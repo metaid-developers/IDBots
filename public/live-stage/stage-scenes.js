@@ -11,6 +11,16 @@
   LS.R = 1;
   LS.O_BASE = LS.O_BASE || { x: 0, y: 0 };
   LS.__geomSyncs = LS.__geomSyncs || [];
+  /* Owner feedback 2026-11-18: every scene animation added with the scene
+     system runs at 0.6×. Applied to the clock/dt fed to web/chain places,
+     peer/group connectors, transients, the verification arc and place
+     reveal/crossfade durations. Exempt: the particle field, the original
+     worker curves, the orb renderer and the rail's DOM transitions. */
+  LS.SCENE_TIME_SCALE = 0.6;
+  /* Web/Chain dim: resting/base alphas ×0.6, moving highlights ×0.75. */
+  LS.SCENE_ALPHA_BASE = 0.6;
+  LS.SCENE_ALPHA_HI = 0.75;
+  LS.VALID_AVATAR = /^(?:data:image\/|https?:\/\/|avatars\/)/i;
 })();
 /* Live Stage prototype — shared helpers + Mind place renderer.
    Place factories return { id, build(), setMotif(m), draw(g, dt, t, fx) }.
@@ -134,842 +144,137 @@
   };
 
   LS.placeFactories = LS.placeFactories || {};
-
-  /* ============================= MIND — stars ============================= */
-  LS.placeFactories.mind = (env) => {
-    const { W, H, R } = LS;
-    const violet = '197,169,255', cyan = '155,244,255';
-    let motif = 'idle';
-    let t = 0;
-    const statics = LS.makeStatics(env);
-    let far = [], mid = [], near = [];
-    let ring = null;
-    const flash = new Map();
-    let synapses = [], synNext = 0;
-    let constellation = null, constNext = 0;
-    let settle = null; // {from:[{x,y}], t0}
-    let drifters = [], driftNext = 0;
-    /* settle arc: 220° of the orbit ellipse, concentrated toward the
-       report button (lower-left of the orb, ~140°) */
-    const ARC_C = (140 * Math.PI) / 180, ARC_SPAN = (220 * Math.PI) / 180;
-    const settleAngle = (i, n) => {
-      const u = n <= 1 ? 0.5 : i / (n - 1);           // 0..1
-      const s = Math.sign(u - 0.5) * Math.pow(Math.abs(u - 0.5) * 2, 1.3) / 2;
-      return ARC_C + s * ARC_SPAN;
-    };
-    let mul = 0.3, mulTarget = 0.3;
-
-    function midPos(s, time) {
-      const a = s.ang;
-      const rad = motif === 'speaking'
-        ? s.rad * (1 + 0.025 * env.voice() * Math.sin(3 * a + 4 * time))
-        : s.rad;
-      return {
-        x: env.O.x + Math.cos(a) * rad * 1.1,
-        y: env.O.y + Math.sin(a) * rad * 0.62,
-      };
-    }
-
-    function activityMul() {
-      const a = env.activity();
-      return a === 'working' ? 1 : a === 'thinking' ? 1.15 : a === 'speaking' ? 0.6 : a === 'waiting' ? 0.5 : 0.45;
-    }
-
-    function build() {
-      const rng = LS.mulberry32(101);
-      far = []; mid = []; near = [];
-      for (let i = 0; i < 140; i += 1) {
-        far.push({ x: 0.25 * W + rng() * 0.8 * W, y: rng() * H, r: 0.4 + rng() * 0.5, a: 0.04 + rng() * 0.12, tw: rng() * 6.28, tws: 0.6 + rng() * 1.2 });
-      }
-      for (let i = 0; i < 46; i += 1) {
-        mid.push({ ang: rng() * Math.PI * 2, rad: (1.05 + rng() * 2.15) * R, sp: 0.12 + rng() * 0.35, sz: 0.7 + rng() * 1.6, cyan: i % 7 === 0, born: -9 });
-      }
-      for (let i = 0; i < 7; i += 1) {
-        near.push({ x: 0.3 * W + rng() * 0.72 * W, y: rng() * H, r: 3 + rng() * 3, a: 0.035 + rng() * 0.025, ph: rng() * 6.28 });
-      }
-    }
-
-    function setMotif(m) {
-      if (m === 'received' && motif !== 'received') ring = { t0: t };
-      if (m === 'received') ring = { t0: t };
-      motif = m;
-      if (m === 'settle') {
-        settle = { t0: t, from: mid.map((s) => midPos(s, t)) };
-        drifters = [];
-        driftNext = t + 1.4;
-      } else {
-        settle = null;
-      }
-      constellation = null;
-      constNext = t + 1.6;
-      synapses = [];
-      synNext = t + 0.35;
-      mulTarget = m === 'idle' ? 0.3 : m === 'reasoning' ? 1.75 : m === 'speaking' ? 0.6 : m === 'settle' || m === 'still' ? 0 : 1;
-      if (m === 'still' || m === 'settle') mulTarget = 0;
-    }
-
-    function drawFar(g, fx, hue1, hue2) {
-      const twMul = motif === 'reasoning' ? 1.6 : 1;
-      for (let i = 0; i < far.length; i += 1) {
-        const s = far[i];
-        const dx = env.O.x - LS.O_BASE.x, dy = env.O.y - LS.O_BASE.y;
-        const x = s.x + dx, y = s.y + dy;
-        let m = fx.elA(x, y, Math.hypot(s.x - LS.O_BASE.x, s.y - LS.O_BASE.y));
-        if (m <= 0.002) continue;
-        let a = s.a * (1 + 0.4 * twMul * Math.sin(t * 1.3 * s.tws + s.tw));
-        const f0 = flash.get(i);
-        if (f0 != null) {
-          const e = (t - f0) * 1000;
-          if (e < 300) a += 0.35 * (1 - e / 300);
-        }
-        if (motif === 'still' || motif === 'settle') a *= 0.7;
-        g.beginPath();
-        g.fillStyle = LS.rgba(i % 9 === 0 ? hue2 : hue1, a * m);
-        g.arc(x, y, s.r, 0, Math.PI * 2);
-        g.fill();
-      }
-    }
-
-    function draw(g, dt, tNow, fx) {
-      const hue1 = fx.slate ? '148,163,184' : violet;
-      const hue2 = fx.slate ? '148,163,184' : cyan;
-      const sdt = fx.freeze ? 0 : dt * (fx.slow || 1);
-      t += sdt;
-      mul += (mulTarget - mul) * (1 - Math.exp(-sdt / 0.5));
-      const energy = LS.clamp(env.orbSpeed(), 0.3, 1.2);
-      const speed = mul * activityMul() * energy;
-
-      // integrate mid orbiters
-      if (sdt > 0 && !settle) {
-        for (const s of mid) {
-          s.ang += sdt * s.sp * speed;
-          if (motif === 'recall') {
-            s.rad -= 4 * sdt;
-            if (s.rad < 1.0 * R) { s.rad = 3.2 * R; s.born = t; }
-          }
-        }
-      }
-
-      // bokeh discs
-      for (const b of near) {
-        const dx = env.O.x - LS.O_BASE.x, dy = env.O.y - LS.O_BASE.y;
-        const x = b.x + dx + Math.sin(t * 0.31 + b.ph) * 20;
-        const y = b.y + dy + Math.cos(t * 0.23 + b.ph * 1.7) * 20;
-        const m = fx.elA(x, y, 0);
-        if (m <= 0.002) continue;
-        g.beginPath();
-        g.fillStyle = LS.rgba(hue1, b.a * m);
-        g.arc(x, y, b.r, 0, Math.PI * 2);
-        g.fill();
-      }
-
-      drawFar(g, fx, hue1, hue2);
-
-      // mid orbiters (or settled arc)
-      for (let i = 0; i < mid.length; i += 1) {
-        const s = mid[i];
-        let p;
-        if (settle) {
-          const e = LS.clamp((t - settle.t0) / 0.8, 0, 1);
-          const arc = settleAngle(i, mid.length);
-          const tx = env.O.x + Math.cos(arc) * 190, ty = env.O.y + Math.sin(arc) * 125;
-          p = { x: LS.lerp(settle.from[i].x, tx, LS.easeOutCubic(e)), y: LS.lerp(settle.from[i].y, ty, LS.easeOutCubic(e)) };
-        } else {
-          p = midPos(s, t);
-        }
-        let m = fx.elA(p.x, p.y, Math.hypot(p.x - env.O.x, p.y - env.O.y));
-        if (m <= 0.002) continue;
-        let a = 0.18 + (s.sz - 0.7) * 0.2;
-        if (motif === 'idle') a *= 0.6;
-        if (motif === 'settle' || motif === 'still') a = motif === 'settle' ? 0.18 : a * 0.7;
-        if (t - s.born < 0.4) a *= (t - s.born) / 0.4;
-        g.beginPath();
-        g.fillStyle = LS.rgba(s.cyan ? hue2 : hue1, a * m);
-        g.arc(p.x, p.y, s.sz, 0, Math.PI * 2);
-        g.fill();
-        s._px = p.x; s._py = p.y;
-      }
-
-      // settle drifters: 2–3 stars at a time leave the arc toward the
-      // report button and fade, one launch every 2s
-      if (motif === 'settle' && settle) {
-        if (sdt > 0 && t >= driftNext && drifters.length < 3) {
-          driftNext = t + 2;
-          const rp = env.reportPos ? env.reportPos() : { x: 0.12 * W, y: 0.86 * H };
-          const arcI = Math.floor(mid.length / 2 + (env.rand() - 0.5) * mid.length * 0.6);
-          const a = settleAngle(LS.clamp(arcI, 0, mid.length - 1), mid.length);
-          drifters.push({
-            x0: env.O.x + Math.cos(a) * 190, y0: env.O.y + Math.sin(a) * 125,
-            tx: rp.x, ty: rp.y, t0: t,
-          });
-        }
-        for (const d of drifters) {
-          const e = (t - d.t0) / 1.8;
-          if (e >= 1) continue;
-          const p = LS.easeInOutCubic(LS.clamp(e / 0.85, 0, 1));
-          const x = LS.lerp(d.x0, d.tx, p * 0.9), y = LS.lerp(d.y0, d.ty, p * 0.9);
-          g.beginPath();
-          g.fillStyle = LS.rgba(hue1, 0.32 * (1 - e) * fx.aMul);
-          g.arc(x, y, 1.5, 0, Math.PI * 2);
-          g.fill();
-        }
-        drifters = drifters.filter((d) => t - d.t0 < 1.8);
-      }
-
-      // reasoning synapses
-      if (motif === 'reasoning') {
-        if (t >= synNext && synapses.length < 6 && sdt > 0) {
-          synNext = t + 0.35;
-          const i = Math.floor(env.rand() * mid.length);
-          let best = -1, bd = 110;
-          for (let j = 0; j < mid.length; j += 1) {
-            if (j === i) continue;
-            const d = Math.hypot(mid[j]._px - mid[i]._px, mid[j]._py - mid[i]._py);
-            if (d < bd) { bd = d; best = j; }
-          }
-          if (best >= 0) synapses.push({ a: i, b: best, t0: t });
-        }
-        synapses = synapses.filter((sn) => t - sn.t0 < 1.2);
-        for (const sn of synapses) {
-          const e = (t - sn.t0) / 1.2;
-          const a = 0.22 * Math.sin(Math.PI * e);
-          const m = fx.elA(mid[sn.a]._px, mid[sn.a]._py, 0);
-          g.beginPath();
-          g.moveTo(mid[sn.a]._px, mid[sn.a]._py);
-          g.lineTo(mid[sn.b]._px, mid[sn.b]._py);
-          g.strokeStyle = LS.rgba(hue2, a * m);
-          g.lineWidth = 0.6;
-          g.stroke();
-        }
-      }
-
-      // recall constellation → glint home
-      if (motif === 'recall') {
-        if (!constellation && t >= constNext && sdt > 0) {
-          const seed = env.rand() * Math.PI * 2;
-          // compact set: right of the copy column, one 50° sector, radius 1.4r–3r
-          const cands = mid
-            .filter((s) => {
-              if (s._px < env.O.x - 0.6 * R) return false;
-              const d = Math.hypot(s._px - env.O.x, s._py - env.O.y);
-              if (d < 1.4 * R || d > 3 * R) return false;
-              const a = Math.atan2(s._py - env.O.y, s._px - env.O.x);
-              let dd = Math.abs(a - seed);
-              if (dd > Math.PI) dd = 2 * Math.PI - dd;
-              return dd < (50 * Math.PI) / 360;
-            })
-            .sort((a, b) => Math.atan2(a._py - env.O.y, a._px - env.O.x)
-              - Math.atan2(b._py - env.O.y, b._px - env.O.x));
-          // longest run of consecutive picks joined by ≤90px segments
-          let best = [], run = [];
-          for (const s of cands) {
-            const prev = run[run.length - 1];
-            if (!prev || Math.hypot(s._px - prev._px, s._py - prev._py) <= 90) run.push(s);
-            else { if (run.length > best.length) best = run; run = [s]; }
-          }
-          if (run.length > best.length) best = run;
-          const picks = best.slice(0, 4);
-          if (picks.length >= 2) {
-            constellation = { pts: picks.map((s) => ({ x: s._px, y: s._py })), t0: t };
-            constNext = t + 1.6;
-          } else constNext = t + 0.4;
-        }
-        if (constellation) {
-          const c = constellation;
-          const e = (t - c.t0) * 1000;
-          const drawMs = 500, holdMs = 400, glintMs = 700, fadeMs = 600;
-          const m = fx.elA(c.pts[0].x, c.pts[0].y, 0);
-          if (e < drawMs + holdMs) {
-            const p = LS.clamp(e / drawMs, 0, 1);
-            const n = c.pts.length;
-            const upto = p * (n - 1);
-            g.beginPath();
-            g.moveTo(c.pts[0].x, c.pts[0].y);
-            for (let i = 1; i < n; i += 1) {
-              if (i <= upto) g.lineTo(c.pts[i].x, c.pts[i].y);
-              else if (i - 1 < upto) {
-                const f = upto - (i - 1);
-                g.lineTo(LS.lerp(c.pts[i - 1].x, c.pts[i].x, f), LS.lerp(c.pts[i - 1].y, c.pts[i].y, f));
-                break;
-              }
-            }
-            g.strokeStyle = LS.rgba(hue2, 0.5 * m);
-            g.lineWidth = 0.8;
-            g.stroke();
-          } else {
-            const glintT = e - drawMs - holdMs;
-            const last = c.pts[c.pts.length - 1];
-            const dxn = env.O.x - last.x, dyn = env.O.y - last.y;
-            const dd = Math.hypot(dxn, dyn) || 1;
-            const edge = { x: env.O.x - (dxn / dd) * R, y: env.O.y - (dyn / dd) * R };
-            if (glintT < glintMs) {
-              const p = LS.easeInOutCubic(glintT / glintMs);
-              const gx = LS.lerp(last.x, edge.x, p), gy = LS.lerp(last.y, edge.y, p);
-              const tx = LS.lerp(last.x, edge.x, Math.max(0, p - 0.25)), ty = LS.lerp(last.y, edge.y, Math.max(0, p - 0.25));
-              g.save();
-              g.globalCompositeOperation = 'lighter';
-              const grad = g.createLinearGradient(tx, ty, gx, gy);
-              grad.addColorStop(0, LS.rgba(hue2, 0));
-              grad.addColorStop(1, LS.rgba(hue2, 0.6 * m));
-              g.strokeStyle = grad;
-              g.lineWidth = 2;
-              g.beginPath(); g.moveTo(tx, ty); g.lineTo(gx, gy); g.stroke();
-              g.restore();
-            } else if (!c.inhaled) {
-              c.inhaled = true;
-              env.emit('inhale');
-            }
-            const fadeE = glintT / fadeMs;
-            if (fadeE < 1) {
-              g.beginPath();
-              g.moveTo(c.pts[0].x, c.pts[0].y);
-              for (let i = 1; i < c.pts.length; i += 1) g.lineTo(c.pts[i].x, c.pts[i].y);
-              g.strokeStyle = LS.rgba(hue2, 0.5 * (1 - fadeE) * m);
-              g.lineWidth = 0.8;
-              g.stroke();
-            } else constellation = null;
-          }
-        }
-      }
-
-      // received acknowledgement ring
-      if (ring) {
-        const e = (t - ring.t0) * 1000;
-        if (e < 1100) {
-          const p = LS.easeOutCubic(e / 1100);
-          const rr = R * (1 + 2.4 * p);
-          const m = fx.elA(env.O.x, env.O.y, 0);
-          g.beginPath();
-          g.strokeStyle = LS.rgba(hue2, 0.28 * (1 - p) * m);
-          g.lineWidth = 1;
-          g.arc(env.O.x, env.O.y, rr, 0, Math.PI * 2);
-          g.stroke();
-          for (let i = 0; i < far.length; i += 1) {
-            const s = far[i];
-            const d = Math.hypot(s.x - LS.O_BASE.x, s.y - LS.O_BASE.y);
-            if (Math.abs(d - rr) < 10) flash.set(i, t);
-          }
-        } else ring = null;
-      }
-    }
-
-    return {
-      id: 'mind',
-      build,
-      setMotif,
-      draw,
-      statics,
-    };
-  };
 })();
-/* Live Stage prototype — Machine place renderer (PCB / circuit).
-   The orb is the processor: a socket + pin ticks around it, seeded traces,
-   substrate dot grid, two memory chips, and motif-specific movers. */
+
+/* Live Stage prototype — the shared rotating-particle place (Mind + Machine).
+   Verbatim port of the pre-scene-system drawParticles field (stage.js @
+   36ff3c60d). One persistent instance backs both the mind and machine place
+   keys, so the integrated phase stays continuous across mind↔machine family
+   moves; the engine fades the field in/out when the place switches to or
+   from web/chain. The particle field is exempt from SCENE_TIME_SCALE. */
 (() => {
   const LS = window.LS;
-  let { W, H, R } = LS; (LS.__geomSyncs = LS.__geomSyncs || []).push(() => { W = LS.W; H = LS.H; R = LS.R; });
-  const O = LS.O_BASE;
-  const trace = '214,160,92', pulse = '255,214,128', cell = '255,220,81';
 
-  LS.placeFactories.machine = (env) => {
-    const statics = LS.makeStatics(env);
-    let motif = 'run';
-    let t = 0;
-    let traces = [], feedTraces = [], chips = [], placed = [];
-    const sideFlash = { R: -9, T: -9, B: -9, L: -9 };
-    const viaFlash = new Map();
-    let pulses = [], spawnAcc = 0;
-    const S = 2 * 1.18 * R;
-    const half = S / 2;
+  /* Particles integrate their own phase (phase += dt × speed × energy ×
+     activity) so family/energy changes retune the drift without teleporting
+     the field. The activity multiplier follows the orb's activity bucket —
+     working speeds up, speaking and resting slow down — and eases toward its
+     target with a ~0.8 s time constant. */
+  const PARTICLE_ACTIVITY = { working: 1.75, speaking: .6, resting: .5 };
+  /* The gather pull applies to the recall/run/read families — bash/read were
+     the old local-recall, which gathered. */
+  const GATHER_FAMILIES = new Set(['local-recall', 'local-run', 'local-read']);
+  const ARC_FAMILIES = new Set(['report-ready', 'complete']);
 
-    /* ---------------- geometry ---------------- */
-    function samplePts(pts, every, out) {
-      const at = LS.arcTable(pts);
-      for (let s = 0; s < at.L; s += every) out.push(at.pointAt(s));
-      out.push(at.pointAt(at.L));
-    }
-
-    function clearOf(pts, gap) {
-      const samples = [];
-      samplePts(pts, 10, samples);
-      for (const p of samples) {
-        for (const q of placed) {
-          if (Math.hypot(p.x - q.x, p.y - q.y) < gap) return false;
-        }
-      }
-      return true;
-    }
-
-    function commitTrace(pts, side, end) {
-      const at = LS.arcTable(pts);
-      const tr = { pts, side, end, at, endPos: pts[pts.length - 1] };
-      traces.push(tr);
-      samplePts(pts, 10, placed);
-      return tr;
-    }
-
-    function genTrace(rng, sideWeights, usedTicks) {
-      const r = rng();
-      let side = 'R';
-      let acc = 0;
-      for (const [s, w] of sideWeights) { acc += w; if (r <= acc) { side = s; break; } }
-      let tick = Math.floor(rng() * 14);
-      for (let k = 0; k < 14; k += 1) {
-        if (!usedTicks[side].has((tick + k) % 14)) { tick = (tick + k) % 14; break; }
-      }
-      usedTicks[side].add(tick);
-      const off = (tick + 0.5) * (S / 14) - half;
-      const nrm = { R: [1, 0], L: [-1, 0], T: [0, -1], B: [0, 1] }[side];
-      const lat = { R: [0, 1], L: [0, 1], T: [1, 0], B: [1, 0] }[side];
-      const start = {
-        x: side === 'R' || side === 'L' ? O.x + nrm[0] * (half + 6) : O.x + off,
-        y: side === 'T' || side === 'B' ? O.y + nrm[1] * (half + 6) : O.y + off,
+  LS.placeFactories.particles = (env) => {
+    const particles = Array.from({ length: 42 }, (_, index) => {
+      const random = (salt) => {
+        const value = Math.sin(index * 91.731 + salt * 17.17) * 43758.5453;
+        return value - Math.floor(value);
       };
-      for (let attempt = 0; attempt < 6; attempt += 1) {
-        const pts = [{ ...start }];
-        let px = start.x, py = start.y;
-        // perpendicular run
-        const d1 = 20 + rng() * 40;
-        px += nrm[0] * d1; py += nrm[1] * d1;
-        pts.push({ x: px, y: py });
-        // 45° jog
-        const latSign = rng() < 0.5 ? -1 : 1;
-        const d2 = 20 + rng() * 30;
-        px += (nrm[0] + lat[0] * latSign) * d2 * 0.7071;
-        py += (nrm[1] + lat[1] * latSign) * d2 * 0.7071;
-        px = Math.round(px / 12) * 12; py = Math.round(py / 12) * 12;
-        pts.push({ x: px, y: py });
-        // orthogonal runs on a 12px grid
-        const runs = 2 + Math.floor(rng() * 3);
-        let horizontal = side === 'T' || side === 'B';
-        let total = d1 + d2;
-        const target = 160 + rng() * 260;
-        for (let i = 0; i < runs && total < target; i += 1) {
-          const len = (2 + Math.floor(rng() * 8)) * 12;
-          if (horizontal) {
-            const dir = side === 'L' ? -1 : 1;
-            px += dir * len;
-          } else {
-            const dir = side === 'T' ? -1 : side === 'B' ? 1 : rng() < 0.5 ? -1 : 1;
-            py += dir * len;
-          }
-          total += len;
-          pts.push({ x: px, y: py });
-          horizontal = !horizontal;
-        }
-        if (clearOf(pts, 9) || attempt === 5) {
-          const end = rng() < 0.7 ? 'via' : 'pad';
-          return commitTrace(pts, side, end);
-        }
+      return {
+        angle: random(1) * Math.PI * 2, radius: 110 + random(2) * 250,
+        speed: .12 + random(3) * .35, size: .7 + random(4) * 1.8,
+        drift: random(5), phase: 0, sx: 1.1, sy: .62, aw: 0,
+      };
+    });
+    const clock = { last: 0, activity: 1 };
+    let familyNow = 'idle', heroNow = false, tNow = 0, arcNow = false;
+
+    /* Orbit ellipse scale per mode in the original branch order — gather
+       pull (recall/run/read) first, then the compressed structured orbit
+       (×.65/×.45 while a hero companion is active), which outranks the
+       report-ready/complete arc just as topology.mode === 'structured' did.
+       The arc itself is a fixed formation, blended in via p.aw below.
+       The switch eases (~0.18 s constant) so particles glide between modes
+       instead of teleporting. */
+    function targetScale(p) {
+      if (GATHER_FAMILIES.has(familyNow)) {
+        const pull = .68 + Math.sin(tNow * .8 + p.drift * 6) * .18;
+        return { x: pull * 1.2, y: pull * .65 };
       }
-      return null;
+      if (heroNow) return { x: .65, y: .45 };
+      return { x: 1.1, y: .62 };
     }
 
-    function chipTrace(rng, chipIndex) {
-      // dedicated feed from the socket right edge to the chip's left edge
-      const chip = chips[chipIndex];
-      const y0 = O.y + (chipIndex === 0 ? -60 : 60);
-      const pts = [
-        { x: O.x + half + 6, y: y0 },
-        { x: O.x + half + 36, y: y0 },
-      ];
-      const midX = Math.round(((O.x + half + 36) + (chip.x - 6)) / 2 / 12) * 12;
-      pts.push({ x: midX, y: y0 });
-      pts.push({ x: midX, y: chip.y + chip.h / 2 });
-      pts.push({ x: chip.x - 6, y: chip.y + chip.h / 2 });
-      pts.push({ x: chip.x, y: chip.y + chip.h / 2 });
-      return commitTrace(pts, 'R', `chip${chipIndex}`);
-    }
-
-    function feedTrace(toX, toY, fromY) {
-      // socket right edge → a point on a window frame's edge
-      const pts = [
-        { x: O.x + half + 6, y: fromY },
-        { x: toX - 30, y: fromY },
-        { x: toX, y: toY },
-      ];
-      const tr = { pts, side: 'R', end: 'feed', at: LS.arcTable(pts), endPos: pts[2] };
-      feedTraces.push(tr);
-      return tr;
-    }
-
-    function build() {
-      const rng = LS.mulberry32(202);
-      statics.els.length = 0;
-      traces = []; feedTraces = []; placed = []; pulses = [];
-      chips = [
-        { x: O.x + 0.24 * W, y: O.y - 0.27 * H, w: 70, h: 26, next: 0, lit: new Array(16).fill(-9) },
-        { x: O.x + 0.22 * W, y: O.y + 0.28 * H, w: 70, h: 26, next: 0, lit: new Array(16).fill(-9) },
-      ];
-
-      // socket
-      statics.add(O.x, O.y, (g, m) => {
-        const h = fxHue();
-        LS.roundRect(g, O.x - half, O.y - half, S, S, 22);
-        g.strokeStyle = LS.rgba(h, 0.065 * m);
-        g.lineWidth = 1;
-        g.stroke();
-        LS.roundRect(g, O.x - half + 8, O.y - half + 8, S - 16, S - 16, 16);
-        g.strokeStyle = LS.rgba(h, 0.04 * m);
-        g.stroke();
-        // pin ticks: 14 per side, 6px outward
-        g.strokeStyle = LS.rgba(h, 0.1 * m);
-        g.beginPath();
-        for (let i = 0; i < 14; i += 1) {
-          const off = (i + 0.5) * (S / 14) - half;
-          g.moveTo(O.x + half, O.y + off); g.lineTo(O.x + half + 6, O.y + off);
-          g.moveTo(O.x - half - 6, O.y + off); g.lineTo(O.x - half, O.y + off);
-          g.moveTo(O.x + off, O.y - half - 6); g.lineTo(O.x + off, O.y - half);
-          g.moveTo(O.x + off, O.y + half); g.lineTo(O.x + off, O.y + half + 6);
+    function step(now, reduced) {
+      /* Original order: gather → structured (hero) → arc. The arc only
+         applies when neither the gather families nor hero mode claim the
+         field; p.aw eases the blend in/out over ~0.18 s. */
+      arcNow = !heroNow && ARC_FAMILIES.has(familyNow);
+      const dt = clock.last === 0 ? 0 : Math.min(.1, Math.max(0, now - clock.last));
+      clock.last = now;
+      const bucket = env.activity();
+      const target = bucket === 'waiting' ? .95 : (PARTICLE_ACTIVITY[bucket] ?? 1);
+      clock.activity += (target - clock.activity) * (1 - Math.exp(-dt / .8));
+      if (!reduced && dt > 0) {
+        // Integrated phase must never see a non-finite energy: one NaN step
+        // would poison the accumulator for the rest of the session.
+        const energy = env.energy();
+        const rate = energy * clock.activity;
+        const k = 1 - Math.exp(-dt / .18);
+        const aw = arcNow ? 1 : 0;
+        for (const p of particles) {
+          p.phase += dt * p.speed * rate;
+          const ts = targetScale(p);
+          p.sx += (ts.x - p.sx) * k;
+          p.sy += (ts.y - p.sy) * k;
+          p.aw += (aw - p.aw) * k;
         }
-        g.stroke();
-      });
-
-      // substrate dot grid
-      statics.add(O.x + 0.2 * W, O.y, (g, m) => {
-        const h = fxHue();
-        for (let x = 0; x <= W; x += 20) {
-          for (let y = 0; y <= H; y += 20) {
-            const d = Math.hypot(x - O.x, y - O.y);
-            const f = LS.clamp(1 - (d - half) / (0.55 * W - half), 0, 1);
-            const a = 0.03 * f * m;
-            if (a < 0.002) continue;
-            g.fillStyle = LS.rgba(h, a);
-            g.fillRect(x - 0.3, y - 0.3, 0.6, 0.6);
-          }
+      } else if (reduced) {
+        const aw = arcNow ? 1 : 0;
+        for (const p of particles) {
+          const ts = targetScale(p);
+          p.sx = ts.x; p.sy = ts.y; p.aw = aw;
         }
-      });
-
-      // traces
-      const usedTicks = { R: new Set(), T: new Set(), B: new Set(), L: new Set() };
-      const weights = [['R', 0.35], ['T', 0.25], ['B', 0.25], ['L', 0.15]];
-      for (let i = 0; i < 30; i += 1) genTrace(rng, weights, usedTicks);
-      chipTrace(rng, 0);
-      chipTrace(rng, 1);
-      // feed traces for desktop / screen frames (drawn in their motifs)
-      feedTrace(O.x + 200, O.y + 230, O.y + 100);   // desktop frame bottom edge
-      feedTrace(O.x + 210, O.y - 30, O.y - 60);     // screen frame bottom edge
-      feedTrace(O.x + 260, O.y - 30, O.y - 20);     // screen frame bottom edge 2
-
-      statics.add(O.x + W * 0.2, O.y, (g, m) => {
-        const h = fxHue();
-        g.strokeStyle = LS.rgba(h, 0.08 * m);
-        g.lineWidth = 1;
-        for (const tr of traces) {
-          g.beginPath();
-          g.moveTo(tr.pts[0].x, tr.pts[0].y);
-          for (let i = 1; i < tr.pts.length; i += 1) g.lineTo(tr.pts[i].x, tr.pts[i].y);
-          g.stroke();
-        }
-      });
-      // trace end terminations
-      statics.add(O.x + W * 0.2, O.y, (g, m) => {
-        const h = fxHue();
-        for (const tr of traces) {
-          const p = tr.endPos;
-          if (tr.end === 'via') {
-            g.beginPath();
-            g.strokeStyle = LS.rgba(h, 0.16 * m);
-            g.lineWidth = 1;
-            g.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
-            g.stroke();
-          } else if (tr.end === 'pad') {
-            g.fillStyle = LS.rgba(h, 0.12 * m);
-            g.fillRect(p.x - 2, p.y - 2, 4, 4);
-          }
-        }
-      });
-      // memory chips
-      statics.add(chips[0].x, chips[0].y, (g, m) => {
-        const h = fxHue();
-        for (const c of chips) {
-          LS.roundRect(g, c.x, c.y, c.w, c.h, 4);
-          g.strokeStyle = LS.rgba(h, 0.08 * m);
-          g.lineWidth = 1;
-          g.stroke();
-          g.fillStyle = LS.rgba(h, 0.05 * m);
-          for (let r = 0; r < 2; r += 1) {
-            for (let i = 0; i < 8; i += 1) {
-              g.fillRect(c.x + 7 + i * 7, c.y + 5 + r * 10, 6, 6);
-            }
-          }
-        }
-      });
-    }
-
-    // fxHue is set per draw (slate override)
-    let fxHue = () => trace;
-    const traceSetFor = () => {
-      if (motif === 'desktop') return [...traces, feedTraces[0]];
-      if (motif === 'screen' || motif === 'project') return [...traces, feedTraces[1], feedTraces[2]];
-      return traces;
-    };
-
-    function pulseRate() {
-      switch (motif) {
-        case 'run': return 4.5;
-        case 'read': return 3;
-        case 'write': return 3;
-        case 'desktop': return 1.2;
-        case 'screen': case 'project': return 1.6;
-        case 'workers': return 0.8;
-        case 'waiting': return 0.6;
-        default: return 1.4;
       }
     }
 
-    function spawnPulse() {
-      if (pulses.length >= 20) return;
-      const set = traceSetFor();
-      const tr = set[Math.floor(env.rand() * set.length)];
-      let dir = env.rand() < 0.5 ? 1 : -1;
-      if (motif === 'read') dir = -1;
-      if (motif === 'write') dir = 1;
-      if (tr.end === 'feed') dir = 1;
-      pulses.push({ tr, s: dir > 0 ? 0 : tr.at.L, dir, spd: 150 + env.rand() * 70 });
-    }
-
-    function onPulseArrive(p) {
-      if (p.dir < 0) {
-        sideFlash[p.tr.side] = t;
-      } else if (p.tr.end === 'via') {
-        viaFlash.set(p.tr, t);
-      } else if (p.tr.end.startsWith('chip')) {
-        const c = chips[Number(p.tr.end.slice(4))];
-        c.lit[c.next % 16] = t;
-        c.next += 1;
-      }
-    }
-
-    function drawPulses(g, fx, m) {
-      const h = fx.slate ? '148,163,184' : pulse;
-      g.save();
-      g.globalCompositeOperation = 'lighter';
-      for (const p of pulses) {
-        const head = p.tr.at.pointAt(p.s);
-        const tail = p.tr.at.pointAt(p.s - p.dir * 22);
-        const grad = g.createLinearGradient(tail.x, tail.y, head.x, head.y);
-        grad.addColorStop(0, LS.rgba(h, 0));
-        grad.addColorStop(1, LS.rgba(h, 0.5 * m));
-        g.strokeStyle = grad;
-        g.lineWidth = 1.4;
-        g.beginPath();
-        // short polyline along the trace for a curved streak
-        const steps = 5;
-        for (let i = 0; i <= steps; i += 1) {
-          const q = p.tr.at.pointAt(p.s - p.dir * 22 * (1 - i / steps));
-          if (i === 0) g.moveTo(q.x, q.y); else g.lineTo(q.x, q.y);
+    function draw(g, dt, now, fx) {
+      const reduced = env.reduced();
+      familyNow = env.family();
+      heroNow = env.hero();
+      tNow = reduced ? env.seed() * .01 : now;
+      const arcFam = ARC_FAMILIES.has(familyNow);
+      step(now, reduced);
+      const cx = env.O.x, cy = env.O.y;
+      const seed = env.seed();
+      for (let index = 0; index < particles.length; index += 1) {
+        const p = particles[index];
+        const angle = p.angle + p.phase + seed * .0001;
+        const ox = cx + Math.cos(angle) * p.radius * p.sx;
+        const oy = cy + Math.sin(angle) * p.radius * p.sy;
+        let x = ox, y = oy;
+        if (p.aw > 0) {
+          const a = -Math.PI * .85 + (index / particles.length) * Math.PI * 1.7;
+          x = LS.lerp(ox, cx + Math.cos(a) * 190, p.aw);
+          y = LS.lerp(oy, cy + Math.sin(a) * 125, p.aw);
         }
-        g.stroke();
-        g.shadowColor = LS.rgba(h, 0.9 * m);
-        g.shadowBlur = 8;
+        const base = arcFam ? .18 : .18 + p.drift * .35;
+        const m = (fx.elAFree || fx.elA)(x, y);
+        if (m <= 0.002) continue;
+        const alpha = base * m;
         g.beginPath();
-        g.fillStyle = LS.rgba(h, 0.85 * m);
-        g.arc(head.x, head.y, 1.6, 0, Math.PI * 2);
+        g.fillStyle = index % 7 === 0
+          ? LS.rgba('155,244,255', alpha + .12 * m)
+          : LS.rgba('197,169,255', alpha);
+        g.arc(x, y, p.size, 0, Math.PI * 2);
         g.fill();
-        g.shadowBlur = 0;
       }
-      g.restore();
-    }
-
-    function drawFrameDecor(g, fx, m) {
-      const h = fx.slate ? '148,163,184' : trace;
-      const dx = env.O.x - O.x, dy = env.O.y - O.y;
-      g.save();
-      g.translate(dx, dy);
-      if (motif === 'desktop') {
-        const fx0 = O.x + 40, fy0 = O.y + 20, fw = 330, fh = 210;
-        LS.roundRect(g, fx0, fy0, fw, fh, 10);
-        g.fillStyle = `rgba(8,14,26,${0.86 * m})`;
-        g.fill();
-        g.strokeStyle = LS.rgba(h, 0.18 * m); g.lineWidth = 1; g.stroke();
-        g.beginPath(); g.moveTo(fx0, fy0 + 18); g.lineTo(fx0 + fw, fy0 + 18); g.stroke();
-        g.fillStyle = LS.rgba(h, 0.3 * m);
-        for (let i = 0; i < 3; i += 1) { g.beginPath(); g.arc(fx0 + 12 + i * 8, fy0 + 9, 1.5, 0, Math.PI * 2); g.fill(); }
-        g.fillStyle = LS.rgba(h, 0.06 * m);
-        g.fillRect(fx0 + 14, fy0 + 34, fw - 60, 46);
-        g.fillRect(fx0 + 14, fy0 + 92, fw - 130, 34);
-        g.fillRect(fx0 + 14, fy0 + 138, fw - 90, 50);
-      }
-      if (motif === 'screen' || motif === 'project') {
-        const fx0 = O.x + 30, fy0 = O.y - 250, fw = 360, fh = 220;
-        LS.roundRect(g, fx0, fy0, fw, fh, 10);
-        g.fillStyle = `rgba(8,14,26,${0.86 * m})`;
-        g.fill();
-        let border = 0.18;
-        if (motif === 'project') border = 0.18 + 0.12 * LS.clamp(1 - (t - projectT0) / 1.1, 0, 1);
-        g.strokeStyle = LS.rgba(h, border * m); g.lineWidth = 1; g.stroke();
-        // tab pill instead of dots
-        LS.roundRect(g, fx0 + 12, fy0 + 6, 58, 11, 5.5);
-        g.strokeStyle = LS.rgba(h, 0.16 * m); g.stroke();
-        if (motif === 'screen') {
-          const scanY = fy0 + ((t % 2.2) / 2.2) * fh;
-          g.strokeStyle = LS.rgba(h, 0.25 * m);
-          g.beginPath(); g.moveTo(fx0 + 2, scanY); g.lineTo(fx0 + fw - 2, scanY); g.stroke();
-        }
-        if (motif === 'project') {
-          const e = (t - projectT0) % 3;
-          const p = LS.easeOutQuint(LS.clamp(e / 1.1, 0, 1));
-          const cx = LS.lerp(O.x, fx0 + fw / 2, p), cy = LS.lerp(O.y, fy0 + fh / 2, p);
-          const sc = LS.lerp(0.4, 1, p);
-          g.save();
-          g.translate(cx, cy);
-          g.scale(sc, sc);
-          LS.roundRect(g, -45, -58, 90, 116, 6);
-          g.strokeStyle = LS.rgba(h, 0.3 * p * m);
-          g.stroke();
-          g.fillStyle = LS.rgba(h, 0.05 * p * m);
-          g.fillRect(-45, -58, 90, 116);
-          g.fillStyle = LS.rgba(h, 0.16 * p * m);
-          for (let i = 0; i < 6; i += 1) g.fillRect(-34, -44 + i * 16, (30 + (i * 37) % 40), 4);
-          g.restore();
-        }
-      }
-      g.restore();
-    }
-
-    // reticle cursor state (desktop)
-    let cur = null, curNext = 0, ripple = null;
-    let projectT0 = 0;
-
-    function drawDesktopCursor(g, fx, m) {
-      const h = fx.slate ? '148,163,184' : pulse;
-      const dx = env.O.x - O.x, dy = env.O.y - O.y;
-      const fx0 = O.x + 40 + dx, fy0 = O.y + 20 + dy;
-      if (!cur) cur = { x: fx0 + 60, y: fy0 + 60, fx: fx0 + 60, fy: fy0 + 60, t0: 0 };
-      if (t >= curNext) {
-        cur.fx = cur.x; cur.fy = cur.y;
-        cur.x = fx0 + 20 + env.rand() * 290;
-        cur.y = fy0 + 26 + env.rand() * 170;
-        cur.t0 = t;
-        curNext = t + 1.6;
-        ripple = { x: cur.x, y: cur.y, t0: t + 0.9 };
-      }
-      const p = LS.easeInOutCubic(LS.clamp((t - cur.t0) / 0.9, 0, 1));
-      const cx = LS.lerp(cur.fx, cur.x, p), cy = LS.lerp(cur.fy, cur.y, p);
-      // 1px dark outline so the reticle reads over the window fill
-      g.strokeStyle = `rgba(8,14,26,${0.9 * m})`;
-      g.lineWidth = 2.5;
-      g.beginPath();
-      g.moveTo(cx - 5, cy); g.lineTo(cx + 5, cy);
-      g.moveTo(cx, cy - 5); g.lineTo(cx, cy + 5);
-      g.stroke();
-      g.beginPath(); g.arc(cx, cy, 6, 0, Math.PI * 2); g.stroke();
-      g.strokeStyle = LS.rgba(h, 0.6 * m);
-      g.lineWidth = 1;
-      g.beginPath();
-      g.moveTo(cx - 5, cy); g.lineTo(cx + 5, cy);
-      g.moveTo(cx, cy - 5); g.lineTo(cx, cy + 5);
-      g.stroke();
-      g.beginPath(); g.arc(cx, cy, 6, 0, Math.PI * 2); g.stroke();
-      if (ripple && t > ripple.t0) {
-        const e = (t - ripple.t0) / 0.5;
-        if (e < 1) {
-          g.strokeStyle = LS.rgba(h, 0.5 * (1 - e) * m);
-          g.beginPath(); g.arc(ripple.x, ripple.y, 6 + 16 * e, 0, Math.PI * 2); g.stroke();
-        }
-      }
-    }
-
-    function draw(g, dt, tNow, fx) {
-      fxHue = () => (fx.slate ? '148,163,184' : trace);
-      const sdt = fx.freeze ? 0 : dt * (fx.slow || 1);
-      t += sdt;
-      const dx = env.O.x - O.x, dy = env.O.y - O.y;
-      const motifDim = motif === 'desktop' ? 0.6 : motif === 'workers' ? 0.5 : 1;
-      const fx2 = { ...fx, elA: (x, y, d) => fx.elA(x, y, d) * motifDim, forceElements: motifDim !== 1 };
-      statics.draw(g, fx2);
-
-      const m = fx.aMul * motifDim;
-
-      // pulses
-      if (sdt > 0) {
-        spawnAcc += sdt * pulseRate();
-        while (spawnAcc >= 1) { spawnAcc -= 1; spawnPulse(); }
-        for (const p of pulses) {
-          p.s += p.dir * p.spd * sdt;
-          if (p.s < 0 || p.s > p.tr.at.L) { p.done = true; onPulseArrive(p); }
-        }
-        pulses = pulses.filter((p) => !p.done);
-      }
-      g.save();
-      g.translate(dx, dy);
-      drawPulses(g, fx, fx2.elA(O.x, O.y, 0));
-      g.restore();
-
-      g.save();
-      g.translate(dx, dy);
-      const h = fx.slate ? '148,163,184' : trace;
-      const hp = fx.slate ? '148,163,184' : pulse;
-      const hc = fx.slate ? '148,163,184' : cell;
-
-      // socket side flashes (read arrivals)
-      for (const side of ['R', 'T', 'B', 'L']) {
-        const e = (t - sideFlash[side]) * 1000;
-        if (e >= 0 && e < 220) {
-          const a = 0.12 * (1 - e / 220) * m;
-          g.strokeStyle = LS.rgba(hp, a);
-          g.lineWidth = 1.2;
-          g.beginPath();
-          if (side === 'R') { g.moveTo(O.x + half, O.y - half); g.lineTo(O.x + half, O.y + half); }
-          if (side === 'L') { g.moveTo(O.x - half, O.y - half); g.lineTo(O.x - half, O.y + half); }
-          if (side === 'T') { g.moveTo(O.x - half, O.y - half); g.lineTo(O.x + half, O.y - half); }
-          if (side === 'B') { g.moveTo(O.x - half, O.y + half); g.lineTo(O.x + half, O.y + half); }
-          g.stroke();
-        }
-      }
-      // via flashes
-      for (const [tr, t0] of viaFlash) {
-        const e = (t - t0) * 1000;
-        if (e > 400) { viaFlash.delete(tr); continue; }
-        g.beginPath();
-        g.strokeStyle = LS.rgba(hp, 0.4 * (1 - e / 400) * m);
-        g.arc(tr.endPos.x, tr.endPos.y, 2.5 + e / 400 * 3, 0, Math.PI * 2);
-        g.stroke();
-      }
-      // memory cells decay
-      for (const c of chips) {
-        for (let i = 0; i < 16; i += 1) {
-          const e = (t - c.lit[i]) * 1000;
-          if (e < 0 || e > 1800) continue;
-          const a = (0.55 - (0.55 - 0.05) * (e / 1800)) * m;
-          g.fillStyle = LS.rgba(hc, a);
-          g.fillRect(c.x + 7 + (i % 8) * 7, c.y + 5 + Math.floor(i / 8) * 10, 6, 6);
-        }
-      }
-      // corner LEDs (run motif): sequence every 180ms + occasional bursts
-      if (motif === 'run') {
-        const step = Math.floor(t / 0.18);
-        const litIdx = step % 4;
-        const burst = LS.mulberry32(step * 7919)() < 0.12;
-        const corners = [
-          [O.x - half - 10, O.y - half - 10], [O.x + half + 10, O.y - half - 10],
-          [O.x + half + 10, O.y + half + 10], [O.x - half - 10, O.y + half + 10],
-        ];
-        for (let i = 0; i < 4; i += 1) {
-          const lit = i === litIdx || (burst && i === (litIdx + 2) % 4);
-          g.fillStyle = LS.rgba(hc, (lit ? 0.7 : 0.12) * m);
-          g.fillRect(corners[i][0] - 1.5, corners[i][1] - 1.5, 3, 3);
-        }
-      }
-      g.restore();
-
-      drawFrameDecor(g, fx, m);
-      if (motif === 'desktop') drawDesktopCursor(g, fx, m);
     }
 
     return {
-      id: 'machine',
-      build,
-      setMotif(m) {
-        motif = m;
-        if (m === 'project') projectT0 = t;
+      id: 'particles',
+      build() {}, setMotif() {}, draw,
+      statics: { renderOff() {}, draw() {} },
+      __sim: {
+        particles, clock, PARTICLE_ACTIVITY, GATHER_FAMILIES, ARC_FAMILIES, step, targetScale,
+        setContext(family, hero, t) { familyNow = family; heroNow = hero; tNow = t; },
       },
-      draw,
-      statics,
     };
   };
 })();
+
 /* Live Stage prototype — Web place renderers.
    Variant A: irregular hyperlink mesh with hub "sites".
    Read = scan band; search = query sweep; packet arcs home to the orb. */
@@ -1212,7 +517,11 @@
       fxHit = () => (fx.slate ? '148,163,184' : hit);
       const sdt = fx.freeze ? 0 : dt * (fx.slow || 1);
       t += sdt;
+      const aBase = LS.SCENE_ALPHA_BASE, aHi = LS.SCENE_ALPHA_HI;
+      g.save();
+      g.globalAlpha *= aBase; // resting mesh statics ×0.6
       statics.draw(g, fx);
+      g.restore();
       const dx = env.O.x - O.x, dy = env.O.y - O.y;
       g.save();
       g.translate(dx, dy);
@@ -1230,7 +539,7 @@
           const ge = (t - n.glowT) * 1000;
           if (ge < 450) a = Math.max(a, 0.6 * (1 - ge / 450));
         }
-        g.fillStyle = LS.rgba(fxNode(), a * m);
+        g.fillStyle = LS.rgba(fxNode(), a * m * aBase);
         g.beginPath();
         g.arc(n.x, n.y, hub ? 2.2 : 1.1, 0, Math.PI * 2);
         g.fill();
@@ -1243,7 +552,7 @@
           const rr = R + (t - w.t0) * 300;
           const fade = LS.clamp(1 - rr / (0.85 * W), 0, 1);
           const m = fx.elA(env.O.x + dx * 0, env.O.y, 0);
-          g.strokeStyle = LS.rgba(fxHit(), 0.12 * fade * m);
+          g.strokeStyle = LS.rgba(fxHit(), 0.12 * fade * m * aHi);
           g.lineWidth = 1;
           g.beginPath();
           g.arc(O.x, O.y, rr, 0, Math.PI * 2);
@@ -1269,10 +578,10 @@
               g.translate(n.x + 12, n.y - 20);
               g.scale(sc, sc);
               LS.roundRect(g, -4.5, -5.5, 9, 11, 1.5);
-              g.strokeStyle = LS.rgba(fxHit(), 0.7 * fadeG * gm);
+              g.strokeStyle = LS.rgba(fxHit(), 0.7 * fadeG * gm * aHi);
               g.lineWidth = 1;
               g.stroke();
-              g.strokeStyle = LS.rgba(fxHit(), 0.5 * fadeG * gm);
+              g.strokeStyle = LS.rgba(fxHit(), 0.5 * fadeG * gm * aHi);
               g.beginPath();
               g.moveTo(-2, -1.5); g.lineTo(2, -1.5);
               g.moveTo(-2, 1.5); g.lineTo(1, 1.5);
@@ -1300,13 +609,13 @@
                   g.globalCompositeOperation = 'lighter';
                   const grad = g.createLinearGradient(tail.x, tail.y, head.x, head.y);
                   grad.addColorStop(0, LS.rgba(fxHit(), 0));
-                  grad.addColorStop(1, LS.rgba(fxHit(), 0.6 * gm));
+                  grad.addColorStop(1, LS.rgba(fxHit(), 0.6 * gm * aHi));
                   g.strokeStyle = grad;
                   g.lineWidth = 2;
                   g.beginPath(); g.moveTo(tail.x, tail.y); g.lineTo(head.x, head.y); g.stroke();
-                  g.shadowColor = LS.rgba(fxHit(), 0.8 * gm);
+                  g.shadowColor = LS.rgba(fxHit(), 0.8 * gm * aHi);
                   g.shadowBlur = 6;
-                  g.fillStyle = LS.rgba(fxHit(), 0.7 * gm);
+                  g.fillStyle = LS.rgba(fxHit(), 0.7 * gm * aHi);
                   g.beginPath(); g.arc(head.x, head.y, 2, 0, Math.PI * 2); g.fill();
                   g.restore();
                 }
@@ -1318,7 +627,7 @@
         for (const [n, t0] of uplinkFlash) {
           const e = (t - t0) * 1000;
           if (e > 500) { uplinkFlash.delete(n); continue; }
-          const a = 0.3 * (1 - e / 500) * fx.aMul;
+          const a = 0.3 * (1 - e / 500) * fx.aMul * aHi;
           const d = Math.hypot(n.x - O.x, n.y - O.y) || 1;
           g.strokeStyle = LS.rgba(fxHit(), a);
           g.lineWidth = 1.4;
@@ -1341,7 +650,7 @@
           const n = best >= 0 ? nodes[best] : { x: target.x, y: target.y };
           reader.start(n.x + 16, n.y - 190, t);
         }
-        reader.draw(g, fx, t, fxHit());
+        reader.draw(g, { ...fx, elA: (x, y, d) => fx.elA(x, y, d) * aHi }, t, fxHit());
       }
 
       g.restore();
@@ -1480,6 +789,7 @@
     }
 
     function drawReadCycle(g, fx, m) {
+      /* all elements here are moving highlights — caller passes m×HI */
       if (!cycle || cycle.kind !== 'read') return;
       const e = t - cycle.t0;
       const h = fxGlint();
@@ -1529,7 +839,9 @@
       }
     }
 
-    function drawWriteCycle(g, fx, m) {
+    function drawWriteCycle(g, fx, m, mBase) {
+      /* m = highlight alpha (×HI); mBase = resting alpha (×BASE) for the
+         just-written block that reads as a normal block. */
       if (!cycle || (cycle.kind !== 'write' && cycle.kind !== 'transfer')) return;
       const isTransfer = cycle.kind === 'transfer';
       const e = (t - cycle.t0) * 1000;
@@ -1632,7 +944,7 @@
       }
       // the just-written block reads as a normal block until it joins the pack
       if (e >= 1600 && e < 2400) {
-        blockDraw(g, front, headS, 30, { stroke: 0.13 * m, edge: 0.07 * m, hash: 0.07 * m }, fxHue(), 0);
+        blockDraw(g, front, headS, 30, { stroke: 0.13 * mBase, edge: 0.07 * mBase, hash: 0.07 * mBase }, fxHue(), 0);
       }
       // confirmation ripple head → tail: brighten each block's own
       // stroke + hash in glint colour, 35ms stagger, decaying over 400ms
@@ -1653,7 +965,7 @@
       }
     }
 
-    function drawRibbon(g, fx, m, dimMul) {
+    function drawRibbon(g, fx, m, dimMul, mHi) {
       const dx = env.O.x - O.x, dy = env.O.y - O.y;
       const h = fxHue();
       g.save();
@@ -1684,9 +996,9 @@
           if (fe < 600) flash = 0.5 * (1 - fe / 600);
         }
         blockDraw(g, front, b.s, 30, {
-          stroke: (0.13 + boost * 0.42 + flash) * m * dimMul,
-          edge: (0.07 + flash * 0.5) * m * dimMul,
-          hash: (0.07 + boost * 0.23 + flash * 0.4) * m * dimMul,
+          stroke: 0.13 * m * dimMul + (boost * 0.42 + flash) * mHi * dimMul,
+          edge: 0.07 * m * dimMul + flash * 0.5 * mHi * dimMul,
+          hash: 0.07 * m * dimMul + (boost * 0.23 + flash * 0.4) * mHi * dimMul,
         }, h, lift);
       }
       // pending head slot (dashed, breathing) at x = 0.90W — hidden while a
@@ -1720,7 +1032,7 @@
         const p = front.pointAt(gs);
         g.save();
         g.globalCompositeOperation = 'lighter';
-        g.fillStyle = LS.rgba(fxGlint(), 0.25 * m * dimMul);
+        g.fillStyle = LS.rgba(fxGlint(), 0.25 * mHi * dimMul);
         g.beginPath(); g.arc(p.x, p.y, 6, 0, Math.PI * 2); g.fill();
         g.restore();
       }
@@ -1765,7 +1077,8 @@
       const sdt = fx.freeze ? 0 : dt * (fx.slow || 1);
       t += sdt;
       const dimMul = motif === 'private' || motif === 'group' ? 0.7 : 1;
-      const m = fx.aMul;
+      const m = fx.aMul * LS.SCENE_ALPHA_BASE;
+      const mHi = fx.aMul * LS.SCENE_ALPHA_HI;
       // Front ribbon is slot-quantized: block i sits at pos(i,p) = headS −
       // (i+p)·pitch with slot 0 the pending head. No ambient scroll — life
       // comes from the propagation glint, the read scan and write shifts.
@@ -1784,12 +1097,12 @@
         if (b.s < -30) b.baseS += 30 * backBlocks.length;
         b.s = b.baseS - backScroll;
       }
-      drawRibbon(g, fx, m, dimMul);
+      drawRibbon(g, fx, m, dimMul, mHi);
 
       if (motif === 'read' || motif === 'write' || motif === 'transfer') {
         if (!cycle && t >= cycleNext && sdt > 0) { cycleNext = t + (motif === 'read' ? 2.4 : 3); newCycle(); }
-        drawReadCycle(g, fx, m * dimMul);
-        drawWriteCycle(g, fx, m * dimMul);
+        drawReadCycle(g, fx, mHi * dimMul);
+        drawWriteCycle(g, fx, mHi * dimMul, m * dimMul);
         if (cycle) {
           const maxE = cycle.kind === 'read' ? 4 : 3.2;
           if (t - cycle.t0 > maxE) cycle = null;
@@ -1814,7 +1127,7 @@
   const LS = window.LS;
   let { W, H, R } = LS; (LS.__geomSyncs = LS.__geomSyncs || []).push(() => { W = LS.W; H = LS.H; R = LS.R; });
   const O = LS.O_BASE;
-  const COPPER = '255,190,120', GOLD = '255,214,128', AMBER = '255,220,81';
+  const AMBER = '255,220,81';
   const CYAN = '96,226,236', CYAN_HI = '190,250,255', OT = '197,169,255';
 
   const STATUS_RANK = {
@@ -2050,7 +1363,7 @@
       stack.className = 'rail-stack';
       c.members.slice(0, 3).forEach((pid, i) => {
         const img = document.createElement('img');
-        img.src = person(pid).avatar;
+        setAvatar(img, person(pid).avatar);
         img.alt = '';
         stack.appendChild(img);
       });
@@ -2064,7 +1377,7 @@
     } else {
       const img = document.createElement('img');
       img.className = 'rail-avatar';
-      img.src = person(c.who).avatar;
+      setAvatar(img, person(c.who).avatar);
       img.alt = '';
       el.appendChild(img);
     }
@@ -2107,6 +1420,20 @@
     return el;
   }
 
+  /* Missing or invalid avatars fall back to the shipped default Bot avatar;
+     the error listener swaps once ({ once:true }) — no retry loop. */
+  function setAvatar(img, src) {
+    const fb = typeof window.__FALLBACK_AVATAR__ === 'string' && window.__FALLBACK_AVATAR__
+      ? window.__FALLBACK_AVATAR__ : '';
+    const ok = typeof src === 'string' && LS.VALID_AVATAR.test(src);
+    img.src = ok ? src : fb;
+    if (fb) {
+      img.addEventListener('error', () => {
+        if (img.src !== fb) img.src = fb;
+      }, { once: true });
+    }
+  }
+
   /* logical position helpers (offset* coords are unscaled stage px) */
   function itemRect(el) {
     const stage = M.rail.offsetParent; // .live-stage
@@ -2133,77 +1460,73 @@
     return { x: r.x + img.offsetLeft + img.offsetWidth / 2, y: r.y + img.offsetTop + img.offsetHeight / 2 };
   }
 
-  /* --------------------------- worker connector --------------------------- */
-  function workerRoute(to) {
-    const o = M.env.O;
-    const S2 = 1.18 * R;
-    const pts = [];
-    pts.push({ x: o.x + S2, y: o.y });
-    pts.push({ x: o.x + S2 + 40, y: o.y });
-    const dy = to.y - o.y;
-    const jog = Math.sign(dy) * Math.min(Math.abs(dy), 60);
-    pts.push({ x: o.x + S2 + 40 + Math.abs(jog), y: o.y + jog });
-    pts.push({ x: to.x, y: to.y });
-    return LS.arcTable(pts);
-  }
-
-  function drawWorker(g, item, status, hero, fx, t) {
-    const to = itemAnchor(item);
-    const route = workerRoute(to);
-    const baseA = hero ? 0.38 : 0.12;
+  /* Worker connector — verbatim port of the pre-scene-system drawParticles
+     constellation block (stage.js @ 36ff3c60d): a quadratic curve from the
+     orb-edge anchor to the card's left-middle anchor, chevron arrowhead at
+     the destination and heartbeat pulse dots. Every visible worker rail
+     item gets one; the hero is emphasised by the card styling only. This is
+     an original-speed animation — SCENE_TIME_SCALE does not apply. */
+  function drawWorker(g, item, status, fx, t, index, reduced) {
+    const orbCenter = { x: M.env.O.x, y: M.env.O.y };
+    const orbRadius = Math.max(44, R * (4 / 3)); // original: .membrane width × .48
+    const r = itemRect(item);
+    if (r.w < 4 || r.h < 4) return;
+    const cardAnchor = { x: r.x - 4, y: r.y + r.h / 2 };
+    const dx = cardAnchor.x - orbCenter.x;
+    const dy = cardAnchor.y - orbCenter.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const orbAnchor = {
+      x: orbCenter.x + (dx / dist) * orbRadius,
+      y: orbCenter.y + (dy / dist) * orbRadius,
+    };
+    const dir = status;
+    const returning = dir === 'return' || dir === 'verifying';
+    const lowFreqWait = M.env.family() === 'waiting' || dir === 'waiting' || dir === 'verifying';
+    const fromPt = returning ? cardAnchor : orbAnchor;
+    const toPt = returning ? orbAnchor : cardAnchor;
+    const midY = (fromPt.y + toPt.y) / 2;
+    const bend = Math.min(34, Math.max(12, Math.abs(dx) * .12));
+    const ctrl = { x: (fromPt.x + toPt.x) / 2, y: midY - bend };
+    const cyan = fx.slate ? '148,163,184' : '155,244,255';
+    const gold = fx.slate ? '148,163,184' : '255,220,81';
     const m = fx.aMul;
-    const h = fx.slate ? '148,163,184' : COPPER;
     g.save();
-    g.strokeStyle = LS.rgba(h, baseA * m);
-    g.lineWidth = 1.2;
-    if (status === 'verifying') g.setLineDash([4, 5]);
+    if (lowFreqWait) g.setLineDash([5, 7]);
     g.beginPath();
-    route.pts.forEach((p, i) => (i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)));
+    g.moveTo(fromPt.x, fromPt.y);
+    g.quadraticCurveTo(ctrl.x, ctrl.y, toPt.x, toPt.y);
+    g.strokeStyle = LS.rgba(returning ? gold : cyan, (returning ? .44 : .38) * m);
+    g.lineWidth = lowFreqWait ? 1.35 : 1.45;
     g.stroke();
     g.setLineDash([]);
-    // via ring at the item end
-    g.strokeStyle = LS.rgba(h, Math.min(0.5, baseA + 0.1) * m);
+
+    // Directional chevron arrowhead at destination endpoint (`toPt`):
+    const tanX = toPt.x - ctrl.x;
+    const tanY = toPt.y - ctrl.y;
+    const angle = Math.atan2(tanY, tanX);
+    const headLen = 7;
     g.beginPath();
-    g.arc(to.x, to.y, 2.5, 0, Math.PI * 2);
+    g.moveTo(toPt.x, toPt.y);
+    g.lineTo(toPt.x - headLen * Math.cos(angle - .46), toPt.y - headLen * Math.sin(angle - .46));
+    g.moveTo(toPt.x, toPt.y);
+    g.lineTo(toPt.x - headLen * Math.cos(angle + .46), toPt.y - headLen * Math.sin(angle + .46));
+    g.strokeStyle = LS.rgba(returning ? gold : cyan, (returning ? .88 : .85) * m);
+    g.lineWidth = 1.6;
     g.stroke();
     g.restore();
 
-    // pulses
-    const conf = {
-      dispatch: { period: 1.4, a: 0.85, dir: 1 },
-      working: { period: 2.6, a: 0.3, dir: 1 },
-      return: { period: 1.2, a: 0.85, dir: -1 },
-      verifying: { period: 2.4, a: 0.5, dir: -1 },
-    }[status] || { period: 4, a: 0.22, dir: 1 };
-    const period = hero ? conf.period : 4;
-    const alpha = hero ? conf.a : 0.22;
-    const dir = hero ? conf.dir : 1;
-    const local = (t + route.L / 300) % period;
-    const speed = 220;
-    const s = dir > 0 ? local * speed : route.L - local * speed;
-    if (s >= 0 && s <= route.L) {
-      const head = route.pointAt(s);
-      const tail = route.pointAt(s - dir * 16);
-      const hue = status === 'return' ? (fx.slate ? h : AMBER) : (fx.slate ? h : GOLD);
-      g.save();
-      g.globalCompositeOperation = 'lighter';
-      const grad = g.createLinearGradient(tail.x, tail.y, head.x, head.y);
-      grad.addColorStop(0, LS.rgba(hue, 0));
-      grad.addColorStop(1, LS.rgba(hue, alpha * m));
-      g.strokeStyle = grad;
-      g.lineWidth = 1.6;
-      g.shadowColor = LS.rgba(hue, alpha * m);
-      g.shadowBlur = 6;
+    // Low-frequency calm heartbeat pulse when waiting; brisk pulse when dispatching:
+    const speed = lowFreqWait ? .11 : .32;
+    const pulseCount = lowFreqWait ? 2 : 1;
+    for (let pIdx = 0; pIdx < pulseCount; pIdx += 1) {
+      const prog = reduced ? (.35 + pIdx * .35) : (t * speed + index * .23 + pIdx * .5) % 1;
+      const inv = 1 - prog;
+      const px = inv * inv * fromPt.x + 2 * inv * prog * ctrl.x + prog * prog * toPt.x;
+      const py = inv * inv * fromPt.y + 2 * inv * prog * ctrl.y + prog * prog * toPt.y;
       g.beginPath();
-      g.moveTo(tail.x, tail.y);
-      g.lineTo(head.x, head.y);
-      g.stroke();
-      g.restore();
-      if (dir < 0 && s < speed * 0.033 && status === 'return' && !item._inhaled) {
-        item._inhaled = true;
-        M.env.emit('inhale');
-      }
-      if (s > speed * 0.033) item._inhaled = false;
+      g.arc(px, py, lowFreqWait ? 2.8 : 3.5, 0, Math.PI * 2);
+      g.fillStyle = LS.rgba(returning ? gold : cyan, (returning ? .92 : .9) * m);
+      g.fill();
     }
   }
 
@@ -2431,7 +1754,7 @@
       el.className = 'group-member';
       const p = person(pid);
       const img = document.createElement('img');
-      img.src = p.avatar;
+      setAvatar(img, p.avatar);
       img.alt = '';
       el.appendChild(img);
       if (grp.chair === pid) {
@@ -2664,26 +1987,28 @@
       const d = Math.hypot(arc.from.x - o.x, arc.from.y - o.y);
       return { x: arc.from.x, y: arc.from.y, d, edge: d - R };
     },
-    /* called by proto once per frame with both companion canvases */
-    draw(gBack, gFront, dt, t, fx) {
+    /* called by the engine once per frame with both companion canvases.
+       t = real clock (original-speed worker curves, DOM-facing fades);
+       ts = scene clock slowed by SCENE_TIME_SCALE (peer capsule, ring flow). */
+    draw(gBack, gFront, dt, t, ts, fx) {
       M.t = t;
       syncMemberLayer();
       // ring + members fade over 400ms when the hero gains/leaves a group
       if (dt === 0) M.ringA = heroGroup() ? 1 : 0;
       else M.ringA = LS.clamp(M.ringA + (heroGroup() ? dt / 0.4 : -dt / 0.4), 0, 1);
       if (!heroGroup() && M.ringA <= 0 && M.memberGrp) clearMemberLayer();
-      drawGroupRing(gBack, gFront, dt, t, fx);
-      for (const c of M.spec.workers || []) {
+      const reduced = M.env.reduced ? M.env.reduced() : false;
+      drawGroupRing(gBack, gFront, dt * LS.SCENE_TIME_SCALE, ts, fx);
+      (M.spec.workers || []).forEach((c, i) => {
         const el = M.items.get(`workers:${c.who}`);
-        if (!el) continue;
-        const hero = M.hero && M.hero.type === 'workers' && M.hero.id === c.who;
-        drawWorker(gFront, el, c.status, hero, fx, t);
-      }
+        if (!el) return;
+        drawWorker(gFront, el, c.status, fx, t, i, reduced);
+      });
       for (const c of M.spec.peers || []) {
         const el = M.items.get(`peers:${c.who}`);
         if (!el) continue;
         const hero = M.hero && M.hero.type === 'peers' && M.hero.id === c.who;
-        drawPeer(gFront, el, c.status, hero, fx, t, dt);
+        drawPeer(gFront, el, c.status, hero, fx, ts, dt);
       }
     },
     layoutMembers,
@@ -2699,8 +2024,10 @@
   const LS = window.LS;
   const perfNow = () => performance.now() / 1000;
 
-  const PLACE_KEYS = { mind: 'mind', machine: 'machine', web: 'web-a', chain: 'chain-a' };
-  const PLACE_GLOW = { mind: '#956CFF', machine: '#D9A25F', web: '#6FA0FF', chain: '#46D6E6' };
+  /* mind and machine share one persistent particle field — phase stays
+     continuous across mind↔machine family moves (owner feedback 2026-11-18). */
+  const PLACE_KEYS = { mind: 'particles', machine: 'particles', web: 'web-a', chain: 'chain-a' };
+  const PLACE_GLOW = { mind: '#956CFF', machine: '#956CFF', web: '#6FA0FF', chain: '#46D6E6' };
   const FAMILY_MOTIF = {
     received: 'received', reasoning: 'reasoning', 'local-recall': 'recall',
     speaking: 'speaking', idle: 'idle', 'report-ready': 'settle', complete: 'still',
@@ -2714,7 +2041,7 @@
   const WAITING_MOTIF = { machine: 'workers', chain: 'private', web: 'search', mind: 'idle' };
   const WORKER_STATUS = new Set(['dispatch', 'working', 'waiting', 'return', 'verifying']);
   const RESTING = new Set(['idle', 'complete', 'report-ready']);
-  const VALID_AVATAR = /^(?:data:image\/|https?:\/\/|avatars\/)/i;
+  const VALID_AVATAR = LS.VALID_AVATAR;
   const TRANSIENT_MS = { steer: 2400, retry: 2400, 'model-switch': 2200, 'chain-confirmed': 1800, 'tool-error': 1600 };
 
   /* --------------------------- pure helpers --------------------------- */
@@ -2813,6 +2140,9 @@
     modEvents: { inhaleT: -9, compressT: -9, shimmerT: -9 },
     raf: 0, lastT: 0, disposed: false, frames: 0,
     density: 'full',
+    /* tScene advances at SCENE_TIME_SCALE — the slowed clock for everything
+       except particles, original worker curves, the orb and rail DOM. */
+    tScene: 0,
   };
 
   const reduced = () => (S.opts && S.opts.reduced ? Boolean(S.opts.reduced()) : false);
@@ -2838,6 +2168,17 @@
     rand: () => Math.random(),
     voice: () => (S.opts && S.opts.voice ? S.opts.voice() : 0),
     activity: () => (S.opts && S.opts.activity ? S.opts.activity() : 'resting'),
+    family: () => (S.state ? S.state.family : 'idle'),
+    hero: () => S.heroOn,
+    energy: () => {
+      const e = S.state && S.state.motion && S.state.motion.energy;
+      return Number.isFinite(e) ? e : 0;
+    },
+    seed: () => {
+      const s = S.state && S.state.motion && S.state.motion.seed;
+      return Number.isFinite(s) ? s : 0;
+    },
+    reduced: () => reduced(),
     orbSpeed: () => (S.opts && S.opts.orbSpeed ? S.opts.orbSpeed() : 0.5),
     chainApi: null,
     reportPos() {
@@ -2846,7 +2187,7 @@
       return { x: b.offsetLeft + b.offsetWidth / 2, y: b.offsetTop + b.offsetHeight / 2 };
     },
     emit(name, arg) {
-      const now = perfNow();
+      const now = S.tScene;
       if (name === 'inhale') S.modEvents.inhaleT = now;
       else if (name === 'compress') S.modEvents.compressT = now;
       else if (name === 'lean' && S.els.entity) {
@@ -3044,14 +2385,15 @@
   }
 
   function fxFor(entry, now) {
-    const e = (now - entry.revealT0) * 1000;
+    /* reveal/crossfade durations are scene animations → slowed by 1/0.6 */
+    const e = (now - entry.revealT0) * 1000 * LS.SCENE_TIME_SCALE;
     const mods = entry.mods || {};
-    const dip = now < S.dipUntil ? S.dipAmt : 1;
+    const dip = S.tScene < S.dipUntil ? S.dipAmt : 1;
     const aMul = (mods.dim != null ? mods.dim : 1) * dip;
     const revealDone = e > 1400;
     return {
       aMul,
-      slate: Boolean(mods.slate) || now < S.slateUntil,
+      slate: Boolean(mods.slate) || S.tScene < S.slateUntil,
       freeze: Boolean(mods.freeze) || Boolean(mods.eventsPaused),
       slow: mods.slow || 1,
       revealDone,
@@ -3061,30 +2403,45 @@
         const rv = revealDone ? 1 : LS.clamp((e - dist / 1.2) / 300, 0, 1);
         return aMul * copyMask(x) * rv;
       },
+      /* Mask-free alpha for the particle field: place fade/reveal only. The
+         original field was never dimmed by the copy column or the vignette,
+         so far-left particles drift over the text at their normal alpha. */
+      elAFree: (x, y, d) => {
+        const dist = d != null ? d : Math.hypot(x - S.O.x, y - S.O.y);
+        const rv = revealDone ? 1 : LS.clamp((e - dist / 1.2) / 300, 0, 1);
+        return aMul * rv;
+      },
     };
   }
 
+  /* The particle field and original worker curves run at original speed;
+     every other place clock is slowed by SCENE_TIME_SCALE. */
+  const placeDt = (entry, dt) => (entry.key === 'particles' ? dt : dt * LS.SCENE_TIME_SCALE);
   function drawPlaces(g, dt, now) {
     if (S.placePrev) {
-      const fe = (now - S.placePrev.fadeT0) * 1000;
+      const fe = (now - S.placePrev.fadeT0) * 1000 * LS.SCENE_TIME_SCALE;
       if (fe > 900) S.placePrev = null;
       else {
         const fx = fxFor(S.placePrev, now);
         fx.aMul *= 1 - fe / 900;
-        S.placePrev.inst.draw(g, dt, now, fx);
+        S.placePrev.inst.draw(g, placeDt(S.placePrev, dt), now, fx);
       }
     }
-    if (S.placeCur) S.placeCur.inst.draw(g, dt, now, fxFor(S.placeCur, now));
-    const grad = g.createRadialGradient(S.O.x, S.O.y, LS.R * 0.8, S.O.x, S.O.y, S.W * 0.62);
-    grad.addColorStop(0, 'rgba(7,12,24,0)');
-    grad.addColorStop(1, 'rgba(7,12,24,.28)');
-    g.fillStyle = grad;
-    g.fillRect(0, 0, S.W, S.H);
+    if (S.placeCur) S.placeCur.inst.draw(g, placeDt(S.placeCur, dt), now, fxFor(S.placeCur, now));
+    /* The particle field keeps the original un-vignetted look; the edge
+       vignette only shades the web/chain places. */
+    if (S.placeCur && S.placeCur.key !== 'particles') {
+      const grad = g.createRadialGradient(S.O.x, S.O.y, LS.R * 0.8, S.O.x, S.O.y, S.W * 0.62);
+      grad.addColorStop(0, 'rgba(7,12,24,0)');
+      grad.addColorStop(1, 'rgba(7,12,24,.28)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, S.W, S.H);
+    }
   }
 
   /* ------------------------------ transients ----------------------------- */
   function trigger(transient) {
-    const now = perfNow();
+    const now = S.tScene;
     S.transFx.active = { kind: transient.kind, t0: now };
     const chip = S.els.chip;
     if (chip) {
@@ -3101,10 +2458,10 @@
     if (transient.kind === 'steer') env.emit('inhale');
   }
 
-  function drawTransients(g, now) {
+  function drawTransients(g, ts) {
     const a = S.transFx.active;
     if (!a) return;
-    const e = (now - a.t0) * 1000;
+    const e = (ts - a.t0) * 1000;
     const ms = TRANSIENT_MS[a.kind] || 2000;
     if (e > ms) {
       S.transFx.active = null;
@@ -3181,9 +2538,9 @@
   }
 
   /* ------------------------- verification overlay ------------------------ */
-  function drawVerification(g, now) {
+  function drawVerification(g, ts) {
     if (!S.state || S.state.family !== 'verification' || S.verifyT0 < 0) return;
-    const e = now - S.verifyT0;
+    const e = ts - S.verifyT0;
     const gold = '255,220,81';
     const rr = 1.22 * LS.R;
     const O = S.O;
@@ -3216,6 +2573,7 @@
   /* ------------------------------- frame --------------------------------- */
   function drawFrame(now, dt) {
     S.frames += 1;
+    S.tScene += dt * LS.SCENE_TIME_SCALE;
     tickO(now);
     if (S.opts && S.opts.onFrame) S.opts.onFrame(performance.now());
     const W = S.W, H = S.H;
@@ -3224,9 +2582,13 @@
     S.ctxs.front.clearRect(0, 0, W, H);
     drawPlaces(S.ctxs.place, dt, now);
     if (S.oAnim || LS.companions.needsLayout()) LS.companions.layoutMembers();
-    LS.companions.draw(S.ctxs.back, S.ctxs.front, dt, now, { aMul: 1, slate: Boolean(S.mods.slate) });
-    drawVerification(S.ctxs.front, now);
-    drawTransients(S.ctxs.front, now);
+    /* Scenic modifiers (dim/freeze/slate from family) stay on web/chain —
+       the particle place behaves exactly like the original renderer. */
+    const scenic = S.placeCur && (S.placeCur.base === 'web' || S.placeCur.base === 'chain');
+    const slate = (Boolean(S.mods.slate) && scenic) || S.tScene < S.slateUntil;
+    LS.companions.draw(S.ctxs.back, S.ctxs.front, dt, now, S.tScene, { aMul: 1, slate });
+    drawVerification(S.ctxs.front, S.tScene);
+    drawTransients(S.ctxs.front, S.tScene);
   }
 
   function loop(ts) {
@@ -3276,8 +2638,11 @@
     }
     const target = state.place && PLACE_KEYS[state.place] ? state.place : 'mind';
     ensurePlace(target, motifFor(state.family, target), now);
-    if (S.placeCur) S.placeCur.mods = { ...S.mods };
-    if (state.family === 'verification' && S.lastFamily !== 'verification') S.verifyT0 = now;
+    if (S.placeCur) {
+      const scenic = S.placeCur.base === 'web' || S.placeCur.base === 'chain';
+      S.placeCur.mods = scenic ? { ...S.mods } : {};
+    }
+    if (state.family === 'verification' && S.lastFamily !== 'verification') S.verifyT0 = S.tScene;
     if (shouldPlayTransient(S.transSeen, state.transient, Date.now())) trigger(state.transient);
     const glowBase = S.placeCur ? S.placeCur.base : target;
     const glow = state.family === 'owner-needed' ? '#FFD27A'
@@ -3323,7 +2688,7 @@
     /* Extra orb-modulation deltas from transient envelopes (inhale /
        compress / shimmer), merged by stage.js into its text modulation. */
     modulationDelta(nowMs) {
-      const now = nowMs / 1000;
+      const now = S.tScene;
       const d = { radius: 0, edgeGlow: 0, exposure: 0 };
       const ei = (now - S.modEvents.inhaleT) * 1000;
       if (ei >= 0 && ei < 400) d.radius += 0.012 * (1 - ei / 400);
@@ -3347,6 +2712,9 @@
         hero: LS.companions.hero(),
         dim: S.mods.dim != null ? S.mods.dim : 1,
         memberLayouts: LS.companions._layoutCount(),
+        particle: S.placeCur && S.placeCur.inst.__sim
+          ? { activity: S.placeCur.inst.__sim.clock.activity, phase: S.placeCur.inst.__sim.particles[0].phase }
+          : null,
         railDensity: S.density,
         raf: Boolean(S.raf),
         frames: S.frames,
@@ -3357,6 +2725,9 @@
       railOrder, shouldPlayTransient, placeGlow,
       placeFactories: () => LS.placeFactories,
       makePlace: (key, envOverride) => LS.placeFactories[key](envOverride || env),
+      placeKeys: () => ({ ...PLACE_KEYS }),
+      timeScale: () => LS.SCENE_TIME_SCALE,
+      sceneTime: () => S.tScene,
     },
   };
 })();

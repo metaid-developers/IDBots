@@ -124,7 +124,7 @@ test('shouldPlayTransient dedupes by id and rejects stale events older than 6s',
 
 test('placeGlow returns the per-place tint', () => {
   assert.equal(T.placeGlow('mind'), '#956CFF');
-  assert.equal(T.placeGlow('machine'), '#D9A25F');
+  assert.equal(T.placeGlow('machine'), '#956CFF', 'mind/machine return to the original violet glow');
   assert.equal(T.placeGlow('web'), '#6FA0FF');
   assert.equal(T.placeGlow('chain'), '#46D6E6');
 });
@@ -203,4 +203,149 @@ test('the scene glow tint is re-applied after every orb setState', () => {
     /orb\.controller\?\.setState\(family, effectiveReduced\(\)\);\s*if \(lastOrbTint\) orb\.controller\?\.setParams\(\{ glowColor: lastOrbTint \}\)/,
     'same-layer setState re-applies the cached tint'
   );
+});
+
+test('ported particle field matches the original 36ff3c60d formula over 60 frames', () => {
+  const fakeEnv = {
+    O: { x: 400, y: 300 },
+    family: () => 'reasoning',
+    hero: () => false,
+    activity: () => 'working',
+    energy: () => 1.2,
+    seed: () => 42,
+    reduced: () => false,
+    rand: () => 0.5,
+  };
+  const field = T.makePlace('particles', fakeEnv);
+  const sim = field.__sim;
+  // Reference implementation copied from 36ff3c60d stage.js drawParticles:
+  // same seed formula, same phase integration (dt × speed × energy × eased
+  // activity), same presence ellipse ×1.1/×.62.
+  const ref = Array.from({ length: 42 }, (_, index) => {
+    const random = (salt) => {
+      const value = Math.sin(index * 91.731 + salt * 17.17) * 43758.5453;
+      return value - Math.floor(value);
+    };
+    return { angle: random(1) * Math.PI * 2, radius: 110 + random(2) * 250, speed: .12 + random(3) * .35, size: .7 + random(4) * 1.8, drift: random(5), phase: 0 };
+  });
+  let refLast = 0, refActivity = 1;
+  for (let f = 0; f < 60; f += 1) {
+    const now = f / 60;
+    sim.setContext('reasoning', false, now);
+    sim.step(now, false);
+    const dt = refLast === 0 ? 0 : Math.min(.1, Math.max(0, now - refLast));
+    refLast = now;
+    refActivity += (1.75 - refActivity) * (1 - Math.exp(-dt / .8));
+    if (dt > 0) {
+      const rate = 1.2 * refActivity;
+      for (const p of ref) p.phase += dt * p.speed * rate;
+    }
+    for (let i = 0; i < ref.length; i += 1) {
+      const sp = sim.particles[i];
+      const angle = sp.angle + sp.phase + 42 * .0001;
+      const sx = 400 + Math.cos(angle) * sp.radius * sp.sx;
+      const sy = 300 + Math.sin(angle) * sp.radius * sp.sy;
+      const ra = ref[i].angle + ref[i].phase + 42 * .0001;
+      const rx = 400 + Math.cos(ra) * ref[i].radius * 1.1;
+      const ry = 300 + Math.sin(ra) * ref[i].radius * .62;
+      assert.ok(Math.abs(sx - rx) < 0.01 && Math.abs(sy - ry) < 0.01,
+        `frame ${f} particle ${i} diverged: (${sx.toFixed(3)},${sy.toFixed(3)}) vs (${rx.toFixed(3)},${ry.toFixed(3)})`);
+    }
+  }
+});
+
+const spyCtx = () => {
+  const fills = [];
+  let fs = '';
+  let cur = null;
+  return {
+    fills,
+    beginPath() {},
+    arc(x, y) { cur = { x, y }; },
+    fill() { fills.push({ x: cur.x, y: cur.y, fs }); },
+    set fillStyle(v) { fs = v; },
+    get fillStyle() { return fs; },
+  };
+};
+
+test('particle branch order is gather → hero-compressed → arc (original order)', () => {
+  let envFamily = 'report-ready', envHero = true;
+  const env = {
+    O: { x: 400, y: 300 },
+    family: () => envFamily,
+    hero: () => envHero,
+    activity: () => 'resting',
+    energy: () => 0,
+    seed: () => 42,
+    reduced: () => false,
+    rand: () => 0.5,
+  };
+  const field = T.makePlace('particles', env);
+  const sim = field.__sim;
+  const g = spyCtx();
+  const fx = { elA: () => 0, elAFree: () => 1 };
+
+  // report-ready WITH a hero active: the original `structured` branch beat
+  // the arc → eased compressed orbit ×.65/×.45, arc weight stays 0.
+  let refSx = 1.1, refSy = .62, refLast = 0;
+  for (let f = 0; f < 60; f += 1) {
+    const now = f / 60;
+    field.draw(g, 0, now, fx);
+    // Same clock.last===0 sentinel as the engine: the first two frames have
+    // dt=0, so easing starts on the third frame.
+    const dt = refLast === 0 ? 0 : Math.min(.1, Math.max(0, now - refLast));
+    refLast = now;
+    const k = 1 - Math.exp(-dt / .18);
+    refSx += (.65 - refSx) * k;
+    refSy += (.45 - refSy) * k;
+  }
+  for (let i = 0; i < 42; i += 1) {
+    const p = sim.particles[i];
+    assert.equal(p.aw, 0, `particle ${i} took the arc while hero mode was active`);
+    const f = g.fills[g.fills.length - 42 + i];
+    const ra = p.angle + p.phase + 42 * .0001;
+    const rx = 400 + Math.cos(ra) * p.radius * refSx;
+    const ry = 300 + Math.sin(ra) * p.radius * refSy;
+    assert.ok(Math.abs(f.x - rx) < 0.01 && Math.abs(f.y - ry) < 0.01,
+      `hero-compressed particle ${i}: (${f.x.toFixed(3)},${f.y.toFixed(3)}) vs (${rx.toFixed(3)},${ry.toFixed(3)})`);
+  }
+
+  // report-ready with NO hero: after ~3 s of easing the field sits on the
+  // original fixed arc (radius 190 × 125, span −0.85π..+0.85π).
+  envHero = false;
+  for (let f = 0; f < 30; f += 1) field.draw(g, 0, 1 + f * .1, fx);
+  for (let i = 0; i < 42; i += 1) {
+    const f = g.fills[g.fills.length - 42 + i];
+    const a = -Math.PI * .85 + (i / 42) * Math.PI * 1.7;
+    const rx = 400 + Math.cos(a) * 190, ry = 300 + Math.sin(a) * 125;
+    assert.ok(Math.abs(f.x - rx) < 0.01 && Math.abs(f.y - ry) < 0.01,
+      `arc particle ${i}: (${f.x.toFixed(3)},${f.y.toFixed(3)}) vs (${rx.toFixed(3)},${ry.toFixed(3)})`);
+  }
+});
+
+test('particle alpha uses elAFree — never the copy-column mask', () => {
+  let elACalled = false;
+  const env = {
+    O: { x: 400, y: 300 },
+    family: () => 'reasoning',
+    hero: () => false,
+    activity: () => 'working',
+    energy: () => 0,
+    seed: () => 42,
+    reduced: () => false,
+    rand: () => 0.5,
+  };
+  const field = T.makePlace('particles', env);
+  const g = spyCtx();
+  const fx = { elA: () => { elACalled = true; return 0; }, elAFree: () => 1 };
+  field.draw(g, 0, 0, fx);
+  assert.equal(elACalled, false, 'particles must not consult the copy-column mask');
+  assert.ok(g.fills.length > 30, `expected the field to paint, got ${g.fills.length} fills`);
+  for (const f of g.fills) {
+    const a = Number(f.fs.match(/,\s*([\d.]+)\)$/)?.[1]);
+    assert.ok(a > 0.05, `particle alpha ${a} was masked`);
+  }
+  // The stage vignette is likewise skipped while the particles place is current.
+  const src = read('stage-scenes.js');
+  assert.match(src, /S\.placeCur\.key !== 'particles'/);
 });

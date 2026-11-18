@@ -181,6 +181,7 @@
       modulation.edgeGlow += delta.edgeGlow;
       modulation.exposure += delta.exposure;
     }
+    window.__liveStageModulation = modulation;
     orbLayers.forEach((layer) => layer.controller?.setModulation(modulation));
   }
 
