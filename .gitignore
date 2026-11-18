@@ -1096,3 +1096,4 @@ blob-report/
 !tests/studioQuotaBypassRouting.test.ts
 !tests/studioBrowserTabsTool.test.ts
 !tests/studioChapterStore.test.mjs
+!tests/studioChapterClose.test.ts
