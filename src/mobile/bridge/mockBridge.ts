@@ -59,7 +59,14 @@ import type {
 import { selectFileOnPhone, type PhoneFileSelectionOptions } from './installShim';
 import { uploadFile, type UploadTransport } from './upload';
 import { getMockArtifact, MOCK_ARTIFACT_PATHS } from './mockArtifacts';
-import { applyLongTermStage, createLongTermFixture, longTermBoard } from './backgroundFixtures';
+import {
+  appendLongTermFixtureEvent,
+  applyLongTermStage,
+  createActiveLongTermFixture,
+  createLongTermFixture,
+  longTermBoardCollection,
+  syncLongTermFixture,
+} from './backgroundFixtures';
 
 const DEFAULT_STREAM_TOKEN_INTERVAL_MS = 40;
 const DEFAULT_ORDER_COMPLETE_DELAY_MS = 10_000;
@@ -673,13 +680,24 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     sessionType: 'longterm',
   });
   completeArtifactSession(longTermSession, 'Produce a document');
-  let longTermDetail = createLongTermFixture(longTermSession.id);
+  const activeLongTermSession = createSession({
+    title: 'Mobile task center design',
+    prompt: 'Confirm the Native Library and current-step card',
+    metabotId: 1,
+    sessionType: 'longterm',
+  });
+  completeArtifactSession(activeLongTermSession, 'Confirm the Native Library and current-step card');
+  const longTermDetails = [
+    createLongTermFixture(longTermSession.id),
+    createActiveLongTermFixture(activeLongTermSession.id),
+  ];
+  const findLongTermDetail = (taskId: string) => longTermDetails.find((detail) => detail.id === taskId);
   let longTermSeq = 0;
-  const emitLongTermUpdate = (reason: string) => {
+  const emitLongTermUpdate = (reason: string, taskId: string) => {
     longTermSeq += 1;
     emitter.emit('longtermTask:update', {
       seq: longTermSeq,
-      taskIds: [longTermDetail.id],
+      taskIds: [taskId],
       reason,
     });
   };
@@ -1060,33 +1078,193 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     onStatusUpdate: (callback: (data: unknown) => void) => emitter.on('scheduledTask:statusUpdate', callback as never),
   };
 
+  const findLongTermSubtask = (subtaskId: string) => {
+    for (const detail of longTermDetails) {
+      const subtask = detail.subtasks.find((candidate) => candidate.id === subtaskId);
+      if (subtask) return { detail, subtask };
+    }
+    return null;
+  };
   const longtermTaskImpl: Record<string, unknown> = {
     board: () => guardOnline(async () => ({
       success: true,
-      board: longTermBoard(structuredClone(longTermDetail)),
+      board: longTermBoardCollection(structuredClone(longTermDetails)),
     })),
     get: (input: { taskId: string }) =>
-      guardOnline(async () => (
-        input?.taskId === longTermDetail.id
-          ? { success: true, detail: structuredClone(longTermDetail) }
-          : { success: false, error: 'Task not found' }
-      )),
+      guardOnline(async () => {
+        const detail = findLongTermDetail(input?.taskId);
+        return detail
+          ? { success: true, detail: structuredClone(detail) }
+          : { success: false, error: 'Task not found' };
+      }),
+    update: (input: { taskId: string; title?: string; goal?: string; acceptanceDelegate?: boolean; planArtifactUri?: string | null }) =>
+      guardOnline(async () => {
+        const detail = findLongTermDetail(input?.taskId);
+        if (!detail) return { ok: false, code: 'NOT_FOUND', error: 'Task not found' };
+        if (input.title !== undefined) detail.title = input.title;
+        if (input.goal !== undefined) detail.goal = input.goal;
+        if (input.acceptanceDelegate !== undefined) detail.acceptanceDelegate = input.acceptanceDelegate;
+        if (input.planArtifactUri !== undefined) detail.planArtifactUri = input.planArtifactUri;
+        const timestamp = new Date(now()).toISOString();
+        appendLongTermFixtureEvent(detail, 'note', 'owner', 'Task settings updated', null, timestamp);
+        syncLongTermFixture(detail, timestamp);
+        emitLongTermUpdate('updated', detail.id);
+        return { ok: true, value: structuredClone(detail) };
+      }),
     setStage: (input: { taskId: string; action: 'pause' | 'resume' | 'cancel' }) =>
       guardOnline(async () => {
-        if (input?.taskId !== longTermDetail.id) {
-          return { ok: false, code: 'NOT_FOUND', error: 'Task not found' };
-        }
+        const detail = findLongTermDetail(input?.taskId);
+        if (!detail) return { ok: false, code: 'NOT_FOUND', error: 'Task not found' };
         const validTransition = input.action === 'pause'
-          ? longTermDetail.stage === 'active'
+          ? detail.stage === 'active'
           : input.action === 'resume'
-            ? longTermDetail.stage === 'paused' || longTermDetail.stage === 'defining'
-            : input.action === 'cancel' && longTermDetail.stage !== 'done' && longTermDetail.stage !== 'cancelled';
-        if (!validTransition) {
-          return { ok: false, code: 'VALIDATION', error: 'Invalid task stage transition' };
+            ? detail.stage === 'paused' || detail.stage === 'defining'
+            : input.action === 'cancel' && detail.stage !== 'done' && detail.stage !== 'cancelled';
+        if (!validTransition) return { ok: false, code: 'VALIDATION', error: 'Invalid task stage transition' };
+        const timestamp = new Date(now()).toISOString();
+        applyLongTermStage(detail, input.action, timestamp);
+        syncLongTermFixture(detail, timestamp);
+        emitLongTermUpdate(`stage_${input.action}`, detail.id);
+        return { ok: true, value: input.action === 'cancel' ? null : structuredClone(detail) };
+      }),
+    complete: (input: { taskId: string }) =>
+      guardOnline(async () => {
+        const detail = findLongTermDetail(input?.taskId);
+        if (!detail) return { ok: false, code: 'NOT_FOUND', error: 'Task not found' };
+        if (detail.stage === 'done' || detail.stage === 'cancelled') {
+          return { ok: false, code: 'VALIDATION', error: 'Task is already closed' };
         }
-        longTermDetail = applyLongTermStage(longTermDetail, input.action, new Date(now()).toISOString());
-        emitLongTermUpdate(`stage_${input.action}`);
-        return { ok: true, value: input.action === 'cancel' ? null : structuredClone(longTermDetail) };
+        for (const subtask of detail.subtasks) {
+          if (subtask.status !== 'accepted' && subtask.status !== 'skipped') subtask.status = 'skipped';
+        }
+        const timestamp = new Date(now()).toISOString();
+        detail.stage = 'done';
+        detail.doneAt = timestamp;
+        appendLongTermFixtureEvent(detail, 'completed', 'owner', 'Goal completed; remaining subtasks skipped', null, timestamp);
+        syncLongTermFixture(detail, timestamp);
+        emitLongTermUpdate('completed', detail.id);
+        return { ok: true, value: structuredClone(detail) };
+      }),
+    accept: (input: { subtaskId: string; note?: string }) =>
+      guardOnline(async () => {
+        const found = findLongTermSubtask(input?.subtaskId);
+        if (!found) return { ok: false, code: 'NOT_FOUND', error: 'Subtask not found' };
+        if (found.subtask.status !== 'waiting_owner') {
+          return { ok: false, code: 'VALIDATION', error: 'Subtask is not waiting for acceptance' };
+        }
+        const timestamp = new Date(now()).toISOString();
+        found.subtask.status = 'accepted';
+        found.subtask.acceptedBy = 'owner';
+        found.subtask.acceptedAt = timestamp;
+        found.subtask.waitNote = '';
+        appendLongTermFixtureEvent(found.detail, 'accepted', 'owner', input.note ?? 'Subtask accepted', found.subtask.id, timestamp);
+        syncLongTermFixture(found.detail, timestamp);
+        emitLongTermUpdate('subtask_accepted', found.detail.id);
+        return { ok: true, value: structuredClone(found.subtask) };
+      }),
+    reject: (input: { subtaskId: string; feedback: string }) =>
+      guardOnline(async () => {
+        const found = findLongTermSubtask(input?.subtaskId);
+        if (!found) return { ok: false, code: 'NOT_FOUND', error: 'Subtask not found' };
+        if (found.subtask.status !== 'waiting_owner' || !input.feedback?.trim()) {
+          return { ok: false, code: 'VALIDATION', error: 'Subtask cannot be rejected without feedback' };
+        }
+        const timestamp = new Date(now()).toISOString();
+        found.subtask.status = 'in_progress';
+        found.subtask.waitNote = input.feedback.trim();
+        appendLongTermFixtureEvent(found.detail, 'rejected', 'owner', input.feedback.trim(), found.subtask.id, timestamp);
+        syncLongTermFixture(found.detail, timestamp);
+        emitLongTermUpdate('subtask_rejected', found.detail.id);
+        return { ok: true, value: structuredClone(found.subtask) };
+      }),
+    subtaskSkip: (input: { subtaskId: string; reason?: string }) =>
+      guardOnline(async () => {
+        const found = findLongTermSubtask(input?.subtaskId);
+        if (!found) return { ok: false, code: 'NOT_FOUND', error: 'Subtask not found' };
+        if (found.subtask.status === 'accepted' || found.subtask.status === 'skipped') {
+          return { ok: false, code: 'VALIDATION', error: 'Subtask is already closed' };
+        }
+        const timestamp = new Date(now()).toISOString();
+        found.subtask.status = 'skipped';
+        found.subtask.notes = input.reason ?? '';
+        found.subtask.waitNote = '';
+        appendLongTermFixtureEvent(found.detail, 'skipped', 'owner', input.reason || 'Subtask skipped', found.subtask.id, timestamp);
+        syncLongTermFixture(found.detail, timestamp);
+        emitLongTermUpdate('subtask_skipped', found.detail.id);
+        return { ok: true, value: structuredClone(found.subtask) };
+      }),
+    unblock: (input: { subtaskId: string; note?: string }) =>
+      guardOnline(async () => {
+        const found = findLongTermSubtask(input?.subtaskId);
+        if (!found) return { ok: false, code: 'NOT_FOUND', error: 'Subtask not found' };
+        if (found.subtask.status !== 'waiting_owner' && found.subtask.status !== 'waiting_external') {
+          return { ok: false, code: 'VALIDATION', error: 'Subtask is not waiting' };
+        }
+        const timestamp = new Date(now()).toISOString();
+        found.subtask.status = 'in_progress';
+        found.subtask.waitNote = '';
+        appendLongTermFixtureEvent(found.detail, 'unblocked', 'owner', input.note ?? 'Wait resolved', found.subtask.id, timestamp);
+        syncLongTermFixture(found.detail, timestamp);
+        emitLongTermUpdate('subtask_unblocked', found.detail.id);
+        return { ok: true, value: structuredClone(found.subtask) };
+      }),
+    begin: (input: { subtaskId: string }) =>
+      guardOnline(async () => {
+        const found = findLongTermSubtask(input?.subtaskId);
+        if (!found) return { ok: false, code: 'NOT_FOUND', error: 'Subtask not found' };
+        if (found.subtask.status !== 'pending') {
+          return { ok: false, code: 'VALIDATION', error: 'Subtask is not pending' };
+        }
+        const timestamp = new Date(now()).toISOString();
+        found.subtask.status = 'in_progress';
+        if (!found.subtask.sessionId) found.subtask.sessionId = found.detail.definitionSessionId;
+        if (found.subtask.sessionId && !found.subtask.sessionHistory.includes(found.subtask.sessionId)) {
+          found.subtask.sessionHistory.push(found.subtask.sessionId);
+        }
+        appendLongTermFixtureEvent(found.detail, 'began', 'owner', 'Subtask started', found.subtask.id, timestamp);
+        syncLongTermFixture(found.detail, timestamp);
+        emitLongTermUpdate('subtask_began', found.detail.id);
+        return { ok: true, value: structuredClone(found.subtask) };
+      }),
+    moveSubtask: (input: { subtaskId: string; direction: 'up' | 'down' }) =>
+      guardOnline(async () => {
+        const found = findLongTermSubtask(input?.subtaskId);
+        if (!found) return { ok: false, code: 'NOT_FOUND', error: 'Subtask not found' };
+        const index = found.detail.subtasks.findIndex((subtask) => subtask.id === found.subtask.id);
+        const targetIndex = input.direction === 'up' ? index - 1 : index + 1;
+        if (targetIndex < 0 || targetIndex >= found.detail.subtasks.length) {
+          return { ok: false, code: 'VALIDATION', error: 'Subtask is already at the boundary' };
+        }
+        const timestamp = new Date(now()).toISOString();
+        const [moved] = found.detail.subtasks.splice(index, 1);
+        found.detail.subtasks.splice(targetIndex, 0, moved);
+        found.detail.subtasks.forEach((subtask, ordinal) => { subtask.ordinal = ordinal + 1; });
+        appendLongTermFixtureEvent(found.detail, 'replanned', 'owner', 'Subtask order changed', found.subtask.id, timestamp);
+        syncLongTermFixture(found.detail, timestamp);
+        emitLongTermUpdate('subtask_moved', found.detail.id);
+        return { ok: true, value: structuredClone(found.subtask) };
+      }),
+    subtaskUpdate: (input: { subtaskId: string } & Record<string, unknown>) =>
+      guardOnline(async () => {
+        const found = findLongTermSubtask(input?.subtaskId);
+        if (!found) return { ok: false, code: 'NOT_FOUND', error: 'Subtask not found' };
+        const { subtaskId, ...patch } = input;
+        Object.assign(found.subtask, patch);
+        const timestamp = new Date(now()).toISOString();
+        appendLongTermFixtureEvent(found.detail, 'replanned', 'owner', 'Subtask definition updated', subtaskId, timestamp);
+        syncLongTermFixture(found.detail, timestamp);
+        emitLongTermUpdate('subtask_updated', found.detail.id);
+        return { ok: true, value: structuredClone(found.subtask) };
+      }),
+    note: (input: { taskId: string; subtaskId?: string; text: string }) =>
+      guardOnline(async () => {
+        const detail = findLongTermDetail(input?.taskId);
+        if (!detail) return { ok: false, code: 'NOT_FOUND', error: 'Task not found' };
+        const timestamp = new Date(now()).toISOString();
+        appendLongTermFixtureEvent(detail, 'note', 'owner', input.text, input.subtaskId ?? null, timestamp);
+        syncLongTermFixture(detail, timestamp);
+        emitLongTermUpdate('note', detail.id);
+        return { ok: true, value: null };
       }),
     onUpdate: (callback: (data: unknown) => void) => emitter.on('longtermTask:update', callback as never),
   };

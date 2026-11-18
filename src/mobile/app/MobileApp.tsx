@@ -73,6 +73,7 @@ export default function MobileApp(): JSX.Element {
   const [usageSignal, setUsageSignal] = useState(0);
   const [browserVisited, setBrowserVisited] = useState(() => tab === 'browser');
   const [browserRequest, setBrowserRequest] = useState<MobileBrowserRequest | null>(null);
+  const [taskAttentionCount, setTaskAttentionCount] = useState(0);
   const selectTab = useCallback((next: MobileTab) => {
     if (next === 'browser') setBrowserVisited(true);
     setTab(next);
@@ -143,6 +144,13 @@ export default function MobileApp(): JSX.Element {
     }
     return false;
   }, [chat.getOpenSessionId, chat.openSession]);
+  const openTaskDraft = useCallback((draft: string) => {
+    if (twinMetabotId !== null) chat.setMetabotId(twinMetabotId);
+    chat.newChat();
+    chat.setDraft(draft);
+    setPurchase(null);
+    setTab('chat');
+  }, [chat.setDraft, chat.setMetabotId, chat.newChat, twinMetabotId]);
   // Terminal gateway states (REQ-E-2 close codes) replace the whole shell.
   const { terminal, versionMismatch } = useTerminalBridgeState();
   // Reconnect resync (REQ-E-5): refresh on every (re)connect, whichever
@@ -214,6 +222,9 @@ export default function MobileApp(): JSX.Element {
               twinMetabotId={twinMetabotId}
               twinName={twinName}
               onOpenSession={openWorkSession}
+              onOpenDraft={openTaskDraft}
+              onOpenUri={openBrowser}
+              onAttentionCount={setTaskAttentionCount}
             />
           </Suspense>
         ) : null}
@@ -237,7 +248,7 @@ export default function MobileApp(): JSX.Element {
           </div>
         ) : null}
       </div>
-      <TabBar active={tab} onSelect={selectTab} />
+      <TabBar active={tab} onSelect={selectTab} taskAttentionCount={taskAttentionCount} />
       {purchaseAllowed && purchase ? (
         <div className="fixed inset-0 z-50">
           <Suspense fallback={<TabFallback />}>

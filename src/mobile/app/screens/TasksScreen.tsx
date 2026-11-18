@@ -16,10 +16,23 @@ import { formatDurationMs, formatRunTime } from '../format';
 import { BottomSheet } from '../components/BottomSheet';
 import { Section } from '../components/Section';
 import { Switch } from '../components/Switch';
-import { ActivitySection } from '../components/ActivitySection';
+import { UnifiedTasksSection } from '../components/unifiedTasks/UnifiedTasksSection';
+import { UnifiedTaskDetail } from '../components/unifiedTasks/UnifiedTaskDetail';
+import { useUnifiedTasks } from '../hooks/useUnifiedTasks';
 
 type ScheduleKind = 'interval' | 'daily' | 'cron';
 type TaskScreen = ReturnType<typeof useScheduledTasks>;
+type PrimaryTaskTab = 'tasks' | 'scheduled';
+
+const PRIMARY_TASK_TAB_KEY = 'idbots.mobile.tasksPrimaryTab.v1';
+
+function readPrimaryTaskTab(): PrimaryTaskTab {
+  try {
+    return window.localStorage.getItem(PRIMARY_TASK_TAB_KEY) === 'scheduled' ? 'scheduled' : 'tasks';
+  } catch {
+    return 'tasks';
+  }
+}
 
 const LAST_STATUS_KEY: Record<NonNullable<ScheduledTask['state']['lastStatus']>, string> = {
   success: 'mobile.tasks.statusLabel.success',
@@ -318,58 +331,176 @@ function TaskFormSheet({
   );
 }
 
+function ScheduledRunHistory({ screen }: { screen: TaskScreen }): JSX.Element {
+  if (screen.allRunsLoading && screen.allRuns.length === 0) {
+    return <p className="py-4 text-sm text-[var(--text-secondary)]">{t('mobile.common.loading')}</p>;
+  }
+  return (
+    <div data-testid="scheduled-run-history">
+      {screen.allRunsError ? (
+        <div role="alert" className="twin-notice twin-notice-error mb-3">
+          <p>{screen.allRunsError}</p>
+          <button type="button" className="min-h-[44px]" onClick={() => void screen.loadAllRuns()}>{t('mobile.tasks.retry')}</button>
+        </div>
+      ) : null}
+      {!screen.allRunsLoading && screen.allRuns.length === 0 ? (
+        <p className="py-4 text-sm text-[var(--text-secondary)]">{t('mobile.tasks.noRuns')}</p>
+      ) : null}
+      <div className="twin-unified-history-list">
+        {screen.allRuns.map((run) => {
+          const taskName = run.taskName ?? screen.tasks.find((task) => task.id === run.taskId)?.name ?? run.taskId;
+          return (
+            <article key={run.id} className="twin-unified-history-row" data-testid={`scheduled-history-run-${run.id}`}>
+              <h3>{taskName}</h3>
+              <p>
+                {new Date(run.startedAt).toLocaleString()} · {t(`mobile.tasks.runStatus.${run.status}`)}
+                {run.durationMs !== null && run.durationMs !== undefined ? ` · ${formatDurationMs(run.durationMs)}ms` : ''}
+              </p>
+              {run.error ? <p className="text-[var(--twin-danger)]">{run.error}</p> : null}
+              {run.skipReason ? <p>{t(`mobile.tasks.skipReason.${run.skipReason}`)}</p> : null}
+              {screen.errorFor(run.taskId) ? <p role="alert" className="text-[var(--twin-danger)]">{screen.errorFor(run.taskId)}</p> : null}
+              <button
+                type="button"
+                className="twin-button twin-button-secondary twin-button-small mt-2"
+                disabled={!run.sessionId}
+                onClick={() => void screen.openRun(run)}
+                aria-label={`${t('mobile.activity.openResult')} · ${run.id}`}
+              >
+                {t('mobile.activity.openResult')}
+              </button>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function TasksScreen({
   resyncCounter = 0,
   twinMetabotId,
   twinName,
   onOpenSession,
+  onOpenDraft = () => undefined,
+  onOpenUri = () => undefined,
+  onAttentionCount = () => undefined,
 }: {
   resyncCounter?: number;
   twinMetabotId: number | null;
   twinName: string;
   onOpenSession: OpenWorkSession;
+  onOpenDraft?: (draft: string) => void;
+  onOpenUri?: (uri: string) => void;
+  onAttentionCount?: (count: number) => void;
 }): JSX.Element {
+  const [primaryTab, setPrimaryTab] = useState<PrimaryTaskTab>(readPrimaryTaskTab);
+  const [scheduledSubTab, setScheduledSubTab] = useState<'schedules' | 'history'>('schedules');
   const [activityRevision, setActivityRevision] = useState(0);
   const refreshActivity = useCallback(() => setActivityRevision((revision) => revision + 1), []);
   const screen = useScheduledTasks({ twinMetabotId, onOpenSession, resyncCounter, onChanged: refreshActivity });
+  const unified = useUnifiedTasks({ resyncCounter: resyncCounter + activityRevision, onOpenSession });
   const [formOpen, setFormOpen] = useState(false);
   const [editTask, setEditTask] = useState<ScheduledTask | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScheduledTask | null>(null);
+  const attentionCount = unified.cards.filter((card) => card.column === 'waiting_owner' && card.stage !== 'done' && card.stage !== 'cancelled').length;
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PRIMARY_TASK_TAB_KEY, primaryTab);
+    } catch {
+      return;
+    }
+  }, [primaryTab]);
+
+  useEffect(() => {
+    onAttentionCount(attentionCount);
+  }, [attentionCount, onAttentionCount]);
 
   const deleteTask = async (): Promise<void> => {
     if (!deleteTarget) return;
     if (await screen.deleteTask(deleteTarget.id)) setDeleteTarget(null);
   };
+  const openScheduleForm = () => {
+    setEditTask(null);
+    setFormOpen(true);
+  };
+
+  if (primaryTab === 'tasks' && unified.selectedTaskId) {
+    return <UnifiedTaskDetail screen={unified} onOpenDraft={onOpenDraft} onOpenUri={onOpenUri} />;
+  }
 
   return (
     <div className="twin-page">
       <div className="twin-topbar twin-topbar-simple">
-        <h1 className="twin-title">{t('mobile.tasks.title')}</h1>
-        <button type="button" onClick={() => { setEditTask(null); setFormOpen(true); }} className="twin-button twin-button-ghost">
-          <PlusIcon className="h-5 w-5" aria-hidden />
-          {t('mobile.tasks.create')}
+        <div>
+          <h1 className="twin-title">{t(primaryTab === 'tasks' ? 'mobile.taskCenter.title' : 'mobile.tasks.title')}</h1>
+          <p className="twin-subtitle">
+            {primaryTab === 'tasks'
+              ? t('mobile.taskCenter.subtitle', { count: unified.cards.filter((card) => card.column === 'in_progress').length })
+              : t('mobile.taskCenter.scheduledSubtitle')}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={primaryTab === 'tasks' ? () => onOpenDraft(t('mobile.taskCenter.newTaskDraft')) : openScheduleForm}
+          className="twin-icon-button twin-icon-button-primary"
+          aria-label={t(primaryTab === 'tasks' ? 'mobile.taskCenter.newTask' : 'mobile.tasks.create')}
+          data-testid="task-center-create"
+        >
+          <PlusIcon aria-hidden />
+        </button>
+      </div>
+      <div className="twin-unified-primary-tabs" role="tablist" aria-label={t('mobile.taskCenter.primaryTabs')}>
+        <button type="button" role="tab" aria-selected={primaryTab === 'tasks'} onClick={() => setPrimaryTab('tasks')}>
+          {t('mobile.taskCenter.tasksTab')}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={primaryTab === 'scheduled'}
+          onClick={() => { setPrimaryTab('scheduled'); unified.closeDetail(); }}
+        >
+          {t('mobile.taskCenter.scheduledTab')}
         </button>
       </div>
       <div className="twin-scroll p-3">
-        <ActivitySection resyncCounter={resyncCounter + activityRevision} onOpenSession={onOpenSession} />
-        <Section title={t('mobile.tasks.title')}>
-          {screen.loadError ? (
-            <div role="alert" className="py-2 text-sm text-red-600">
-              <p>{screen.loadError}</p>
-              <button type="button" className="min-h-[44px]" onClick={() => void screen.reload()}>{t('mobile.tasks.retry')}</button>
+        {primaryTab === 'tasks' ? <UnifiedTasksSection screen={unified} /> : (
+          <>
+            <div className="twin-unified-schedule-tools">
+              <div className="twin-unified-schedule-tabs" role="tablist" aria-label={t('mobile.taskCenter.scheduledViews')}>
+                <button type="button" role="tab" aria-selected={scheduledSubTab === 'schedules'} onClick={() => setScheduledSubTab('schedules')}>
+                  {t('mobile.taskCenter.schedules')}
+                </button>
+                <button type="button" role="tab" aria-selected={scheduledSubTab === 'history'} onClick={() => setScheduledSubTab('history')}>
+                  {t('mobile.taskCenter.history')}
+                </button>
+              </div>
+              <button type="button" className="twin-button twin-button-primary twin-button-small" onClick={openScheduleForm}>
+                {t('mobile.tasks.create')}
+              </button>
             </div>
-          ) : null}
-          {!screen.loading && screen.tasks.length === 0 ? <p className="py-4 text-sm text-[var(--text-secondary)]">{t('mobile.tasks.empty')}</p> : null}
-          {screen.tasks.map((task) => (
-            <TaskRow
-              key={task.id}
-              task={task}
-              screen={screen}
-              onEdit={() => { setEditTask(task); setFormOpen(true); }}
-              onDelete={() => setDeleteTarget(task)}
-            />
-          ))}
-        </Section>
+            {scheduledSubTab === 'history' ? <ScheduledRunHistory screen={screen} /> : (
+              <Section title={t('mobile.tasks.title')}>
+                {screen.loadError ? (
+                  <div role="alert" className="py-2 text-sm text-red-600">
+                    <p>{screen.loadError}</p>
+                    <button type="button" className="min-h-[44px]" onClick={() => void screen.reload()}>{t('mobile.tasks.retry')}</button>
+                  </div>
+                ) : null}
+                {!screen.loading && screen.tasks.length === 0 ? <p className="py-4 text-sm text-[var(--text-secondary)]">{t('mobile.tasks.empty')}</p> : null}
+                {screen.tasks.map((task) => (
+                  <TaskRow
+                    key={task.id}
+                    task={task}
+                    screen={screen}
+                    onEdit={() => { setEditTask(task); setFormOpen(true); }}
+                    onDelete={() => setDeleteTarget(task)}
+                  />
+                ))}
+              </Section>
+            )}
+          </>
+        )}
       </div>
       <TaskFormSheet
         screen={screen}

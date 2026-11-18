@@ -10,7 +10,7 @@ const TABS: Array<{ id: MobileTab; labelKey: string; icon: typeof ChatBubbleLeft
   { id: 'me', labelKey: 'mobile.tabs.me', icon: UserIcon },
 ];
 
-export function TabBar(props: { active: MobileTab; onSelect: (tab: MobileTab) => void }): JSX.Element {
+export function TabBar(props: { active: MobileTab; onSelect: (tab: MobileTab) => void; taskAttentionCount?: number }): JSX.Element {
   return (
     <nav className="twin-tabbar" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }} aria-label={t('mobile.app.tabBarLabel')}>
       {TABS.map((tab) => {
@@ -24,9 +24,13 @@ export function TabBar(props: { active: MobileTab; onSelect: (tab: MobileTab) =>
             aria-current={selected ? 'page' : undefined}
             className="twin-tab"
             data-testid={`mobile-tab-${tab.id}`}
+            aria-label={t(tab.labelKey)}
           >
             <Icon className="twin-tab-icon" aria-hidden />
             <span>{t(tab.labelKey)}</span>
+            {tab.id === 'tasks' && (props.taskAttentionCount ?? 0) > 0 ? (
+              <span className="twin-tab-badge" aria-hidden>{Math.min(99, props.taskAttentionCount!)}</span>
+            ) : null}
           </button>
         );
       })}
