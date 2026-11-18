@@ -53,6 +53,10 @@ test('filterVisiblePanelMessages keeps turn-level failure rows only', () => {
     msg({ type: 'system', content: '', metadata: { dshTurnStalled: true } }),
     msg({ type: 'system', content: '', metadata: { dshTurnInterrupted: true } }),
     msg({ type: 'system', content: '', metadata: { emptyTerminalTurn: true } }),
+    // cw-636ddce2 (2026-11-19): a context overflow that settled as the host's
+    // output-truncation note — BotWorks showed the ✂️ note, the Studio panel
+    // filtered it out and the turn ended in silence.
+    msg({ type: 'system', content: '', metadata: { replyTruncatedTurn: true } }),
     // Everything below must stay hidden:
     msg({ type: 'system', content: '', metadata: { compaction: true, compactedItems: 3, compactedTokens: 900 } }),
     msg({ type: 'system', content: '', metadata: { compaction: true, isError: true } }),
@@ -61,7 +65,7 @@ test('filterVisiblePanelMessages keeps turn-level failure rows only', () => {
     msg({ type: 'system', content: '' }),
   ];
   const kept = filterVisiblePanelMessages(input);
-  assert.equal(kept.length, 4, 'error + three flags survive; compaction and other system rows do not');
+  assert.equal(kept.length, 5, 'error + four flags survive; compaction and other system rows do not');
   assert.ok(kept.every((message) => message.type === 'system'));
 });
 
@@ -105,6 +109,16 @@ test('PanelMessage renders the failure card with reason+hint and hides raw text 
     assert.match(stalledMarkup, /本轮长时间无进展/, 'flag kinds reuse the existing i18n explanation');
     assert.match(stalledMarkup, /说「继续」我就接着做。/, 'flag cards carry the generic hint');
     assert.doesNotMatch(stalledMarkup, /<details>/, 'flag rows have no raw error to disclose');
+
+    // cw-636ddce2 regression: the truncation note renders as a Studio failure
+    // card with the shared ✂️ copy instead of being filtered into silence.
+    const truncated = msg({ type: 'system', content: '', metadata: { replyTruncatedTurn: true } });
+    const truncatedMarkup = renderToStaticMarkup(
+      React.createElement(PanelMessage, { message: truncated, onOpenUri: () => undefined }),
+    );
+    assert.match(truncatedMarkup, /本轮回复被输出 token 上限截断/, 'truncated kind reuses the transcript ✂️ copy');
+    assert.match(truncatedMarkup, /说「继续」我就接着做。/, 'truncated card carries the generic hint');
+    assert.doesNotMatch(truncatedMarkup, /<details>/, 'truncated rows have no raw error to disclose');
   } finally {
     i18nService.setLanguage(previousLanguage, { persist: false });
   }
