@@ -15,6 +15,12 @@ import { resolveSessionWorkingDirectory } from './botWorkspace';
 import { resolveCoworkExecutionMode } from './coworkExecutionMode';
 import { buildScheduledRunReportMessage, tailDispatchReportExcerpt } from './coworkCrossSessionReport';
 import { createPracticeSessionState, PRACTICE_RUN_WATCHDOG_MS } from './practiceInteractionGuard';
+import {
+  classifyScheduledRunOutcome,
+  countRunWorkMessages,
+  TURN_SETTLED_ABNORMALLY_ERROR,
+  type ScheduledRunOutcome,
+} from './scheduledRunOutcome';
 import type { IMGatewayManager } from '../im/imGatewayManager';
 import type { CoworkSubmitInput, CoworkSubmitInputResult } from '../services/coworkTurnSubmission';
 
@@ -690,13 +696,18 @@ export class Scheduler {
         const taskStillExists = this.store.getTask(task.id) !== null;
 
         if (taskStillExists) {
+          // Run receipt tiering (T-A): the receipt records WHICH world
+          // happened (completed / completed_empty / crashed / timeout), not
+          // just whether the fire threw. `success` stays the executor-exit
+          // flag and keeps driving every bookkeeping block below unchanged.
+          const receipt = this.resolveRunReceipt(success, error, sessionId, startTime);
           // Update run record
           this.store.completeRun(
             run.id,
-            success ? 'success' : 'error',
+            receipt.outcome,
             sessionId,
             durationMs,
-            error
+            receipt.error
           );
 
           // Practice loop closure (design 2026-10-10 §3.4): the proposal the
@@ -777,6 +788,88 @@ export class Scheduler {
 
         this.reschedule();
       }
+    }
+  }
+
+  /**
+   * Run receipt classification (T-A) — see libs/scheduledRunOutcome.ts for
+   * the tier semantics and the zero-work criterion.
+   *
+   * Evidence windows are keyed on `runStartMs` (the fire's claim time, before
+   * createRun). Turn-outcome markers are per SESSION, not per run, so a
+   * failure marker only counts inside this fire's window — a standing
+   * 'series' conversation's older failed fires must not re-crash this one.
+   * Interleaved owner turns cannot overlap a fire (the session is busy while
+   * `startCoworkSession` awaits the whole turn), so the window holds exactly
+   * this fire's output.
+   *
+   * Every evidence read fails soft: an unavailable store API or a read error
+   * degrades to "unknown evidence", which classifies as `completed` (the old
+   * label) — missing evidence can never fabricate a crash or an empty run.
+   */
+  private resolveRunReceipt(
+    submitted: boolean,
+    submissionError: string | null,
+    sessionId: string | null,
+    runStartMs: number,
+  ): { outcome: ScheduledRunOutcome; error: string | null } {
+    if (!submitted || !sessionId) {
+      return {
+        outcome: classifyScheduledRunOutcome({
+          submitted: false,
+          errorMessage: submissionError,
+          turnSettledAbnormally: false,
+          workMessageCount: null,
+        }),
+        error: submissionError,
+      };
+    }
+    if (this.turnSettledAbnormallyInWindow(sessionId, runStartMs)) {
+      return { outcome: 'crashed', error: TURN_SETTLED_ABNORMALLY_ERROR };
+    }
+    return {
+      outcome: classifyScheduledRunOutcome({
+        submitted: true,
+        errorMessage: null,
+        turnSettledAbnormally: false,
+        workMessageCount: this.countRunWork(sessionId, runStartMs),
+      }),
+      error: null,
+    };
+  }
+
+  /**
+   * Whether the newest turn settlement marker inside [runStartMs, now] is a
+   * failure (`recordSessionTurnFailure` newer than — or without — a newer
+   * `recordSessionTurnCompletion`). The markers are written by the runner's
+   * turn pipeline BEFORE the active session is removed, and the fire awaits
+   * the whole pipeline, so they are durable when this runs.
+   */
+  private turnSettledAbnormallyInWindow(sessionId: string, runStartMs: number): boolean {
+    try {
+      const reader = (this.coworkStore as Partial<CoworkStore>).getSessionTurnOutcome;
+      if (typeof reader !== 'function') return false;
+      const { lastFailedAtMs, lastCompletedAtMs } = reader.call(this.coworkStore, sessionId);
+      if (lastFailedAtMs == null || lastFailedAtMs < runStartMs) return false;
+      return lastCompletedAtMs == null || lastFailedAtMs > lastCompletedAtMs;
+    } catch {
+      return false; // evidence unavailable — never fabricate a crash
+    }
+  }
+
+  /**
+   * Work evidence for the run window: `assistant` / `tool_use` messages
+   * persisted at `timestamp >= runStartMs` (newest-first page of the session
+   * transcript; the fire's output is the freshest content). `null` = the
+   * paging API is unavailable or the read failed — unknown, not zero.
+   */
+  private countRunWork(sessionId: string, runStartMs: number): number | null {
+    try {
+      const page = this.coworkStore.getSessionMessagesPage?.(sessionId, { limit: 200 });
+      if (!page || !Array.isArray(page.messages)) return null;
+      return countRunWorkMessages(page.messages, runStartMs);
+    } catch {
+      return null;
     }
   }
 

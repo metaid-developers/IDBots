@@ -20,6 +20,12 @@ const statusIcons: Record<string, { icon: string; color: string }> = {
   error: { icon: '✗', color: 'text-red-500' },
   running: { icon: '●', color: 'text-blue-500' },
   skipped: { icon: '⊘', color: 'text-amber-500' },
+  // T-A tiered outcomes: completed_empty must NOT read as success (amber),
+  // crashed stays in the red ✗ family, timeout gets the clock.
+  completed: { icon: '✓', color: 'text-green-500' },
+  completed_empty: { icon: '◌', color: 'text-amber-500' },
+  crashed: { icon: '✗', color: 'text-red-500' },
+  timeout: { icon: '⏱', color: 'text-red-500' },
 };
 
 const skipReasonLabels: Record<string, string> = {
@@ -68,7 +74,7 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({ taskId, runs }) => {
                     {formatDuration(run.durationMs)}
                   </span>
                 )}
-                {run.status === 'error' && run.error && (
+                {(run.status === 'error' || run.status === 'crashed' || run.status === 'timeout') && run.error && (
                   <span
                     className="text-xs text-red-500 max-w-[150px] truncate"
                     title={run.error}

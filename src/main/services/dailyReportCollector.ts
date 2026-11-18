@@ -945,9 +945,12 @@ const HUMAN_USER_MESSAGE_SQL = `
 /** Daily-report sessions are excluded from the human-work bucket by title. */
 const DAILY_REPORT_TITLE_LIKE = '每日汇报 %';
 
-/** Run statuses that count as not-succeeded (mirrors the generator's set). */
+/** Run statuses that count as not-succeeded (mirrors the generator's set —
+ *  T-A tiered receipt: completed_empty / crashed / timeout are not success).
+ *  Legacy 'success' rows predate the tiering and keep counting as succeeded. */
 const isFailedOrSkippedRunStatus = (status: string): boolean =>
-  status === 'failed' || status === 'error' || status === 'skipped';
+  status === 'failed' || status === 'error' || status === 'skipped'
+  || status === 'completed_empty' || status === 'crashed' || status === 'timeout';
 
 export const collectDailyReportFacts = (input: {
   db: DailyReportDb;

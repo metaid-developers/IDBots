@@ -5,10 +5,12 @@
 //      badges; the section is OMITTED ENTIRELY when pendingFollowUps is
 //      empty (markdown + HTML), never an empty-state line;
 //   b. owner-task table — step counts / percent, never the LLM's job;
-//   c. machine rollups — one scheduled-runs summary line (total; "all
-//      succeeded" when true; only failed/skipped NAMED, max 3, with bot),
-//      one group-task count line, twin-delegate count; long-term journal
-//      events never appear;
+//   c. machine rollups — one scheduled-runs summary line (total; the T-A
+//      tiered receipt counts `completed` (+ legacy success) as the success
+//      numerator and presents completed_empty / crashed / timeout / skipped
+//      separately; "all succeeded" only when every run really completed;
+//      only troubled runs are NAMED, max 3, with bot), one group-task count
+//      line, twin-delegate count; long-term journal events never appear;
 //   d. per-bot one-liners — deterministic text (title prefix folded, volume,
 //      top external peer, OpenTeam, chain interactions) replacing the v1
 //      counts table; the counts table is GONE from markdown and HTML;
@@ -199,12 +201,99 @@ test('machine rollups: failed/skipped runs named (max 3) with bot; success still
     },
   });
   const lines = buildDailyReportMachineRollupMarkdown(facts, DAILY_REPORT_STRINGS_EN);
-  assert.match(lines[0], /^Scheduled runs 6 · failed\/skipped 3:/);
+  // T-A tiered line: legacy failed 3 + error 1 count as crashed 4; skipped
+  // is ledger-only and shown separately.
+  assert.match(lines[0], /^Scheduled runs 6 · completed 1 · crashed 4 · skipped 1:/);
   const named = lines.slice(1).filter((l) => l.startsWith('- '));
   assert.equal(named.length, 3, 'at most 3 failed/skipped runs are named');
   assert.match(named.join('\n'), /Backup check · Ops — failed/);
   assert.match(named.join('\n'), /Site patrol · Guard — skipped \(already_running\)/);
   assert.doesNotMatch(named.join('\n'), /Sixth failure/, 'failures beyond the cap are not named');
+});
+
+test('machine rollups T-A: zero-work completion blocks "all succeeded" and is counted separately', () => {
+  const facts = sampleFacts({
+    machineActivity: {
+      ...sampleFacts().machineActivity,
+      scheduledRuns: [
+        { taskName: 'Nightly inspect', botName: 'Ops', status: 'completed', skipReason: null, startedAt: null, error: null },
+        { taskName: 'Pool skeleton', botName: 'Ops', status: 'completed_empty', skipReason: null, startedAt: null, error: null },
+      ],
+    },
+  });
+  const lines = buildDailyReportMachineRollupMarkdown(facts, DAILY_REPORT_STRINGS_EN);
+  assert.match(lines[0], /^Scheduled runs 2 · completed 1 · no-op 1:/);
+  assert.doesNotMatch(lines[0], /all succeeded/, 'a zero-work run must not narrate as all-succeeded');
+  const named = lines.slice(1).filter((l) => l.startsWith('- '));
+  assert.match(named.join('\n'), /Pool skeleton · Ops — completed_empty/, 'the empty run is named');
+  const zh = buildDailyReportMachineRollupMarkdown(facts, DAILY_REPORT_STRINGS_ZH).join('\n');
+  assert.match(zh, /定时任务 2 · 完成 1 · 空转 1:/);
+});
+
+test('machine rollups T-A: crashed and timeout tiers are presented separately', () => {
+  const facts = sampleFacts({
+    machineActivity: {
+      ...sampleFacts().machineActivity,
+      scheduledRuns: [
+        { taskName: 'Nightly inspect', botName: 'Ops', status: 'completed', skipReason: null, startedAt: null, error: null },
+        { taskName: 'Broken runtime', botName: 'Ops', status: 'crashed', skipReason: null, startedAt: null, error: 'executor turn settled without answering' },
+        { taskName: 'Slow practice', botName: 'Twin', status: 'timeout', skipReason: null, startedAt: null, error: 'Practice run exceeded its 20-minute wall-clock budget' },
+        { taskName: 'Site patrol', botName: 'Guard', status: 'skipped', skipReason: 'expired', startedAt: null, error: null },
+      ],
+    },
+  });
+  const lines = buildDailyReportMachineRollupMarkdown(facts, DAILY_REPORT_STRINGS_EN);
+  assert.match(lines[0], /^Scheduled runs 4 · completed 1 · crashed 1 · timed out 1 · skipped 1:/);
+  const named = lines.slice(1).filter((l) => l.startsWith('- '));
+  const namedJoined = named.join('\n');
+  assert.match(namedJoined, /Broken runtime · Ops — crashed/, 'crashed run named with its error');
+  assert.match(namedJoined, /Slow practice · Twin — timeout/, 'timeout run named');
+  assert.match(namedJoined, /Site patrol · Guard — skipped \(expired\)/);
+});
+
+test('machine rollups T-A: zero-count tiers stay off the line, numerator always shown', () => {
+  const facts = sampleFacts({
+    machineActivity: {
+      ...sampleFacts().machineActivity,
+      scheduledRuns: [
+        { taskName: 'Nightly inspect', botName: 'Ops', status: 'completed', skipReason: null, startedAt: null, error: null },
+        { taskName: 'Broken runtime', botName: 'Ops', status: 'crashed', skipReason: null, startedAt: null, error: 'x' },
+      ],
+    },
+  });
+  const lines = buildDailyReportMachineRollupMarkdown(facts, DAILY_REPORT_STRINGS_EN);
+  assert.match(lines[0], /^Scheduled runs 2 · completed 1 · crashed 1:/);
+  assert.doesNotMatch(lines[0], /no-op/, 'a zero-count tier is not rendered');
+  assert.doesNotMatch(lines[0], /timed out/, 'a zero-count tier is not rendered');
+});
+
+test('HTML KPI T-A: a zero-work run removes the all-succeeded badge', () => {
+  const okHtml = buildDailyReportHtml({
+    facts: sampleFacts(),
+    strings: DAILY_REPORT_STRINGS_ZH,
+    dateLabel: '2026-11-18',
+    headlineText: '总览。',
+    proseMarkdown: '',
+  });
+  assert.match(okHtml, /全部成功/, 'single success run keeps the badge');
+  const emptyRunFacts = sampleFacts({
+    machineActivity: {
+      ...sampleFacts().machineActivity,
+      scheduledRuns: [
+        { taskName: 'Nightly inspect', botName: 'Ops', status: 'success', skipReason: null, startedAt: null, error: null },
+        { taskName: 'Pool skeleton', botName: 'Ops', status: 'completed_empty', skipReason: null, startedAt: null, error: null },
+      ],
+    },
+  });
+  const emptyHtml = buildDailyReportHtml({
+    facts: emptyRunFacts,
+    strings: DAILY_REPORT_STRINGS_ZH,
+    dateLabel: '2026-11-18',
+    headlineText: '总览。',
+    proseMarkdown: '',
+  });
+  assert.doesNotMatch(emptyHtml, /全部成功/, 'a zero-work run must remove the all-succeeded badge');
+  assert.match(emptyHtml, /Pool skeleton/, 'the empty run surfaces in the needs-you cards');
 });
 
 test('bot one-liner text: prefix folded, volume + peer + OpenTeam + chain folded in', () => {

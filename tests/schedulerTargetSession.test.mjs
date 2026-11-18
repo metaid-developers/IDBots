@@ -214,7 +214,10 @@ test('Scheduler submits a bound task into its existing session instead of creati
   assert.deepEqual(recording.createdSessions, []);
   assert.deepEqual(recording.runnerCalls, []);
   assert.equal(recording.completedRuns.length, 1);
-  assert.equal(recording.completedRuns[0].status, 'success');
+  // T-A tiered receipt: this stub has no message-paging API, so work evidence
+  // is unknown (null) and the documented fail-soft rule classifies the normal
+  // exit as `completed` — never as `completed_empty` on missing evidence.
+  assert.equal(recording.completedRuns[0].status, 'completed');
   assert.equal(recording.completedRuns[0].sessionId, 'bound-session');
 });
 
@@ -284,7 +287,7 @@ test('Scheduler wired to the real turn-submission controller persists the prompt
   assert.equal(continueCalls.length, 1);
   assert.equal(continueCalls[0].sessionId, 'bound-session');
   assert.deepEqual(recording.createdSessions, []);
-  assert.equal(recording.completedRuns[0].status, 'success');
+  assert.equal(recording.completedRuns[0].status, 'completed');
   assert.equal(recording.completedRuns[0].sessionId, 'bound-session');
 });
 
@@ -301,7 +304,7 @@ test('Scheduler falls back to a fresh session when the bound session no longer e
   assert.deepEqual(recording.submitCalls, []);
   assert.equal(recording.createdSessions.length, 1);
   assert.deepEqual(recording.runnerCalls.map((call) => call.sessionId), ['session-1']);
-  assert.equal(recording.completedRuns[0].status, 'success');
+  assert.equal(recording.completedRuns[0].status, 'completed');
   assert.equal(recording.completedRuns[0].sessionId, 'session-1');
 });
 
@@ -360,7 +363,7 @@ test('Scheduler records a failed run when the bound session rejects the submissi
   assert.deepEqual(recording.createdSessions, []);
   assert.deepEqual(recording.runnerCalls, []);
   assert.equal(recording.completedRuns.length, 1);
-  assert.equal(recording.completedRuns[0].status, 'error');
+  assert.equal(recording.completedRuns[0].status, 'crashed');
   assert.equal(recording.completedRuns[0].error, 'bound session refused the prompt');
   assert.equal(recording.completedRuns[0].sessionId, null);
 });
@@ -376,7 +379,7 @@ test('Scheduler treats a binding as invalid when no submit handler is wired', as
 
   assert.deepEqual(recording.submitCalls, []);
   assert.equal(recording.createdSessions.length, 1);
-  assert.equal(recording.completedRuns[0].status, 'success');
+  assert.equal(recording.completedRuns[0].status, 'completed');
   assert.equal(recording.completedRuns[0].sessionId, 'session-1');
 });
 
@@ -418,7 +421,7 @@ test('Scheduler ledgers an already_running skip when a second fire arrives for a
   await live;
 
   assert.equal(recording.completedRuns.length, 1);
-  assert.equal(recording.completedRuns[0].status, 'success');
+  assert.equal(recording.completedRuns[0].status, 'completed');
 });
 
 test('Scheduler ledgers an expired skip for a due task whose expiry day has passed', async () => {
@@ -494,5 +497,5 @@ test('Scheduler does not ledger a stuck skip for a task with a live execution', 
   }
 
   assert.equal(recording.completedRuns.length, 1);
-  assert.equal(recording.completedRuns[0].status, 'success');
+  assert.equal(recording.completedRuns[0].status, 'completed');
 });

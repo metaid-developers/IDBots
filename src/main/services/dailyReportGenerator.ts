@@ -85,6 +85,12 @@ export interface DailyReportStrings {
   scheduledRunsLabel: string;
   allSucceededLabel: string;
   failedSkippedLabel: string;
+  /** T-A tier breakdown vocabulary (completed is the success numerator). */
+  runTierCompletedLabel: string;
+  runTierEmptyLabel: string;
+  runTierCrashedLabel: string;
+  runTierTimeoutLabel: string;
+  runTierSkippedLabel: string;
   groupTasksRollupLabel: string;
   twinDelegateIntro: string;
   longTermIntro: string;
@@ -150,6 +156,11 @@ export const DAILY_REPORT_STRINGS_EN: DailyReportStrings = {
   scheduledRunsLabel: 'Scheduled runs',
   allSucceededLabel: 'all succeeded',
   failedSkippedLabel: 'failed/skipped',
+  runTierCompletedLabel: 'completed',
+  runTierEmptyLabel: 'no-op',
+  runTierCrashedLabel: 'crashed',
+  runTierTimeoutLabel: 'timed out',
+  runTierSkippedLabel: 'skipped',
   groupTasksRollupLabel: 'Group task updates',
   twinDelegateIntro: 'Twin-delegated orchestrations touched:',
   longTermIntro: 'Long-term projects:',
@@ -213,6 +224,11 @@ export const DAILY_REPORT_STRINGS_ZH: DailyReportStrings = {
   scheduledRunsLabel: '定时任务',
   allSucceededLabel: '全部成功',
   failedSkippedLabel: '失败/跳过',
+  runTierCompletedLabel: '完成',
+  runTierEmptyLabel: '空转',
+  runTierCrashedLabel: '异常',
+  runTierTimeoutLabel: '超时',
+  runTierSkippedLabel: '跳过',
   groupTasksRollupLabel: '群任务动态',
   twinDelegateIntro: 'Twin 自动派单触及：',
   longTermIntro: '长期项目：',
@@ -292,13 +308,47 @@ const STATUS_EMOJI: Record<string, string> = {
   review: '🔎',
   planning: '📋',
   pending: '⏳',
+  // T-A scheduled-run tiers (must not borrow the success/failure glyphs).
+  completed_empty: '◌',
+  crashed: '❌',
+  timeout: '⏱️',
 };
 
 const statusEmoji = (status: string): string => STATUS_EMOJI[status] ?? '•';
 
-/** Run statuses that count as not-succeeded for the rollup naming. */
+/** Run statuses that count as not-succeeded. T-A: the tiered receipt adds
+ *  `completed_empty` (normal exit, zero work), `crashed` and `timeout` — none
+ *  of them may enter the success numerator, or a broken-runtime day narrates
+ *  as "all succeeded" again (2026-11-17 pool-skeleton fire). Legacy 'success'
+ *  rows predate the tiering (executor-exit only) and keep counting as
+ *  succeeded. */
 const isFailedOrSkippedRun = (status: string): boolean =>
-  status === 'failed' || status === 'error' || status === 'skipped';
+  status === 'failed' || status === 'error' || status === 'skipped'
+  || status === 'completed_empty' || status === 'crashed' || status === 'timeout';
+
+/** T-A tier counts for the rollup line. The success numerator is
+ *  `completed` (+ legacy 'success'); every other terminal tier is presented
+ *  separately; 'skipped' is ledger-only and never an outcome tier. */
+interface RunTierCounts {
+  total: number;
+  completed: number;
+  empty: number;
+  crashed: number;
+  timeout: number;
+  skipped: number;
+}
+
+const countRunTiers = (runs: DailyReportFacts['machineActivity']['scheduledRuns']): RunTierCounts => {
+  const counts: RunTierCounts = { total: runs.length, completed: 0, empty: 0, crashed: 0, timeout: 0, skipped: 0 };
+  for (const run of runs) {
+    if (run.status === 'completed' || run.status === 'success') counts.completed += 1;
+    else if (run.status === 'completed_empty') counts.empty += 1;
+    else if (run.status === 'crashed' || run.status === 'error' || run.status === 'failed') counts.crashed += 1;
+    else if (run.status === 'timeout') counts.timeout += 1;
+    else if (run.status === 'skipped') counts.skipped += 1;
+  }
+  return counts;
+};
 
 /** Fold the host-generated delegation/schedule prefixes away (fixed generated
  * markers, mirrored from the collector — kept local so this module stays free
@@ -443,10 +493,21 @@ export const buildDailyReportMachineRollupMarkdown = (
   const runs = facts.machineActivity.scheduledRuns;
   if (runs.length > 0) {
     const troubled = runs.filter((run) => isFailedOrSkippedRun(run.status)).slice(0, 3);
+    const tiers = countRunTiers(runs);
     let line = `${strings.scheduledRunsLabel} ${runs.length} · `;
-    line += troubled.length === 0
-      ? strings.allSucceededLabel
-      : `${strings.failedSkippedLabel} ${troubled.length}:`;
+    if (troubled.length === 0) {
+      line += strings.allSucceededLabel;
+    } else {
+      // T-A: the numerator counts real completions only; the other terminal
+      // tiers are presented separately (zero-count tiers stay off the line,
+      // except the numerator itself which is always shown).
+      line += `${strings.runTierCompletedLabel} ${tiers.completed}`;
+      if (tiers.empty > 0) line += ` · ${strings.runTierEmptyLabel} ${tiers.empty}`;
+      if (tiers.crashed > 0) line += ` · ${strings.runTierCrashedLabel} ${tiers.crashed}`;
+      if (tiers.timeout > 0) line += ` · ${strings.runTierTimeoutLabel} ${tiers.timeout}`;
+      if (tiers.skipped > 0) line += ` · ${strings.runTierSkippedLabel} ${tiers.skipped}`;
+      line += ':';
+    }
     lines.push(line);
     for (const run of troubled) {
       const skip = run.skipReason ? ` (${run.skipReason})` : '';

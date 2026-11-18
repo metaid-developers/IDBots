@@ -136,11 +136,25 @@ export const SCHEDULED_TASK_SESSION_MODES = ['series', 'fresh'] as const;
 
 export type ScheduledTaskSessionMode = (typeof SCHEDULED_TASK_SESSION_MODES)[number];
 
+/**
+ * Terminal outcome tiers written by the scheduler (T-A). Legacy rows keep
+ * 'success' | 'error' — both mean "executor exited / did not exit normally"
+ * under the old two-state receipt; they are never written again but stay
+ * readable forever. The tiered meanings live in libs/scheduledRunOutcome.ts.
+ */
+export type ScheduledRunTerminalStatus =
+  | 'success'
+  | 'error'
+  | 'completed'
+  | 'completed_empty'
+  | 'crashed'
+  | 'timeout';
+
 export interface ScheduledTaskRun {
   id: string;
   taskId: string;
   sessionId: string | null;
-  status: 'running' | 'success' | 'error' | 'skipped';
+  status: 'running' | 'skipped' | ScheduledRunTerminalStatus;
   startedAt: string;
   finishedAt: string | null;
   durationMs: number | null;
@@ -995,7 +1009,7 @@ export class ScheduledTaskStore {
 
   completeRun(
     runId: string,
-    status: 'success' | 'error',
+    status: ScheduledRunTerminalStatus,
     sessionId: string | null,
     durationMs: number,
     error: string | null
@@ -1215,7 +1229,7 @@ export class ScheduledTaskStore {
       id: row.id,
       taskId: row.task_id,
       sessionId: row.session_id,
-      status: row.status as 'running' | 'success' | 'error',
+      status: row.status as ScheduledTaskRun['status'],
       startedAt: row.started_at,
       finishedAt: row.finished_at,
       durationMs: row.duration_ms,
