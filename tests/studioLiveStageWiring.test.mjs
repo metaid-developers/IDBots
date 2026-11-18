@@ -57,6 +57,34 @@ test('pending permissions present on the Studio stage card and clear on resoluti
   assert.match(service, /function startInteractionPolling\(run: LiveStageRun\): void/);
 });
 
+test('stage patches, interaction drains and act lookups never raise the window over the owner\'s app', () => {
+  const main = read('src/main/main.ts');
+  // Owner-reported focus steal: every state update delivered a stage patch
+  // through the tab bridge, whose default was to restore/show/focus the
+  // window — even while the owner worked in a different app.
+  assert.match(
+    main,
+    /applyPatch: \(input\) => applyStudioLiveStagePatch\(\{[\s\S]{0,200}focusWindow: false[\s\S]{0,80}\}, input\)/,
+    'stage patch lookups stay off the OS focus',
+  );
+  assert.match(
+    main,
+    /drainInteractions: \(tabId, sessionId\) => drainStudioLiveStageInteractions\(\{[\s\S]{0,200}focusWindow: false/,
+    'interaction card drains stay off the OS focus',
+  );
+  assert.match(
+    main,
+    /executeBotBrowserPreviewAct\(\s*\{[\s\S]{0,320}focusWindow: false/,
+    'act executor lookups stay off the OS focus',
+  );
+  const bridge = read('src/main/services/botBrowserTabBridge.ts');
+  assert.match(
+    bridge,
+    /command\.background !== true/,
+    'background commands never steal the OS focus at the bridge either',
+  );
+});
+
 test('skip travels as an explicit honest list through panel, runner, and stage', () => {
   const runner = read('src/main/libs/coworkRunner.ts');
   assert.match(runner, /skipped\.has\(q\.question\)/);
