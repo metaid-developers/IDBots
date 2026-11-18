@@ -162,7 +162,9 @@ public class NativeCapabilitiesPlugin extends Plugin {
     @PluginMethod
     public void shareArtifact(PluginCall call) {
         String url = call.getString("url", "");
+        if (url == null) url = "";
         String filename = call.getString("filename", "File");
+        if (filename == null) filename = "File";
         Uri uri = Uri.parse(url);
         String scheme = uri.getScheme();
         if ((!"https".equals(scheme) && !"http".equals(scheme)) || uri.getHost() == null || uri.getUserInfo() != null) {
@@ -178,8 +180,12 @@ public class NativeCapabilitiesPlugin extends Plugin {
             call.reject("No system share target is available", "UNAVAILABLE");
             return;
         }
-        getBridge().getActivity().startActivity(chooser);
-        call.resolve((JSObject) new JSObject().put("result", "shared"));
+        try {
+            getBridge().getActivity().startActivity(chooser);
+            call.resolve((JSObject) new JSObject().put("result", "shared"));
+        } catch (android.content.ActivityNotFoundException error) {
+            call.reject("No system share target is available", "UNAVAILABLE", error);
+        }
     }
 
     @PluginMethod
@@ -210,8 +216,12 @@ public class NativeCapabilitiesPlugin extends Plugin {
         try (Cursor cursor = getContext().getContentResolver().query(uri, null, null, null, null)) {
             if (cursor != null && cursor.moveToFirst()) {
                 int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-                if (index >= 0) return cursor.getString(index);
+                if (index >= 0) {
+                    String displayName = cursor.getString(index);
+                    if (displayName != null && !displayName.isEmpty()) return displayName;
+                }
             }
+        } catch (Exception ignored) {
         }
         return uri.getLastPathSegment() == null ? "file" : uri.getLastPathSegment();
     }
@@ -234,12 +244,16 @@ public class NativeCapabilitiesPlugin extends Plugin {
         return -1;
     }
 
-    private byte[] readBytes(Uri uri) throws Exception {
+    private InputStream openStream(Uri uri) throws Exception {
         InputStream input = "file".equals(uri.getScheme())
             ? new FileInputStream(new File(uri.getPath()))
             : getContext().getContentResolver().openInputStream(uri);
         if (input == null) throw new IllegalStateException("Unable to open the selected file");
-        try (InputStream stream = input; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+        return input;
+    }
+
+    private byte[] readBytes(Uri uri) throws Exception {
+        try (InputStream stream = openStream(uri); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[16 * 1024];
             long total = 0;
             int read;
