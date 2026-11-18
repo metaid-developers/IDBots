@@ -91,6 +91,14 @@ export interface DailyReportStrings {
   runTierCrashedLabel: string;
   runTierTimeoutLabel: string;
   runTierSkippedLabel: string;
+  /* T-B forced overdue section (host-direct; always present). */
+  overdueSectionTitle: string;
+  overdueNoneLabel: string;
+  overdueLongtermLabel: string;
+  overdueReviewLabel: string;
+  overdueWaitingSuffix: string;
+  overdueThresholdSuffix: string;
+  htmlOverdueTitle: string;
   groupTasksRollupLabel: string;
   twinDelegateIntro: string;
   longTermIntro: string;
@@ -161,6 +169,13 @@ export const DAILY_REPORT_STRINGS_EN: DailyReportStrings = {
   runTierCrashedLabel: 'crashed',
   runTierTimeoutLabel: 'timed out',
   runTierSkippedLabel: 'skipped',
+  overdueSectionTitle: 'Overdue',
+  overdueNoneLabel: 'None',
+  overdueLongtermLabel: 'long-term task awaiting your call',
+  overdueReviewLabel: 'orchestration review stalled',
+  overdueWaitingSuffix: 'h waiting',
+  overdueThresholdSuffix: 'threshold',
+  htmlOverdueTitle: 'Overdue',
   groupTasksRollupLabel: 'Group task updates',
   twinDelegateIntro: 'Twin-delegated orchestrations touched:',
   longTermIntro: 'Long-term projects:',
@@ -229,6 +244,13 @@ export const DAILY_REPORT_STRINGS_ZH: DailyReportStrings = {
   runTierCrashedLabel: '异常',
   runTierTimeoutLabel: '超时',
   runTierSkippedLabel: '跳过',
+  overdueSectionTitle: '逾期处置',
+  overdueNoneLabel: '无',
+  overdueLongtermLabel: '长期任务等待拍板',
+  overdueReviewLabel: '编排复核停滞',
+  overdueWaitingSuffix: '小时待处理',
+  overdueThresholdSuffix: '阈值',
+  htmlOverdueTitle: '逾期处置',
   groupTasksRollupLabel: '群任务动态',
   twinDelegateIntro: 'Twin 自动派单触及：',
   longTermIntro: '长期项目：',
@@ -528,11 +550,51 @@ export const buildDailyReportMachineRollupMarkdown = (
  * brain is unavailable: needs-you links, per-bot one-liners, owner-task
  * table, long-term progress, machine rollups, and the agenda.
  */
+/**
+ * T-B forced overdue section — 宿主直出. Previously a task waiting on the
+ * owner for days and a review stalled for a week only ever got a suggestion
+ * sentence from the brain ("待处置不构成处置"); this section is generated
+ * deterministically from the collector's overdue facts and is ALWAYS present,
+ * reading 无 when nothing is overdue, so its absence can never be mistaken
+ * for silence-by-omission.
+ */
+export const buildDailyReportOverdueMarkdown = (
+  facts: DailyReportFacts,
+  strings: DailyReportStrings,
+): string => {
+  const items = facts.machineActivity.overdueItems ?? [];
+  const lines = items.map((item) => {
+    const label = item.kind === 'orchestration_review_stalled'
+      ? strings.overdueReviewLabel
+      : strings.overdueLongtermLabel;
+    return `- 🔴 ${sanitizeMarkdownLinkText(item.title)} — ${label} · ${item.ageHours}${strings.overdueWaitingSuffix}（${strings.overdueThresholdSuffix} ${item.thresholdHours}）`;
+  });
+  return [`**${strings.overdueSectionTitle}**`, '', lines.length > 0 ? lines.join('\n') : `- ${strings.overdueNoneLabel}`].join('\n');
+};
+
+/** HTML twin of the forced overdue section: the card always renders. */
+const buildOverdueHtml = (facts: DailyReportFacts, strings: DailyReportStrings): string => {
+  const items = facts.machineActivity.overdueItems ?? [];
+  const body = items.length > 0
+    ? items.map((item) => {
+      const label = item.kind === 'orchestration_review_stalled'
+        ? strings.overdueReviewLabel
+        : strings.overdueLongtermLabel;
+      return `<div class="need red"><div class="t">🔴 ${escapeHtml(item.title)}</div><div class="act">${escapeHtml(label)} · ${item.ageHours}${escapeHtml(strings.overdueWaitingSuffix)} · ${escapeHtml(strings.overdueThresholdSuffix)} ${item.thresholdHours}</div></div>`;
+    }).join('')
+    : `<div class="need link"><div class="t" style="opacity:.65">${escapeHtml(strings.overdueNoneLabel)}</div></div>`;
+  return `<div class="card"><h2>${escapeHtml(strings.htmlOverdueTitle)}</h2>${body}</div>`;
+};
+
 export const buildDeterministicBriefing = (
   facts: DailyReportFacts,
   strings: DailyReportStrings,
 ): string => {
   const sections: string[] = [];
+
+  // T-B: the forced overdue section leads the briefing — escalations are the
+  // first thing the owner should see, ahead of every narrative section.
+  sections.push(buildDailyReportOverdueMarkdown(facts, strings));
 
   const followUps = buildDailyReportFollowUpListMarkdown(facts, strings);
   if (followUps) sections.push(followUps);
@@ -901,7 +963,7 @@ export const buildDailyReportHtml = (input: {
 
   <div class="cols">
     <div>${buildBotCardsHtml(facts, strings, brainLines)}${ownerTaskRows ? `<div class="card"><h2>${escapeHtml(strings.htmlOwnerTasks)}</h2><table><thead><tr><th>${escapeHtml(strings.columnTask)}</th><th>${escapeHtml(strings.htmlStatus)}</th><th>${escapeHtml(strings.htmlSteps)}</th><th>${escapeHtml(strings.columnProgress)}</th></tr></thead><tbody>${ownerTaskRows}</tbody></table></div>` : ''}</div>
-    <div>${buildNeedsHtml(facts, strings, sections?.needsYou ?? [])}${buildProgressHtml(facts, strings)}${buildAgendaHtml(facts, strings)}</div>
+    <div>${buildOverdueHtml(facts, strings)}${buildNeedsHtml(facts, strings, sections?.needsYou ?? [])}${buildProgressHtml(facts, strings)}${buildAgendaHtml(facts, strings)}</div>
   </div>
 </div>
 </body>

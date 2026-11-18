@@ -43,6 +43,7 @@ import {
   buildDailyReportFollowUpListMarkdown,
   buildDailyReportHtml,
   buildDailyReportMachineRollupMarkdown,
+  buildDailyReportOverdueMarkdown,
   buildDailyReportOwnerTasksMarkdown,
   buildDeterministicBotLines,
   buildDeterministicBriefing,
@@ -73,6 +74,7 @@ const sampleFacts = (overrides = {}) => ({
     { sessionId: 'hs1', title: 'Landing copy', botName: 'Writer', sessionType: 'standard', humanUserMessages: 3, assistantMessages: 5, lastAssistantExcerpt: 'Draft ready', lastUserExcerpt: 'go' },
   ],
   machineActivity: {
+    overdueItems: [],
     scheduledRuns: [{ taskName: 'Nightly inspect', botName: 'Ops', status: 'success', skipReason: null, startedAt: null, error: null }],
     groupTaskTransitions: [{ taskId: 9, title: 'Group push', fromStatus: 'executing', toStatus: 'review', actor: 'chair', reason: null, createdAt: null }],
     longTermEvents: [{ taskId: 'lt1', taskTitle: 'Q4 roadmap', subtaskId: null, kind: 'stage_changed', actor: 'twin', detail: 'active', createdAt: null }],
@@ -294,6 +296,69 @@ test('HTML KPI T-A: a zero-work run removes the all-succeeded badge', () => {
   });
   assert.doesNotMatch(emptyHtml, /全部成功/, 'a zero-work run must remove the all-succeeded badge');
   assert.match(emptyHtml, /Pool skeleton/, 'the empty run surfaces in the needs-you cards');
+});
+
+test('overdue section T-B: forced present with title and wait durations', () => {
+  const facts = sampleFacts({
+    machineActivity: {
+      ...sampleFacts().machineActivity,
+      overdueItems: [
+        { kind: 'longterm_waiting_owner', title: '挂了 30h 的任务', taskId: 'lt-1', status: 'waiting_owner', ageHours: 30.5, thresholdHours: 24 },
+        { kind: 'orchestration_review_stalled', title: '停了 96h 的复核', taskId: 'orch-1', status: 'review', ageHours: 96, thresholdHours: 72 },
+      ],
+    },
+  });
+  const markdown = buildDailyReportOverdueMarkdown(facts, DAILY_REPORT_STRINGS_ZH);
+  assert.match(markdown, /\*\*逾期处置\*\*/);
+  assert.match(markdown, /挂了 30h 的任务 — 长期任务等待拍板 · 30\.5小时待处理（阈值 24）/);
+  assert.match(markdown, /停了 96h 的复核 — 编排复核停滞 · 96小时待处理（阈值 72）/);
+
+  const en = buildDailyReportOverdueMarkdown(facts, DAILY_REPORT_STRINGS_EN);
+  assert.match(en, /\*\*Overdue\*\*/);
+  assert.match(en, /30\.5h waiting/);
+});
+
+test('overdue section T-B: no overdue keeps the structure stable with a fixed 无 slot', () => {
+  const markdown = buildDailyReportOverdueMarkdown(sampleFacts(), DAILY_REPORT_STRINGS_ZH);
+  assert.equal(markdown, '**逾期处置**\n\n- 无');
+  const en = buildDailyReportOverdueMarkdown(sampleFacts(), DAILY_REPORT_STRINGS_EN);
+  assert.equal(en, '**Overdue**\n\n- None');
+});
+
+test('overdue section T-B: leads the deterministic briefing and renders as an always-present HTML card', () => {
+  const facts = sampleFacts({
+    machineActivity: {
+      ...sampleFacts().machineActivity,
+      overdueItems: [
+        { kind: 'longterm_waiting_owner', title: '挂了 30h 的任务', taskId: 'lt-1', status: 'waiting_owner', ageHours: 30.5, thresholdHours: 24 },
+      ],
+    },
+  });
+  const briefing = buildDeterministicBriefing(facts, DAILY_REPORT_STRINGS_ZH);
+  const overdueAt = briefing.indexOf('**逾期处置**');
+  assert.ok(overdueAt >= 0);
+  assert.ok(briefing.indexOf('需要你') === -1 || overdueAt < briefing.indexOf('需要你'), 'escalations precede every narrative section');
+  const emptyBriefing = buildDeterministicBriefing(sampleFacts(), DAILY_REPORT_STRINGS_ZH);
+  assert.ok(emptyBriefing.startsWith('**逾期处置**\n\n- 无'), 'the section is present (无) even on a quiet day');
+
+  const html = buildDailyReportHtml({
+    facts,
+    strings: DAILY_REPORT_STRINGS_ZH,
+    dateLabel: '2026-11-18',
+    headlineText: '总览。',
+    proseMarkdown: '',
+  });
+  assert.match(html, /<h2>逾期处置<\/h2>/);
+  assert.match(html, /挂了 30h 的任务/);
+  const emptyHtml = buildDailyReportHtml({
+    facts: sampleFacts(),
+    strings: DAILY_REPORT_STRINGS_ZH,
+    dateLabel: '2026-11-18',
+    headlineText: '总览。',
+    proseMarkdown: '',
+  });
+  assert.match(emptyHtml, /<h2>逾期处置<\/h2>/, 'the card always renders');
+  assert.match(emptyHtml, /<div class="t" style="opacity:\.65">无<\/div>/);
 });
 
 test('bot one-liner text: prefix folded, volume + peer + OpenTeam + chain folded in', () => {

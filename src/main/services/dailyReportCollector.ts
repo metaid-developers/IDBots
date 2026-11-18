@@ -64,6 +64,13 @@ export const DAILY_REPORT_GROUP_TASK_TITLE_MAX_CHARS = 100;
 export const DAILY_REPORT_MAX_LONG_TERM_EVENTS = 10;
 export const DAILY_REPORT_MAX_LONG_TERM_TASKS = 8;
 export const DAILY_REPORT_LONG_TERM_TITLE_MAX_CHARS = 100;
+// T-B overdue escalation thresholds (hours), host-side constants so they can
+// be retuned without touching the queries: a long-term task waiting on the
+// owner past 24h and an orchestration review stalled past 72h both land in
+// the report's forced overdue section (宿主直出，不靠 bot 自觉).
+export const DAILY_REPORT_OVERDUE_WAITING_OWNER_HOURS = 24;
+export const DAILY_REPORT_OVERDUE_REVIEW_STALLED_HOURS = 72;
+export const DAILY_REPORT_MAX_OVERDUE_ITEMS = 12;
 export const DAILY_REPORT_MAX_ONLINE_BOTS = 20;
 /** 80KB: a full 20-bot day (the system-wide bot cap) with dream digests
  * landed needs ~60-70KB; smaller budgets forced the shrink ladder to drop
@@ -143,6 +150,22 @@ export interface DailyReportScheduledRun {
   skipReason: string | null;
   startedAt: string | null;
   error: string | null;
+}
+
+/**
+ * One host-side overdue fact (T-B): something the owner owes or a review
+ * nobody is doing, past its escalation threshold. Age is computed from the
+ * row's existing `updated_at` — the last touch of the waiting card — which
+ * under-reports slightly (a worker progress note also refreshes it) but can
+ * never fabricate an overdue item.
+ */
+export interface DailyReportOverdueItem {
+  kind: 'longterm_waiting_owner' | 'orchestration_review_stalled';
+  title: string;
+  taskId: string | null;
+  status: string;
+  ageHours: number;
+  thresholdHours: number;
 }
 
 export interface DailyReportGroupTaskTransition {
@@ -270,6 +293,8 @@ export interface DailyReportFacts {
     longTermEvents: DailyReportLongTermEvent[];
     longTermProgress: DailyReportLongTermProgress[];
     twinDelegateOrchestrationsInWindow: number;
+    /** T-B: host-collected overdue facts (forced report section). */
+    overdueItems: DailyReportOverdueItem[];
   };
   onlineActivity: DailyReportOnlineActivity[];
   /** v2: per-bot "what did this bot do" rollup (all session types + runs + external). */
@@ -328,6 +353,45 @@ export const computeDailyReportWindow = (input: {
   }
   return { windowStartMs, windowEndMs };
 };
+
+/**
+ * Shape overdue rows (T-B) — pure. Input rows carry { kind, title, taskId,
+ * status, updated_at }; `nowMs` is the report window end. An item enters the
+ * section only when its age reaches the threshold for its kind (equal counts:
+ * 24.0h waiting IS overdue at a 24h threshold). Unknown/absent timestamps
+ * never become overdue. Sorted longest-waiting first, capped.
+ */
+export const shapeOverdueRows = (
+  rows: ReadonlyArray<Record<string, unknown>>,
+  nowMs: number,
+  waitingOwnerThresholdHours: number = DAILY_REPORT_OVERDUE_WAITING_OWNER_HOURS,
+  reviewStalledThresholdHours: number = DAILY_REPORT_OVERDUE_REVIEW_STALLED_HOURS,
+  maxItems: number = DAILY_REPORT_MAX_OVERDUE_ITEMS,
+): DailyReportOverdueItem[] =>
+  rows
+    .map((row) => {
+      const kind = row.kind === 'orchestration_review_stalled'
+        ? 'orchestration_review_stalled' as const
+        : 'longterm_waiting_owner' as const;
+      const thresholdHours = kind === 'orchestration_review_stalled'
+        ? reviewStalledThresholdHours
+        : waitingOwnerThresholdHours;
+      const updatedAtMs = Date.parse(String(row.updated_at ?? ''));
+      if (!Number.isFinite(updatedAtMs)) return null;
+      const ageHours = (nowMs - updatedAtMs) / 3_600_000;
+      if (ageHours < thresholdHours) return null;
+      return {
+        kind,
+        title: capDailyReportText(row.title, DAILY_REPORT_LONG_TERM_TITLE_MAX_CHARS) || '(untitled)',
+        taskId: row.taskId != null && String(row.taskId) !== '' ? String(row.taskId) : null,
+        status: String(row.status ?? ''),
+        ageHours: Math.round(ageHours * 10) / 10,
+        thresholdHours,
+      };
+    })
+    .filter((item): item is DailyReportOverdueItem => item !== null)
+    .sort((a, b) => b.ageHours - a.ageHours)
+    .slice(0, maxItems);
 
 /** Whitespace-collapse + UTF-16-safe prefix cut with an ellipsis marker. */
 export const capDailyReportText = (text: unknown, maxChars: number): string => {
@@ -832,6 +896,7 @@ export const computeDailyReportHasAnyActivity = (facts: {
     groupTaskTransitions: readonly unknown[];
     longTermEvents: readonly unknown[];
     twinDelegateOrchestrationsInWindow: number;
+    overdueItems: readonly unknown[];
   };
   onlineActivity: ReadonlyArray<{ privateMessageCount: number; groupMessageCount: number }>;
   newSessionCount: number;
@@ -843,6 +908,10 @@ export const computeDailyReportHasAnyActivity = (facts: {
   || facts.machineActivity.groupTaskTransitions.length > 0
   || facts.machineActivity.longTermEvents.length > 0
   || facts.machineActivity.twinDelegateOrchestrationsInWindow > 0
+  // T-B: a day whose only signal is an overdue escalation still ships — the
+  // forced section must not be hidden by an otherwise-quiet window.
+  // Defensive read: legacy callers (tests, older embedders) predate the field.
+  || (facts.machineActivity.overdueItems ?? []).length > 0
   || facts.onlineActivity.some((entry) => entry.privateMessageCount > 0 || entry.groupMessageCount > 0)
   || facts.newSessionCount > 0;
 
@@ -1151,6 +1220,43 @@ export const collectDailyReportFacts = (input: {
         percentComplete: liveTotal === 0 ? 0 : Math.round((accepted / liveTotal) * 100),
       };
     }));
+
+  // T-B overdue facts (forced report section): owner-waiting long-term
+  // tasks and stalled orchestration reviews, straight from the existing
+  // status/timestamp columns — no new tables, no new state.
+  const overdueItems = safeCollect('overdueItems', [] as DailyReportOverdueItem[], () => {
+    const rows: Array<Record<string, unknown>> = [];
+    // Active tasks whose sub-project sits in waiting_owner: the age basis is
+    // the oldest waiting card's updated_at (when this wait began, as far as
+    // the schema can say — any card touch refreshes it, so the section
+    // under-reports rather than false-alarms).
+    const waitingRows = db.queryAll<Record<string, unknown>>(`
+      SELECT t.id AS task_id, t.title AS title, st.status AS status, MIN(st.updated_at) AS updated_at
+      FROM long_term_tasks t
+      JOIN long_term_subtasks st ON st.task_id = t.id
+      WHERE t.stage = 'active' AND st.status = 'waiting_owner'
+      GROUP BY t.id
+    `);
+    for (const row of waitingRows) rows.push({ ...row, kind: 'longterm_waiting_owner' });
+    // defining/paused drafts are owner-waiting too (deriveManagedState maps
+    // both stages to waiting_owner); age basis is the task's updated_at.
+    const draftRows = db.queryAll<Record<string, unknown>>(`
+      SELECT id AS task_id, title AS title, stage AS status, updated_at
+      FROM long_term_tasks
+      WHERE stage IN ('defining', 'paused')
+    `);
+    for (const row of draftRows) rows.push({ ...row, kind: 'longterm_waiting_owner' });
+    // Orchestration reviews nobody is working: task-level review status with
+    // its updated_at (the 105-item UI review stall that only got a suggestion
+    // sentence before).
+    const reviewRows = db.queryAll<Record<string, unknown>>(`
+      SELECT id AS task_id, owner_intent AS title, status AS status, updated_at
+      FROM orchestration_tasks
+      WHERE status = 'review'
+    `);
+    for (const row of reviewRows) rows.push({ ...row, kind: 'orchestration_review_stalled' });
+    return shapeOverdueRows(rows, msEnd);
+  });
 
   const twinDelegateOrchestrationsInWindow = safeCollect('twinDelegateOrchestrations', 0, () => {
     const row = db.queryAll<{ cnt: number }>(`
@@ -1597,6 +1703,7 @@ export const collectDailyReportFacts = (input: {
       longTermEvents,
       longTermProgress,
       twinDelegateOrchestrationsInWindow,
+      overdueItems,
     },
     onlineActivity,
     botActivity,
