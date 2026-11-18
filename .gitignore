@@ -1090,3 +1090,4 @@ blob-report/
 !tests/studioTaskSessionDecouple.test.mjs
 !tests/taskHierarchyAndStageSync.test.mjs
 !tests/studioFallbackEffortFloor.test.ts
+!tests/studioQuotaBypassRouting.test.ts

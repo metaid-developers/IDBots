@@ -10832,6 +10832,76 @@ export class CoworkRunner extends EventEmitter {
     return fallbackRoute
   }
 
+  // ── Provider quota-exhaustion memory (2026-11-18 Studio post-mortem) ──
+  //
+  // A 429 quota death (e.g. the free relay's insufficient_me) ends ONE turn,
+  // but the next turn re-resolved the same dead route and paid the whole
+  // doomed-attempt tax again — the incident session hit the relay 16 times
+  // over nine hours (a failed attempt + an auto-continue + a switch notice
+  // per turn) while the balance could not have paid for a single request.
+  // Quota does not heal mid-window, so the runner remembers the exhausted
+  // provider (account-wide — the ME balance is shared by every session) and
+  // the quota pre-gate routes subsequent turns straight to a payable
+  // alternative. Re-probe cadence: after PROVIDER_QUOTA_REPROBE_AFTER_MS one
+  // real attempt re-tests the provider (a recharge must recover service
+  // without an app restart); a 429 on that probe re-marks the provider for
+  // another window. Any successful turn on the provider clears the memory
+  // immediately.
+
+  private static readonly PROVIDER_QUOTA_REPROBE_AFTER_MS = 10 * 60 * 1000;
+
+  private readonly providerQuotaExhausted = new Map<string, { sinceMs: number; lastProbeAt: number }>();
+  /** Sessions already notified about a given exhaustion period — one bypass notice per period per session. */
+  private readonly quotaBypassNoticeBySession = new Map<string, { provider: string; sinceMs: number }>();
+
+  /** The exhaustion entry when the provider should still be bypassed, else null (absent, or the re-probe window is due). */
+  private quotaExhaustedBypassEntry(provider: string): { sinceMs: number; lastProbeAt: number } | null {
+    const entry = this.providerQuotaExhausted.get(provider);
+    if (!entry) return null;
+    return Date.now() - entry.lastProbeAt < CoworkRunner.PROVIDER_QUOTA_REPROBE_AFTER_MS ? entry : null;
+  }
+
+  private markProviderQuotaExhausted(provider: string): void {
+    const now = Date.now();
+    const entry = this.providerQuotaExhausted.get(provider);
+    if (entry) {
+      entry.lastProbeAt = now;
+    } else {
+      this.providerQuotaExhausted.set(provider, { sinceMs: now, lastProbeAt: now });
+    }
+  }
+
+  private clearProviderQuotaExhausted(provider: string): void {
+    this.providerQuotaExhausted.delete(provider);
+    for (const [sessionId, noticed] of this.quotaBypassNoticeBySession) {
+      if (noticed.provider === provider) this.quotaBypassNoticeBySession.delete(sessionId);
+    }
+  }
+
+  /**
+   * Payable alternative for a quota-exhausted route, mirroring the GT-02
+   * fallback order (bot fallback brain → current default → system rescue).
+   * Both resolvers already decline the failed route's upstream, so a null
+   * return genuinely means "no alternative" and the turn keeps its normal
+   * ladder (the settlement copy then explains the quota death).
+   */
+  private resolveQuotaBypassDshRoute(
+    sessionId: string,
+    deadRoute: DshProviderRouteInfo,
+  ): { route: DshProviderRouteInfo; targetZh: string; targetEn: string } | null {
+    const brainFallback = this.resolveSessionFallbackDshRoute(sessionId, deadRoute);
+    if (brainFallback) {
+      return { route: brainFallback, targetZh: '该 Bot 的备用模型', targetEn: "the bot's fallback model" };
+    }
+    const rescue = this.resolveCurrentDefaultDshRoute(sessionId, deadRoute);
+    if (rescue.route) {
+      return rescue.source === 'system-rescue'
+        ? { route: rescue.route, targetZh: '系统兜底模型', targetEn: 'the system rescue model' }
+        : { route: rescue.route, targetZh: '当前默认模型', targetEn: 'the current default model' };
+    }
+    return null;
+  }
+
   /**
    * Last-resort runtime rescue route (2026-10-08 stale-binding post-mortem):
    * when the turn's bound route (session model pick, or a bot brain pinned to
@@ -13016,7 +13086,64 @@ export class CoworkRunner extends EventEmitter {
       }
       };
 
-      let outcome = await runGuardedTurn(effectiveDshPrompt, promptImages);
+      // Quota-exhaustion pre-gate (2026-11-18 Studio post-mortem): a provider
+      // whose quota died earlier in this window is skipped BEFORE the turn
+      // runs — in the incident session every turn re-attempted the dead
+      // relay, burned a failed attempt + auto-continue, and printed another
+      // switch notice, 16 times over one evening. The bypass route mirrors
+      // the GT-02 order (bot fallback brain → current default → system
+      // rescue); when nothing payable resolves, the turn keeps its normal
+      // ladder and the settlement copy explains the death. One bypass notice
+      // per exhaustion period per session (自动+明示, owner ruling
+      // 2026-11-19); the periodic re-probe and any successful turn on the
+      // provider restore the primary route automatically.
+      let quotaBypassRoute: DshProviderRouteInfo | null = null;
+      const quotaBypassEntry = this.quotaExhaustedBypassEntry(route.provider);
+      if (quotaBypassEntry) {
+        const bypass = this.resolveQuotaBypassDshRoute(sessionId, route);
+        if (bypass) {
+          quotaBypassRoute = bypass.route;
+          const deadProviderLabel = isFreeQuotaProvider(route.provider) ? FREE_PROVIDER_DISPLAY_NAME : route.provider;
+          const altProviderLabel = isFreeQuotaProvider(bypass.route.provider) ? FREE_PROVIDER_DISPLAY_NAME : bypass.route.provider;
+          const noticed = this.quotaBypassNoticeBySession.get(sessionId);
+          if (!noticed || noticed.provider !== route.provider || noticed.sinceMs !== quotaBypassEntry.sinceMs) {
+            this.quotaBypassNoticeBySession.set(sessionId, { provider: route.provider, sinceMs: quotaBypassEntry.sinceMs });
+            if (this.quotaBypassNoticeBySession.size > 256) {
+              for (const [key, entry] of [...this.quotaBypassNoticeBySession]) {
+                if (!this.quotaExhaustedBypassEntry(entry.provider)) this.quotaBypassNoticeBySession.delete(key);
+              }
+            }
+            this.addSystemMessage(
+              sessionId,
+              tApp(
+                isFreeQuotaProvider(route.provider)
+                  ? `${deadProviderLabel} 免费中转积分不足（请求按输入量计费，长会话每轮成本会随上下文增长）。本轮起已自动改用${bypass.targetZh} ${bypass.route.model}（${altProviderLabel}）继续；充值积分或在 设置 > 模型 配置自有 Provider 后会自动切回。`
+                  : `模型供应商 ${deadProviderLabel} 的 ${route.model} 额度不足。本轮起已自动改用${bypass.targetZh} ${bypass.route.model}（${altProviderLabel}）继续；充值后会自动切回。`,
+                isFreeQuotaProvider(route.provider)
+                  ? `${deadProviderLabel} free relay is out of ME credits (requests are billed by input size, so the per-turn cost grows as the conversation grows). Turns now continue automatically on ${bypass.targetEn} ${bypass.route.model} (${altProviderLabel}); top up credits or configure your own provider under Settings > Models to switch back.`
+                  : `Provider ${deadProviderLabel} model ${route.model} is out of credits. Turns now continue automatically on ${bypass.targetEn} ${bypass.route.model} (${altProviderLabel}); top up to switch back.`,
+              ),
+              {
+                dshRouteFallback: true,
+                quotaBypass: true,
+                fromProvider: route.provider,
+                fromModel: route.model,
+                toProvider: bypass.route.provider,
+                toModel: bypass.route.model,
+              },
+            );
+          }
+          coworkLog('INFO', 'runDshSessionLocal', 'Quota-exhausted provider bypassed for this turn', {
+            sessionId,
+            deadRoute: { provider: route.provider, model: route.model },
+            bypassRoute: { provider: bypass.route.provider, model: bypass.route.model },
+            sinceMs: quotaBypassEntry.sinceMs,
+          });
+        }
+      }
+      const quotaBypassOverride = quotaBypassRoute ?? undefined;
+
+      let outcome = await runGuardedTurn(effectiveDshPrompt, promptImages, quotaBypassOverride);
 
       // Empty terminal turn auto-continue (parity with the Claude path's
       // bf15f63d fix): DeepSeek occasionally ends a turn after emitting only a
@@ -13035,7 +13162,7 @@ export class CoworkRunner extends EventEmitter {
         outcome = await runGuardedTurn(
           EMPTY_TERMINAL_TURN_CONTINUE_PROMPT,
           undefined,
-          undefined,
+          quotaBypassOverride,
           { reasoningEffort: CONTINUE_TURN_REASONING_EFFORT },
         );
       }
@@ -13054,7 +13181,7 @@ export class CoworkRunner extends EventEmitter {
           outcome = await runGuardedTurn(
             FINALIZATION_TURN_CONTINUE_PROMPT,
             undefined,
-            undefined,
+            quotaBypassOverride,
             { reasoningEffort: CONTINUE_TURN_REASONING_EFFORT, finalizing: true },
           );
         } finally {
@@ -13082,7 +13209,7 @@ export class CoworkRunner extends EventEmitter {
         outcome = await runGuardedTurn(
           TRUNCATED_TURN_CONTINUE_PROMPT,
           undefined,
-          undefined,
+          quotaBypassOverride,
           { reasoningEffort: CONTINUE_TURN_REASONING_EFFORT },
         );
       }
@@ -13108,7 +13235,7 @@ export class CoworkRunner extends EventEmitter {
           'Turn died on malformed streamed tool-call JSON — auto-continuing once',
           { sessionId, code: outcome.error?.code, message: outcome.error?.message }
         );
-        outcome = await runGuardedTurn(MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT);
+        outcome = await runGuardedTurn(MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, undefined, quotaBypassOverride);
       }
 
       // Transient environmental failure (TRANSPORT/TIMEOUT/RATE_LIMIT/SERVER/
@@ -13122,8 +13249,9 @@ export class CoworkRunner extends EventEmitter {
       // error settlement below; non-transient codes never enter this path.
       // Route behind the most recent turn attempt — the quota notice below
       // must name the route that actually ran out of credit, which can be the
-      // fallback brain route after a provider-outage switch, not `route`.
-      let lastAttemptRoute = route;
+      // fallback brain route after a provider-outage switch, or the quota
+      // bypass route from the pre-gate above, not `route`.
+      let lastAttemptRoute = quotaBypassRoute ?? route;
       for (let resumeAttempt = 1; resumeAttempt <= DSH_TRANSIENT_TURN_MAX_RESUMES; resumeAttempt += 1) {
         if (outcome.kind !== 'error' || activeSession.abortController.signal.aborted || !isTransientDshTurnError(outcome)) break;
         coworkLog(
@@ -13132,7 +13260,7 @@ export class CoworkRunner extends EventEmitter {
           'Transient DSH turn failure — auto-resuming turn after provider/network blip',
           { sessionId, code: outcome.error?.code, message: outcome.error?.message, resumeAttempt, maxResumes: DSH_TRANSIENT_TURN_MAX_RESUMES }
         );
-        outcome = await runGuardedTurn(TRANSIENT_TURN_RESUME_PROMPT);
+        outcome = await runGuardedTurn(TRANSIENT_TURN_RESUME_PROMPT, undefined, quotaBypassOverride);
       }
 
       // GT-02 provider-outage fallback: the primary route burned its whole
@@ -13351,6 +13479,20 @@ export class CoworkRunner extends EventEmitter {
           lastAttemptRoute = switchRescueRoute;
           outcome = await runGuardedTurn(effectiveDshPrompt, promptImages, switchRescueRoute);
         }
+      }
+
+      // Quota-exhaustion memory upkeep (2026-11-18 Studio post-mortem): a
+      // quota death is remembered per provider so the NEXT turn skips the
+      // dead route at the pre-gate above (the re-probe happens at most once
+      // per PROVIDER_QUOTA_REPROBE_AFTER_MS window); a completed turn clears
+      // the memory for whichever route actually served it, so a recharge or
+      // a top-up recovers the primary route without an app restart.
+      if (outcome.kind === 'error') {
+        if (isQuotaDshTurnError(outcome)) {
+          this.markProviderQuotaExhausted(lastAttemptRoute.provider);
+        }
+      } else {
+        this.clearProviderQuotaExhausted(lastAttemptRoute.provider);
       }
 
       if (activeSession.abortController.signal.aborted) {
