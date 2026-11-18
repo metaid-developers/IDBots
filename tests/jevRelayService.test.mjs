@@ -17,12 +17,14 @@ import Module from 'node:module';
 const require = Module.createRequire(import.meta.url);
 
 const service = require('../dist-electron/main/services/jevRelayService.js');
-const {
+  const {
   initJevRelayService,
   invalidateJevRelayCredentials,
   resetJevRelayServiceForTests,
+  resetJevRelayTransportForTests,
   resolveJevRelayCredentials,
   resolveCerebellumRuntimeConfig,
+  createDirectFirstFetch,
   createJevRelayFetchWithKeyRetry,
   createSignalBoundedFetch,
   parseJevRelayErrorCode,
@@ -749,4 +751,58 @@ test('getJevRelayQuotaStatus reports breaker exhaustion and emits WARN log once 
   assert.equal(getJevRelayQuotaStatus(now + 2000).retryAfterMs, JEV_RELAY_QUOTA_BREAKER_MS - 1000);
   const warnLines = lines.filter((line) => line.tag === 'jevRelay:quota' && line.level === 'WARN');
   assert.equal(warnLines.length, 1);
+});
+
+test('createDirectFirstFetch uses direct fetch first, falls back to proxy on transport errors, and ignores AbortError', async () => {
+  resetJevRelayTransportForTests();
+  try {
+    let nowMs = 5_000_000;
+    const calls = [];
+    const transport = createDirectFirstFetch(
+      async (url) => {
+        calls.push(['direct', url]);
+        if (url.includes('/fail-direct')) {
+          throw new TypeError('fetch failed');
+        }
+        if (url.includes('/abort')) {
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          throw err;
+        }
+        return makeResponse(200);
+      },
+      async (url) => {
+        calls.push(['proxy', url]);
+        return makeResponse(200);
+      },
+      { now: () => nowMs, cooldownMs: 60_000 },
+    );
+
+    // Healthy direct call does not touch proxy.
+    const okRes = await transport('https://www.metaso.network/ok', {});
+    assert.equal(okRes.status, 200);
+    assert.deepEqual(calls, [['direct', 'https://www.metaso.network/ok']]);
+
+    // AbortError must NOT trigger proxy fallback.
+    await assert.rejects(() => transport('https://www.metaso.network/abort', {}), { name: 'AbortError' });
+    assert.equal(calls.length, 2);
+
+    // Non-abort transport error falls back to proxy immediately and caches proxy for cooldown.
+    const fallbackRes = await transport('https://www.metaso.network/fail-direct', {});
+    assert.equal(fallbackRes.status, 200);
+    assert.deepEqual(calls.slice(2), [
+      ['direct', 'https://www.metaso.network/fail-direct'],
+      ['proxy', 'https://www.metaso.network/fail-direct'],
+    ]);
+
+    await transport('https://www.metaso.network/during-cooldown', {});
+    assert.deepEqual(calls.at(-1), ['proxy', 'https://www.metaso.network/during-cooldown']);
+
+    // After cooldown expires, probes direct again.
+    nowMs += 61_000;
+    await transport('https://www.metaso.network/after-cooldown', {});
+    assert.deepEqual(calls.at(-1), ['direct', 'https://www.metaso.network/after-cooldown']);
+  } finally {
+    resetJevRelayTransportForTests();
+  }
 });

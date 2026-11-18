@@ -93,7 +93,7 @@ import {
   type TaskIntentRubricConfig,
 } from './taskIntentRubric';
 
-export const CEREBELLUM_TURN_DECISION_TIMEOUT_MS = 1500;
+export const CEREBELLUM_TURN_DECISION_TIMEOUT_MS = 2500;
 export const CEREBELLUM_BUNDLE_MAX_MEMORIES = 15;
 export const CEREBELLUM_BUNDLE_MEMORY_TEXT_MAX_CHARS = 220;
 export const CEREBELLUM_BUNDLE_MAX_KNOWLEDGE = 12;

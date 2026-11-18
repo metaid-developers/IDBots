@@ -11,7 +11,7 @@
 import type { ResolvedCerebellumConfig } from '../libs/cerebellumConfig';
 import type { CerebellumFetchLike } from './memoryRank';
 
-export const CEREBELLUM_CONVERSATION_RANK_TIMEOUT_MS = 1500;
+export const CEREBELLUM_CONVERSATION_RANK_TIMEOUT_MS = 2500;
 /** The tool itself never returns more than 10 chats. */
 export const CEREBELLUM_CONVERSATION_RANK_MAX_CANDIDATES = 10;
 /** One hit has nothing to reorder. */

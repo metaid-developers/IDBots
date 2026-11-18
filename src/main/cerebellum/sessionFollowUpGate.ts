@@ -42,7 +42,7 @@ function collapseWhitespace(value: unknown): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
 
-export const CEREBELLUM_SESSION_FOLLOW_UP_TIMEOUT_MS = 1500;
+export const CEREBELLUM_SESSION_FOLLOW_UP_TIMEOUT_MS = 2500;
 
 /**
  * Noul probability at or above which the completed turn counts as waiting on

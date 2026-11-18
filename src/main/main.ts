@@ -53,6 +53,7 @@ import type { MemoryBackend } from './memory/memoryBackend';
 import { createOwnerMemoryScope } from './memory/memoryScope';
 import { CEREBELLUM_FREE_PROVIDER, resolveCerebellumConfig, type ResolvedCerebellumConfig } from './libs/cerebellumConfig';
 import {
+  createDirectFirstFetch,
   createJevRelayCallRecorder,
   createJevRelayFetchWithKeyRetry,
   createSignalBoundedFetch,
@@ -3745,15 +3746,23 @@ const cerebellumFetchFor = (config: ResolvedCerebellumConfig) => {
   // included. The bind's overloaded signature defeats the wrappers' generic
   // inference, so pin the shape every cerebellum call site consumes
   // (ok/status/json).
-  const rawFetch = createSignalBoundedFetch(
-    session.defaultSession.fetch.bind(session.defaultSession) as unknown as (
-      url: string,
-      init: Record<string, unknown>,
-    ) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>,
-  );
+  type CerebellumFetch = (
+    url: string,
+    init: Record<string, unknown>,
+  ) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+  const sessionFetch = session.defaultSession.fetch.bind(session.defaultSession) as unknown as CerebellumFetch;
   if (config.provider !== CEREBELLUM_FREE_PROVIDER) {
-    return rawFetch;
+    // Direct TypeSafe (`api.typesafe.ai`) may be region-blocked unless routed
+    // through the system proxy via session.defaultSession.fetch.
+    return createSignalBoundedFetch(sessionFetch);
   }
+  // IDBots-JEV (`www.metaso.network`) prefers direct Node fetch (~20ms warm,
+  // avoiding slow local proxy TLS handshakes) and falls back to sessionFetch
+  // only when direct transport fails.
+  const directFetch = globalThis.fetch.bind(globalThis) as unknown as CerebellumFetch;
+  const rawFetch = createSignalBoundedFetch(
+    createDirectFirstFetch(directFetch, sessionFetch),
+  );
   return createJevRelayCallRecorder(createJevRelayFetchWithKeyRetry(rawFetch));
 };
 

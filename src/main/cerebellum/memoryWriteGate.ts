@@ -44,7 +44,7 @@ function truncateUtf16Prefix(text: string, maxUnits: number): string {
  * but the gate still gets the same hard abort deadline as every cerebellum
  * call: one shot, then the brain extraction proceeds ungated.
  */
-export const CEREBELLUM_MEMORY_WRITE_GATE_TIMEOUT_MS = 1500;
+export const CEREBELLUM_MEMORY_WRITE_GATE_TIMEOUT_MS = 2500;
 
 /**
  * Noul probability at or above which the turn is worth a brain extraction

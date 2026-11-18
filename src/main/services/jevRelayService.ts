@@ -487,11 +487,63 @@ export function classifyJevRelayThrownError(error: unknown): JevRelayCallResultC
 export const JEV_RELAY_QUOTA_BREAKER_MS = 5 * 60 * 1000;
 export const JEV_RELAY_TIMEOUT_STREAK_THRESHOLD = 3;
 export const JEV_RELAY_TIMEOUT_BREAKER_MS = 90 * 1000;
+export const JEV_RELAY_PROXY_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000;
 
 let quotaExhaustedUntil = 0;
 let consecutiveTransientFailures = 0;
 let timeoutCircuitOpenUntil = 0;
 let relaySupportsQuestionTemplates = false;
+let proxyFallbackUntil = 0;
+
+export function resetJevRelayTransportForTests(): void {
+  proxyFallbackUntil = 0;
+}
+
+/**
+ * Direct-first transport for IDBots-JEV (`www.metaso.network`):
+ * Electron's `session.defaultSession.fetch` honors system proxies (e.g. local
+ * ClashX HTTP proxies where TLS handshakes alone measured 1.33-1.46s), whereas
+ * Node's direct `fetch` hits `www.metaso.network` in ~20-40ms warm (~240ms
+ * cold). When direct fetch fails with a non-abort transport error (e.g. a
+ * restricted corporate network that requires the system proxy), this wrapper
+ * falls back to `proxyFetch` immediately and remembers the fallback for
+ * `cooldownMs` before probing direct again.
+ */
+export function createDirectFirstFetch<R>(
+  directFetch: (url: string, init: Record<string, unknown>) => Promise<R>,
+  proxyFetch: (url: string, init: Record<string, unknown>) => Promise<R>,
+  options?: { now?: () => number; cooldownMs?: number; sink?: JevRelayLogSink },
+): (url: string, init: Record<string, unknown>) => Promise<R> {
+  const now = options?.now ?? Date.now;
+  const cooldownMs = options?.cooldownMs ?? JEV_RELAY_PROXY_FALLBACK_COOLDOWN_MS;
+  return async (url, init) => {
+    const signal = (init as { signal?: AbortSignal | null } | undefined)?.signal ?? null;
+    if (signal?.aborted) {
+      return directFetch(url, init);
+    }
+    const nowMs = now();
+    if (nowMs < proxyFallbackUntil) {
+      return proxyFetch(url, init);
+    }
+    try {
+      return await directFetch(url, init);
+    } catch (error) {
+      const code = classifyJevRelayThrownError(error);
+      if (code === 'timeout' || signal?.aborted) {
+        throw error;
+      }
+      const wasFallback = nowMs < proxyFallbackUntil;
+      proxyFallbackUntil = nowMs + cooldownMs;
+      if (!wasFallback) {
+        const sink = options?.sink ?? statsSink;
+        sink?.('WARN', 'jevRelay:transport', 'Direct fetch to IDBots-JEV failed; falling back to system proxy for 5m', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return proxyFetch(url, init);
+    }
+  };
+}
 
 export function doesJevRelaySupportTemplates(): boolean {
   return relaySupportsQuestionTemplates;
@@ -506,6 +558,11 @@ export function isJevRelayTimeoutCircuitOpen(nowMs: number = Date.now()): boolea
 }
 
 function noteJevRelayTransientFailure(nowMs: number): void {
+  if (timeoutCircuitOpenUntil > 0 && nowMs >= timeoutCircuitOpenUntil) {
+    // Cooldown expired -> half-open probe; require a fresh streak before re-tripping.
+    timeoutCircuitOpenUntil = 0;
+    consecutiveTransientFailures = 0;
+  }
   consecutiveTransientFailures += 1;
   if (consecutiveTransientFailures >= JEV_RELAY_TIMEOUT_STREAK_THRESHOLD) {
     const wasOpen = isJevRelayTimeoutCircuitOpen(nowMs);
@@ -552,6 +609,7 @@ export function resetJevRelayCallStatsForTests(): void {
   consecutiveTransientFailures = 0;
   timeoutCircuitOpenUntil = 0;
   relaySupportsQuestionTemplates = false;
+  proxyFallbackUntil = 0;
   activeDayStats = null;
   statsSink = null;
 }
