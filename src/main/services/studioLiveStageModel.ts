@@ -165,6 +165,8 @@ export function buildStudioLiveTaskHud(params: {
 export type LiveStageState = {
   protocol: typeof LIVE_STAGE_PROTOCOL;
   sessionId: string;
+  /** Stable per-Bot stage identity (`bot:<metabotId>`); all Studio sessions of the same Bot share one Live Stage. */
+  botKey?: string;
   turnId: string;
   /**
    * Epoch ms when this turn's state was created. The persistent stage page
@@ -232,6 +234,7 @@ export type LiveStageState = {
 
 export type LiveStageSessionContext = {
   sessionId: string;
+  botKey?: string;
   turnId: string;
   botName: string;
   botAvatar?: string;
@@ -362,6 +365,7 @@ export function createLiveStageState(context: LiveStageSessionContext): LiveStag
   return {
     protocol: LIVE_STAGE_PROTOCOL,
     sessionId: context.sessionId,
+    ...(context.botKey ? { botKey: context.botKey } : {}),
     turnId: context.turnId,
     turnStartedAt: nowMs,
     revision: 0,

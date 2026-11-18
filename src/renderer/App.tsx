@@ -956,6 +956,14 @@ const App: React.FC = () => {
     sessionTabBinding.attach({
       controlTabs: (command) => botBrowserShell.controlTabsSilent(command),
       getOpenSession: () => store.getState().browserCowork.currentSession,
+      getSessionBotId: (sessionId) => {
+        const cur = store.getState().browserCowork.currentSession;
+        if (cur?.id === sessionId && typeof cur.metabotId === 'number') {
+          return cur.metabotId;
+        }
+        const summary = store.getState().cowork.sessions.find((entry) => entry.id === sessionId);
+        return typeof summary?.metabotId === 'number' ? summary.metabotId : null;
+      },
       openSession: async (sessionId) => {
         try {
           await browserCoworkService.loadSession(sessionId);

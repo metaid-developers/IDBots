@@ -37,6 +37,7 @@
   // offline demo) starts claimed by that state; the persistent entry starts
   // unclaimed and claims on the first accepted patch.
   let claimedSessionId = typeof initial?.sessionId === 'string' && initial.sessionId ? initial.sessionId : null;
+  let claimedBotKey = typeof initial?.botKey === 'string' && initial.botKey ? initial.botKey : null;
 
   const body = document.body;
   const $ = (selector) => document.querySelector(selector);
@@ -1314,25 +1315,43 @@
       if (patch.protocol !== PROTOCOL) return { ok: false, reason: 'protocol' };
       if (patch.draft === true) {
         // Pre-claim draft identity (bot name/avatar on the idle family):
-        // applies only while the page is unclaimed and never claims it —
-        // the first real session patch still claims the page wholesale.
-        if (claimedSessionId != null) return { ok: false, reason: 'already-claimed' };
+        // applies while unclaimed; if already claimed by the SAME Bot, keep
+        // the Bot's live stage intact without rejecting or wiping state.
+        if (claimedSessionId != null) {
+          if (claimedBotKey && typeof patch.botKey === 'string' && patch.botKey === claimedBotKey) {
+            return true;
+          }
+          return { ok: false, reason: 'already-claimed' };
+        }
         heldPatch = null;
         stopHeldRelease();
         commitStagePatch(patch);
         return true;
       }
       if (claimedSessionId == null) {
-        // First claim: an unclaimed page adopts the patching session and its
+        // First claim: an unclaimed page adopts the patching session/bot and its
         // state wholesale — the revision baseline starts here.
         if (typeof patch.sessionId !== 'string' || !patch.sessionId) return { ok: false, reason: 'protocol' };
         claimedSessionId = patch.sessionId;
+        claimedBotKey = typeof patch.botKey === 'string' && patch.botKey ? patch.botKey : null;
         heldPatch = null;
         stopHeldRelease();
         commitStagePatch(patch);
         return true;
       }
-      if (patch.sessionId !== claimedSessionId) return { ok: false, reason: 'session-mismatch' };
+      if (patch.sessionId !== claimedSessionId) {
+        // Single Live Stage per Bot: switching or starting a new conversation
+        // with the SAME Bot (`patch.botKey === claimedBotKey`) seamlessly
+        // adopts the new session on the existing stage without reloading.
+        if (claimedBotKey && typeof patch.botKey === 'string' && patch.botKey === claimedBotKey) {
+          claimedSessionId = patch.sessionId;
+          heldPatch = null;
+          stopHeldRelease();
+          commitStagePatch(patch);
+          return true;
+        }
+        return { ok: false, reason: 'session-mismatch' };
+      }
       const patchTurnStart = typeof patch.turnStartedAt === 'number' ? patch.turnStartedAt : 0;
       const stateTurnStart = typeof state.turnStartedAt === 'number' ? state.turnStartedAt : 0;
       if (patch.turnId !== state.turnId) {

@@ -1083,3 +1083,4 @@ blob-report/
 !tests/firstClassTaskPhase2.test.mjs
 !tests/firstClassTaskPhase3.test.mjs
 !tests/firstClassTaskPhase4.test.mjs
+!tests/studioTaskSessionDecouple.test.mjs
