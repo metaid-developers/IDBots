@@ -129,6 +129,7 @@ tests/*
 !tests/creditPullService.test.mjs
 !tests/relayCatalogFreshness.test.mjs
 !tests/mobileSettings.test.ts
+!tests/mobileModelSettings.test.tsx
 !tests/mobileRechargeRecovery.test.ts
 !tests/mobileBotLifecycle.test.ts
 !tests/mobileBotEditor.test.tsx
