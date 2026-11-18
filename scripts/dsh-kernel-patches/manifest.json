@@ -2,6 +2,43 @@
   "$comment": "Fingerprints proving each committed kernel patch really landed in an installed or PACKAGED dsh-runtime. scripts/verify-dsh-kernel-patches.cjs consumes this file: it fails when a patch file has no entry (adding a patch without a fingerprint is the silent-drop class of the v0.9.3 incident), when a listed patch file is gone, or when the marker count in the target file does not match. Keep `count` exact so a partially applied patch also fails. Paths are package-root relative, so the same entry works for a checkout and for an unpacked app's resources directory.",
   "patches": [
     {
+      "patch": "@earendil-works+pi-ai+1.5.0.patch",
+      "why": "silent-overflow Case 3 slack (cw-636ddce2, 2026-11-19): the length-stop overflow detection required usage.output === 0, but gateways spend a few reasoning tokens before the window boundary stops the stream (opencode zen: output=16, 128,988 input+cacheRead vs a 128,000 window) — the classification missed and the turn died as a silent max-tokens truncation; a <=64-token output slack restores the designed CONTEXT_WINDOW_EXCEEDED classification with its compact-and-retry recovery",
+      "targets": [
+        {
+          "file": "dsh-runtime/node_modules/@earendil-works/pi-ai/dist/utils/overflow.js",
+          "match": "IDBots patch (silent-overflow output slack)",
+          "count": 2
+        },
+        {
+          "file": "dsh-runtime/node_modules/@earendil-works/pi-ai/dist/utils/overflow.js",
+          "match": "SILENT_OVERFLOW_OUTPUT_SLACK",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "patch": "@deepseek-ai+dsh-agent-loop+0.2.2-rc.1.patch",
+      "why": "empty-length-stop overflow recovery (cw-636ddce2, 2026-11-19): a `length` stop with zero content blocks and <=64 output tokens means the INPUT filled the context window — the stock path returned max-tokens, the host burned its auto-continuation on a doomed request and the turn died silently; the patch diverts to the agent/request-error waterfall so compaction-basic compacts and retries, and failing that raises a real CONTEXT_WINDOW_EXCEEDED error every surface can show",
+      "targets": [
+        {
+          "file": "dsh-runtime/node_modules/@deepseek-ai/dsh-agent-loop/lib/index.js",
+          "match": "IDBots patch (empty-length-stop overflow recovery)",
+          "count": 3
+        },
+        {
+          "file": "dsh-runtime/node_modules/@deepseek-ai/dsh-agent-loop/lib/index.js",
+          "match": "EMPTY_LENGTH_STOP_OUTPUT_TOKEN_CEILING",
+          "count": 2
+        },
+        {
+          "file": "dsh-runtime/node_modules/@deepseek-ai/dsh-agent-loop/lib/index.js",
+          "match": "isOverflowMasquerade",
+          "count": 2
+        }
+      ]
+    },
+    {
       "patch": "@deepseek-ai+dsh-win32-process+0.2.2-rc.1.patch",
       "why": "CREATE_NO_WINDOW on all three raw CreateProcess spawn sites — a dropped patch silently brings back the Windows bash.exe console flash",
       "platforms": [

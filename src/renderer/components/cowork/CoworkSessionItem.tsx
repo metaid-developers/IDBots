@@ -114,6 +114,16 @@ const statusLabels: Record<CoworkSessionStatus, string> = {
   stopped: 'coworkStatusStopped',
 };
 
+// Studio history rows (showBrowserContext) keep the visited-page context in
+// the meta line instead of the everyday status word — idle / running /
+// completed need no badge there. A DEAD session must surface in the Studio
+// list too though: session cw-636ddce2 (2026-11-19) died inside Studio with
+// zero indication while the same row in BotWorks showed 已停止. Error-family
+// and Twin-initiated stopped states always render their label, on both
+// surfaces; error-family labels render red (same palette as the
+// approval-pending dot above).
+const DEATH_STATUS_LABEL_STATES: ReadonlySet<CoworkSessionStatus> = new Set<CoworkSessionStatus>(['error', 'error_retried', 'stopped']);
+
 // "Move to…" flyout metrics: enough for the widest of the three section labels
 // (bilingual), three rows tall, and a short grace period for the pointer to
 // cross the row→flyout gap without the submenu snapping shut.
@@ -768,8 +778,12 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
             <span className="whitespace-nowrap" title={relativeTime.full}>
               {relativeTime.compact}
             </span>
-            {!showBrowserContext && (
-              <span className="text-[10px] whitespace-nowrap">
+            {(!showBrowserContext || DEATH_STATUS_LABEL_STATES.has(session.status)) && (
+              <span
+                className={`text-[10px] whitespace-nowrap ${
+                  session.status === 'error' || session.status === 'error_retried' ? 'text-red-500' : ''
+                }`}
+              >
                 {i18nService.t(statusLabels[session.status])}
               </span>
             )}

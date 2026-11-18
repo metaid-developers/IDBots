@@ -47,6 +47,7 @@ export interface FetchedProviderModel {
   name?: string;
   supportsImage?: boolean;
   contextWindow?: number;
+  maxOutputTokens?: number;
 }
 
 const MODEL_LIST_SYNC_PROVIDERS = ['deepseek', 'opencode', 'commandcode', 'zhipu'] as const;
@@ -92,8 +93,15 @@ export function buildProviderModelsUrl(baseUrl: string, providerKey: string): st
  * `{object: 'list', data: [...]}`; commandcode also reports a display `name`
  * and `context_length` per model. Zhipu's Responses catalog answers
  * `{models: [...]}` with `slug` / `display_name` / `context_window` /
- * `input_modalities` per entry. Unknown shapes yield an empty list (the caller
- * treats that as a failed sync, never an empty replace).
+ * `input_modalities` per entry. opencode's gateway reports a nested
+ * `limit: {context, output}` per model plus `modalities` (either a
+ * `{input, output}` record or a flat MIME array depending on the SKU), so a
+ * model fetched from it lands with its REAL context window and output
+ * ceiling instead of falling through to the 128K fallback — session
+ * cw-636ddce2 died because gemini-4-argon (1M real) resolved to the
+ * fallback 128K and the request overflowed mid-turn. Unknown shapes yield
+ * an empty list (the caller treats that as a failed sync, never an empty
+ * replace).
  */
 export function parseProviderModelListPayload(payload: unknown): FetchedProviderModel[] {
   const container = payload as { data?: unknown; models?: unknown } | null;
@@ -108,20 +116,48 @@ export function parseProviderModelListPayload(payload: unknown): FetchedProvider
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const rawName = record.name ?? record.display_name;
-    const rawContext = record.contextWindow ?? record.context_window ?? record.context_length;
-    const rawModalities = record.input_modalities;
+    const limit = record.limit as Record<string, unknown> | undefined;
+    const rawContext = record.contextWindow
+      ?? record.context_window
+      ?? record.context_length
+      ?? limit?.context;
+    const rawMaxOutput = record.maxOutputTokens ?? record.max_output_tokens ?? limit?.output;
+    // Zhipu reports `input_modalities`; opencode reports `modalities` as
+    // either an `{input, output}` record or a flat MIME array. A parsed list
+    // is AUTHORITATIVE both ways (the gateway knows the SKU); any other
+    // gateway leaves the key absent so merge falls back to preset/local
+    // flags.
+    const parsedModalities = parseModalitiesInputList(record.input_modalities)
+      ?? parseModalitiesInputList(record.modalities);
     models.push({
       id,
       name: typeof rawName === 'string' && rawName.trim() ? rawName.trim() : undefined,
-      // Only the Zhipu catalog reports modalities; leave the key absent for
-      // the OpenAI-style gateways so merge falls back to preset/local flags.
-      ...(Array.isArray(rawModalities) ? { supportsImage: rawModalities.includes('image') } : {}),
-      contextWindow: typeof rawContext === 'number' && Number.isFinite(rawContext) && rawContext > 0
-        ? Math.floor(rawContext)
-        : undefined,
+      ...(parsedModalities !== undefined
+        ? { supportsImage: parsedModalities.some((item) => typeof item === 'string' && item.toLowerCase().startsWith('image')) }
+        : {}),
+      contextWindow: toPositiveTokenCount(rawContext),
+      maxOutputTokens: toPositiveTokenCount(rawMaxOutput),
     });
   }
   return models;
+}
+
+/** Coerce a fetched limit value into a positive integer token count. */
+function toPositiveTokenCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : undefined;
+}
+
+/**
+ * Normalize a gateway's modality declaration into its input list, whatever
+ * shape it arrives in: Zhipu's flat `["text", "image"]`, opencode's flat
+ * MIME array, or opencode's `{input: [...], output: [...]}` record.
+ */
+function parseModalitiesInputList(raw: unknown): unknown[] | undefined {
+  if (Array.isArray(raw)) return raw;
+  const input = (raw as Record<string, unknown> | undefined)?.input;
+  return Array.isArray(input) ? input : undefined;
 }
 
 /**
@@ -161,7 +197,7 @@ export function mergeSyncedProviderModels(
       name: canonical?.name ?? entry.name ?? current?.name ?? entry.id,
       supportsImage: entry.supportsImage ?? canonical?.supportsImage ?? current?.supportsImage ?? false,
       contextWindow: entry.contextWindow ?? canonical?.contextWindow ?? current?.contextWindow,
-      maxOutputTokens: canonical?.maxOutputTokens ?? current?.maxOutputTokens,
+      maxOutputTokens: entry.maxOutputTokens ?? canonical?.maxOutputTokens ?? current?.maxOutputTokens,
       options: current?.options ?? canonical?.options,
     };
   });

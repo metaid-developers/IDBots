@@ -87,6 +87,16 @@ export const DEEPSEEK_V4_FLASH_MAX_OUTPUT_TOKENS = 256_000;
 // ceiling — thinking shares the output budget, so matching the real cap
 // removes mid-thought truncation. Billing is by actual tokens used.
 export const GLM_MAX_OUTPUT_TOKENS = 128_000;
+// Gemini family fallback: the whole modern Gemini line serves 1M-token
+// contexts (gemini-4-argon reports limit.context = 1048576 on the opencode
+// gateway and pi-ai's own catalog agrees; 1M is the round catalog value the
+// app already uses for the other 1M families) with a 64K output ceiling
+// (limit.output = 65536). Uncatalogued ids previously fell to the 128K
+// fallback window, which is unusable in cowork sessions — the system+tools
+// baseline alone is ~105K tokens (cw-636ddce2: the request hit the 128K
+// fallback window mid-turn and died as a silent empty length-stop).
+export const GEMINI_FAMILY_CONTEXT_WINDOW = 1_000_000;
+export const GEMINI_FAMILY_MAX_OUTPUT_TOKENS = 65_536;
 
 export type CoworkModelLimitSource = 'provider-model' | 'available-model' | 'known-model' | 'family-model' | 'fallback';
 
@@ -279,6 +289,27 @@ function glmFamilyLimits(modelId: string): Partial<Pick<CoworkModelLimits, 'cont
   return { maxOutputTokens: GLM_MAX_OUTPUT_TOKENS };
 }
 
+/**
+ * Gemini family fallback for ids the exact catalog does not track — the
+ * catalog only pins gemini-3.x exact ids at 2M, so every newer SKU
+ * (gemini-4-argon, gemini-4-flash, vendor-prefixed `google/gemini-4-*`…
+ * gateways ship new Gemini ids faster than the catalog can track) fell to
+ * the 128K fallback window. The whole modern Gemini line serves 1M context
+ * with a 64K output ceiling (opencode `limit: {context: 1048576, output:
+ * 65536}`, pi-ai catalog agrees), and every Gemini generation is natively
+ * multimodal. Only the LAST path segment matches so vendor prefixes
+ * (`google/`, `opencode/gemini-*`) resolve identically.
+ */
+function geminiFamilyLimits(modelId: string): Partial<Pick<CoworkModelLimits, 'contextWindow' | 'maxOutputTokens' | 'supportsVision'>> | undefined {
+  const segment = (modelId.split('/').pop() ?? modelId);
+  if (!/^gemini-/i.test(segment)) return undefined;
+  return {
+    contextWindow: GEMINI_FAMILY_CONTEXT_WINDOW,
+    maxOutputTokens: GEMINI_FAMILY_MAX_OUTPUT_TOKENS,
+    supportsVision: true,
+  };
+}
+
 function toPositiveInteger(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return undefined;
@@ -364,7 +395,7 @@ function buildLimits(
   source: CoworkModelLimitSource,
   explicit?: Partial<Pick<CoworkModelLimits, 'contextWindow' | 'maxOutputTokens' | 'supportsVision'>>,
 ): CoworkModelLimits {
-  const known = KNOWN_MODEL_LIMITS[modelId] ?? deepseekV4FamilyLimits(modelId) ?? glmFamilyLimits(modelId);
+  const known = KNOWN_MODEL_LIMITS[modelId] ?? deepseekV4FamilyLimits(modelId) ?? glmFamilyLimits(modelId) ?? geminiFamilyLimits(modelId);
   const contextWindow = explicit?.contextWindow ?? known?.contextWindow ?? DEFAULT_COWORK_CONTEXT_WINDOW;
   const configuredMaxOutputTokens = explicit?.maxOutputTokens ?? known?.maxOutputTokens ?? DEFAULT_COWORK_MAX_OUTPUT_TOKENS;
   return {
@@ -408,6 +439,7 @@ export function modelSupportsVision(modelId: string | null | undefined): boolean
   return KNOWN_MODEL_LIMITS[normalized]?.supportsVision
     ?? deepseekV4FamilyLimits(normalized)?.supportsVision
     ?? glmFamilyLimits(normalized)?.supportsVision
+    ?? geminiFamilyLimits(normalized)?.supportsVision
     ?? false;
 }
 
@@ -471,7 +503,7 @@ export function resolveCoworkModelLimits(
     return buildLimits(modelId, 'known-model');
   }
 
-  if (deepseekV4FamilyLimits(modelId) || glmFamilyLimits(modelId)) {
+  if (deepseekV4FamilyLimits(modelId) || glmFamilyLimits(modelId) || geminiFamilyLimits(modelId)) {
     return buildLimits(modelId, 'family-model');
   }
 

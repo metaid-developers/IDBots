@@ -830,3 +830,72 @@ test('clampCoworkMaxOutputTokens handles degenerate inputs without throwing', as
   assert.equal(clampCoworkMaxOutputTokens(128_000, 0), 128_000);
   assert.equal(clampCoworkMaxOutputTokens(0, 128_000), 0);
 });
+
+test('uncatalogued gemini-4 ids resolve the 1M family window, never the 128K fallback (cw-636ddce2 regression)', async () => {
+  const { resolveCoworkModelLimits, modelSupportsVision } =
+    await import('../dist-electron/main/libs/coworkModelLimits.js');
+
+  // Session cw-636ddce2 (2026-11-19): gemini-4-argon fetched from the
+  // opencode gateway carried NO window metadata, fell through every layer
+  // to the 128K fallback, and the cowork baseline (~105K of system + tools)
+  // plus one turn overflowed it mid-task — the turn died as a silent empty
+  // length-stop. The gemini family rule pins the real 1M window / 64K
+  // output ceiling for every uncatalogued gemini-* id.
+  const limits = resolveCoworkModelLimits({
+    model: { defaultModel: 'gemini-4-argon', availableModels: [{ id: 'gemini-4-argon' }] },
+    providers: {},
+  }, 'gemini-4-argon');
+  assert.deepEqual(limits, {
+    modelId: 'gemini-4-argon',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 65_536,
+    supportsVision: true,
+    source: 'family-model',
+  });
+  // Every Gemini generation is natively multimodal — the vision helper must
+  // agree with the family rule (Read-image guard otherwise denies).
+  assert.equal(modelSupportsVision('gemini-4-argon'), true);
+  assert.equal(modelSupportsVision('opencode/gemini-4-argon'), true);
+});
+
+test('gemini family matches on the last path segment across gateway prefixes', async () => {
+  const { resolveCoworkModelLimits } =
+    await import('../dist-electron/main/libs/coworkModelLimits.js');
+
+  for (const id of ['google/gemini-4-flash', 'opencode/gemini-4-argon', 'gemini-4-pro-preview-11-25']) {
+    const limits = resolveCoworkModelLimits({
+      model: { defaultModel: id, availableModels: [{ id }] },
+      providers: {},
+    }, id);
+    assert.equal(limits.source, 'family-model', id);
+    assert.equal(limits.contextWindow, 1_000_000, id);
+    assert.equal(limits.maxOutputTokens, 65_536, id);
+  }
+});
+
+test('gemini-3.x exact catalog ids stay at 2M — known-model beats the family rule', async () => {
+  const { resolveCoworkModelLimits } =
+    await import('../dist-electron/main/libs/coworkModelLimits.js');
+
+  const limits = resolveCoworkModelLimits(APP_CONFIG_WITHOUT_PROVIDER_META, 'gemini-3.1-pro-preview');
+  assert.equal(limits.contextWindow, 2_000_000);
+  assert.equal(limits.source, 'known-model');
+});
+
+test('explicit provider metadata still wins over the gemini family rule', async () => {
+  const { resolveCoworkModelLimits } =
+    await import('../dist-electron/main/libs/coworkModelLimits.js');
+
+  const limits = resolveCoworkModelLimits({
+    model: { defaultModel: 'gemini-4-argon', availableModels: [] },
+    providers: {
+      opencode: {
+        enabled: true,
+        models: [{ id: 'gemini-4-argon', contextWindow: 1048576, maxOutputTokens: 65536 }],
+      },
+    },
+  }, 'gemini-4-argon', 'opencode');
+  assert.equal(limits.source, 'provider-model');
+  assert.equal(limits.contextWindow, 1_048_576);
+  assert.equal(limits.maxOutputTokens, 65_536);
+});
