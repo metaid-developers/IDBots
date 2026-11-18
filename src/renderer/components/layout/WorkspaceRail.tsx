@@ -2,12 +2,10 @@ import React, { useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import {
   ArchiveBoxIcon,
-  ClockIcon,
+  BellAlertIcon,
   Cog6ToothIcon,
-  CpuChipIcon,
-  GlobeAltIcon,
+  MapIcon,
   ShoppingBagIcon,
-  UserGroupIcon,
 } from '@heroicons/react/24/outline';
 import Tooltip from '../ui/Tooltip';
 import ComposeIcon from '../icons/ComposeIcon';
@@ -36,36 +34,98 @@ interface RailNavItem {
 }
 
 /**
- * Icon tokens → assets. Everything is already an in-repo icon (heroicons or
- * components/icons); the rail never introduces a new icon dependency.
+ * Icon tokens → assets. Everything is an in-repo icon (heroicons or
+ * components/icons) or an inline in-file SVG; the rail never introduces a new
+ * icon dependency. The two brand glyphs drawn in-file (我的 BOT, Bot Browser)
+ * share the rail's eye language — LEFT eye ink (currentColor), RIGHT eye amber
+ * #F5A93B, the 元 avatar's background color — so the two entries answer each
+ * other across the column (窗里住着 bot 的眼睛).
  */
 const renderRailIcon = (icon: string): React.ReactNode => {
   switch (icon) {
     case 'compose':
-      return <ComposeIcon className="h-5 w-5" />;
+      return <ComposeIcon className="h-6 w-6" />;
     case 'clock':
-      return <ClockIcon className="h-5 w-5" />;
-    case 'userGroup':
-      return <UserGroupIcon className="h-5 w-5" />;
+      // 长期任务: a roadmap (Heroicons map) — the board is a route to walk,
+      // not a point in time.
+      return <MapIcon className="h-6 w-6" />;
+    case 'userGroup': {
+      // 多人任务: Tabler "users-plus" glyph (tabler.io/icons, MIT license),
+      // copied verbatim into this file (same inline pattern as squares2x2
+      // below); strokeWidth 2 → 1.5 to match the rail's stroke family.
+      return (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className="h-6 w-6"
+        >
+          <path d="M5 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0" />
+          <path d="M3 21v-2a4 4 0 0 1 4 -4h4c.96 0 1.84 .338 2.53 .901" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          <path d="M16 19h6" />
+          <path d="M19 16v6" />
+        </svg>
+      );
+    }
+    case 'bell':
+      // 定时任务: a bell (Heroicons bell-alert) — a scheduled run rings.
+      return <BellAlertIcon className="h-6 w-6" />;
     case 'archive':
-      return <ArchiveBoxIcon className="h-5 w-5" />;
+      // 任务记录: an archive box (Heroicons archive-box).
+      return <ArchiveBoxIcon className="h-6 w-6" />;
     case 'shoppingBag':
-      return <ShoppingBagIcon className="h-5 w-5" />;
-    case 'cpuChip':
-      return <CpuChipIcon className="h-5 w-5" />;
+      return <ShoppingBagIcon className="h-6 w-6" />;
+    case 'cpuChip': {
+      // 我的 BOT: Lucide "bot" skeleton (lucide.dev, ISC license) — antenna,
+      // head, side ears — strokeWidth 1.5 like the rest of the family. The
+      // filled eyes carry the rail's brand pair: left ink (currentColor),
+      // right amber #F5A93B = the 元 avatar's background color. Filled shapes
+      // set stroke="none": a 1.5 stroke around a 2.6px rect would nearly
+      // double it (same reasoning as the Bot Browser eyes below).
+      return (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className="h-6 w-6"
+        >
+          <path d="M12 8V4H8" />
+          <rect x="4" y="8" width="16" height="12" rx="2" />
+          <path d="M2 14h2" />
+          <path d="M20 14h2" />
+          <rect x="7.6" y="11.2" width="2.6" height="2.6" rx="0.4" fill="currentColor" stroke="none" />
+          <rect x="13.8" y="11.2" width="2.6" height="2.6" rx="0.4" fill="#F5A93B" stroke="none" />
+        </svg>
+      );
+    }
     case 'squares2x2':
       return (
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          width="20"
-          height="20"
+          width="24"
+          height="24"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="h-5 w-5"
+          className="h-6 w-6"
         >
           <rect x="3" y="3" width="7" height="7" rx="1.5" />
           <rect x="14" y="3" width="7" height="7" rx="1.5" />
@@ -74,8 +134,34 @@ const renderRailIcon = (icon: string): React.ReactNode => {
         </svg>
       );
     case 'globe':
-    default:
-      return <GlobeAltIcon className="h-5 w-5" />;
+    default: {
+      // Bot Browser: a browser window (frame + address row + traffic dots)
+      // with the SAME square eyes living inside it — left ink, right amber
+      // #F5A93B (元 avatar's background color). 窗里住着 bot 的眼睛; the
+      // window answers the 我的 BOT bot below it (same eye pair, two worlds).
+      return (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className="h-6 w-6"
+        >
+          <rect x="3" y="4.5" width="18" height="15" rx="2.4" />
+          <line x1="3" y1="7.9" x2="21" y2="7.9" />
+          <circle cx="5.9" cy="6.2" r="0.45" fill="currentColor" stroke="none" />
+          <circle cx="8.1" cy="6.2" r="0.45" fill="currentColor" stroke="none" />
+          <rect x="7.6" y="12.2" width="3.2" height="3.2" rx="0.7" fill="currentColor" stroke="none" />
+          <rect x="13.2" y="12.2" width="3.2" height="3.2" rx="0.7" fill="#F5A93B" stroke="none" />
+        </svg>
+      );
+    }
   }
 };
 
@@ -296,7 +382,7 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
         >
           {/* 两面一致性令 (owner order 2026-11-09 11:16): the Home face's
               rail carries exactly the three entries that used to be the
-              sidebar's stacked text rows — 新建任务 / 长期任务 / 多人任务.
+              sidebar's stacked text rows — 新建任务 / 定时任务 / 多人任务.
               The records archive selector stays out: on this surface the
               records body is always on screen below, so a fourth icon would
               add a door the face never had. */}
@@ -328,7 +414,7 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
             active={false}
             onClick={onShowSettings}
           >
-            <Cog6ToothIcon className="h-5 w-5" />
+            <Cog6ToothIcon className="h-6 w-6" />
           </RailButton>
         ) : null}
         {/* The old compact ME badge is GONE from the rail (owner ruling
