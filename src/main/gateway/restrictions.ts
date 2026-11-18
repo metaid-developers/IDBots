@@ -361,13 +361,46 @@ function redactProviderEntry(node: unknown): unknown {
   return clone;
 }
 
+const RELAY_PROVIDER_KEYS = new Set(['idbots', 'metaid-free']);
+const PROVIDER_API_FORMATS = new Set(['anthropic', 'openai', 'responses']);
+const NEW_PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+function mergeProviderEntry(key: string, incoming: unknown, stored: unknown): Record<string, unknown> | null {
+  if (!isPlainRecord(incoming)) return null;
+  if (stored !== undefined && !isPlainRecord(stored)) return null;
+  const storedEntry = isPlainRecord(stored) ? stored : null;
+  const relayManaged = RELAY_PROVIDER_KEYS.has(key.trim().toLowerCase());
+  if (!storedEntry) {
+    if (relayManaged || !NEW_PROVIDER_KEY_PATTERN.test(key)) return null;
+  }
+
+  const merged = {
+    ...(storedEntry ? deepClonePlain(storedEntry) as Record<string, unknown> : {}),
+    ...deepClonePlain(incoming) as Record<string, unknown>,
+  };
+  if (storedEntry) {
+    if (relayManaged || incoming.apiKey === undefined || incoming.apiKey === REDACTED) {
+      merged.apiKey = storedEntry.apiKey;
+    }
+    if (relayManaged || incoming.baseUrl === undefined) merged.baseUrl = storedEntry.baseUrl;
+    if (relayManaged || incoming.apiFormat === undefined) merged.apiFormat = storedEntry.apiFormat;
+  }
+
+  if (merged.apiKey !== undefined && typeof merged.apiKey !== 'string') return null;
+  if (typeof merged.baseUrl !== 'string') return null;
+  if (merged.apiFormat !== undefined && !PROVIDER_API_FORMATS.has(String(merged.apiFormat))) return null;
+  if (merged.enabled !== undefined && typeof merged.enabled !== 'boolean') return null;
+  if (merged.models !== undefined && !Array.isArray(merged.models)) return null;
+  if (!storedEntry && (!merged.baseUrl.trim() || !PROVIDER_API_FORMATS.has(String(merged.apiFormat)))) return null;
+  return merged;
+}
+
 /**
  * Merge an incoming `app_config` set (`02` R-store) into the latest stored
- * value so field-scoped writes cannot erase concurrent bootstrap or preference
- * updates. Provider entries cannot be added or removed, and each provider's
- * `apiKey`, `baseUrl`, and `apiFormat` are kept from the stored value. Returns
- * the value to store, or null when the incoming shape violates the rule (the
- * server layer maps null to ARG_RESTRICTED / INVALID_ARGS).
+ * value. Existing providers may be edited and new user-owned providers may be
+ * added, but removal stays rejected. "__redacted__" always preserves the
+ * stored credential, and the relay-managed provider's route and credential
+ * remain server-owned. Returns null for an invalid shape.
  */
 export function mergeAppConfigSet(stored: unknown, incoming: unknown): unknown | null {
   if (!isPlainRecord(incoming)) return null;
@@ -376,7 +409,7 @@ export function mergeAppConfigSet(stored: unknown, incoming: unknown): unknown |
 
   const merged = deepClonePlain(storedRecord) as Record<string, unknown>;
   for (const [key, value] of Object.entries(incoming)) {
-    if (key === 'providers') continue; // handled below
+    if (key === 'providers') continue;
     merged[key] = deepClonePlain(value);
   }
 
@@ -384,22 +417,12 @@ export function mergeAppConfigSet(stored: unknown, incoming: unknown): unknown |
     const incomingProviders = incoming.providers;
     if (!isPlainRecord(incomingProviders)) return null;
     const storedKeys = storedProviders ? Object.keys(storedProviders) : [];
-    const incomingKeys = Object.keys(incomingProviders);
-    if (storedKeys.length !== incomingKeys.length || !storedKeys.every((key) => key in incomingProviders)) {
-      return null; // provider entries cannot be added or removed
-    }
+    if (!storedKeys.every((key) => key in incomingProviders)) return null;
     const mergedProviders: Record<string, unknown> = {};
-    for (const key of storedKeys) {
-      const incomingEntry = incomingProviders[key];
-      const storedEntry = storedProviders?.[key];
-      if (!isPlainRecord(incomingEntry)) return null;
-      if (!isPlainRecord(storedEntry)) return null;
-      mergedProviders[key] = {
-        ...incomingEntry,
-        apiKey: storedEntry.apiKey,
-        baseUrl: storedEntry.baseUrl,
-        apiFormat: storedEntry.apiFormat,
-      };
+    for (const [key, incomingEntry] of Object.entries(incomingProviders)) {
+      const mergedEntry = mergeProviderEntry(key, incomingEntry, storedProviders?.[key]);
+      if (mergedEntry === null) return null;
+      mergedProviders[key] = mergedEntry;
     }
     merged.providers = mergedProviders;
   } else if (storedProviders) {

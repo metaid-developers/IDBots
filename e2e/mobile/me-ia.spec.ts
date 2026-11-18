@@ -29,6 +29,7 @@ test.describe('A6 settings IA', () => {
     await expect(generalGroup.getByTestId('me-entry-usage')).toBeVisible();
     await expect(generalGroup.getByTestId('me-entry-skills')).toBeVisible();
     await expect(generalGroup.getByTestId('me-entry-memory')).toBeVisible();
+    await expect(generalGroup.getByTestId('me-entry-model')).toBeVisible();
     await expect(generalGroup.getByTestId('me-entry-general')).toBeVisible();
 
     // Live summaries from the mock fixtures: 2 bots, 2 enabled skills,
@@ -64,6 +65,7 @@ test.describe('A6 settings IA', () => {
       { row: 'me-entry-usage', page: 'me-page-usage' },
       { row: 'me-entry-skills', page: 'me-page-skills' },
       { row: 'me-entry-memory', page: 'me-page-memory' },
+      { row: 'me-entry-model', page: 'me-page-model' },
       { row: 'me-entry-general', page: 'me-page-general' },
       { row: 'me-entry-account', page: 'me-page-account' },
       { row: 'me-entry-about', page: 'me-page-about' },
@@ -184,5 +186,34 @@ test.describe('A6 settings IA', () => {
 
     // The retired traffic surface is unreachable.
     await expect(page.getByTestId('me-page-traffic')).toHaveCount(0);
+  });
+
+  test('models page saves a custom provider without retaining its key in the form or phone storage', async ({ page }, testInfo) => {
+    await openMe(page);
+    await page.getByTestId('me-entry-model').click();
+    await expect(page.getByTestId('model-form')).toBeVisible();
+    await page.getByTestId('model-provider').selectOption('custom');
+    await page.getByTestId('model-provider-name').fill('Playwright provider');
+    await page.getByTestId('model-api-key').fill('playwright-test-key');
+    await page.getByTestId('model-id').fill('playwright-model');
+    await page.getByTestId('model-base-url').fill('https://models.example/v1');
+    await page.getByTestId('model-save').click();
+
+    await expect(page.getByTestId('model-saved')).toContainText('playwright-model');
+    await expect(page.getByTestId('model-current')).toContainText('playwright-model');
+    await expect(page.getByTestId('model-current')).toContainText('Playwright provider');
+    await expect(page.getByTestId('model-api-key')).toHaveValue('');
+    const storageContainsKey = await page.evaluate(() => {
+      const values: string[] = [];
+      for (const storage of [localStorage, sessionStorage]) {
+        for (let index = 0; index < storage.length; index += 1) {
+          const key = storage.key(index);
+          if (key) values.push(storage.getItem(key) ?? '');
+        }
+      }
+      return values.some((value) => value.includes('playwright-test-key'));
+    });
+    expect(storageContainsKey).toBe(false);
+    await attachScreen(testInfo, page, 'mobile-model-custom-provider-saved');
   });
 });

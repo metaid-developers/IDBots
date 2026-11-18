@@ -207,14 +207,14 @@ test('hold -> release -> asr.done emits the final transcript exactly once', asyn
   assert.deepEqual(harness.draftWrites, [], 'draft still untouched after the session');
 });
 
-test('release -> asr.done -> chat.send(finalText, []) end to end (draft untouched)', async () => {
+test('release -> asr.done -> chat.send(finalText, [], preserveDraft) end to end (draft untouched)', async () => {
   // One test spanning the REAL controller and the REAL hand-off helper: the
   // screen's onFinalText wiring is exactly this one line.
-  const calls: { text: string; attachments: unknown[] }[] = [];
+  const calls: { text: string; attachments: unknown[]; options?: { preserveDraft?: boolean } }[] = [];
   const chat = {
     draft: '我的原始草稿',
-    send(text: string, attachments: unknown[] = []) {
-      calls.push({ text, attachments });
+    send(text: string, attachments: unknown[] = [], options?: { preserveDraft?: boolean }) {
+      calls.push({ text, attachments, options });
       return { status: 'success' };
     },
     setDraft(next: string) {
@@ -263,7 +263,7 @@ test('release -> asr.done -> chat.send(finalText, []) end to end (draft untouche
   socket.emit({ kind: 'final', text: '明天上午十点开会' });
   socket.emit({ kind: 'done' });
 
-  assert.deepEqual(calls, [{ text: '明天上午十点开会', attachments: [] }]);
+  assert.deepEqual(calls, [{ text: '明天上午十点开会', attachments: [], options: { preserveDraft: true } }]);
   assert.equal(chat.draft, '我的原始草稿', 'the pre-existing draft survives unchanged');
   assert.equal(ui.phase, 'idle');
 });
@@ -275,11 +275,11 @@ test('the emitted transcript becomes a NEW message with no attachments; the draf
   harness.socket.emit({ kind: 'final', text: '帮我看一下' });
   harness.socket.emit({ kind: 'done' });
 
-  const calls: { text: string; attachments: unknown[] }[] = [];
+  const calls: { text: string; attachments: unknown[]; options?: { preserveDraft?: boolean } }[] = [];
   const chat = {
     draft: '用户已经输入的草稿',
-    send(text: string, attachments: unknown[] = []) {
-      calls.push({ text, attachments });
+    send(text: string, attachments: unknown[] = [], options?: { preserveDraft?: boolean }) {
+      calls.push({ text, attachments, options });
       return { status: 'success' };
     },
     setDraft(next: string) {
@@ -289,7 +289,7 @@ test('the emitted transcript becomes a NEW message with no attachments; the draf
 
   const outcome = sendVoiceMessage(chat, harness.finalTexts[0]!);
   assert.equal(outcome, 'sent');
-  assert.deepEqual(calls, [{ text: '帮我看一下', attachments: [] }], 'chat.send(finalText, [])');
+  assert.deepEqual(calls, [{ text: '帮我看一下', attachments: [], options: { preserveDraft: true } }], 'voice send preserves the composer');
   assert.equal(chat.draft, '用户已经输入的草稿', 'composer draft is byte-for-byte unchanged');
   assert.equal(harness.draftWrites.length, 0);
 });

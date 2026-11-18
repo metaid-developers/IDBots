@@ -57,7 +57,7 @@ export function resolveHoldRelease(input: {
 
 /** Minimal chat surface the final-text hand-off needs (ChatScreen's chat). */
 export interface VoiceSendTarget {
-  send(text: string, attachments?: unknown[]): unknown;
+  send(text: string, attachments?: unknown[], options?: { preserveDraft?: boolean }): unknown;
   setDraft?(text: string): void;
   readonly draft?: string;
 }
@@ -68,8 +68,8 @@ export type VoiceSendOutcome = 'sent' | 'empty' | 'kept_in_draft';
  * Hands a finished transcript to the chat as a BRAND-NEW message.
  *
  * Contract (acceptance-critical):
- *  - `chat.send(finalText, [])` is called with the transcript and no
- *    attachments; the composer draft is neither read nor written.
+ *  - `chat.send(finalText, [], { preserveDraft: true })` sends the transcript
+ *    with no attachments and keeps the existing composer draft untouched.
  *  - Empty transcript = accidental press: no send, caller shows a hint.
  *  - `blocked` (the composer is busy: streaming / waiting permission):
  *    the words are never dropped — they are appended to the existing draft
@@ -88,6 +88,6 @@ export function sendVoiceMessage(
     target.setDraft?.(`${draft}${glue}${text}`);
     return 'kept_in_draft';
   }
-  void target.send(text, []);
+  void target.send(text, [], { preserveDraft: true });
   return 'sent';
 }

@@ -341,7 +341,7 @@ test('ChatScreen renders terminal error rows as an inline notice instead of drop
   assert.ok(markup.includes('free_quota_exhausted'), 'the relay machine code is visible in the transcript');
 });
 
-test('ChatScreen shows Bot activity instead of mechanical submission copy', () => {
+test('ChatScreen shows Studio Bot activity instead of mechanical submission copy', () => {
   mobileI18n.setLanguage('en');
   const html = renderToStaticMarkup(
     <ChatScreen
@@ -366,7 +366,7 @@ test('ChatScreen shows Bot activity instead of mechanical submission copy', () =
     />,
   );
   assert.ok(html.includes('assistant-status-shimmer'), 'desktop Bot activity indicator is reused');
-  assert.ok(html.includes('Understanding your follow-up'), 'natural activity copy is rendered');
+  assert.match(html, /Continuing to work…|Making progress…/, 'the Studio activity phrase pool is used');
   assert.ok(!html.includes('Sending and waiting for tenant confirmation'), 'mechanical submission copy is removed');
   assert.ok(!html.includes('Sending your follow-up'), 'transport-oriented follow-up copy is removed');
 });

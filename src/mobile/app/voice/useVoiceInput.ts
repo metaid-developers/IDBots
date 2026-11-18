@@ -10,7 +10,7 @@
  *  - `startHold()` / `endHold()` / `cancelHold()` — hold to talk. The
  *    composer draft is NEVER read for writing: partials stay in the session,
  *    and the finished transcript leaves through `onFinalText` exactly once
- *    (ChatScreen sends it as a new message). Release without a session ends
+ *    (ChatScreen sends it as a new message with draft preservation). Release without a session ends
  *    in `cancelHold()`, which discards everything.
  *  - `start()` / `stop()` — the voice-P0 tap toggle, kept as the
  *    accessibility fallback (keyboard / screen reader). This path keeps the

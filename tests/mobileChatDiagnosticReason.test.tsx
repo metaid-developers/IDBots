@@ -221,3 +221,23 @@ test('composer has no send button and keeps Enter-to-send with IME/newline guard
   assert.match(source, /event\.preventDefault\(\);/);
   assert.match(source, /if \(canSubmit\) submit\(\);/);
 });
+
+test('steering uses Studio activity phrases instead of the obsolete follow-up fallback', () => {
+  const markup = renderToStaticMarkup(
+    <ChatScreen
+      chat={chatFixture({ isStreaming: true, turnPhase: 'steering', activityMessages: [], sessionId: 'status-1' })}
+      bots={[]}
+      onOpenRecharge={() => undefined}
+    />,
+  );
+  assert.match(markup, /Continuing to work…|Making progress…/);
+  assert.doesNotMatch(markup, /Understanding your follow-up|正在理解补充指令/);
+});
+
+test('composer focus and message-link presentation rules are pinned', () => {
+  const css = readFileSync(new URL('../src/mobile/app/twin-ui.css', import.meta.url), 'utf8');
+  assert.match(css, /\.twin-composer-input:focus::placeholder\s*\{[^}]*color:\s*transparent/s);
+  assert.match(css, /\.twin-composer-input:focus-visible\s*\{[^}]*outline:\s*none/s);
+  assert.match(css, /--twin-message-link:\s*#ffe36e/);
+  assert.match(css, /\.twin-message-assistant a\s*\{[^}]*color:\s*var\(--twin-message-link\)/s);
+});

@@ -18,11 +18,9 @@
  *     target even when the finger leaves the button, and a non-passive
  *     `touchmove` preventDefault for the duration of the hold.
  *  3. Hold-to-talk is worse for accessibility.
- *     Kept as a fallback, not as the only path: a short press (< 400 ms,
- *     i.e. a tap) still toggles the recording state, so keyboard and
- *     screen-reader users operate the same button with click/Enter/Space.
- *     VoiceOver/TalkBack map the focused button's activate gesture to click,
- *     which is exactly the tap path.
+ *     The icon's click/Enter/Space path switches composer modes, while the
+ *     wide "hold to talk" button's keyboard / screen-reader click toggles
+ *     recording. Pointer taps never start a recording accidentally.
  *
  * `mode` records which path started the current session: hold sessions render
  * the bottom overlay and never touch the composer draft; tap sessions keep the
