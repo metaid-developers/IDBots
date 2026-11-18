@@ -15,7 +15,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const t = (key) => key;
 
-/** The 长期任务 rail entry — the one that carries the attention dot. */
+/** The BotWorks 定时任务 rail entry — the one that carries the running dot. */
 const longTermItem = (params) =>
   getRailHomeNavModel({ t, ...params }).find((item) => item.id === 'longTerm');
 
@@ -27,7 +27,7 @@ test('Bot Home rail keeps the four destinations in order: new task, long-term, g
   assert.deepEqual(ids, ['newTask', 'longTerm', 'groupTasks', 'records']);
   const items = getRailHomeNavModel({ t, hasRunningScheduledTask: false });
   assert.equal(items[0].icon, 'compose');
-  assert.equal(items[1].icon, 'clock');
+  assert.equal(items[1].icon, 'bell');
   assert.equal(items[2].icon, 'userGroup');
   assert.equal(items[3].icon, 'archive');
   // Every rail entry is an icon + a tooltip label — no text row survives.
@@ -37,7 +37,7 @@ test('Bot Home rail keeps the four destinations in order: new task, long-term, g
   }
 });
 
-test('the 长期任务 rail entry carries no dot by default, an amber running dot while a task runs', () => {
+test('the 定时任务 rail entry carries no dot by default, an amber running dot while a task runs', () => {
   const idle = longTermItem({ hasRunningScheduledTask: false, needsDecisionCount: 0 });
   assert.equal(idle.hasIndicator, false);
   assert.equal(idle.indicatorKind, undefined);
@@ -49,43 +49,55 @@ test('the 长期任务 rail entry carries no dot by default, an amber running do
   assert.equal(running.indicatorLabel, undefined, 'the running dot stays unlabelled (historic behaviour)');
 });
 
-test('a pending owner decision lights the 长期任务 dot with its own count label, and outranks "running"', () => {
-  const decision = longTermItem({ hasRunningScheduledTask: false, needsDecisionCount: 2 });
+test('the decision dot rides the Studio tasks entry with its own count label; the BotWorks scheduled-tasks entry never carries it', () => {
+  // Studio migration: the parked-decision dot moved to the Internet rail's
+  // Studio `tasks` entry; the BotWorks 定时任务 entry only ever carries the
+  // plain running dot (see the previous test).
+  const studioTasks = (needsDecisionCount) =>
+    getRailInternetNavModel({ t, needsDecisionCount }).find((item) => item.id === 'tasks');
+
+  const decision = studioTasks(2);
   assert.equal(decision.hasIndicator, true);
   assert.equal(decision.indicatorKind, 'decision');
   assert.equal(decision.indicatorLabel, 'trackedTaskNeedsDecision', 'the label key carries the count placeholder');
 
-  const both = longTermItem({ hasRunningScheduledTask: true, needsDecisionCount: 1 });
-  assert.equal(both.indicatorKind, 'decision', 'the owner decision wins over a running task');
-  assert.equal(both.hasIndicator, true);
-
   // Garbage counts must not light the dot.
   for (const needsDecisionCount of [0, -3, undefined, null, NaN]) {
     assert.equal(
-      longTermItem({ hasRunningScheduledTask: false, needsDecisionCount }).hasIndicator,
+      studioTasks(needsDecisionCount).hasIndicator,
       false,
       `needsDecisionCount=${String(needsDecisionCount)} keeps the dot off`,
     );
   }
+
+  // The BotWorks scheduled-tasks entry ignores decision counts: its model has
+  // no needsDecisionCount input, so the amber decision dot never moves back.
+  const botWorks = longTermItem({ hasRunningScheduledTask: false, needsDecisionCount: 2 });
+  assert.equal(botWorks.hasIndicator, false);
+  assert.equal(botWorks.indicatorKind, undefined);
 });
 
-test('Bot Internet rail lists browser, hidden Bot Hub, Meta Apps and My Bots — the Co-Work entry is retired', () => {
+test('Bot Internet rail lists browser, the Studio tasks entry, hidden Bot Hub, Meta Apps and My Bots — the Co-Work entry is retired', () => {
   const items = getRailInternetNavModel({ t });
 
-  assert.deepEqual(items.map((item) => item.id), ['browser', 'gigSquare', 'metaapps', 'myBots']);
+  assert.deepEqual(items.map((item) => item.id), ['browser', 'tasks', 'gigSquare', 'metaapps', 'myBots']);
   assert.equal(items[0].icon, 'globe');
-  assert.equal(items[1].icon, 'shoppingBag');
-  assert.equal(items[1].badge, 'gigSquareAlphaBadge');
-  assert.equal(items[2].icon, 'squares2x2');
-  assert.equal(items[3].label, 'metabots');
-  assert.equal(items[3].icon, 'cpuChip');
+  // Studio tasks = the long-term task board: the roadmap (clock token → Map),
+  // NOT the scheduled-tasks bell that lives on the BotWorks rail.
+  assert.equal(items[1].icon, 'clock');
+  assert.equal(items[1].label, 'railLongTermTasks');
+  assert.equal(items[2].icon, 'shoppingBag');
+  assert.equal(items[2].badge, 'gigSquareAlphaBadge');
+  assert.equal(items[3].icon, 'squares2x2');
+  assert.equal(items[4].label, 'metabots');
+  assert.equal(items[4].icon, 'cpuChip');
 
   // Bot Hub is not a promoted column for now: its entry stays implemented but
-  // hidden, so the rail lists exactly THREE visible destinations.
-  assert.equal(items[1].hidden, true);
+  // hidden, so the rail lists exactly FOUR visible destinations.
+  assert.equal(items[2].hidden, true);
   assert.deepEqual(
     items.filter((item) => !item.hidden).map((item) => item.id),
-    ['browser', 'metaapps', 'myBots'],
+    ['browser', 'tasks', 'metaapps', 'myBots'],
   );
   // Owner ruling 2026-11-08 20:18: the bubble icon is retired. The Co-Work
   // face is this surface's default (the session list IS the mid column), so it

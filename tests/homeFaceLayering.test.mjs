@@ -29,11 +29,12 @@ import {
  *
  * What that means for this suite:
  *   1. The Home face mounts NO rail. Its destinations are the baseline TEXT
- *      rows (新建任务 / 长期任务 / 多人任务) in HomeSidebar.tsx.
+ *      rows (新建任务 / 定时任务 / 多人任务) in HomeSidebar.tsx.
  *   2. The record-type selector is the sidebar's own text tab row — the drawer
  *      stays retired (owner ruled it redundant), and this is its only entrance.
- *   3. The amber 「待拍板」 decision dot is back on the restored 长期任务 row:
- *      same derivation, same condition (total > 0), same class.
+ *   3. The amber 「待拍板」 decision dot rides the rail's Studio tasks entry
+ *      (see the dedicated test below); the scheduled-tasks entry keeps only
+ *      the running dot.
  *   4. The records list keeps the accepted 6165d6449 fusion unchanged: by-Bot
  *      grouped template on both faces, group header = avatar + name + trailing
  *      +, no empty groups on the online face, per-face memory keys.
@@ -91,7 +92,7 @@ test('the Home face mounts the three-column shell: rail | records column | right
   assert.match(homeSidebarSource, /i18nService\.t\('coworkHistory'\)/);
 });
 
-test('the Home destinations are the rail icon entries — 新建任务/长期任务/多人任务', () => {
+test('the Home destinations are the rail icon entries — 新建任务/定时任务/多人任务', () => {
   // Three-column final ruling 2026-11-09: the three entries moved to the
   // rail's home nav. The model keeps FOUR items (records included) but the
   // rail filters `records` out — the records BODY is always on screen in the
@@ -112,7 +113,7 @@ test('the Home destinations are the rail icon entries — 新建任务/长期任
 
   // The rail renders the FILTERED home model; App wires the OLD rows'
   // behavior VERBATIM in the home-branch mount — 新建任务 →
-  // handleBlankNewChat (the rail's own onNewChat hook), 长期任务 →
+  // handleBlankNewChat (the rail's own onNewChat hook), 定时任务 →
   // handleShowScheduledTasks, 多人任务 → handleShowGroupTasks. No Home-side
   // 我的 Bot wiring survives.
   const branchStart = appSource.indexOf('{showHomeSurface ? (');

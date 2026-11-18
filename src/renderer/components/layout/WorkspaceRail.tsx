@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import {
+  ArchiveBoxIcon,
   BellAlertIcon,
   Cog6ToothIcon,
   MapIcon,
@@ -43,11 +44,11 @@ interface RailNavItem {
 const renderRailIcon = (icon: string): React.ReactNode => {
   switch (icon) {
     case 'compose':
-      return <ComposeIcon className="h-5 w-5" />;
+      return <ComposeIcon className="h-6 w-6" />;
     case 'clock':
       // 长期任务: a roadmap (Heroicons map) — the board is a route to walk,
       // not a point in time.
-      return <MapIcon className="h-5 w-5" />;
+      return <MapIcon className="h-6 w-6" />;
     case 'userGroup': {
       // 多人任务: Tabler "users-plus" glyph (tabler.io/icons, MIT license),
       // copied verbatim into this file (same inline pattern as squares2x2
@@ -55,8 +56,8 @@ const renderRailIcon = (icon: string): React.ReactNode => {
       return (
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          width="20"
-          height="20"
+          width="24"
+          height="24"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -64,7 +65,7 @@ const renderRailIcon = (icon: string): React.ReactNode => {
           strokeLinecap="round"
           strokeLinejoin="round"
           aria-hidden="true"
-          className="h-5 w-5"
+          className="h-6 w-6"
         >
           <path d="M5 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0" />
           <path d="M3 21v-2a4 4 0 0 1 4 -4h4c.96 0 1.84 .338 2.53 .901" />
@@ -74,11 +75,14 @@ const renderRailIcon = (icon: string): React.ReactNode => {
         </svg>
       );
     }
-    case 'archive':
+    case 'bell':
       // 定时任务: a bell (Heroicons bell-alert) — a scheduled run rings.
-      return <BellAlertIcon className="h-5 w-5" />;
+      return <BellAlertIcon className="h-6 w-6" />;
+    case 'archive':
+      // 任务记录: an archive box (Heroicons archive-box).
+      return <ArchiveBoxIcon className="h-6 w-6" />;
     case 'shoppingBag':
-      return <ShoppingBagIcon className="h-5 w-5" />;
+      return <ShoppingBagIcon className="h-6 w-6" />;
     case 'cpuChip': {
       // 我的 BOT: Lucide "bot" skeleton (lucide.dev, ISC license) — antenna,
       // head, side ears — strokeWidth 1.5 like the rest of the family. The
@@ -89,8 +93,8 @@ const renderRailIcon = (icon: string): React.ReactNode => {
       return (
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          width="20"
-          height="20"
+          width="24"
+          height="24"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -98,7 +102,7 @@ const renderRailIcon = (icon: string): React.ReactNode => {
           strokeLinecap="round"
           strokeLinejoin="round"
           aria-hidden="true"
-          className="h-5 w-5"
+          className="h-6 w-6"
         >
           <path d="M12 8V4H8" />
           <rect x="4" y="8" width="16" height="12" rx="2" />
@@ -113,15 +117,15 @@ const renderRailIcon = (icon: string): React.ReactNode => {
       return (
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          width="20"
-          height="20"
+          width="24"
+          height="24"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="h-5 w-5"
+          className="h-6 w-6"
         >
           <rect x="3" y="3" width="7" height="7" rx="1.5" />
           <rect x="14" y="3" width="7" height="7" rx="1.5" />
@@ -138,8 +142,8 @@ const renderRailIcon = (icon: string): React.ReactNode => {
       return (
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          width="20"
-          height="20"
+          width="24"
+          height="24"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -147,7 +151,7 @@ const renderRailIcon = (icon: string): React.ReactNode => {
           strokeLinecap="round"
           strokeLinejoin="round"
           aria-hidden="true"
-          className="h-5 w-5"
+          className="h-6 w-6"
         >
           <rect x="3" y="4.5" width="18" height="15" rx="2.4" />
           <line x1="3" y1="7.9" x2="21" y2="7.9" />
@@ -378,7 +382,7 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
         >
           {/* 两面一致性令 (owner order 2026-11-09 11:16): the Home face's
               rail carries exactly the three entries that used to be the
-              sidebar's stacked text rows — 新建任务 / 长期任务 / 多人任务.
+              sidebar's stacked text rows — 新建任务 / 定时任务 / 多人任务.
               The records archive selector stays out: on this surface the
               records body is always on screen below, so a fourth icon would
               add a door the face never had. */}
@@ -410,7 +414,7 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
             active={false}
             onClick={onShowSettings}
           >
-            <Cog6ToothIcon className="h-5 w-5" />
+            <Cog6ToothIcon className="h-6 w-6" />
           </RailButton>
         ) : null}
         {/* The old compact ME badge is GONE from the rail (owner ruling

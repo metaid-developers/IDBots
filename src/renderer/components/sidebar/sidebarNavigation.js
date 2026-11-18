@@ -28,7 +28,8 @@ const BOT_HUB_NAV_ENABLED = false;
  * The Home face no longer renders the 64 px icon rail, so its destinations are
  * the baseline text rows again: one creation action plus the two list
  * destinations the owner kept (2026-11-08 15:46). `scheduledTasks` is the
- * long-term workspace entry and carries the amber owner-decision dot;
+ * scheduled-tasks entry (定时任务; the label misrendered as 长期任务 until the
+ * 2026-11-18 token-split ruling) and carries the amber owner-decision dot;
  * `groupTasks` opens the 多人任务 management view.
  *
  * The 「我的 Bot」row is RETIRED from this menu by the same 15:46 ruling. The
@@ -54,7 +55,9 @@ export function getSidebarPrimaryNavModel({ t, hasRunningScheduledTask, needsDec
     {
       id: 'scheduledTasks',
       label: t('scheduledTasks'),
-      icon: 'clock',
+      // Same 定时语义 anchor as the BotWorks rail: the scheduled-tasks entry
+      // rings the bell (the roadmap Map belongs to the long-term board).
+      icon: 'bell',
       hasIndicator: Boolean(hasRunningScheduledTask) || hasDecision,
       indicatorKind: hasDecision ? 'decision' : hasRunningScheduledTask ? 'running' : undefined,
       indicatorLabel: hasDecision
@@ -189,7 +192,7 @@ export function getRailHomeNavModel({ t, hasRunningScheduledTask }) {
     {
       id: 'longTerm',
       label: t('scheduledTasks'),
-      icon: 'clock',
+      icon: 'bell',
       hasIndicator: Boolean(hasRunningScheduledTask),
       indicatorKind: hasRunningScheduledTask ? 'running' : undefined,
     },
