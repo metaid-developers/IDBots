@@ -190,34 +190,21 @@ const UserSettings: React.FC = () => {
   const [chainBackupLastRun, setChainBackupLastRun] = useState<number | null>(null);
   const [subsidyRetrying, setSubsidyRetrying] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
-  const [twinName, setTwinName] = useState('');
   const [dailyMessage, setDailyMessage] = useState('');
   useEffect(() => {
     let alive = true;
-    const load = async () => {
-      try {
-        const roster = await window.electron.metabot.list();
-        const bots = roster?.success && Array.isArray(roster.list) ? roster.list : [];
-        const twin = bots.find((bot) => bot.metabot_type === 'twin');
-        if (alive) setTwinName((twin?.name || '').trim());
-      } catch {
-        if (alive) setTwinName('');
-      }
+    const load = () => {
       const stored = readTwinDailyMessage();
       if (alive) setDailyMessage(stored?.text ?? resolveSessionFallbackMessage());
     };
-    void load();
-    const handleRosterChanged = () => { void load(); };
+    load();
+    const handleRosterChanged = () => { load(); };
     window.addEventListener('app:metabots-changed', handleRosterChanged);
     return () => {
       alive = false;
       window.removeEventListener('app:metabots-changed', handleRosterChanged);
     };
   }, []);
-  const signatureText = [
-    twinName ? `${twinName} 今天想跟你说：` : '',
-    dailyMessage,
-  ].filter(Boolean).join('');
   const [nameSaving, setNameSaving] = useState(false);
   const [nameError, setNameError] = useState('');
   const [avatarEditing, setAvatarEditing] = useState(false);
@@ -1068,7 +1055,8 @@ const UserSettings: React.FC = () => {
           </div>
         )}
 
-        {/* Profile card: identity group (clickable avatar + inline name + daily message) with account actions */}
+        {/* Profile card: identity group (clickable avatar + inline name) with account actions;
+            the daily message renders as its own full-width row below. */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-4">
             <button
@@ -1128,11 +1116,6 @@ const UserSettings: React.FC = () => {
                   </button>
                 )}
               </div>
-              {signatureText && (
-                <p className="text-[13px] font-medium text-claude-text dark:text-claude-darkText truncate mt-1">
-                  {signatureText}
-                </p>
-              )}
               {nameError && (
                 <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
                   {nameError}
@@ -1144,26 +1127,33 @@ const UserSettings: React.FC = () => {
             <button
               type="button"
               onClick={() => setBackupModalOpen(true)}
-              className="inline-flex h-9 min-w-[128px] items-center justify-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-3 text-xs font-medium transition-colors dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+              className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-2.5 text-xs font-medium transition-colors dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
             >
               {i18nService.t('userSettingsBackupMnemonic')}
             </button>
             <button
               type="button"
               onClick={() => openLogoutModal('switch')}
-              className="inline-flex h-9 min-w-[128px] items-center justify-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-3 text-xs font-medium transition-colors dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+              className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-2.5 text-xs font-medium transition-colors dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
             >
               {i18nService.t('userSettingsSwitchAccount')}
             </button>
             <button
               type="button"
               onClick={() => openLogoutModal('logout')}
-              className="inline-flex h-9 min-w-[128px] items-center justify-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border border-red-600 px-3 text-xs font-medium text-red-600 transition-colors hover:bg-red-600/5"
+              className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border border-red-600 px-2.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-600/5"
             >
               {i18nService.t('userSettingsLogout')}
             </button>
           </div>
         </div>
+
+        {/* Daily message: its own full-width row below the identity row — wraps up to two lines, never truncated to an ellipsis. */}
+        {dailyMessage && (
+          <p className="break-words text-[13px] font-medium leading-relaxed line-clamp-2 text-claude-text dark:text-claude-darkText">
+            {dailyMessage}
+          </p>
+        )}
 
         {avatarEditing && (
           <AvatarPickerModal
