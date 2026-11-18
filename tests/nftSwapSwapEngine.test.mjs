@@ -125,6 +125,7 @@ function makeDeps({ vaultRows = [], probePins = [], overrides = {} } = {}) {
     },
     waitItemInfo: async () => ({ hit: { output: `${uniqueHex()}:0`, outputValue: 1, transferCount: 0 } }),
     fetchItemVerify: async () => ({ creatorMinted: true }),
+    fetchItemInfo: async () => ({ cover: '/test-covers/legacy.png' }),
     fetchCollectionInfo: async () => ({ createAddress: ALBUM.issuerAddress }),
     transferItem: async () => {
       calls.transfer += 1;
@@ -136,6 +137,12 @@ function makeDeps({ vaultRows = [], probePins = [], overrides = {} } = {}) {
       return { txId: uniqueHex(), feeSats: 420 };
     },
     sleep: async () => {},
+    // Cover-preservation guard (2026-11-19): mint/broadcast fail closed when
+    // neither an explicit --cover nor deps.resolveCover exists. The engine's
+    // own behavior tests stay focused on the mint/burn lifecycle, so the
+    // default deps carry a stub resolver; cover-guard tests override it via
+    // `overrides` to assert the COVER_UNAVAILABLE paths.
+    resolveCover: async () => ({ cover: '/test-covers/legacy.png', source: 'test-resolver' }),
     ...overrides,
   };
   return { deps, calls };
