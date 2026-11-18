@@ -261,6 +261,7 @@ export function useChat(bots: MockMetabot[] = []) {
   const send = useCallback(async (
     text: string,
     attachments: MobileChatAttachment[] = [],
+    options: { preserveDraft?: boolean } = {},
   ): Promise<CoworkActionResult> => {
     if (!controller) return { status: 'failed', error: t('mobile.bridge.unavailableBody') };
     const trimmed = text.trim();
@@ -276,7 +277,7 @@ export function useChat(bots: MockMetabot[] = []) {
     const startOptions = metabotId === null
       ? { title }
       : buildCoworkSessionStartOptions({ metabotId, title, config: configRef.current });
-    return controller.send(text, startOptions, attachments, t('mobile.chat.inputFile'));
+    return controller.send(text, startOptions, attachments, t('mobile.chat.inputFile'), options);
   }, [controller, metabotId, sessionId]);
 
   const openSession = useCallback(async (id: string): Promise<boolean> => (

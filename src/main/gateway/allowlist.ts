@@ -1,5 +1,5 @@
 // IPC allowlist data — encodes docs/cloud-mobile/02-ipc-allowlist-v1.md
-// (allowlist version 1.0.3 per CR-WSA-001 + CR-WSA-002 + CR-WSA-003 + CR-WSA-004; frozen at 1.0.0 on
+// (allowlist version 1.0.4 per CR-WSA-001 + CR-WSA-002 + CR-WSA-003 + CR-WSA-004 + CR-WSE-001; frozen at 1.0.0 on
 // 2026-10-15) as data, per REQ-A-17.
 //
 // Every tier/restriction/timeout assignment in the FROZEN sections of this
@@ -33,8 +33,8 @@ export interface AllowlistEntry {
   note?: string;
 }
 
-/** Allowlist version from `02` (frozen at 1.0.0 on 2026-10-15; 1.0.3 = CR-WSA-003). */
-export const ALLOWLIST_VERSION = '1.0.3';
+/** Allowlist version from `02` (frozen at 1.0.0 on 2026-10-15; 1.0.4 = CR-WSE-001). */
+export const ALLOWLIST_VERSION = '1.0.4';
 
 /** C2 Limits: default invoke timeout. Channel-specific overrides live on entries. */
 export const DEFAULT_INVOKE_TIMEOUT_MS = 120_000;
@@ -322,7 +322,7 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'app:getVersion': { tier: 'P1' },
   'app:getSystemLocale': { tier: 'P1' },
   'store:get': { tier: 'P1', restrictions: ['R-store'], note: '`02`: P1-R, R-store (only key `app_config`, apiKey redacted).' },
-  'store:set': { tier: 'P1', restrictions: ['R-store'], note: '`02`: P1-R, R-store (only key `app_config`, provider entries frozen).' },
+  'store:set': { tier: 'P1', restrictions: ['R-store'], note: '`02`: P1-R, R-store (only key `app_config`, redacted-key preservation, relay route pinned).' },
   'store:remove': { tier: 'P1', restrictions: ['R-store'], note: '`02`: P1-R, R-store (`remove` is rejected by R-store).' },
   'get-api-config': { tier: 'P1', note: '`02`: read and connection test only.' },
   'check-api-config': { tier: 'P1', note: '`02`: read and connection test only.' },

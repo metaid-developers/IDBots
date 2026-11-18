@@ -1,7 +1,7 @@
 # 02 — IPC Allowlist v1 (Mobile API v1)
 
-Allowlist version: **1.0.2** (CR-WSA-001 + CR-WSA-002 + CR-WSA-004, 2026-11-11: two
-read-only MRC-721 channels N → P1; the me:* family registered; user-wallet MRC-721 holdings added), originally
+Allowlist version: **1.0.4** (CR-WSE-001, 2026-11-19: user-owned mobile model providers;
+1.0.3 included CR-WSA-001 through CR-WSA-004), originally
 frozen at **1.0.0** by the owner on 2026-10-15 (M1); changes
 follow the change-request process in `00`. This is the complete list
 of IPC channels a gateway client may invoke and the main-process events it
@@ -34,7 +34,7 @@ after that date so it gets a tier here.
 | R-upload | File path arguments must resolve inside `/data/workspace/uploads` (files the phone uploaded through C2). |
 | R-exec | `executionMode` may only be `auto` or `local`; `sandbox` is rejected (no nested containers). |
 | R-cfg | `cowork:config:set` accepts only `memoryEnabled`, `memoryImplicitUpdateEnabled`, `memoryLlmJudgeEnabled`, `memoryGuardLevel`, `memoryUserMemoriesMaxItems`, plus `workingDirectory` and `executionMode` under R-cwd and R-exec. Other fields are rejected. |
-| R-store | `store:get`, `store:set`, `store:remove` accept only key `app_config`. On `get`, every `providers.*.apiKey` is replaced by `"__redacted__"`. On `set`, provider entries cannot be added or removed and their `apiKey`, `baseUrl`, and `apiFormat` are kept from the stored value; `remove` is rejected. |
+| R-store | `store:get`, `store:set`, `store:remove` accept only key `app_config`. On `get`, every `providers.*.apiKey` is replaced by `"__redacted__"`. On `set`, existing provider entries cannot be removed; user-owned entries may be added or edited with validated fields. An omitted or `"__redacted__"` key preserves the stored credential. Relay-managed `idbots` / `metaid-free` entries keep their stored `apiKey`, `baseUrl`, and `apiFormat`; `remove` is rejected. |
 | R-size | Base64 payloads are limited by the 1 MiB inbound frame; larger files go through the upload route. |
 
 ## Invoke Channels
@@ -171,7 +171,7 @@ after that date so it gets a tier here.
 | Channel | Tier | Notes |
 |---------|------|-------|
 | `app:getVersion`, `app:getSystemLocale` | P1 | |
-| `store:get`, `store:set`, `store:remove` | P1-R | R-store. |
+| `store:get`, `store:set`, `store:remove` | P1-R | R-store, including user-owned provider management (CR-WSE-001). |
 | `get-api-config`, `check-api-config` | P1 | Read and connection test only. |
 | `save-api-config` | N | Provider management is not on the phone in v1. |
 | `generate-session-title` | P1 | |
@@ -226,6 +226,6 @@ Renderer-to-main `send` channels (`window-close`, `window-maximize`,
    untiered channel fails the test.
 3. Each R rule has a positive and a negative test (for example
    `cowork:session:start` with `cwd: '/etc'` returns `ARG_RESTRICTED`).
-4. `store:get('app_config')` over the gateway never contains a real API key.
+4. `store:get('app_config')` over the gateway never contains a real API key; a redacted or omitted key on `store:set` preserves the stored key, user-owned providers can be added/edited, and relay-managed routes stay pinned.
 5. P2 channels return `CHANNEL_NOT_ALLOWED` while the tenant runs with
    `IDBOTS_GATEWAY_TIER=P1`, and work with `IDBOTS_GATEWAY_TIER=P2`.

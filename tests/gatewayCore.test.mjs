@@ -334,39 +334,43 @@ test('restrictions: redactAppConfig replaces every providers.*.apiKey and clones
   assert.equal(restrictions.redactAppConfig(null), null);
 });
 
-test('restrictions: mergeAppConfigSet pins apiKey/baseUrl/apiFormat and rejects provider add/remove', () => {
+test('restrictions: mergeAppConfigSet preserves redacted keys, allows provider edits/additions, and rejects removal', () => {
   const stored = {
     providers: {
       deepseek: { apiKey: 'stored-key', baseUrl: 'https://stored.example', apiFormat: 'openai', enabled: true },
+      idbots: { apiKey: 'relay-secret', baseUrl: 'https://relay.example', apiFormat: 'openai', enabled: true },
     },
     theme: 'dark',
   };
-  const incoming = {
+  const merged = restrictions.mergeAppConfigSet(stored, {
     providers: {
-      deepseek: { apiKey: 'hacked-key', baseUrl: 'https://evil.example', apiFormat: 'anthropic', enabled: false },
+      deepseek: { apiKey: '__redacted__', baseUrl: 'https://new.example', apiFormat: 'anthropic', enabled: false },
+      idbots: { apiKey: 'replacement', baseUrl: 'https://evil.example', apiFormat: 'anthropic', enabled: true },
+      'custom-relay': { apiKey: 'new-key', baseUrl: 'https://custom.example/v1', apiFormat: 'openai', enabled: true, models: [] },
     },
     theme: 'light',
-  };
-  const merged = restrictions.mergeAppConfigSet(stored, incoming);
+  });
   assert.deepEqual(merged, {
     providers: {
-      deepseek: { apiKey: 'stored-key', baseUrl: 'https://stored.example', apiFormat: 'openai', enabled: false },
+      deepseek: { apiKey: 'stored-key', baseUrl: 'https://new.example', apiFormat: 'anthropic', enabled: false },
+      idbots: { apiKey: 'relay-secret', baseUrl: 'https://relay.example', apiFormat: 'openai', enabled: true },
+      'custom-relay': { apiKey: 'new-key', baseUrl: 'https://custom.example/v1', apiFormat: 'openai', enabled: true, models: [] },
     },
     theme: 'light',
   });
 
-  // Added provider.
-  assert.equal(
-    restrictions.mergeAppConfigSet(stored, { providers: { ...incoming.providers, newp: { apiKey: 'x' } } }),
-    null,
-  );
-  // Removed provider.
-  assert.equal(restrictions.mergeAppConfigSet(stored, { providers: {} }), null);
-  // Incoming providers not an object.
+  const replaced = restrictions.mergeAppConfigSet(stored, {
+    providers: {
+      deepseek: { apiKey: 'new-key', baseUrl: 'https://stored.example', apiFormat: 'openai', enabled: true },
+      idbots: stored.providers.idbots,
+    },
+  });
+  assert.equal(replaced.providers.deepseek.apiKey, 'new-key');
+  assert.equal(restrictions.mergeAppConfigSet(stored, { providers: {} }), null, 'provider removal rejected');
+  assert.equal(restrictions.mergeAppConfigSet(stored, { providers: { ...stored.providers, 'bad_key': { apiKey: 'x', baseUrl: 'https://x.example', apiFormat: 'openai' } } }), null);
+  assert.equal(restrictions.mergeAppConfigSet(stored, { providers: { ...stored.providers, 'custom-bad': { apiKey: 'x', baseUrl: '', apiFormat: 'openai' } } }), null);
   assert.equal(restrictions.mergeAppConfigSet(stored, { providers: 'nope' }), null);
-  // Incoming not an object at all.
   assert.equal(restrictions.mergeAppConfigSet(stored, 'nope'), null);
-  // Providers omitted in incoming: stored providers kept verbatim.
   const partial = restrictions.mergeAppConfigSet(stored, { theme: 'light' });
   assert.deepEqual(partial.providers, stored.providers);
 });

@@ -38,6 +38,7 @@ import { BotsPage } from './me/BotsPage';
 import { BotEditPage } from './me/BotEditPage';
 import { SkillsPage } from './me/SkillsPage';
 import { MemoryPage } from './me/MemoryPage';
+import { ModelPage } from './me/ModelPage';
 import { GeneralPage } from './me/GeneralPage';
 import { AccountPage } from './me/AccountPage';
 import { WeixinBindPage } from './me/WeixinBindPage';
@@ -338,6 +339,8 @@ export default function MeScreen(props: {
         return <SkillsPage onBack={requestBack} />;
       case 'memory':
         return <MemoryPage onBack={requestBack} />;
+      case 'model':
+        return <ModelPage onBack={requestBack} onSaved={() => void metabots.reload()} />;
       case 'general':
         return <GeneralPage onBack={requestBack} />;
       case 'account':
