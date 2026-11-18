@@ -140,8 +140,13 @@ const sweep = (listOnly) => {
   let failed = false;
   if (mjs.length > 0) {
     console.log(`unwired sweep: node --test over ${mjs.length} .mjs files`);
-    const r = spawnSync('node', ['--test', '--test-concurrency=4', ...mjs], {
+    // Per-test timeout: a file that wedges under sweep concurrency (resource
+    // contention around spawned daemons — green solo, hung in company) must
+    // turn into a RED sweep result, never into a wedged root chain. The batch
+    // cap is the last-resort backstop.
+    const r = spawnSync('node', ['--test', '--test-concurrency=4', '--test-timeout=180000', ...mjs], {
       cwd: repoRoot, stdio: 'inherit', maxBuffer: 1024 * 1024 * 1024,
+      timeout: 35 * 60 * 1000, killSignal: 'SIGKILL',
       env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
     });
     if (r.status !== 0) failed = true;
