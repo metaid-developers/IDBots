@@ -36,26 +36,32 @@ test('the Bot Home rail keeps the four destinations in order', () => {
   ]);
   assert.deepEqual(items.map((item) => item.label), [
     '新建任务',
-    '长期任务',
+    // scheduledTasks = the 定时任务 entry (icon bell); the long-term board
+    // label lives on the Internet rail's Studio tasks entry instead.
+    '定时任务',
     '群组任务',
     '任务记录',
   ]);
 });
 
-test('the Bot Internet rail places Gig Square before MetaApps and My Bots — Co-Work retired', () => {
+test('the Bot Internet rail places the Studio tasks entry before Gig Square, MetaApps and My Bots — Co-Work retired', () => {
   const items = getRailInternetNavModel({ t });
 
   assert.deepEqual(items.map((item) => item.id), [
     'browser',
+    // Studio tasks (长期任务 board) rides the Internet rail, between the
+    // browser door and the hidden Bot Hub entry.
+    'tasks',
     'gigSquare',
     'metaapps',
     'myBots',
   ]);
-  // The visible rail is three icons: the Co-Work bubble entry was retired by
-  // the owner ruling of 2026-11-08 20:18 (the face is the surface default).
+  // The visible rail is FOUR icons: the Co-Work bubble entry was retired by
+  // the owner ruling of 2026-11-08 20:18 (the face is the surface default),
+  // and the Studio tasks entry joined the rail with the Studio migration.
   assert.deepEqual(
     items.filter((item) => !item.hidden).map((item) => item.label),
-    ['Bot 浏览器', '元应用', 'MetaBots'],
+    ['Bot 浏览器', '长期任务', '元应用', 'MetaBots'],
   );
 });
 

@@ -3069,7 +3069,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     'longTermTask.collapse': '收起',
     'longTermTask.origin.label': '所属任务',
     'longTermTask.origin.open': '打开看板里的这个任务',
-    scheduledTasks: '长期任务',
+    scheduledTasks: '定时任务',
     scheduledTasksTitle: '长期任务',
     scheduledTasksNewTask: '新建任务',
     scheduledTasksEmptyState: '暂无定时任务',
@@ -6902,8 +6902,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     'longTermTask.collapse': 'Collapse',
     'longTermTask.origin.label': 'Task',
     'longTermTask.origin.open': 'Open this task on the board',
-    // Long-term Tasks (formerly Scheduled Tasks / Tracking Tasks)
-    scheduledTasks: 'Long-term Tasks',
+    // scheduledTasks labels the scheduled (cron) tasks view — the rail/menu
+    // label, never the long-term task board. The scheduledTasksTitle family
+    // below keeps its retired Long-term Tasks wording (title key currently
+    // unreferenced in src).
+    scheduledTasks: 'Scheduled tasks',
     scheduledTasksTitle: 'Long-term Tasks',
     scheduledTasksNewTask: 'New Task',
     scheduledTasksEmptyState: 'No scheduled tasks',
