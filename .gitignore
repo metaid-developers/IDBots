@@ -1091,3 +1091,4 @@ blob-report/
 !tests/taskHierarchyAndStageSync.test.mjs
 !tests/studioFallbackEffortFloor.test.ts
 !tests/studioQuotaBypassRouting.test.ts
+!tests/studioBrowserTabsTool.test.ts

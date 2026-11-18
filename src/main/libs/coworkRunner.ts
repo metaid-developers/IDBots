@@ -2413,7 +2413,8 @@ export interface CoworkRunnerOptions {
    * non-browser sessions and degrade gracefully (never throw) when the browser
    * surface is unavailable.
    */
-  getBrowserContextPrompt?: (sessionId: string) => Promise<string | null>;
+  getBrowserGuidePrompt?: (sessionId: string) => Promise<string | null>;
+  getBrowserTabsPrompt?: (sessionId: string) => Promise<string | null>;
   /**
    * True while another stage (the first-run Genesis Stage) owns a projector
    * session's projector: the bot must not project pages of its own then.
@@ -2970,7 +2971,8 @@ export class CoworkRunner extends EventEmitter {
   private getMetaAppAliases?: (appId: string) => string[] | null;
   private requestIMSessionReset?: (sessionId: string) => boolean;
   private isIMSessionCallback?: (sessionId: string) => boolean;
-  private getBrowserContextPrompt?: (sessionId: string) => Promise<string | null>;
+  private getBrowserGuidePrompt?: (sessionId: string) => Promise<string | null>;
+  private getBrowserTabsPrompt?: (sessionId: string) => Promise<string | null>;
   private isProjectorHeldByStage?: (sessionId: string) => boolean;
   private controlBotBrowser?: BotBrowserControl;
   private experienceStore?: CoworkExperienceStore;
@@ -3195,7 +3197,8 @@ export class CoworkRunner extends EventEmitter {
     this.getMetaAppAliases = options?.getMetaAppAliases;
     this.requestIMSessionReset = options?.requestIMSessionReset;
     this.isIMSessionCallback = options?.isIMSession;
-    this.getBrowserContextPrompt = options?.getBrowserContextPrompt;
+    this.getBrowserGuidePrompt = options?.getBrowserGuidePrompt;
+    this.getBrowserTabsPrompt = options?.getBrowserTabsPrompt;
     this.isProjectorHeldByStage = options?.isProjectorHeldByStage;
     this.controlBotBrowser = options?.controlBotBrowser;
     this.experienceStore = options?.experienceStore;
@@ -7936,11 +7939,17 @@ export class CoworkRunner extends EventEmitter {
       }
     }
     const isProactiveStudioBriefingTurn = prompt.includes('<studio_proactive_briefing>');
-    if (this.getBrowserContextPrompt && !trustSuppressed && !isProactiveStudioBriefingTurn) {
-      // Browser tab state is live; fetch async and degrade silently on failure.
+    if (this.getBrowserGuidePrompt && !trustSuppressed && !isProactiveStudioBriefingTurn && shouldInjectVolatile('browser')) {
+      // 2026-11-18 Studio post-mortem: this section used to carry the LIVE
+      // tab list (<active_tab>/<open_tabs>) and was re-injected on every turn
+      // — tab snapshots alone accounted for ~63% of one day's context growth
+      // in the incident session. The section is now the byte-stable browser
+      // guide only (dedupable — it enters history once per generation), and
+      // the live state lives behind the browser_tabs tool (see
+      // buildDshHostTools).
       sections.push({
         key: 'browser',
-        text: await this.getBrowserContextPrompt(sessionId).catch(() => ''),
+        text: await this.getBrowserGuidePrompt(sessionId).catch(() => ''),
       });
     }
     // Active session goal (/goal command): rides the per-turn tail like the
@@ -13925,6 +13934,30 @@ export class CoworkRunner extends EventEmitter {
             ? `Fast mode engaged (reasoning effort: ${result.effort}). Write the projection page now.`
             : 'Fast mode unavailable right now — write the projection page as usual.'
           return { content: [{ type: 'text', text }] } as any
+        },
+      ))
+    }
+    // Live Bot Browser tab state as a PULL tool (2026-11-18 Studio
+    // post-mortem): the tab list used to ride every turn's volatile tail and
+    // accumulated as ~63% of one day's context growth — snapshots of the same
+    // tabs, re-sent and never reclaimed. Studio (browser-type) sessions get
+    // the tool; the byte-stable browser guide stays in the tail (deduped).
+    if (this.getBrowserTabsPrompt && this.store.getSessionWithoutMessages(sessionId)?.sessionType === 'browser') {
+      tools.push(passthrough(
+        'browser_tabs',
+        'List the Bot Browser\'s LIVE tab state for this session: the active tab (title, uri, renderer type, source_dir for MetaApp/HTML pages) and every open tab. Live tab state is NOT auto-injected into the conversation — call this FIRST whenever the owner refers to "the page / 当前页面 / this tab", asks what is open, or before reading or controlling a specific tab; then act with the bot_browser_* tools. Returns a <browser_tabs> block; "not open" means the Bot Browser has no tabs right now, not an error.',
+        {},
+        async () => {
+          const text = await this.getBrowserTabsPrompt!(sessionId).catch(() => null)
+          return {
+            content: [
+              {
+                type: 'text',
+                text: text
+                  ?? 'Bot Browser is not open or did not respond right now. If the user asks you to control the browser, ask them to switch to Bot Browser mode first.',
+              },
+            ],
+          } as any
         },
       ))
     }
