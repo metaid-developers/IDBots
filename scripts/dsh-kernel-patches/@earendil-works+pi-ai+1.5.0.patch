@@ -1,0 +1,30 @@
+--- a/dsh-runtime/node_modules/@earendil-works/pi-ai/dist/utils/overflow.js
++++ b/dsh-runtime/node_modules/@earendil-works/pi-ai/dist/utils/overflow.js
+@@ -34,6 +34,10 @@
+  * - DashScope/Qwen: "Range of input length should be [1, X]" (HTTP 400 invalid_parameter_error)
+  * - Ollama: Some deployments truncate silently, others return errors like "prompt too long; exceeded max context length by X tokens"
+  */
++// IDBots patch (silent-overflow output slack): reasoning-token slack a length
++// stop may burn and still be the context-window boundary rather than a real
++// output-ceiling truncation. See Case 3 in isContextOverflow below.
++const SILENT_OVERFLOW_OUTPUT_SLACK = 64;
+ const OVERFLOW_PATTERNS = [
+     /prompt (?:is )?too long/i, // Anthropic and z.ai token overflow
+     /prompt exceeds max length/i, // z.ai CN endpoint token overflow
+@@ -160,7 +164,15 @@
+     // Case 3: Length-stop overflow (Xiaomi MiMo style) - server truncates oversized input
+     // to fit the context window, leaving no room for output. Returns stopReason "length"
+     // with output=0 and input+cacheRead filling the context window.
+-    if (contextWindow && message.stopReason === "length" && message.usage.output === 0) {
++    // IDBots patch (silent-overflow output slack): some gateways spend a few
++    // reasoning tokens before the window boundary stops the stream — opencode
++    // zen reported output=16 with 128,988 input+cacheRead tokens against a
++    // 128,000 window (cw-636ddce2, 2026-11-19), which the strict ===0 missed
++    // and the turn died as a silent max-tokens truncation. A length stop that
++    // burned at most SILENT_OVERFLOW_OUTPUT_SLACK tokens (a real output-ceiling
++    // stop burns the whole maxTokens budget, >=8192 in IDBots) with the input
++    // filling 99% of the window can only be the window boundary.
++    if (contextWindow && message.stopReason === "length" && message.usage.output <= SILENT_OVERFLOW_OUTPUT_SLACK) {
+         const inputTokens = message.usage.input + message.usage.cacheRead;
+         if (inputTokens >= contextWindow * 0.99) {
+             return true;
