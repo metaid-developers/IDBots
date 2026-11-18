@@ -157,6 +157,7 @@ import { MetaIDCognitionContextService } from './services/metaidCognitionContext
 import { MetaIDRelationshipResolver } from './services/metaidRelationshipResolver';
 import { MetaIDContactViewService } from './services/metaidContactViewService';
 import { Scheduler } from './libs/scheduler';
+import { PRACTICE_RUN_WATCHDOG_SETTING_KEY } from './libs/practiceInteractionGuard';
 import { initLogger, getLogFilePath } from './logger';
 import {
   APP_DATA_PATH_ENV,
@@ -12621,6 +12622,17 @@ const getScheduler = () => {
       },
       getSkillsPrompt: async () => {
         return getSkillManager().buildAutoRoutingPrompt();
+      },
+      // Per-category practice watchdog budgets (2026-11-18): the value lives in
+      // the app settings store — a number (global) or {defaultMs?, categories?}
+      // — and is re-read on every practice fire, so an override applies without
+      // a restart. Unreadable/missing config keeps the shipped 20-minute tier.
+      getPracticeRunWatchdogConfig: () => {
+        try {
+          return getStore().get(PRACTICE_RUN_WATCHDOG_SETTING_KEY);
+        } catch {
+          return null;
+        }
       },
       isRecoverableSqliteError: isSqliteWasmBoundsError,
       recoverSqlite: recoverSqliteStore,
