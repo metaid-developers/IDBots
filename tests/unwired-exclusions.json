@@ -1,0 +1,205 @@
+{
+  "comment": "Tracked test files that are NOT run anywhere: neither wired into a chain/CI/script nor part of the pnpm run test:unwired sweep. Every entry must carry a reason — a test nobody runs is a defect, not coverage. scripts/test-chain-coverage.mjs --check fails on stale entries (file wired/deleted) and reason-less entries; remove an entry the moment its reason no longer holds. The 2026-11-19 batch: per-file sweep of all 610 then-unwired files (570 green joined the sweep tier, 40 red excluded here until someone revives them against current behavior).",
+  "exclusions": [
+    {
+      "file": "tests/a2aGuidanceFailureVisibility.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): The expression evaluated to a falsy value:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/a2aSimplemsgMetadataBackfill.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Expected values to be strictly equal:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/botBrowserAgentTools.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Expected values to be strictly deep-equal:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/botBrowserBridgeService.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/tusm/Documents/MetaID_Projects/IDBots/IDBots/.worktre",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/botBrowserHostService.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/tusm/Documents/MetaID_Projects/IDBots/IDBots/.worktre",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/botBrowserHumanPinWrite.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/tusm/Documents/MetaID_Projects/IDBots/IDBots/.worktre",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/botBrowserShellStatic.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): The input did not match the regular expression /botBrowserShell\\.controlTabs\\(command\\)/. Input:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/cerebellumJevQuotaBinding.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): loadCerebellumFreeQuota should exist",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/cerebellumKnowledgeHotRank.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): this.store.recentSessionPulse is not a function",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/cerebellumRemoteServiceShortlist.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): this.store.getConversationSourceContextBySession is not a function",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/cerebellumSkillShortlist.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): this.store.getConversationSourceContextBySession is not a function",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/cerebellumVolatileBlockGate.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): browser is not gateable and always rides when present",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkCacheAttribution.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): missing pendingCacheBreakReason = 'snip'",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkCerebellumTurnRace.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): the lapsed effort race lands in cowork.log for triage",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkDefaultProviderWiring.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): the default provider must be matched by key",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkDshPerProviderRuntime.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): timeout waiting for idle runtime reap",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkExternalAgentCliGate.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): plain bash allowed",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkManualCompactionQueue.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): this.dshTurnHub?.isKernelSessionBusy is not a function",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkMetabotLlmRouting.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): a brain must exist when either the primary or the fallback model id is configured",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkQuoteReplyMessage.test.tsx",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): The input did not match the regular expression /}, 2500\\);/. Input:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkSessionMessageWindow.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Expected values to be strictly equal:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkSteerPersistence.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): no such column: auto_origin",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkSteerRecovery.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): no such column: auto_origin",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkSubmitInputIpc.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Expected values to be strictly equal:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/coworkTruncatedTurnContinue.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): The expression evaluated to a falsy value:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/dreamTelemetryPanel.test.tsx",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): amber bar carries the plain count tooltip",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/groupTaskAcceptanceCard.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): decision actions are handed to the acceptance card",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/groupTaskGoalCollapse.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): goalExpanded defaults to false (collapsed)",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/i18nEnglishCoverage.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Expected values to be strictly equal:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/idbotsBrowserHostAdapter.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/tusm/Documents/MetaID_Projects/IDBots/IDBots/.worktre",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/localFileLinkIntegration.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): The input did not match the regular expression /<LocalFileLink[\\s\\S]*?filePath=\\{imagePath\\}/. Input:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/metabotLimit.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): main create/restore IPC paths should enforce the shared MetaBot limit",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/metabotRestoreProtocol.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Expected values to be strictly equal:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/metabotUploadLargefile.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Expected values to be strictly equal:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/openTeamKickLoopStatic.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): listMessages handler exists",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/orchestrationStore.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Expected values to be strictly deep-equal:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/privateChatLiveA2A.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): The input did not match the regular expression /valuable discussion/i. Input:",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/privateChatSkillTurnDeliveryInvariant.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): error: TypeError: coworkStore.getRecentA2AThreadMessages is not a function",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/studioTaskSessionDecouple.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/tusm/Documents/MetaID_Projects/IDBots/IDBots/.worktre",
+      "since": "2026-11-19"
+    },
+    {
+      "file": "tests/walletTransferExternalConfirmGate.test.mjs",
+      "reason": "stale test (red on 2026-11-19 sweep, code moved on): the tool surface must not switch the gate off by construction",
+      "since": "2026-11-19"
+    }
+  ]
+}

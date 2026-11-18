@@ -80,6 +80,7 @@ docs/*
 !docs/qq-channel-verification.md
 !docs/qq-channel-pr.md
 tests/*
+!tests/unwired-exclusions.json
 !tests/dataGuard.test.mjs
 !tests/privateChatFileMessage.test.mjs
 !tests/a2aPendingAskBridge.test.mjs
