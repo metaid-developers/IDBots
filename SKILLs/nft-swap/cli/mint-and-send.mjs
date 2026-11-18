@@ -15,6 +15,8 @@
  *     [--item-info-timeout-ms 360000] [--ledger <path>] [--user-data <dir>]
  */
 
+import path from 'node:path';
+
 import { ISSUER_CONFIG } from './lib/issuer-config.mjs';
 import {
   CliError,
@@ -26,6 +28,8 @@ import {
   resolvedPilotConfig,
   wantsHelp,
 } from './lib/cli-common.mjs';
+import { createCoverResolver, SWAP_COVER_OUT_DEFAULT } from './lib/cover-bridge.mjs';
+import { defaultCatalogFile } from './lib/cover-core.mjs';
 import { createHostAdapter } from './lib/host-adapter.mjs';
 import { fetchVaultTokenRows } from './lib/vault-poll-lib.mjs';
 import { albumFromConfig, createIndexReaders, mintAndSend, waitForTransferStable } from './lib/swap-engine.mjs';
@@ -38,7 +42,13 @@ const HELP = `mint-and-send — 按需铸造 + 发货（PRD §5.5–§5.7，崩�
 选项:
   --token-index <n>              旧 token 编号（必须已在台账 claimed 或更后）
   --recipient <MVC地址>          收货地址（台账已有 claimant 时可省）
-  --cover <metafile://…>         封面（可选；只在首次 mint 时写入）
+  --cover <metafile://…>         封面（可选；缺省时自动从金库行 imgUrl 取图：
+                                 PNG 校验 + sha256 复用 + 单次上传。cover-loss
+                                 修复 2026-11-19：缺图即拒铸，COVER_UNAVAILABLE
+                                 会把行记 rejected 并开放 owner 退款路径）
+  --cover-catalog <路径>         attach-cover 快照目录（sha256 复用源，默认
+                                 out/attach-cover/cover-catalog.jsonl）
+  --cover-out <目录>             取图 journal 目录（默认 out/swap-mint-cover）
   --broadcast                    真实广播（默认 dry-run，绝不发交易）
   --fee-ceiling <sats>           单枚费用上限（默认 5000，COST-BUDGET §5-1）
   --item-info-timeout-ms <ms>    等待 item/info 索引的超时（默认 360000 ≥ 5 分钟）
@@ -57,7 +67,18 @@ const HELP = `mint-and-send — 按需铸造 + 发货（PRD §5.5–§5.7，崩�
 
 async function main(argv) {
   const args = parseCliArgs(argv, {
-    values: ['token-index', 'recipient', 'cover', 'fee-ceiling', 'item-info-timeout-ms', 'metabot-id', 'ledger', 'user-data'],
+    values: [
+      'token-index',
+      'recipient',
+      'cover',
+      'cover-catalog',
+      'cover-out',
+      'fee-ceiling',
+      'item-info-timeout-ms',
+      'metabot-id',
+      'ledger',
+      'user-data',
+    ],
     booleans: ['broadcast', 'dry-run'],
   });
   if (args.broadcast && args['dry-run']) {
@@ -100,6 +121,23 @@ async function main(argv) {
       fetchItemVerify: (pinId) => readers.fetchItemVerify(pinId),
       waitTransferStable: ({ pinId, minCount }) =>
         waitForTransferStable({ pinId, fetchItemInfo: readers.fetchItemInfo, minCount }),
+      // Mint-time cover production (cover-loss fix 2026-11-19): the engine
+      // refuses to mint without a cover; this resolver fetches/validates the
+      // legacy image from the vault row's imgUrl, reuses already-uploaded
+      // pins by sha256 (journal + attach-cover catalog), and uploads once —
+      // only when broadcast=true.
+      resolveCover: createCoverResolver({
+        vaultAddress: config.vaultAddress,
+        metabotId: () => {
+          const id = Number(args['metabot-id'] ?? config.metabotId);
+          if (!Number.isInteger(id) || id <= 0) {
+            throw new CliError('METABOT_ID_MISSING', 'pilot config has no metabotId; pass --metabot-id');
+          }
+          return id;
+        },
+        catalogFile: args['cover-catalog'] ? path.resolve(args['cover-catalog']) : defaultCatalogFile(process.cwd()),
+        outDir: args['cover-out'] ? path.resolve(args['cover-out']) : SWAP_COVER_OUT_DEFAULT,
+      }),
       ...(host
         ? {
             estimateMintPins: (input) => host.estimateMintPins(input),

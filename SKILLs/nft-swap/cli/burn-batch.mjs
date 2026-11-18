@@ -6,6 +6,10 @@
  * Preconditions enforced by the engine:
  *  - only `sent` rows with a stable transferCount are candidates;
  *  - the token must still sit at its recorded vault outpoint;
+ *  - the minted item must already carry a non-empty cover (item/info read,
+ *    cover-loss fix 2026-11-19): a cover-less candidate is refused with
+ *    COVER_MISSING_BEFORE_BURN and its roster — burning would destroy the
+ *    last chance to fetch the legacy artwork. Backfill/attach covers first.
  *  - broadcasting needs BOTH --broadcast and --confirm-owner (owner sign-off,
  *    PRD §9) — a dry-run plan is the default.
  *
@@ -32,7 +36,7 @@ import {
 } from './lib/cli-common.mjs';
 import { createHostAdapter } from './lib/host-adapter.mjs';
 import { fetchVaultTokenRows } from './lib/vault-poll-lib.mjs';
-import { albumFromConfig, runBurnBatch } from './lib/swap-engine.mjs';
+import { albumFromConfig, createIndexReaders, runBurnBatch } from './lib/swap-engine.mjs';
 
 const HELP = `burn-batch — 逐枚单发销毁旧 token（PRD §5.8）
 
@@ -51,8 +55,10 @@ const HELP = `burn-batch — 逐枚单发销毁旧 token（PRD §5.8）
   --help                显示本帮助
 
 待烧名单口径（预审 #7/#10）: 仅 state=sent 且 transferCount 已稳定、且旧
-token 仍在金库原 outpoint 的记录。中航态（detected/claimed/mint_pending/
-minted/send_pending）永不成批。
+token 仍在金库原 outpoint、且新条目 item/info 的 cover 非空的记录
+（cover-loss 修复 2026-11-19：缺图条目拒销并报
+COVER_MISSING_BEFORE_BURN 名单，先补图再销）。中航态（detected/claimed/
+mint_pending/minted/send_pending）永不成批。
 
 退出码: 0 完成/计划 | 1 拒绝/失败 | 2 需人工（缺 owner 确认/需对账）
 `;
@@ -81,6 +87,7 @@ async function main(argv) {
 
   const ledgerPath = resolveLedgerPath(userDataPath, args);
   const ledger = openLedger(ledgerPath);
+  const readers = createIndexReaders();
   let host = null;
   try {
     if (broadcast) {
@@ -93,6 +100,9 @@ async function main(argv) {
 
     const deps = {
       fetchVaultRows: () => fetchVaultTokenRows({ address: config.vaultAddress }),
+      // Cover gate (cover-loss fix 2026-11-19): the engine reads each
+      // candidate's item/info cover before allowing it into a burn batch.
+      fetchItemInfo: (pinId) => readers.fetchItemInfo(pinId),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       ...(host ? { transferLegacyToken: (input) => host.transferLegacyToken(input) } : {}),
     };

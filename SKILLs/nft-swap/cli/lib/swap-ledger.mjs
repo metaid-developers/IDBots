@@ -305,7 +305,12 @@ export class SwapLedger {
   recordTransferBroadcast(rowId, { transferTxid, feeSats }) {
     return this.#transition(rowId, 'send_pending', 'transfer_broadcast', {
       transfer_txid: transferTxid ?? null,
-      fee_sats_json: feeSats ? JSON.stringify(feeSats) : null,
+      // fee_sats_json is object-keyed by phase ({transfer,burn,refund}); a
+      // bare scalar (host feeFromRawTx returns a number) is wrapped so the
+      // later recordBurnBroadcast merge cannot crash on a parsed number
+      // (latent crash found 2026-11-19 by the cover-gate selftest).
+      fee_sats_json:
+        feeSats != null ? JSON.stringify(typeof feeSats === 'object' && feeSats !== null ? feeSats : { transfer: feeSats }) : null,
     });
   }
 
@@ -343,7 +348,9 @@ export class SwapLedger {
       const row = this.rowById(rowId);
       let fees = {};
       try {
-        fees = row?.fee_sats_json ? JSON.parse(row.fee_sats_json) : {};
+        const parsed = row?.fee_sats_json ? JSON.parse(row.fee_sats_json) : {};
+        // tolerate legacy rows that stored a bare scalar (see recordTransferBroadcast)
+        fees = typeof parsed === 'object' && parsed !== null ? parsed : { transfer: parsed };
       } catch {
         fees = {};
       }
