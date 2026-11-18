@@ -130,9 +130,6 @@ body[data-has-report="true"][data-family="complete"] .core-report-ready,body[dat
 .core-entity{transition:left .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1),translate .35s ease}
 body[data-hero="true"] .core-entity{left:56%;transform:scale(.85)}
 body[data-hero="true"][data-rail-density="mini"] .core-entity{transform:scale(.78)}
-/* family-specific membrane-wrap offsets (report-ready lift, complete shrink)
-   would take the orb off the scene centre — the scene owns its position. */
-body[data-family] .membrane-wrap{transform:none;translate:none;scale:1;filter:none;rotate:0deg}
 .orb-halo{position:absolute;inset:6px;border-radius:50%;pointer-events:none;opacity:0;transition:opacity .5s}
 body[data-family="owner-needed"] .orb-halo{opacity:1;box-shadow:0 0 0 1px rgba(255,220,81,.25),0 0 40px rgba(255,220,81,.12);animation:orb-halo-breathe 3.2s ease-in-out infinite}
 body[data-family="problem"] .orb-halo{opacity:1;box-shadow:0 0 0 1px rgba(255,138,122,.25),0 0 40px rgba(255,138,122,.12)}

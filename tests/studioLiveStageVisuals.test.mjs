@@ -224,21 +224,120 @@ test('speaking keeps the base headline size and a wider brighter caption', () =>
 test('the scene engine owns the rAF loop and applies state through update(state)', () => {
   const stage = read('stage.js');
   const scenes = read('stage-scenes.js');
-  // the old ambient particle field is gone — the place renderers + companion
-  // rail + hero connectors draw into the three scene canvases instead.
+  // the ambient particle field lives in the scene engine again (one shared
+  // persistent instance for mind+machine); stage.js only drives the engine.
   assert.doesNotMatch(stage, /particleClock|drawParticles|restartParticles/);
   assert.match(stage, /scenesApi\?\.update\(state\)/, 'applyState drives the scene engine');
   assert.match(stage, /onFrame: updateTextMotion/, 'the engine frame hook keeps text pacing alive');
   assert.match(stage, /scene: scenesApi\?\.debug\?\.\(\) \?\? null/, 'debug hook reports scene state');
   assert.match(scenes, /window\.IDBotsLiveStageScenes/);
   assert.match(scenes, /requestAnimationFrame\(loop\)/);
-  assert.match(scenes, /placeFactories\.mind/);
-  assert.match(scenes, /placeFactories\.machine/);
+  assert.match(scenes, /placeFactories\.particles/);
+  assert.match(scenes, /mind: 'particles', machine: 'particles'/, 'mind + machine share one persistent particle field');
   assert.match(scenes, /placeFactories\['web-a'\]/);
   assert.match(scenes, /placeFactories\['chain-a'\]/);
   // prototype-only variants stay out of the production package
   assert.doesNotMatch(scenes, /placeFactories\['web-b'\]|placeFactories\['chain-b'\]|wire globe|hex lattice/i);
+  // the starfield and circuit-board renderers are gone with the PCB route
+  assert.doesNotMatch(scenes, /starfield|const far = \[|const mid = \[|workerRoute|circuit/i);
   assert.match(stage, /liquidOrbActivityForFamily\(state\.family\)/);
+});
+
+test('particles integrate phase and follow the orb activity multiplier', () => {
+  const scenes = read('stage-scenes.js');
+  // Ported verbatim from the pre-scene-system drawParticles: no absolute-time
+  // angle — energy/family changes retune velocity without teleporting the
+  // field, and reduced motion freezes the accumulated phase.
+  assert.doesNotMatch(scenes, /now \* particle\.speed \* state\.motion\.energy/);
+  assert.match(scenes, /p\.phase \+= dt \* p\.speed \* rate/);
+  assert.match(scenes, /p\.angle \+ p\.phase \+ seed \* \.0001/);
+  assert.match(scenes, /PARTICLE_ACTIVITY = \{ working: 1\.75, speaking: \.6, resting: \.5 \}/);
+  assert.match(scenes, /bucket === 'waiting' \? \.95/, 'waiting keeps its slow .95 multiplier');
+  assert.match(scenes, /1 - Math\.exp\(-dt \/ \.8\)/, '~0.8 s ease toward the activity target');
+  assert.match(scenes, /if \(!reduced && dt > 0\)/, 'reduced motion never advances the phase');
+  assert.match(scenes, /110 \+ random\(2\) \* 250/, 'radius band 110–360 from the original seed formula');
+  assert.match(scenes, /\.18 \+ p\.drift \* \.35/, 'original alpha formula');
+  assert.match(scenes, /index % 7 === 0/, 'cyan every seventh particle');
+  // gather pull returns for the recall/run/read families (old local-recall)
+  assert.match(scenes, /GATHER_FAMILIES = new Set\(\['local-recall', 'local-run', 'local-read'\]\)/);
+  assert.match(scenes, /\.68 \+ Math\.sin\(tNow \* \.8 \+ p\.drift \* 6\) \* \.18/);
+  // compressed orbit while a hero is active; presence orbit otherwise
+  assert.match(scenes, /heroNow\) return \{ x: \.65, y: \.45 \}/);
+  assert.match(scenes, /return \{ x: 1\.1, y: \.62 \}/);
+  // report-ready / complete fixed arc
+  assert.match(scenes, /-Math\.PI \* \.85 \+ \(index \/ particles\.length\) \* Math\.PI \* 1\.7/);
+});
+
+test('original worker connector curves: quadratic, dashed low-frequency, chevron head', () => {
+  const scenes = read('stage-scenes.js');
+  // Ported verbatim from the 36ff3c60d constellation block — curves only,
+  // never polylines; no orthogonal/45° route helper may remain.
+  assert.match(scenes, /g\.quadraticCurveTo\(ctrl\.x, ctrl\.y, toPt\.x, toPt\.y\)/);
+  assert.match(scenes, /const bend = Math\.min\(34, Math\.max\(12, Math\.abs\(dx\) \* \.12\)\)/);
+  assert.match(scenes, /x: r\.x - 4, y: r\.y \+ r\.h \/ 2/, 'card left-middle anchor');
+  assert.match(scenes, /g\.setLineDash\(\[5, 7\]\)/, 'dashed low-frequency waiting/verifying link');
+  assert.match(scenes, /dir === 'return' \|\| dir === 'verifying'/, 'returning direction');
+  assert.match(scenes, /family\(\) === 'waiting' \|\| dir === 'waiting' \|\| dir === 'verifying'/, 'low-frequency gate');
+  assert.match(scenes, /returning \? \.44 : \.38/, 'gold .44 / cyan .38 stroke alpha');
+  assert.match(scenes, /headLen = 7/, 'chevron head length');
+  assert.match(scenes, /angle - \.46/, 'chevron ±.46 rad');
+  assert.match(scenes, /lowFreqWait \? \.11 : \.32/, 'pulse speeds');
+  assert.match(scenes, /lowFreqWait \? 2 : 1/, 'two pulses while waiting');
+  assert.match(scenes, /lowFreqWait \? 2\.8 : 3\.5/, 'pulse radii');
+  assert.match(scenes, /t \* speed \+ index \* \.23 \+ pIdx \* \.5/, 'original pulse phase');
+  assert.doesNotMatch(scenes, /workerRoute/, 'no orthogonal route helper remains');
+});
+
+test('SCENE_TIME_SCALE slows only the new scene animations', () => {
+  const scenes = read('stage-scenes.js');
+  assert.match(scenes, /LS\.SCENE_TIME_SCALE = 0\.6;/);
+  // applied to place clocks, the scene clock, the group ring and reveals
+  assert.match(scenes, /entry\.key === 'particles' \? dt : dt \* LS\.SCENE_TIME_SCALE/, 'particle field exempt');
+  assert.match(scenes, /S\.tScene \+= dt \* LS\.SCENE_TIME_SCALE/, 'scene clock drives transients/verification/peers');
+  assert.match(scenes, /drawGroupRing\(gBack, gFront, dt \* LS\.SCENE_TIME_SCALE, ts, fx\)/, 'group ring slowed');
+  assert.match(scenes, /\(now - entry\.revealT0\) \* 1000 \* LS\.SCENE_TIME_SCALE/, 'reveal duration ×1/0.6');
+  // worker curves take the real clock t, not the slowed ts
+  assert.match(scenes, /drawWorker\(gFront, el, c\.status, fx, t, i, reduced\)/, 'worker curves exempt');
+});
+
+test('web/chain scene alpha is dimmed: base ×0.6, highlights ×0.75', () => {
+  const scenes = read('stage-scenes.js');
+  assert.match(scenes, /LS\.SCENE_ALPHA_BASE = 0\.6;/);
+  assert.match(scenes, /LS\.SCENE_ALPHA_HI = 0\.75;/);
+  assert.match(scenes, /g\.globalAlpha \*= aBase/, 'web mesh statics dimmed');
+  assert.match(scenes, /0\.12 \* fade \* m \* aHi/, 'web waves are highlights');
+  assert.match(scenes, /0\.13 \* m \* dimMul \+ \(boost \* 0\.42 \+ flash\) \* mHi \* dimMul/, 'chain block base vs lift/flash split');
+});
+
+test('scene avatars always resolve to a valid src and swap to the fallback once', () => {
+  const scenes = read('stage-scenes.js');
+  assert.match(scenes, /function setAvatar\(img, src\)/);
+  assert.match(scenes, /window\.__FALLBACK_AVATAR__/);
+  assert.match(scenes, /addEventListener\('error', \(\) => \{\s*if \(img\.src !== fb\) img\.src = fb;\s*\}, \{ once: true \}\)/, 'one-shot error swap, no retry loop');
+  const stack = scenes.match(/setAvatar\(img, person\(pid\)\.avatar\)/);
+  assert.ok(stack, 'group rail stack avatars use the fallback helper');
+  assert.match(scenes, /setAvatar\(img, person\(c\.who\)\.avatar\)/, 'rail avatars use the fallback helper');
+  assert.match(scenes, /setAvatar\(img, p\.avatar\)/, 'member/twin avatars use the fallback helper');
+});
+
+test('orb presets for the computer families revert to their original equivalents', () => {
+  const orb = read('liquid-orb.js');
+  assert.match(orb, /'local-recall': \{ style: 9, speed: \.85, radius: \.72, warp: 3\.5, contourDeform: \.55, glassOpacity: \.64, edgeGlow: \.08 \}/);
+  assert.match(orb, /'local-run': \{ style: 9, speed: \.85, radius: \.72, warp: 3\.5, contourDeform: \.55, glassOpacity: \.64, edgeGlow: \.08 \}/, 'local-run = local-recall values');
+  assert.match(orb, /'local-read': \{ style: 9, speed: \.85, radius: \.72, warp: 3\.5, contourDeform: \.55, glassOpacity: \.64, edgeGlow: \.08 \}/, 'local-read = local-recall values');
+  assert.match(orb, /'browser-action': \{ style: 9, speed: \.92, radius: \.72, warp: 3\.6, contourDeform: \.48, glassOpacity: \.64, edgeGlow: \.08 \}/);
+  assert.match(orb, /'desktop-control': \{ style: 9, speed: \.92, radius: \.72, warp: 3\.6, contourDeform: \.48, glassOpacity: \.64, edgeGlow: \.08 \}/, 'desktop-control = browser-action values');
+  assert.match(orb, /projecting: \{ style: 9, speed: \.92, radius: \.72, warp: 3\.6, contourDeform: \.48, glassOpacity: \.64, edgeGlow: \.08 \}/, 'projecting = browser-action values');
+});
+
+test('the family membrane poses survive the scene engine (resting breathing regression)', () => {
+  const css = read('stage.css');
+  // The 2026-11-18 regression: a blanket body[data-family] reset added after
+  // the family rules killed the report-ready/complete membrane transforms at
+  // equal specificity. It must never come back.
+  assert.doesNotMatch(css, /body\[data-family\] \.membrane-wrap\{transform:none/);
+  assert.match(css, /body\[data-family="complete"\] \.membrane-wrap\{transform:scale\(\.88\)\}/);
+  assert.match(css, /body\[data-family="report-ready"\] \.membrane-wrap\{transform:translateY\(-14px\) scale\(\.9\)\}/);
 });
 
 test('WebGPU orb compiles pipelines asynchronously and tears down late timed-out devices', () => {

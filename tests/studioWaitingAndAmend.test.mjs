@@ -54,7 +54,8 @@ test('Issues 1, 2 & 4: Liquid-Orb has dedicated waiting activity, scene engine d
   // workers get the dashed low-frequency link.
   assert.doesNotMatch(stageJs, /layoutHandoff|handoff-flow|worker-constellation/);
   assert.match(scenesJs, /M\.items\.get\(`\$\{M\.hero\.type\}:\$\{id\}`\) \|\| null/, 'hero connector resolves only a visible rail item');
-  assert.match(scenesJs, /status === 'verifying'\) g\.setLineDash\(\[4, 5\]\)/, 'dashed low-frequency verifying link');
+  assert.match(scenesJs, /if \(lowFreqWait\) g\.setLineDash\(\[5, 7\]\)/, 'dashed low-frequency waiting/verifying link');
+  assert.match(scenesJs, /dir === 'waiting' \|\| dir === 'verifying'/, 'waiting + verifying directions take the low-frequency dash');
   assert.match(stageJs, /const currentIdx = tasks\.findIndex\(\(t\) => t\?\.isCurrent === true\)/, 'never highlights non-current tasks');
 
   const base = createLiveStageState({

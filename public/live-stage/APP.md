@@ -63,21 +63,38 @@ task HUD) → `data-transient-chip` → interaction card.
 
 - **Place** comes from `state.place` (`mind | machine | web | chain`); a place
   holds ≥1.2 s (newer targets queue) and transitions with a radial reveal
-  from the orb plus a ~900 ms crossfade. Family modifiers: speaking dims the
-  current place to .4 with periodic events paused, owner-needed freezes at
-  .35 with an amber halo, problem slates at .5 and 0.2× speed, waiting dims
-  to .55. The engine never reads `state.motif`.
+  from the orb plus a ~1.5 s crossfade. Mind and machine share one persistent
+  rotating-particle field (the pre-scene-system `drawParticles`, verbatim:
+  42 seeded particles, integrated phase, 0.8 s activity ease, gather pull on
+  recall/run/read, compressed orbit while a hero is active, report-ready/
+  complete arc) so phase stays continuous across mind↔machine moves.
+  Family modifiers apply on web/chain only: speaking dims the current place
+  to .4 with periodic events paused, owner-needed freezes at .35 with an
+  amber halo, problem slates at .5 and 0.2× speed, waiting dims to .55 — the
+  particle place behaves like the original renderer. The engine never reads
+  `state.motif`.
 - **Companions** come from `activeWorkers` / `activePeers` / `activeGroups`;
   `companionFocus` picks the hero (fallbacks: a dispatch/return/verifying
   worker, a sending/incoming peer, the first group). The rail orders hero →
   active-now → working → waiting, caps at 5 items with a `+N` row, and a
   section heading renders only when it has a visible item. While the rail is
-  visible `.core-participants` hides. Hero connectors (worker PCB route,
-  peer capsule + drop line, group Saturn ring with chair dot and member
-  arc) draw into the companion canvases.
+  visible `.core-participants` hides. Every visible worker rail item gets
+  the original quadratic connector curve (orb-edge anchor → card
+  left-middle, dashed `[5,7]` when low-frequency, chevron head, heartbeat
+  pulses); peer hero gets the capsule + drop line, group hero the Saturn
+  ring with chair dot and member arc — all curves, no polylines. Rail,
+  peer and member avatars fall back to `__FALLBACK_AVATAR__` for missing or
+  failed sources (one-shot error swap, no retry loop).
 - **Transients** (`state.transient`) play once per `id` and only within 6 s
   of `at`; chip + canvas effects for steer / retry / model-switch /
   chain-confirmed / tool-error.
+- **Pacing:** `SCENE_TIME_SCALE = 0.6` slows the scene clock fed to the
+  web/chain places, peer/group connectors, transients, the verification arc
+  and place reveals; the particle field, worker curves, the orb renderer and
+  rail DOM transitions run at original speed. Web/chain visuals are dimmed:
+  resting alphas ×0.6, moving highlights ×0.75. Orb presets for
+  `local-run`/`local-read` reuse `local-recall`; `desktop-control`/
+  `projecting` reuse `browser-action`.
 - Geometry is measured from the real stage (`clientWidth/Height`, DPR ≤ 2)
   and the rendered orb rect (`r = width/2 × 0.72`) on layout changes —
   never a fixed design space. `body[data-hero]` slides `.core-entity` from

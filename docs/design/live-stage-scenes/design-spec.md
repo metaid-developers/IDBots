@@ -170,3 +170,44 @@ identity palette never changes.
 4. **Group ring stays as drafted** (chair = small gold dot on the orb's top edge).
 
 All transient events are accepted as drafted.
+
+### Owner feedback 2026-11-18 (post-merge)
+
+After testing the merged renderer, the owner requested a motion-tuning and
+partial-revert pass (`fix/live-stage-motion-tuning`):
+
+1. **Mind and Machine return to the original rotating-particle field** (the
+   pre-scene-system `drawParticles`, copied verbatim: 42 seeded particles,
+   integrated phase, 0.8 s activity ease, gather pull for recall/run/read,
+   compressed orbit while a hero is active, report-ready/complete arc). One
+   shared persistent instance backs both places so phase stays continuous
+   across mind↔machine moves and fades in/out on web/chain switches. The
+   starfield and circuit-board renderers are removed; the mind/machine orb
+   glow returns to `#956CFF`; speaking/owner-needed/problem/waiting scenic
+   modifiers (dim/freeze/slate) apply only on web/chain.
+2. **Bot-to-bot connectors are curves, never polylines.** The PCB worker
+   traces are replaced by the original quadratic-curve connector (orb-edge
+   anchor → card left-middle, bend `min(34, max(12, |dx|·.12))`, dashed
+   `[5,7]` when low-frequency, chevron head, heartbeat pulses) drawn for
+   every visible worker rail item. All orthogonal routing code is removed.
+3. **Global slowdown `SCENE_TIME_SCALE = 0.6`** on the clock/dt fed to every
+   remaining new animation (web mesh, chain ribbon, peer capsule/dots/drop,
+   group ring flow/sweeps, verification arc, transients + chip duration) and
+   place reveal/crossfade durations (×1/0.6). Exempt: the particle field,
+   the original worker curves, the orb renderer and rail DOM transitions.
+4. **Resting breathing restored.** Root cause: a blanket
+   `body[data-family] .membrane-wrap{transform:none;…}` reset added after the
+   family rules overrode `transform:scale(.88)` (complete) and
+   `translateY(-14px) scale(.9)` (report-ready) at equal specificity. The
+   reset is removed so idle/complete/report-ready pose exactly like the
+   original.
+5. **Web2 mesh and chain ribbon dimmed:** every resting/base alpha ×0.6,
+   every moving highlight (waves, glints, hits, scan band, seal, ripple,
+   capsule drop flash) ×0.75; the copy-column mask is unchanged.
+6. **Default avatar fallback** on every scene image path (rail avatars, hero
+   peer, group members, twin): missing/invalid src → `__FALLBACK_AVATAR__`,
+   plus a one-shot `error` listener that swaps to the fallback with no retry
+   loop.
+7. **Orb presets revert for the computer families:** `local-run`/`local-read`
+   take the `local-recall` values (.85/3.5/.55/.08); `desktop-control`/
+   `projecting` take the `browser-action` values (.92/3.6/.48/.08).

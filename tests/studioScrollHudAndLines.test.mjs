@@ -68,7 +68,7 @@ test('Issues 1, 2 & 3: Studio browser sessions get a 400-row view window, panel 
     // no second dashed-arc path to suppress anymore.
     assert.doesNotMatch(stageJs, /constellationEl|layoutHandoff|handoff-flow/, 'no duplicate handoff arc path remains');
     const scenesJs = fs.readFileSync(path.resolve('public/live-stage/stage-scenes.js'), 'utf8');
-    assert.match(scenesJs, /function drawWorker\(g, item, status, hero, fx, t\)/, 'worker connectors render via the scene engine');
+    assert.match(scenesJs, /function drawWorker\(g, item, status, fx, t, index, reduced\)/, 'worker connectors render via the scene engine');
     assert.match(
       stageJs,
       /const currentTasks = tasks\.filter\(\(t\) => t\?\.isCurrent === true\)\.slice\(0, 7\)/,
