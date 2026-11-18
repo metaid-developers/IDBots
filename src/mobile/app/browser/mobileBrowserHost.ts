@@ -4,11 +4,13 @@ import { createIdbotsBrowserHostAdapter } from '@/features/botBrowser/idbotsBrow
 import { getMobileElectron } from '../appBridge';
 import { resolveLocalFileUrl } from '../../../renderer/services/localFileUrl';
 import { createMobileMetaAppPreviewSession } from './mobileMetaAppPreview';
+import { installLegacyWebViewUrlCompatibility } from '@/features/botBrowser/legacyWebViewUrl';
 
 export function createMobileBrowserHost(): {
   handle: (request: { url: string; method?: string; body?: unknown }) => Promise<BrowserEndpointShimResponse>;
   dispose: () => void;
 } {
+  installLegacyWebViewUrlCompatibility();
   const preview = createMobileMetaAppPreviewSession();
   const adapter = createIdbotsBrowserHostAdapter({
     features: {
