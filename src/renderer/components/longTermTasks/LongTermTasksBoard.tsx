@@ -216,6 +216,8 @@ const LongTermTasksBoard: React.FC<LongTermTasksBoardProps> = ({ onReturnToStudi
                 ? partitionDoneArchiveCards(cards)
                 : { recentDone: cards, archivedDone: [] as LongTermTaskSummary[] };
               const visibleCards = isDoneCol && !hasActiveSearch ? recentDone : cards;
+              const visibleIds = new Set(visibleCards.map((c) => c.id));
+              const archivedIds = new Set(archivedDone.map((c) => c.id));
               const openCard = (taskId: string) => {
                 dispatch(selectTask(taskId));
                 void longTermTaskService.loadTask(taskId);
@@ -237,6 +239,7 @@ const LongTermTasksBoard: React.FC<LongTermTasksBoardProps> = ({ onReturnToStudi
                       <LongTermTaskCard
                         key={card.id}
                         card={card}
+                        indentedUnderParent={Boolean(card.parentTaskId && visibleIds.has(card.parentTaskId))}
                         onOpen={openCard}
                       />
                     ))}
@@ -262,6 +265,7 @@ const LongTermTasksBoard: React.FC<LongTermTasksBoardProps> = ({ onReturnToStudi
                               <LongTermTaskCard
                                 key={card.id}
                                 card={card}
+                                indentedUnderParent={Boolean(card.parentTaskId && archivedIds.has(card.parentTaskId))}
                                 onOpen={openCard}
                               />
                             ))}

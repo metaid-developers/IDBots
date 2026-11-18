@@ -68,6 +68,11 @@ export type LiveStageTaskHudEntry = {
   currentSubtask?: string | null;
   /** True when the task qualifies for the `[长期]` (Long-Term) complexity/span badge. */
   isLongTerm?: boolean;
+  /** Parent task id (`ltt_...`) when this row is a rework/companion child task. */
+  parentTaskId?: string | null;
+  parentTaskTitle?: string | null;
+  /** True when rendered indented directly beneath its parent task row in the HUD. */
+  isChild?: boolean;
   /** Assigned Bot name currently working on this task, if any. */
   assigneeName?: string | null;
   /** Live Worker milestone progress checkpoint, if any. */
@@ -142,13 +147,45 @@ export function buildStudioLiveTaskHud(params: {
       total: Math.max(1, card.progress.total),
       currentSubtask: subParts.length > 0 ? subParts.join(' · ') : card.currentSubtaskTitle,
       ...(card.isLongTerm ? { isLongTerm: true } : {}),
+      ...(card.parentTaskId ? { parentTaskId: card.parentTaskId } : {}),
+      ...(card.parentTaskTitle ? { parentTaskTitle: card.parentTaskTitle } : {}),
       ...(assignee ? { assigneeName: assignee } : {}),
       ...(card.currentProgressNote ? { progressNote: card.currentProgressNote } : {}),
       isCurrent,
     };
   });
 
-  mappedCards.sort((a, b) => {
+  // Tree hierarchy grouping:
+  // 1) If ANY child task under `parentTaskId` is `isCurrent` (actively advancing),
+  //    promote its open parent task to `isCurrent: true` (and show parent state as
+  //    `in_progress` while its child tasks are actively `in_progress`) so the
+  //    parent sits at top as the group anchor with its children indented beneath it!
+  const byId = new Map(mappedCards.map((entry) => [entry.id, entry]));
+  for (const entry of mappedCards) {
+    if (!entry.parentTaskId) continue;
+    const parent = byId.get(entry.parentTaskId);
+    if (!parent) continue;
+    if (entry.isCurrent) {
+      parent.isCurrent = true;
+    }
+    if (entry.state === 'in_progress' && parent.state === 'waiting_owner') {
+      parent.state = 'in_progress';
+    }
+  }
+
+  const childrenByParent = new Map<string, LiveStageTaskHudEntry[]>();
+  const topLevel: LiveStageTaskHudEntry[] = [];
+  for (const entry of mappedCards) {
+    if (entry.parentTaskId && byId.has(entry.parentTaskId)) {
+      const list = childrenByParent.get(entry.parentTaskId) ?? [];
+      list.push({ ...entry, isChild: true });
+      childrenByParent.set(entry.parentTaskId, list);
+    } else {
+      topLevel.push(entry.parentTaskId ? { ...entry, isChild: true } : entry);
+    }
+  }
+
+  topLevel.sort((a, b) => {
     const aCur = a.isCurrent ? 1 : 0;
     const bCur = b.isCurrent ? 1 : 0;
     if (aCur !== bCur) return bCur - aCur;
@@ -158,13 +195,31 @@ export function buildStudioLiveTaskHud(params: {
     return 0;
   });
 
-  const activeTasks = [...synthesizedCurrent, ...mappedCards].slice(0, maxTasks);
+  const treeOrdered: LiveStageTaskHudEntry[] = [];
+  for (const root of topLevel) {
+    treeOrdered.push(root);
+    const kids = childrenByParent.get(root.id);
+    if (kids && kids.length > 0) {
+      kids.sort((a, b) => {
+        const aCur = a.isCurrent ? 1 : 0;
+        const bCur = b.isCurrent ? 1 : 0;
+        return bCur - aCur;
+      });
+      for (const kid of kids) {
+        treeOrdered.push({ ...kid, isCurrent: Boolean(kid.isCurrent || root.isCurrent) });
+      }
+    }
+  }
+
+  const activeTasks = [...synthesizedCurrent, ...treeOrdered].slice(0, maxTasks);
   return { queuedDecisions, tasks: activeTasks };
 }
 
 export type LiveStageState = {
   protocol: typeof LIVE_STAGE_PROTOCOL;
   sessionId: string;
+  /** Stable per-Bot stage identity (`bot:<metabotId>`); all Studio sessions of the same Bot share one Live Stage. */
+  botKey?: string;
   turnId: string;
   /**
    * Epoch ms when this turn's state was created. The persistent stage page
@@ -232,6 +287,7 @@ export type LiveStageState = {
 
 export type LiveStageSessionContext = {
   sessionId: string;
+  botKey?: string;
   turnId: string;
   botName: string;
   botAvatar?: string;
@@ -362,6 +418,7 @@ export function createLiveStageState(context: LiveStageSessionContext): LiveStag
   return {
     protocol: LIVE_STAGE_PROTOCOL,
     sessionId: context.sessionId,
+    ...(context.botKey ? { botKey: context.botKey } : {}),
     turnId: context.turnId,
     turnStartedAt: nowMs,
     revision: 0,

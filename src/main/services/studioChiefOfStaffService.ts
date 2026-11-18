@@ -291,13 +291,11 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
       '',
       '执行规则：',
       `1. **防重判据（严禁二次形式主义追问）**：先核对本会话上下文——如果主人在此前对话中**已经对这件事拍过板或选定了方案**（例如已选定某版设计稿、已明确后续发布方式、或已说「暂不动代码 / 只留文稿」），严禁为了走流程再让主人多回一次「验收」！请立即调用 \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` 静默收口，**不要调用任何投影工具，也不要再次向主人追问同一件事**（宿主看到已 resolve 就不会覆盖右侧投影屏）。`,
-      `2. **正常汇报 + 右侧交互选择卡（自然简练，禁八股长文）**：如果这确实是待主人拍板的新事项，**严禁在左侧聊天框输出「待拍板重申」或「1) 背景与已完成进展 ... 6) 拍板后的下一步」六段式长模板**！先用 ` +
-        '1 次 `owner_update({ kind: "milestone", message: "..." })` 简短交代核验结论' +
-        `${item.reportHtmlPath ? `（详情简报页 \`${item.reportHtmlPath}\` 可在文末附上 \`[查看核验详情页](preview-metaapp://localhost/${item.reportHtmlPath})\` 链接）` : ''}，` +
-        (item.options.length >= 2
-          ? `随后调用 \`ask_user_question\` 将问题与选项（首推项放第一并标「（推荐）」，header 用 2–6 字中文简写，绝不用 "auto-confirm"）弹在右侧 Live Stage 交互选择卡上等待主人点选（主人在左侧打字也会自动汇入该卡）。一旦 \`ask_user_question\` 返回主人的明确选择（非跳过/取消），立即在同一轮调用 \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` 并直接推进所选下一步！若主人点了跳过或未选定，则保留队列项不调 resolve，简短收尾即可。`
-          : '保持该队列项为当前待拍板状态（不要提前调用 `studio_decision_resolve`），在左侧用 3–5 行自然对话说明结论、唯一需确认事项与下一步。'),
-      '3. **实物可见硬约束**：凡涉及让主人挑选、确认或验收图片/设计稿/本地产物，**必须在左侧回复中逐项附上可点击的本地预览链接**（如 `[方案A](preview-file://localhost/绝对路径)`）与一句区分说明，绝不允许不摆出图片/文件链接就空口让主人验收！（若涉及已上链内容，务必同时明文写出**发布账号**和完整 `pin://...i0` ID）。',
+      `2. **严禁调用 \`ask_user_question\`，先完整呈现成果再让主人在左侧输入拍板（硬规则）**：汇报、是否验收/是否通过、选择方案时**绝对禁止调用 \`ask_user_question\` 工具**（该工具仅限任务开始前做前置调查，严禁用于汇报拍板，否则会遮挡右侧详情页、让主人在看不到文稿/成果的情况下盲选 A/B/C）！保持该队列项为当前待拍板状态（不要提前调 \`studio_decision_resolve\`）：先用 1 次 \`owner_update({ kind: "milestone", message: "..." })\` 简短交代核验结论，随后在左侧聊天回复中用 3–6 行自然简练的文字说明已完成成果、列出清晰的选项（如 \`A（推荐）：...\` / \`B：...\`）与下一步` +
+        `${item.reportHtmlPath ? `，并附上 \`[查看核验详情页](preview-metaapp://localhost/${item.reportHtmlPath})\` 链接` : ''}，` +
+        '然后**直接结束本轮回复**——宿主会自动将包含完整内容与选项的 HTML 页面投到右侧投影屏，主人看完右侧完整文稿/页面后直接在左侧输入框回复 A 或 B 即可！',
+      '3. **实物可见硬约束**：凡涉及让主人挑选、确认或验收文稿/方案/图片/设计稿/本地产物，**必须在右侧投影页完整呈现核心内容，并在左侧回复中逐项附上可点击的本地预览链接**（如 `[文稿全文](preview-file://localhost/绝对路径)` 或 `[方案A](preview-file://localhost/绝对路径)`）与一句区分说明，绝不允许不把实际内容呈现给主人看就让主人做 A/B/C 盲选！（若涉及已上链内容，务必同时明文写出**发布账号**和完整 `pin://...i0` ID）。',
+      '4. **禁止前台重复验工（秒级呈报纪律）**：后台 `[督办]` 会话在入队前**已经跑完了文件、字数与图片核验并生成了详情页**；本轮前台汇报严禁再次从头调 `bash` 跑校验脚本或重复调 `read_image` 拖慢响应——除非先做防重收口，否则直接基于上方已核验信息发出简报与链接并结束本轮！',
       '</studio_proactive_briefing>',
     ].join('\n');
   }
@@ -318,11 +316,10 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
     '',
     'Rules:',
     `1. **Deduplication check (no redundant ceremony)**: If the owner ALREADY ruled on this question or selected a candidate earlier in this conversation, NEVER re-ask them just for formal subtask sign-off — call \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` immediately and do NOT project or re-ask (the host will keep the existing projector page untouched once resolved).`,
-    `2. **Concise briefing + Live Stage interactive card (no 6-section template)**: Otherwise, send one brief \`owner_update({ kind: "milestone", message: "..." })\` stating the verified outcome` +
-      (item.options.length >= 2
-        ? `, then call \`ask_user_question\` with "${item.question}" and the options (recommended option first marked "(Recommended)", short human header — never "auto-confirm") so the interactive choice card appears on the right-hand Live Stage (synced with left chat input). Once \`ask_user_question\` returns an explicit choice, immediately call \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` and execute the chosen next step! If skipped/declined, leave the item in \`presenting\` without resolving.`
-        : ', leave the item in `presenting` (do NOT resolve yet), and keep the left chat reply to 3–5 concise lines stating the verified outcome, the ONE confirmation needed, and the next step.'),
-    '3. **Show artifacts before asking**: Whenever asking the owner to pick, confirm, or accept images/designs/files, ALWAYS include clickable `[label](preview-file://localhost/abs/path)` links with one-line descriptions in your reply — never ask the owner to approve unseen artifacts! (If on-chain content was published, always state BOTH the publishing Bot identity and the verbatim `pin://...i0` ID.)',
+    `2. **NEVER call \`ask_user_question\` for reporting, acceptance, or plan selection (hard rule)**: \`ask_user_question\` is strictly for pre-task requirement surveys BEFORE work begins — NEVER call it during a briefing/acceptance/ruling turn (calling it blocks the right-hand projector and forces the owner to pick A/B/C blind without seeing the deliverable!). Leave the queue item in \`presenting\` (do NOT resolve yet), send one brief \`owner_update({ kind: "milestone", message: "..." })\`, write a concise 3–6 line chat reply summarizing the verified result and clearly listing the A / B options (recommended first)` +
+      `${item.reportHtmlPath ? ` plus \`[Open full briefing](preview-metaapp://localhost/${item.reportHtmlPath})\`` : ''}, and **end your turn immediately** so the host projects the full HTML report/deliverable onto the right screen while the owner inspects it and types A or B in the left chat input.`,
+    '3. **Show full artifacts before asking**: Whenever asking the owner to review, pick, or accept articles, plans, images, designs, or files, ALWAYS present the full content on the right-hand projector and include clickable `[label](preview-file://localhost/abs/path)` links with one-line descriptions in your reply — never ask the owner to choose A/B/C over unseen artifacts! (If on-chain content was published, always state BOTH the publishing Bot identity and the verbatim `pin://...i0` ID.)',
+    '4. **No redundant front-office re-verification**: Back-office supervision has ALREADY verified every artifact and built `reportHtmlPath` before enqueuing; do NOT re-run `bash` verification scripts or `read_image` checks during this front-office presentation turn — deliver the summary, clickable links, and A/B options straight away!',
     '</studio_proactive_briefing>',
   ].join('\n');
 }
@@ -333,6 +330,8 @@ export class StudioChiefOfStaffService {
   private supervisionChain = new Map<string, Promise<void>>();
   private readonly focusedTaskBySession = new Map<string, string>();
   private readonly focusedTaskHistoryBySession = new Map<string, Set<string>>();
+  /** Tracks the task most recently ruled/rejected in a Studio session so follow-up/rework delegations auto-bind `parentTaskId`. */
+  private readonly recentDecisionParentBySession = new Map<string, { taskId: string; atMs: number }>();
   private readonly activeSupervisionsBySession = new Map<string, ActiveStudioSupervisionEntry>();
   private readonly supervisionToOriginStudio = new Map<string, string>();
   private readonly studioToSupervisionIds = new Map<string, Set<string>>();
@@ -414,6 +413,26 @@ export class StudioChiefOfStaffService {
       return single ? [single] : [];
     }
     return [...set].reverse();
+  }
+
+  recordRecentDecisionTask(sessionId: string | null | undefined, taskId: string | null | undefined): void {
+    const sid = (sessionId ?? '').trim();
+    const tid = (taskId ?? '').trim();
+    if (!sid || !tid) return;
+    this.recentDecisionParentBySession.set(sid, { taskId: tid, atMs: this.now() });
+    this.focusTask(sid, tid);
+  }
+
+  getRecentDecisionTask(sessionId: string | null | undefined, maxAgeMs = 5 * 60_000): string | null {
+    const sid = (sessionId ?? '').trim();
+    if (!sid) return null;
+    const hit = this.recentDecisionParentBySession.get(sid);
+    if (!hit) return null;
+    if (this.now() - hit.atMs > maxAgeMs) {
+      this.recentDecisionParentBySession.delete(sid);
+      return null;
+    }
+    return hit.taskId;
   }
 
   isSupervisionBusy(): boolean {
@@ -901,7 +920,7 @@ export class StudioChiefOfStaffService {
     const baselineMs = Math.max(earliestWorkerStart, latestVisibleNonReassuranceAt || earliestWorkerStart);
 
     let state = this.waitingReassuranceState.get(studioSessionId);
-    if (!state || state.signature !== signature || baselineMs > state.lastNoticeMs) {
+    if (!state || baselineMs > state.lastNoticeMs) {
       state = {
         waitBeganMs: earliestWorkerStart,
         lastNoticeMs: baselineMs,
@@ -909,6 +928,12 @@ export class StudioChiefOfStaffService {
         signature,
       };
       this.waitingReassuranceState.set(studioSessionId, state);
+    } else if (state.signature !== signature) {
+      // When one of multiple parallel Workers finishes while another keeps
+      // running, update `signature` WITHOUT rewinding `lastNoticeMs` back to
+      // `baselineMs` (prevents 10s back-to-back reassurance spam).
+      state.signature = signature;
+      state.waitBeganMs = Math.min(state.waitBeganMs, earliestWorkerStart);
     }
 
     const intervals = this.reassuranceIntervalsMs;

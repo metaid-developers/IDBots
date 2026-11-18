@@ -8093,9 +8093,18 @@ const getCoworkRunner = () => {
           if (!twin) return [];
           return getStudioDecisionQueueStore().listOpen(twin.id);
         },
-        resolveDecision: (_sid, queueItemId, resolutionNote) => {
+        resolveDecision: (sid, queueItemId, resolutionNote) => {
           const resolved = getStudioDecisionQueueStore().resolve(queueItemId, resolutionNote);
           if (!resolved) return { ok: false, error: 'QUEUE_ITEM_NOT_FOUND' };
+          if (resolved.longtermTaskId) {
+            const rootParent = getLongTermTaskStore().resolveRootParentTaskId(resolved.longtermTaskId);
+            if (rootParent) {
+              getStudioChiefOfStaffService().recordRecentDecisionTask(sid, rootParent);
+              if (resolved.originStudioSessionId && resolved.originStudioSessionId !== sid) {
+                getStudioChiefOfStaffService().recordRecentDecisionTask(resolved.originStudioSessionId, rootParent);
+              }
+            }
+          }
           getStudioDecisionQueueStore().cancelSiblingQueuedForTask(
             resolved.twinMetabotId,
             resolved.longtermTaskId,
@@ -9679,6 +9688,30 @@ const listBlockingStudioDelegations = (sessionId: string) => listStudioOpenDeleg
 const studioProjectionBlockedReason = (sessionId: string, kind: 'preview' | 'begin'): string | null =>
   describeStudioProjectionBlock(listBlockingStudioDelegations(sessionId), kind);
 
+const listOpenStudioDelegationsForBotStage = (sessionId: string) => {
+  const cur = getCoworkStore().getSessionWithoutMessages(sessionId);
+  const botId = cur?.metabotId ?? null;
+  if (botId == null) return listOpenStudioDelegations(sessionId);
+  const candidateSids = [
+    sessionId,
+    ...getCoworkStore()
+      .listSessions()
+      .filter((s) => s.id !== sessionId && s.sessionType === 'browser' && s.assistantMode === true && s.metabotId === botId)
+      .slice(0, 12)
+      .map((s) => s.id),
+  ];
+  const seen = new Set<string>();
+  const merged: ReturnType<typeof listOpenStudioDelegations> = [];
+  for (const sid of candidateSids) {
+    for (const item of listOpenStudioDelegations(sid)) {
+      if (seen.has(item.attemptId)) continue;
+      seen.add(item.attemptId);
+      merged.push(item);
+    }
+  }
+  return merged;
+};
+
 let studioLiveStageService: StudioLiveStageService | null = null;
 const getStudioLiveStageService = (): StudioLiveStageService => {
   if (!studioLiveStageService) {
@@ -9687,10 +9720,10 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
       getSession: (sessionId) => getCoworkStore().getSessionWithoutMessages(sessionId),
       hasMultipleUserMessages: (sessionId) => getCoworkStore().hasMultipleUserMessages(sessionId),
       getMetabotById: (id) => getMetabotStore().getMetabotById(id),
-      listOpenDelegations: listOpenStudioDelegations,
+      listOpenDelegations: listOpenStudioDelegationsForBotStage,
       listCollaboratingWorkers: (sessionId) => {
         const nowMs = Date.now();
-        const open = listOpenStudioDelegations(sessionId).map((entry) => ({
+        const open = listOpenStudioDelegationsForBotStage(sessionId).map((entry) => ({
           id: entry.attemptId,
           name: entry.workerName ?? `Bot #${entry.workerMetabotId}`,
           ...(entry.workerAvatar ? { avatar: entry.workerAvatar } : {}),
@@ -9844,7 +9877,14 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
       drainInteractions: (tabId, sessionId) => drainStudioLiveStageInteractions({
         getWindows: () => BrowserWindow.getAllWindows(),
         executeTabCommand: (command) => getBotBrowserTabBridge().execute(command),
-      }, { tabId, sessionId }),
+      }, {
+        tabId,
+        sessionId,
+        botKey: (() => {
+          const botId = sessionId ? getCoworkStore().getSessionWithoutMessages(sessionId)?.metabotId : null;
+          return typeof botId === 'number' && botId > 0 ? `bot:${botId}` : undefined;
+        })(),
+      }),
       // Human turns and turn errors bring the stage forward through the
       // renderer binding's role activation — background, open-session guarded.
       activateStageTab: (sessionId) => getBotBrowserTabBridge().execute(
@@ -10670,6 +10710,7 @@ const getTwinOrchestrationService = () => new TwinOrchestrationService({
   longTermTaskStore: () => getLongTermTaskStore(),
   isStudioSourceSession: (sid) => getStudioChiefOfStaffService().isStudioOwnerSession(sid),
   getFocusedTaskForSession: (sid) => getStudioChiefOfStaffService().getFocusedTaskId(sid),
+  getRecentDecisionTaskForSession: (sid) => getStudioChiefOfStaffService().getRecentDecisionTask(sid),
   onStudioWorkerTerminalState: (event) =>
     getStudioChiefOfStaffService().onStudioWorkerTerminalState(event),
   directory: {

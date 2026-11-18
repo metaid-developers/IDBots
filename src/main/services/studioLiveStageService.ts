@@ -972,6 +972,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     const stageDir = entry?.dir ?? '';
     const state = createLiveStageState({
       sessionId,
+      ...(typeof session.metabotId === 'number' && session.metabotId > 0 ? { botKey: `bot:${session.metabotId}` } : {}),
       turnId,
       botName: botNameFor(session),
       botAvatar: stageDir ? stageAssetFor(avatarFor(session), stageDir) : undefined,
@@ -1000,10 +1001,10 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       queue: Promise.resolve(),
       seen: new Set(),
       submissionId: null,
-      // An idle run exists to repaint a stage that may still show an older
-      // claimed state: its resting copy must actually be patched, so the
-      // delivered watermark starts below the initial revision.
-      deliveredRevision: options?.idle === true ? -1 : state.revision,
+      // A fresh run starts at deliveredRevision = -1 so its initial `received`
+      // or `idle` frame is always patched onto a shared per-Bot stage tab
+      // (clearing any previous conversation's finished `report-ready` screen).
+      deliveredRevision: -1,
       patchRetries: 0,
       patchFailures: {},
       retryTimer: null,
@@ -1112,6 +1113,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       const baseIdentity = {
         protocol: run.state.protocol,
         sessionId,
+        ...(run.state.botKey ? { botKey: run.state.botKey } : {}),
         turnId: run.state.turnId,
         turnStartedAt: nowMs,
         enabled: run.state.enabled,
@@ -1269,6 +1271,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     const state: LiveStageState = {
       ...createLiveStageState({
         sessionId: '',
+        ...(metabotId != null ? { botKey: `bot:${metabotId}` } : {}),
         turnId: 'draft',
         botName: metabot?.name?.trim().slice(0, 80) || 'Twin',
         botAvatar: stageDir ? stageAssetFor(avatar, stageDir) : safeAvatar(avatar),

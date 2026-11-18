@@ -44,6 +44,9 @@ export function formatActiveTasksRadarPromptBlock(
   const lines = shown.map((entry) => {
     const badge = entry.isLongTerm ? '[长期]' : '[常规]';
     const originTag = curSid && entry.originSessionId === curSid ? ' (this session)' : '';
+    const parentPart = entry.parentTaskId
+      ? ` · parent="${entry.parentTaskTitle ?? entry.parentTaskId}" (${entry.parentTaskId})`
+      : '';
     const subPart =
       entry.currentSubtaskTitle && entry.currentSubtaskTitle !== entry.title
         ? ` · current="${entry.currentSubtaskTitle}" (${entry.currentSubtaskId ?? 'sub'})`
@@ -61,7 +64,7 @@ export function formatActiveTasksRadarPromptBlock(
         : entry.progressNote
           ? ` · live="${entry.progressNote.replace(/\s+/g, ' ').slice(0, 90)}"`
           : '';
-    return `- ${badge} [${entry.managedState}] "${entry.title}" (taskId=${entry.id}, ${entry.progress.accepted}/${entry.progress.total})${originTag}${subPart}${assigneePart}${detailPart}`;
+    return `- ${badge} [${entry.managedState}] "${entry.title}" (taskId=${entry.id}, ${entry.progress.accepted}/${entry.progress.total})${originTag}${parentPart}${subPart}${assigneePart}${detailPart}`;
   });
 
   const omitted = entries.length - shown.length;
@@ -70,7 +73,7 @@ export function formatActiveTasksRadarPromptBlock(
     'Machine-wide active tasks shared across ALL sessions and channels (Sessions are interaction channels, Tasks are first-class):',
     ...lines,
     ...(omitted > 0 ? [`- (+${omitted} more open tasks; call task_list_active or task_search)`] : []),
-    'Routing rules: If the owner asks what is in flight, answer straight from this radar; if they reference an older/completed topic not listed here, call `task_search`; if they reply to or revise one of the tasks above, update that task instead of creating a duplicate card.',
+    'Routing rules: If the owner asks what is in flight, answer straight from this radar; if they reference an older/completed topic not listed here, call `task_search`; when spawning a rework, companion asset, or follow-up revision for an existing task above, pass `parentTaskId: "<existing taskId>"` to `task_create` / `local_worker_delegate` so it nests under that parent.',
     '</active_tasks_radar>',
   ].join('\n');
 }

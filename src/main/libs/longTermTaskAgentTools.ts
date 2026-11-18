@@ -685,6 +685,7 @@ export function buildLongTermTaskAgentTools(deps: {
       acceptanceCriteria: z.array(z.string()).optional().describe('Checkable acceptance criteria for the Worker output.'),
       preferredChannel: z.enum(CHANNEL_ENUM).optional(),
       expectedMinutes: z.number().int().positive().optional(),
+      parentTaskId: z.string().optional(),
       definitionSessionId: z.string().optional(),
     },
     async (args: {
@@ -693,6 +694,7 @@ export function buildLongTermTaskAgentTools(deps: {
       acceptanceCriteria?: string[];
       preferredChannel?: (typeof CHANNEL_ENUM)[number];
       expectedMinutes?: number;
+      parentTaskId?: string;
       definitionSessionId?: string;
     }) => {
       try {
@@ -704,6 +706,7 @@ export function buildLongTermTaskAgentTools(deps: {
             acceptanceCriteria: args.acceptanceCriteria ?? [],
             preferredChannel: args.preferredChannel ?? 'delegate_bot',
             expectedMinutes: args.expectedMinutes,
+            parentTaskId: args.parentTaskId ?? null,
             definitionSessionId: anchors.originSessionId,
             originSessionId: anchors.originSessionId,
             originMessageId: anchors.originMessageId,
@@ -868,6 +871,7 @@ export function buildLongTermTaskAgentTools(deps: {
       expectedMinutes: z.number().int().positive().optional(),
       activateImmediately: z.boolean().optional().describe('Default true (immediately enters `in_progress`). Set false only for fuzzy multi-week drafts still in `defining`.'),
       isLongTerm: z.boolean().optional().describe('Optional explicit [long-term] badge override (omit for automatic derivation from >=3 Bots, >=1440m duration, >24h span, or >=4 subtasks).'),
+      parentTaskId: z.string().optional().describe('Optional parent Task id (ltt_...) when this task is a rework, companion asset, or follow-up child spawned while advancing/reviewing an existing task (renders indented under its parent on the HUD and Task Board).'),
       planArtifactUri: z.string().optional(),
       definitionSessionId: z.string().optional(),
     },
@@ -880,6 +884,7 @@ export function buildLongTermTaskAgentTools(deps: {
       expectedMinutes?: number;
       activateImmediately?: boolean;
       isLongTerm?: boolean;
+      parentTaskId?: string;
       planArtifactUri?: string;
       definitionSessionId?: string;
     }) => {
@@ -898,6 +903,7 @@ export function buildLongTermTaskAgentTools(deps: {
             expectedMinutes: args.expectedMinutes,
             activateImmediately: args.activateImmediately !== false,
             isLongTerm: args.isLongTerm ?? null,
+            parentTaskId: args.parentTaskId ?? null,
             planArtifactUri: args.planArtifactUri ?? null,
             definitionSessionId: anchors.originSessionId,
             originSessionId: anchors.originSessionId,

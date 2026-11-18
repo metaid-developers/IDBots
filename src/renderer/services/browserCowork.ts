@@ -288,15 +288,12 @@ class BrowserCoworkService {
   }
 
   /**
-   * Single persistent Twin stream: "Clear Screen" archives the finished screen
-   * chapter (preserving tasks, memories, and history) and presents a clean
-   * screen bound to the same Twin Bot instead of piling up open sessions.
+   * Start a fresh Studio conversation view without archiving the previous
+   * conversation: Tasks and Sessions have independent lifecycles, so previous
+   * conversations remain visible and switchable in Studio History unless the
+   * owner explicitly archives a session.
    */
   async clearCurrentScreen(): Promise<void> {
-    const current = store.getState().browserCowork.currentSession;
-    if (current && !isOptimisticSession(current)) {
-      await coworkService.archiveSession(current.id);
-    }
     this.applySession(null);
   }
 }

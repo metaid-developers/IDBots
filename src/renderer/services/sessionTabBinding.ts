@@ -31,6 +31,8 @@ export interface SessionTabHost {
   getOpenSession(): CoworkSession | null;
   openSession(sessionId: string): Promise<CoworkSession | null>;
   listBrowserSessions(): Promise<CoworkSessionSummary[]>;
+  /** Resolve the Bot identity (`metabotId`) of a Studio session so all conversations of the same Bot share one Live Stage tab. */
+  getSessionBotId?(sessionId: string): number | null;
 }
 
 export type SessionBrowserEvent = {
@@ -47,7 +49,7 @@ export type SessionBrowserEvent = {
 export interface SessionTabBinding {
   attach(host: SessionTabHost): void;
   rememberOpenSession(sessionId: string | null): void;
-  prepareDraftTab(): Promise<number | null>;
+  prepareDraftTab(metabotId?: number | null): Promise<number | null>;
   /**
    * Ensure the prewarmed draft tab exists on the stage entry, then patch its
    * frame with the selected bot's draft identity (metabotId null → the
@@ -102,6 +104,8 @@ export function createSessionTabBinding(): SessionTabBinding {
   /** Concurrent prepareDraftTab callers share this one in-flight promise. */
   let prepareDraftPromise: Promise<number | null> | null = null;
   const sessionTabs = new Map<string, TabBinding>();
+  /** One persistent Live Stage tab per Bot (`metabotId -> tabId`) across Studio conversations. */
+  const botStageTabs = new Map<number, number>();
   const sessionPages = new Map<string, PersistedBrowserSessionPage>();
   const sessionActiveRoles = new Map<string, SessionTabRole>();
   let pagesLoaded = false;
@@ -177,6 +181,16 @@ export function createSessionTabBinding(): SessionTabBinding {
     savePersistedBrowserSessionPage(sessionId, page);
   };
 
+  const botIdOf = (sessionId: string): number | null => {
+    const raw = host?.getSessionBotId?.(sessionId);
+    if (typeof raw === 'number' && Number.isInteger(raw) && raw > 0) return raw;
+    const open = host?.getOpenSession();
+    if (open?.id === sessionId && typeof open.metabotId === 'number' && open.metabotId > 0) {
+      return open.metabotId;
+    }
+    return null;
+  };
+
   const ownerOfTab = (tabId: number): TabBinding | null => {
     for (const binding of sessionTabs.values()) {
       if (binding.tabId === tabId) return binding;
@@ -185,10 +199,23 @@ export function createSessionTabBinding(): SessionTabBinding {
   };
 
   const rememberTab = (sessionId: string, role: SessionTabRole, tabId: number): void => {
-    // A live tab holds exactly one role binding: claiming it for this role
-    // releases any other role/session that pointed at it.
+    const botId = role === 'stage' ? botIdOf(sessionId) : null;
+    if (botId != null) {
+      botStageTabs.set(botId, tabId);
+    }
     for (const [key, binding] of sessionTabs) {
-      if (binding.tabId === tabId && key !== tabKey(sessionId, role)) sessionTabs.delete(key);
+      if (binding.tabId !== tabId || key === tabKey(sessionId, role)) continue;
+      // Same-Bot Studio sessions share a single Live Stage tab: keep sibling
+      // stage bindings of the same Bot intact while still evicting foreign/showcase claims.
+      if (
+        role === 'stage'
+        && binding.role === 'stage'
+        && botId != null
+        && botIdOf(binding.sessionId) === botId
+      ) {
+        continue;
+      }
+      sessionTabs.delete(key);
     }
     sessionTabs.delete(tabKey(sessionId, role));
     sessionTabs.set(tabKey(sessionId, role), { sessionId, role, tabId });
@@ -213,16 +240,40 @@ export function createSessionTabBinding(): SessionTabBinding {
   const listTabs = async (): Promise<BotBrowserTabCommandResult | null> =>
     controlTabs({ action: 'get-tabs' });
 
+  const liveBotStageTab = (
+    botId: number | null,
+    tabs: BotBrowserTabInfo[],
+  ): BotBrowserTabInfo | null => {
+    if (botId == null) return null;
+    const tabId = botStageTabs.get(botId);
+    if (tabId == null) return null;
+    const tab = tabs.find((entry) => entry.id === tabId) ?? null;
+    if (!tab) {
+      botStageTabs.delete(botId);
+      return null;
+    }
+    return tab;
+  };
+
   const liveBoundTab = (
     sessionId: string,
     role: SessionTabRole,
     tabs: BotBrowserTabInfo[],
   ): BotBrowserTabInfo | null => {
     const binding = sessionTabs.get(tabKey(sessionId, role));
-    if (!binding) return null;
-    const tab = tabs.find((entry) => entry.id === binding.tabId) ?? null;
-    if (!tab) sessionTabs.delete(tabKey(sessionId, role));
-    return tab;
+    if (binding) {
+      const tab = tabs.find((entry) => entry.id === binding.tabId) ?? null;
+      if (tab) return tab;
+      sessionTabs.delete(tabKey(sessionId, role));
+    }
+    if (role === 'stage') {
+      const shared = liveBotStageTab(botIdOf(sessionId), tabs);
+      if (shared) {
+        rememberTab(sessionId, 'stage', shared.id);
+        return shared;
+      }
+    }
+    return null;
   };
 
   /**
@@ -517,7 +568,7 @@ export function createSessionTabBinding(): SessionTabBinding {
    * already on the entry URI counts as reusable too (covers the second
    * prewarm entry point firing after the first draft navigated).
    */
-  const prepareDraftTab = (): Promise<number | null> => {
+  const prepareDraftTab = (explicitMetabotId?: number | null): Promise<number | null> => {
     prepareDraftPromise ??= enqueue(async () => {
       try {
         const uri = await stageEntryUri();
@@ -527,6 +578,33 @@ export function createSessionTabBinding(): SessionTabBinding {
         const entryUri = uri?.toLowerCase() ?? null;
         const onEntry = (tab: BotBrowserTabInfo): boolean =>
           entryUri != null && browserUrisMatch(uriOf(tab), entryUri);
+
+        // Single Live Stage per Bot: when starting a new Studio conversation
+        // for a Bot that ALREADY owns a Live Stage tab, keep that existing
+        // stage tab instead of spawning a second Live Stage tab.
+        const openBotId =
+          typeof explicitMetabotId === 'number' && Number.isInteger(explicitMetabotId) && explicitMetabotId > 0
+            ? explicitMetabotId
+            : typeof host?.getOpenSession()?.metabotId === 'number' && host.getOpenSession()!.metabotId! > 0
+              ? host.getOpenSession()!.metabotId!
+              : botStageTabs.size === 1
+                ? [...botStageTabs.keys()][0]
+                : null;
+        const existingBotStage = liveBotStageTab(openBotId, tabs);
+        if (existingBotStage && (isBlank(existingBotStage) || onEntry(existingBotStage))) {
+          if (uri && !onEntry(existingBotStage)) {
+            await controlTabs({
+              action: 'navigate-tab',
+              tabId: existingBotStage.id,
+              uri,
+              activate: false,
+            });
+          }
+          if (!existingBotStage.isActive) {
+            await controlTabs({ action: 'switch-tab', tabId: existingBotStage.id });
+          }
+          return existingBotStage.id;
+        }
 
         let draft: BotBrowserTabInfo | null = null;
         if (pendingDraftTabId != null) {
@@ -584,7 +662,7 @@ export function createSessionTabBinding(): SessionTabBinding {
   };
 
   const prepareDraftIdentity = (metabotId: number | null): Promise<void> =>
-    prepareDraftTab().then(async (tabId) => {
+    prepareDraftTab(metabotId).then(async (tabId) => {
       if (tabId == null) return;
       try {
         await window.electron?.studioLiveStage?.prepareDraft?.({
@@ -845,10 +923,14 @@ export function createSessionTabBinding(): SessionTabBinding {
     const tabId = Number(message.payload?.tabId);
     if (!Number.isInteger(tabId) || tabId <= 0) return;
     if (message.event === 'tab-closed') {
-      const owner = ownerOfTab(tabId);
-      if (owner) {
-        sessionTabs.delete(tabKey(owner.sessionId, owner.role));
-        if (owner.role === 'showcase') rememberActiveRole(owner.sessionId, 'stage');
+      for (const [key, binding] of sessionTabs) {
+        if (binding.tabId === tabId) {
+          sessionTabs.delete(key);
+          if (binding.role === 'showcase') rememberActiveRole(binding.sessionId, 'stage');
+        }
+      }
+      for (const [botId, mappedTabId] of botStageTabs) {
+        if (mappedTabId === tabId) botStageTabs.delete(botId);
       }
       if (pendingDraftTabId === tabId) pendingDraftTabId = null;
       return;

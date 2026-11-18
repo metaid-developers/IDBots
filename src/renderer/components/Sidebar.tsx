@@ -184,6 +184,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   const browserOpenSessionId = useSelector(
     (state: RootState) => state.browserCowork.currentSession?.id ?? null,
   );
+  const browserOpenSessionMetabotId = useSelector(
+    (state: RootState) => state.browserCowork.currentSession?.metabotId ?? null,
+  );
   const browserOpenSessionFallbackTitle = useSelector(
     (state: RootState) => state.browserCowork.currentSession?.title ?? null,
   );
@@ -783,7 +786,8 @@ const Sidebar: React.FC<SidebarProps> = ({
       onMouseLeave={(event) => {
         const nextTarget = event.relatedTarget as Node | null;
         if (nextTarget && event.currentTarget.contains(nextTarget)) return;
-        if (!event.currentTarget.contains(document.activeElement)) scheduleTitleHide();
+        const activeEl = document.activeElement;
+        if (!activeEl || !event.currentTarget.contains(activeEl)) scheduleTitleHide();
       }}
       onBlur={(event) => {
         const leaveTarget = event.relatedTarget as Node | null;
@@ -843,9 +847,14 @@ const Sidebar: React.FC<SidebarProps> = ({
           type="button"
           data-slot="cowork-new-session"
           onClick={() => {
+            const currentBotId = browserOpenSessionMetabotId;
             setPanelHistoryOpen(false);
             void browserCoworkService.clearCurrentScreen();
-            void sessionTabBinding.prepareDraftTab();
+            if (currentBotId != null) {
+              void sessionTabBinding.prepareDraftIdentity(currentBotId);
+            } else {
+              void sessionTabBinding.prepareDraftTab();
+            }
           }}
           className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
           aria-label={i18nService.t('studioClearScreen')}

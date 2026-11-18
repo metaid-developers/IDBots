@@ -364,6 +364,7 @@ interface TaskRow {
   is_long_term_override?: number | null;
   acceptance_delegate: number;
   current_subtask_id: string | null;
+  parent_task_id?: string | null;
   definition_session_id: string | null;
   origin_session_id?: string | null;
   origin_message_id?: string | null;
@@ -586,6 +587,10 @@ export class LongTermTaskStore {
     if (!taskColumns.includes('intent_score_json')) {
       this.db.run('ALTER TABLE long_term_tasks ADD COLUMN intent_score_json TEXT');
     }
+    if (!taskColumns.includes('parent_task_id')) {
+      this.db.run('ALTER TABLE long_term_tasks ADD COLUMN parent_task_id TEXT');
+    }
+    this.db.run('CREATE INDEX IF NOT EXISTS idx_long_term_tasks_parent ON long_term_tasks(parent_task_id)');
     const subtaskColumns = this.getAll<{ name: unknown }>('PRAGMA table_info(long_term_subtasks)').map((row) => String(row.name));
     if (!subtaskColumns.includes('expected_minutes')) {
       this.db.run('ALTER TABLE long_term_subtasks ADD COLUMN expected_minutes INTEGER');
@@ -639,7 +644,149 @@ export class LongTermTaskStore {
       CREATE INDEX IF NOT EXISTS idx_task_session_links_task
         ON task_session_links(task_id, updated_at DESC);
     `);
+    this.backfillStudioDecisionParentHierarchy();
     this.saveDb();
+  }
+
+  /**
+   * Resolve the root parent task id (`ltt_...`) for `candidateParentId` (cycle-guarded,
+   * flattened to 1-level parent-child depth so grandchild revisions like v3
+   * spawned from v2 stay indented cleanly under the original root task).
+   */
+  resolveRootParentTaskId(candidateParentId: string | null | undefined, selfTaskId?: string | null): string | null {
+    let cur = asText(candidateParentId ?? '').trim();
+    if (!cur || (selfTaskId && cur === selfTaskId)) return null;
+    const seen = new Set<string>(selfTaskId ? [selfTaskId] : []);
+    for (let depth = 0; depth < 8; depth += 1) {
+      if (seen.has(cur)) return null;
+      seen.add(cur);
+      const row = this.getOne<{ id: string; parent_task_id?: string | null }>(
+        'SELECT id, parent_task_id FROM long_term_tasks WHERE id = ?',
+        [cur],
+      );
+      if (!row) return null;
+      const next = asText(row.parent_task_id ?? '').trim();
+      if (!next || seen.has(next)) {
+        return row.id;
+      }
+      cur = next;
+    }
+    return cur || null;
+  }
+
+  setTaskParent(taskId: string, parentTaskId: string | null): boolean {
+    const tid = asText(taskId).trim();
+    if (!tid) return false;
+    const rootParent = parentTaskId ? this.resolveRootParentTaskId(parentTaskId, tid) : null;
+    this.db.run(
+      'UPDATE long_term_tasks SET parent_task_id = ?, updated_at = ? WHERE id = ?',
+      [rootParent, nowIso(), tid],
+    );
+    const modified = (this.db as unknown as { getRowsModified?: () => number }).getRowsModified?.() ?? 1;
+    if (modified > 0) this.saveDb();
+    return modified > 0;
+  }
+
+  /**
+   * When a new follow-up/rework child task (e.g. v3) is created for `workerMetabotId`
+   * under `parentTaskId`, settle any older active 1-subtask `quick` sibling child
+   * assigned to the SAME Worker whose work was already submitted (e.g. v2) so
+   * superseded intermediate revisions never linger as zombie active cards.
+   */
+  supersedeCompletedWorkerSiblingChildren(params: {
+    parentTaskId: string;
+    newChildTaskId: string;
+    workerMetabotId: number;
+    hasActiveAttemptForTask?: (taskId: string) => boolean;
+  }): string[] {
+    const { parentTaskId, newChildTaskId, workerMetabotId, hasActiveAttemptForTask } = params;
+    if (!parentTaskId || !newChildTaskId) return [];
+    const siblings = this.getAll<TaskRow>(
+      "SELECT * FROM long_term_tasks WHERE parent_task_id = ? AND id != ? AND task_kind = 'quick' AND stage = 'active'",
+      [parentTaskId, newChildTaskId],
+    );
+    const closed: string[] = [];
+    const now = nowIso();
+    for (const sib of siblings) {
+      if (hasActiveAttemptForTask?.(sib.id)) continue;
+      const subs = this.listSubtaskRows(sib.id);
+      if (subs.length !== 1) continue;
+      const sub = subs[0];
+      if (asNullableInt(sub.assignee_metabot_id) !== workerMetabotId) continue;
+      // Only supersede if the prior Worker run already submitted or finished
+      const hasSubmission = Boolean((sub.submission_json ?? '').trim() || (sub.progress_note ?? '').startsWith('submitted'));
+      if (!hasSubmission) continue;
+      this.db.run(
+        "UPDATE long_term_subtasks SET status = 'accepted', accepted_by = 'twin', accepted_at = ?, updated_at = ? WHERE id = ?",
+        [now, now, sub.id],
+      );
+      this.db.run(
+        "UPDATE long_term_tasks SET stage = 'done', done_at = ?, current_subtask_id = NULL, updated_at = ? WHERE id = ?",
+        [now, now, sib.id],
+      );
+      this.addEvent(sib.id, sub.id, 'completed', 'twin', `Superseded by follow-up child task ${newChildTaskId}`);
+      closed.push(sib.id);
+    }
+    if (closed.length > 0) this.saveDb();
+    return closed;
+  }
+
+  /**
+   * Idempotent one-time backfill (`task_parent_hierarchy_backfill_v1`): links
+   * existing unparented Studio `quick` tasks created immediately (<= 3 min)
+   * after resolving a `studio_decision_queue` item back to that item's root
+   * `longterm_task_id`, and settles superseded intermediate revisions.
+   */
+  private backfillStudioDecisionParentHierarchy(): void {
+    try {
+      const hasKv = this.getAll<{ name: unknown }>("SELECT name FROM sqlite_master WHERE type='table' AND name='kv'").length > 0;
+      const hasQueue = this.getAll<{ name: unknown }>("SELECT name FROM sqlite_master WHERE type='table' AND name='studio_decision_queue'").length > 0;
+      if (!hasKv || !hasQueue) return;
+      const migKey = 'task_parent_hierarchy_backfill_v1';
+      const done = this.getOne<{ value?: string }>('SELECT value FROM kv WHERE key = ? LIMIT 1', [migKey]);
+      if (done?.value === '1') return;
+
+      const resolvedItems = this.getAll<{ longterm_task_id?: string | null; updated_at?: string | null }>(
+        "SELECT longterm_task_id, updated_at FROM studio_decision_queue WHERE status = 'resolved' AND longterm_task_id IS NOT NULL ORDER BY updated_at ASC",
+      );
+      const quickTasks = this.getAll<TaskRow>(
+        "SELECT * FROM long_term_tasks WHERE task_kind = 'quick' AND (parent_task_id IS NULL OR parent_task_id = '') ORDER BY created_at ASC",
+      );
+
+      for (const qt of quickTasks) {
+        const createdMs = Date.parse(qt.created_at);
+        if (!Number.isFinite(createdMs)) continue;
+        let matchedParent: string | null = null;
+        for (const item of resolvedItems) {
+          const ltId = asText(item.longterm_task_id ?? '').trim();
+          const resolvedMs = Date.parse(asText(item.updated_at ?? ''));
+          if (!ltId || ltId === qt.id || !Number.isFinite(resolvedMs)) continue;
+          const delta = createdMs - resolvedMs;
+          if (delta >= -2_000 && delta <= 3 * 60_000) {
+            matchedParent = this.resolveRootParentTaskId(ltId, qt.id);
+          }
+        }
+        if (matchedParent) {
+          this.db.run('UPDATE long_term_tasks SET parent_task_id = ? WHERE id = ?', [matchedParent, qt.id]);
+          const subs = this.listSubtaskRows(qt.id);
+          const workerId = subs.length === 1 ? asNullableInt(subs[0].assignee_metabot_id) : null;
+          if (workerId != null && qt.stage === 'active') {
+            this.supersedeCompletedWorkerSiblingChildren({
+              parentTaskId: matchedParent,
+              newChildTaskId: qt.id,
+              workerMetabotId: workerId,
+            });
+          }
+        }
+      }
+
+      this.db.run(
+        'INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+        [migKey, '1', Date.now()],
+      );
+    } catch {
+      // Best-effort backfill; never block store boot.
+    }
   }
 
   // ── row mapping ──────────────────────────────────────────────────────────
@@ -673,6 +820,7 @@ export class LongTermTaskStore {
       ? (row.origin_channel as TaskOriginChannel)
       : null;
     const definitionSessionId = row.definition_session_id ?? null;
+    const parentTaskId = (row.parent_task_id ?? '').trim() || null;
     const originSessionId = (row.origin_session_id ?? '').trim() || definitionSessionId;
     const originMessageId = (row.origin_message_id ?? '').trim() || null;
     const anchorMessageIds = (() => {
@@ -691,6 +839,7 @@ export class LongTermTaskStore {
       isLongTermOverride,
       acceptanceDelegate: row.acceptance_delegate === 1,
       currentSubtaskIdPinned: row.current_subtask_id ?? null,
+      parentTaskId: parentTaskId && parentTaskId !== row.id ? parentTaskId : null,
       definitionSessionId,
       originSessionId,
       originMessageId,
@@ -821,6 +970,9 @@ export class LongTermTaskStore {
       doneAtIso: task.doneAt,
       thresholds: this.badgeThresholds,
     });
+    const parentRow = task.parentTaskId
+      ? this.getOne<{ id: string; title: string }>('SELECT id, title FROM long_term_tasks WHERE id = ?', [task.parentTaskId])
+      : null;
     return {
       id: task.id,
       title: task.title,
@@ -834,6 +986,8 @@ export class LongTermTaskStore {
       managedState,
       acceptanceDelegate: task.acceptanceDelegate,
       planArtifactUri: task.planArtifactUri,
+      parentTaskId: parentRow?.id ?? null,
+      parentTaskTitle: parentRow?.title ?? null,
       originSessionId: task.originSessionId,
       originMessageId: task.originMessageId,
       anchorMessageIds: task.anchorMessageIds,
@@ -1079,6 +1233,7 @@ export class LongTermTaskStore {
         ],
         activateImmediately: true,
         isLongTerm: input.isLongTerm,
+        parentTaskId: input.parentTaskId ?? null,
         definitionSessionId: input.definitionSessionId,
         originSessionId: input.originSessionId ?? input.definitionSessionId,
         originMessageId: input.originMessageId,
@@ -1185,6 +1340,7 @@ export class LongTermTaskStore {
       : null;
     const isLongTermOverride =
       input.isLongTerm === true ? 1 : input.isLongTerm === false ? 0 : null;
+    const parentTaskId = this.resolveRootParentTaskId(input.parentTaskId ?? null);
     const intentScoreJson =
       input.intentScore !== undefined && input.intentScore !== null
         ? JSON.stringify(input.intentScore)
@@ -1201,8 +1357,8 @@ export class LongTermTaskStore {
     const pinnedSubtaskId = initialBegunIds[0] ?? null;
 
     this.db.run(
-      `INSERT INTO long_term_tasks (id, title, goal, stage, task_kind, is_long_term_override, acceptance_delegate, current_subtask_id, definition_session_id, origin_session_id, origin_message_id, anchor_message_ids_json, origin_channel, intent_score_json, plan_artifact_uri, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO long_term_tasks (id, title, goal, stage, task_kind, is_long_term_override, acceptance_delegate, current_subtask_id, parent_task_id, definition_session_id, origin_session_id, origin_message_id, anchor_message_ids_json, origin_channel, intent_score_json, plan_artifact_uri, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         taskId,
         title,
@@ -1211,6 +1367,7 @@ export class LongTermTaskStore {
         taskKind,
         isLongTermOverride,
         pinnedSubtaskId,
+        parentTaskId,
         definitionSessionId,
         originSessionId,
         originMessageId,
@@ -2366,6 +2523,8 @@ export class LongTermTaskStore {
         progressNote: summary.currentProgressNote ?? null,
         waitNote: summary.currentWaitNote ? summary.currentWaitNote.slice(0, 200) : null,
         originSessionId: summary.originSessionId ?? null,
+        parentTaskId: summary.parentTaskId ?? null,
+        parentTaskTitle: summary.parentTaskTitle ?? null,
         updatedAt: summary.updatedAt,
       });
     }

@@ -2250,6 +2250,25 @@ export class CoworkStore implements MemoryBackend {
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN last_turn_completed_at_ms INTEGER;');
         changed = true;
       }
+      // One-time recovery migration: `clearCurrentScreen` previously auto-archived
+      // the active Studio conversation whenever the owner clicked "New Chat",
+      // hiding Studio conversations (e.g. 6a8a9157) from Studio History and
+      // conflating Task archiving with Session archiving. Unarchive human
+      // Studio browser sessions once so they return to Studio History intact.
+      try {
+        const migKey = 'studio_clear_screen_unarchive_v1';
+        const migRow = this.getOne<{ value?: string }>('SELECT value FROM kv WHERE key = ? LIMIT 1', [migKey]);
+        if (!migRow || migRow.value !== '1') {
+          this.restoreAutoArchivedStudioSessions();
+          this.db.run(
+            'INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+            [migKey, '1', Date.now()],
+          );
+          changed = true;
+        }
+      } catch (migErr) {
+        console.warn('[CoworkStore] Studio session unarchive recovery skipped:', migErr);
+      }
 
       // Ensure partial session indexes before running the startup sweeps so
       // multi-GB databases with large system_prompt overflow chains seek only
@@ -4512,6 +4531,27 @@ export class CoworkStore implements MemoryBackend {
     if ((this.db.getRowsModified?.() || 0) > 0) {
       this.saveDb();
     }
+  }
+
+  /**
+   * Restore human Studio conversations (`session_type = 'browser'`,
+   * `assistant_mode = 1`, `auto_origin IS NULL`) that were mistakenly archived
+   * when clicking "New Chat / Clear Screen". Returns the number of restored rows.
+   */
+  restoreAutoArchivedStudioSessions(): number {
+    this.db.run(
+      `UPDATE cowork_sessions
+          SET archived_at = NULL
+        WHERE session_type = 'browser'
+          AND COALESCE(assistant_mode, 0) = 1
+          AND auto_origin IS NULL
+          AND archived_at IS NOT NULL`,
+    );
+    const modified = this.db.getRowsModified?.() || 0;
+    if (modified > 0) {
+      this.saveDb();
+    }
+    return modified;
   }
 
   isSessionArchived(id: string): boolean {

@@ -2,6 +2,8 @@ import path from 'node:path';
 
 export interface StudioTwinToolGuardInput {
   isStudioTwinFrontOffice: boolean;
+  /** True when the current Studio turn is a proactive decision/acceptance briefing. */
+  isProactiveBriefingTurn?: boolean;
   toolName: string;
   toolInput: Record<string, unknown>;
   workspaceRoot: string;
@@ -83,6 +85,17 @@ export function evaluateStudioTwinToolGuard(
   }
 
   const normalizedTool = String(input.toolName ?? '').trim().toLowerCase();
+  if (
+    input.isProactiveBriefingTurn === true
+    && (normalizedTool === 'ask_user_question' || normalizedTool === 'askuserquestion')
+  ) {
+    return {
+      action: 'deny',
+      reason:
+        'Studio briefing rule: NEVER call ask_user_question during task reporting, acceptance sign-off, or plan/deliverable selection. ' +
+        'Present the full deliverable/HTML on the right-hand projector (with clickable preview-file:// or preview-metaapp:// links) and list concise A/B options in your chat reply so the owner can inspect the artifact on the right and reply A or B in the left input box.',
+    };
+  }
   if (!MUTATING_FILE_TOOLS.has(normalizedTool)) {
     return { action: 'allow' };
   }

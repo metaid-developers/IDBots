@@ -75,7 +75,12 @@ export function nextActionText(card: LongTermTaskSummary): string {
 /** Rough "does this next-step text need clamping" check (~3 lines at card width). */
 const CLAMP_THRESHOLD = 90;
 
-const LongTermTaskCard: React.FC<{ card: LongTermTaskSummary; onOpen: (taskId: string) => void }> = ({ card, onOpen }) => {
+const LongTermTaskCard: React.FC<{
+  card: LongTermTaskSummary;
+  onOpen: (taskId: string) => void;
+  /** True when rendered directly underneath its parent card inside the same column. */
+  indentedUnderParent?: boolean;
+}> = ({ card, onOpen, indentedUnderParent = false }) => {
   const isWaitingOwner = card.column === 'waiting_owner';
   const dimmed = card.column === 'paused' || card.column === 'done';
   const [expanded, setExpanded] = useState(false);
@@ -102,19 +107,30 @@ const LongTermTaskCard: React.FC<{ card: LongTermTaskSummary; onOpen: (taskId: s
     <div
       role="button"
       tabIndex={0}
+      data-slot={card.parentTaskId ? 'task-child-card' : 'task-card'}
       onClick={() => onOpen(card.id)}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') onOpen(card.id);
       }}
-      className={`w-full cursor-pointer rounded-lg border p-3 text-left transition dark:bg-claude-darkSurface bg-claude-surface ${
+      className={`cursor-pointer rounded-lg border p-3 text-left transition dark:bg-claude-darkSurface bg-claude-surface ${
+        indentedUnderParent ? 'ml-3.5 border-l-2 border-l-amber-400/60' : 'w-full'
+      } ${
         isWaitingOwner
           ? 'border-amber-500/40 hover:border-amber-400/70'
           : 'dark:border-claude-darkBorder border-claude-border hover:border-brand/60'
       } ${dimmed ? 'opacity-75 hover:opacity-100' : ''} ${card.column === 'defining' ? 'border-dashed' : ''}`}
     >
+      {card.parentTaskId && !indentedUnderParent && card.parentTaskTitle && (
+        <div
+          data-slot="task-parent-breadcrumb"
+          className="mb-1 truncate text-[10px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary"
+        >
+          ↳ {i18nService.t('longTermTask.parentPrefix').replace('{title}', card.parentTaskTitle)}
+        </div>
+      )}
       <div className="flex items-start justify-between gap-2">
         <h3 className="text-[13px] font-semibold leading-snug dark:text-claude-darkText text-claude-text">
-          {card.title}
+          {indentedUnderParent ? `↳ ${card.title}` : card.title}
         </h3>
         {card.isLongTerm && (
           <span
