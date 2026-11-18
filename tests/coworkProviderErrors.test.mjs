@@ -252,7 +252,10 @@ test('coworkRunner auto-continues a malformed-tool-call turn exactly once, befor
     runnerSource.includes('MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT'),
     'coworkRunner must import and use MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT',
   );
-  const useIdx = runnerSource.indexOf('runGuardedTurn(MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT)');
+  // Prefix match: the quota-bypass routing (2026-11-19) added extra
+  // runGuardedTurn args to this call site; the contract is that the continue
+  // prompt goes through runGuardedTurn, not that the arg list stays frozen.
+  const useIdx = runnerSource.indexOf('runGuardedTurn(MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT');
   assert.ok(useIdx > 0, 'the continue prompt must be fed through runGuardedTurn');
   // One-shot (an if, not the resume loop) and gated on the classifier + not aborted.
   const window = runnerSource.slice(Math.max(0, useIdx - 600), useIdx);
@@ -269,7 +272,8 @@ test('coworkRunner auto-continues a malformed-tool-call turn exactly once, befor
     'the continue must not fire after a user abort',
   );
   // Placement: after the initial turn, before the transient-resume loop.
-  const firstTurnIdx = runnerSource.indexOf('let outcome = await runGuardedTurn(effectiveDshPrompt, promptImages)');
+  // Prefix match too — the initial turn gained the same quota-bypass arg.
+  const firstTurnIdx = runnerSource.indexOf('let outcome = await runGuardedTurn(effectiveDshPrompt, promptImages');
   const transientIdx = runnerSource.indexOf('for (let resumeAttempt = 1; resumeAttempt <= DSH_TRANSIENT_TURN_MAX_RESUMES');
   assert.ok(firstTurnIdx > 0 && useIdx > firstTurnIdx, 'the continue runs after the initial turn');
   assert.ok(transientIdx > useIdx, 'the continue runs before the transient-resume ladder');
