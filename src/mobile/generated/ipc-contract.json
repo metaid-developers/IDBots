@@ -477,6 +477,14 @@
       ]
     },
     {
+      "path": "cowork.closeSessionChapter",
+      "kind": "invoke",
+      "channel": "cowork:session:closeChapter",
+      "args": [
+        "sessionId"
+      ]
+    },
+    {
       "path": "cowork.continueSession",
       "kind": "invoke",
       "channel": "cowork:session:continue",

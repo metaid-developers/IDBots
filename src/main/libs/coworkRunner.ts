@@ -53,6 +53,15 @@ import { dshModelReasoningDeclaration, dshRouteReasoningEffort, isGlmFamilyModel
 import { resolveOpenCodeGoApiFormat, openCodeGoWireRouteKey } from './opencodeGoProtocol';
 import { maxLlmEffortLevel, toLlmEffortLevel, type LlmEffortLevel } from './llmEffort';
 import {
+  buildStudioChapterCardFallback,
+  buildStudioChapterCardSystemPrompt,
+  buildStudioChapterCardUserPrompt,
+  parseStudioChapterCardResponse,
+  studioChapterCardToJson,
+  STUDIO_CHAPTER_CARD_TIMEOUT_MS,
+} from './studioChapterCard';
+import { performChatCompletionForOrchestrator } from '../services/cognitiveChatCompletion';
+import {
   CoworkDshSteerWindowClosedError,
   CoworkSteerChannel,
   buildCoworkSteerSdkMessage,
@@ -10079,6 +10088,156 @@ export class CoworkRunner extends EventEmitter {
         return 'Native compaction is not available in this runtime.';
       default:
         return fallback.trim() || 'Compaction failed.';
+    }
+  }
+
+  /** Sessions with a chapter close currently running — double-click guard. */
+  private readonly studioChapterCloseInFlight = new Set<string>();
+
+  /**
+   * Close the ACTIVE chapter of a Studio owner conversation (Phase 1 slice 2,
+   * owner ruling 方案 B — chapters close inside one cw- session). Flow:
+   *
+   *   idle-time LLM chapter card (fallback digest on failure/timeout)
+   *   → closeStudioChapter (durable card row)
+   *   → native compactNow (context resets to checkpoint + tail; the chapter
+   *     index and recall keep the chapter reachable)
+   *   → open the next chapter
+   *   → one bilingual divider system message in the transcript.
+   *
+   * The whole flow is idle-time bookkeeping: the owner's next message starts
+   * from a fresh working set that still knows every earlier chapter.
+   */
+  async closeSessionChapter(sessionId: string, options: { closeReason?: string } = {}): Promise<{
+    success: boolean;
+    error?: string;
+    chapterIndex?: number;
+    title?: string;
+    compaction?: 'done' | 'nothing-to-compact' | 'failed';
+  }> {
+    const closeReason = options.closeReason === 'task_boundary' || options.closeReason === 'budget' ? options.closeReason : 'manual';
+    const session = this.store.getSessionWithoutMessages(sessionId);
+    if (!session) {
+      return { success: false, error: 'Session not found.' };
+    }
+    if (session.sessionType !== 'browser' || !this.isAssistantModeOwnerChatSession(sessionId)) {
+      return { success: false, error: 'Only Studio conversations support chapters.' };
+    }
+    if (this.studioChapterCloseInFlight.has(sessionId)) {
+      return { success: false, error: 'A chapter close is already running for this conversation.' };
+    }
+    const activeSession = this.activeSessions.get(sessionId);
+    if ((activeSession && activeSession.localTurnState !== 'none') || this.isCrossSessionTurnRunning(sessionId)) {
+      return { success: false, error: 'Wait for the current turn to finish before closing the chapter.' };
+    }
+    const chapter = this.store.getActiveStudioChapter(sessionId)
+      ?? this.store.ensureActiveStudioChapter(sessionId, session.metabotId ?? null);
+    if (!chapter) {
+      return { success: false, error: 'Chapter bookkeeping is unavailable right now.' };
+    }
+    const chapterMessages = (this.store.getSession(sessionId)?.messages ?? [])
+      .filter((message) => (message.timestamp ?? 0) >= chapter.startedAt)
+      .filter((message) => message.type === 'user' || message.type === 'assistant');
+    if (chapterMessages.filter((message) => String(message.content ?? '').trim().length > 0).length === 0) {
+      return { success: false, error: 'This chapter has no conversation to close yet.' };
+    }
+    this.studioChapterCloseInFlight.add(sessionId);
+    try {
+      // Idle-time LLM card on the session's own model (session pick → Twin
+      // brain); the deterministic digest keeps the close alive on any
+      // failure — a flaky model must never wedge chaptering.
+      const brain = this.getSessionAutomationBrain(sessionId);
+      const cardModelId = session.model ?? brain?.modelId ?? null;
+      const cardProvider = session.modelProvider ?? brain?.providerKey ?? null;
+      let card = buildStudioChapterCardFallback(chapterMessages);
+      let cardSource: 'llm' | 'fallback' = 'fallback';
+      try {
+        const raw = await performChatCompletionForOrchestrator(
+          buildStudioChapterCardSystemPrompt(),
+          buildStudioChapterCardUserPrompt(chapterMessages),
+          cardModelId,
+          {
+            llmProvider: cardProvider,
+            effort: 'low',
+            webSearch: false,
+            attemptTimeoutMs: STUDIO_CHAPTER_CARD_TIMEOUT_MS,
+          },
+        );
+        const parsed = parseStudioChapterCardResponse(raw);
+        if (parsed) {
+          card = parsed;
+          cardSource = 'llm';
+        }
+      } catch (error) {
+        coworkLog('WARN', 'closeSessionChapter', 'Chapter-card LLM call failed; using the deterministic digest', {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      const closed = this.store.closeStudioChapter(sessionId, {
+        closeReason,
+        title: card.title,
+        summaryMarkdown: card.summaryMarkdown,
+        contentJson: studioChapterCardToJson(card),
+        llmId: cardSource === 'llm' ? (cardModelId ?? null) : null,
+      });
+      if (!closed) {
+        return { success: false, error: 'The chapter could not be closed (already closed or store unavailable).' };
+      }
+      // The divider rides the transcript so the boundary is visible in the UI
+      // even before the renderer grows a dedicated chapter card.
+      const openLoopsBit = card.openLoops.length > 0
+        ? tApp(`未了事项 ${card.openLoops.length} 项已记入章节卡,可用 conversation_recall 找回。`, `${card.openLoops.length} open loop(s) recorded on the chapter card — conversation_recall finds them.`)
+        : '';
+      this.addSystemMessage(
+        sessionId,
+        tApp(
+          `第 ${closed.chapterIndex} 章「${closed.title || '未命名'}」已收拢(${closeReason === 'manual' ? '手动' : closeReason === 'task_boundary' ? '任务交付' : '上下文预算'}):上下文已从章节卡与最近对话继续,更早内容可随时召回。${openLoopsBit}`,
+          `Chapter #${closed.chapterIndex} "${closed.title || 'Untitled'}" closed (${closeReason === 'manual' ? 'manual' : closeReason === 'task_boundary' ? 'task delivered' : 'context budget'}): the conversation now continues from the chapter card and the most recent turns; earlier content is recallable at any time. ${openLoopsBit}`,
+        ),
+        {
+          sessionChapterDivider: {
+            index: closed.chapterIndex,
+            title: closed.title,
+            closeReason,
+            at: closed.endedAt,
+          },
+        },
+      );
+      // Reset the working context. A compaction failure does NOT undo the
+      // chapter close — the card is durable and the next budget/manual close
+      // can retry; surface the failure to the caller.
+      let compaction: 'done' | 'nothing-to-compact' | 'failed' = 'failed';
+      let compactionError: string | undefined;
+      try {
+        const compactResult = await this.requestManualCompaction(sessionId);
+        if (compactResult.success) {
+          compaction = 'done';
+        } else {
+          compactionError = compactResult.error;
+        }
+      } catch (error) {
+        compactionError = error instanceof Error ? error.message : String(error);
+      }
+      // Open the next chapter so the index block and future closes track it.
+      this.store.ensureActiveStudioChapter(sessionId, session.metabotId ?? null);
+      coworkLog('INFO', 'closeSessionChapter', 'Studio chapter closed', {
+        sessionId,
+        chapterIndex: closed.chapterIndex,
+        closeReason,
+        cardSource,
+        compaction,
+        openLoops: card.openLoops.length,
+      });
+      return {
+        success: true,
+        chapterIndex: closed.chapterIndex,
+        title: closed.title,
+        compaction,
+        ...(compaction === 'failed' && compactionError ? { error: compactionError } : {}),
+      };
+    } finally {
+      this.studioChapterCloseInFlight.delete(sessionId);
     }
   }
 

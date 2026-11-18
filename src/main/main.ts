@@ -14703,6 +14703,20 @@ if (!gotTheLock) {
     }
   });
 
+  // Studio chapter close (Phase 1 slice 2): idle-time LLM chapter card →
+  // durable chapter row → native compactNow → next chapter opens. Same
+  // surface family as cowork:session:compact.
+  registerIpcHandler('cowork:session:closeChapter', async (_event, sessionId: string) => {
+    try {
+      return await getCoworkRunner().closeSessionChapter(sessionId);
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to close chapter',
+      };
+    }
+  });
+
   // /export command: render the session transcript as Markdown and save it
   // through a native save dialog (host-side port of the DSH /export command).
   registerIpcHandler('cowork:session:exportTranscript', async (event, sessionId: string) => {

@@ -932,6 +932,30 @@ class CoworkService {
   }
 
   /**
+   * Studio chapter close: idle-time LLM chapter card → durable chapter row →
+   * native compactNow → the next chapter opens. The conversation continues
+   * in the same session from the chapter card + recent turns.
+   */
+  async closeSessionChapter(sessionId: string): Promise<{
+    success: boolean;
+    error?: string;
+    chapterIndex?: number;
+    title?: string;
+    compaction?: 'done' | 'nothing-to-compact' | 'failed';
+  }> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.closeSessionChapter) {
+      console.error('closeSessionChapter API not available');
+      return { success: false, error: 'Chapter close API not available' };
+    }
+    const result = await cowork.closeSessionChapter(sessionId);
+    if (!result) {
+      return { success: false, error: 'Unknown error while closing the chapter' };
+    }
+    return result;
+  }
+
+  /**
    * /export command: renders the session transcript as Markdown and saves it
    * through a native save dialog. `cancelled` means the user dismissed the
    * dialog (not an error).

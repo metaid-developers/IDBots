@@ -62,6 +62,7 @@ const COWORK_INVOKE: Record<string, AllowlistEntry> = {
   'cowork:session:fork': { tier: 'P1' },
   'cowork:session:rewind': { tier: 'P1' },
   'cowork:session:compact': { tier: 'P1' },
+  'cowork:session:closeChapter': { tier: 'P1', note: 'Studio chapter close (Phase 1 slice 2): idle-time LLM chapter card + native compactNow + next chapter. Same surface family/tier as cowork:session:compact.' },
   'cowork:session:clearError': { tier: 'P1' },
   'cowork:session:setModel': { tier: 'P1' },
   'cowork:session:setEffort': { tier: 'P1' },
