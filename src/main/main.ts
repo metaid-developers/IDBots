@@ -8005,6 +8005,9 @@ const getCoworkRunner = () => {
       longTermTaskTools: {
         store: () => getLongTermTaskStore(),
         getAppLanguage: () => getPersistedAppLanguage(),
+        // Whole-task completion closes the owning conversation's chapter at
+        // the next turn end (Phase 1 slice 3, 章节 = 任务).
+        onTaskCompleted: (sid, taskId) => getCoworkRunner().noteStudioTaskBoundary(sid, taskId),
         resolveSessionIdentity: (sid) => {
           const metabotId = getCoworkStore().getMetabotIdForSession(sid);
           const bot = metabotId != null ? getMetabotStore().getMetabotById(metabotId) : null;
