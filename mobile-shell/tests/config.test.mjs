@@ -51,12 +51,15 @@ test('Android has API 26 and explicit staging and production variants', () => {
   assert.match(backPlugin, /getBridge\(\)\.getActivity\(\)\.finish\(\)/);
 });
 
-test('production startup uses declarative config, version 0.1, and branded launcher assets', () => {
+test('production startup uses declarative config, safe lifecycle, version 0.1.1, and branded launcher assets', () => {
   const build = read('../android/app/build.gradle');
-  assert.match(build, /versionCode 2/);
-  assert.match(build, /versionName "0\.1"/);
+  assert.match(build, /versionCode 3/);
+  assert.match(build, /versionName "0\.1\.1"/);
   const activity = read('../android/app/src/main/java/com/idbots/world/MainActivity.java');
   assert.doesNotMatch(activity, /CapConfig|setServerUrl|setErrorPath/);
+  assert.ok(activity.indexOf('registerPlugin(NativeBackPlugin.class)') < activity.indexOf('super.onCreate(savedInstanceState)'));
+  assert.match(activity, /protected void load\(\)/);
+  assert.match(activity, /if \(bridge == null\) return;/);
   for (const [path, size] of [
     ['../android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png', 192],
     ['../android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png', 192],
