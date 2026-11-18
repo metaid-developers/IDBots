@@ -71,6 +71,8 @@ export interface DelegateLocalWorkerInput {
   idempotencyKey?: string | null;
   longtermTaskId?: string | null;
   longtermSubtaskId?: string | null;
+  /** Optional parent Task id (`ltt_...`) when this delegation creates a rework/companion child task under an existing task. */
+  parentTaskId?: string | null;
   /**
    * When false/omitted in Studio mode, re-delegating to the SAME Worker on the
    * SAME Managed Task automatically cancels & stops that Worker's obsolete
@@ -136,6 +138,8 @@ export interface TwinOrchestrationServiceDeps {
   isStudioSourceSession?: (sessionId: string) => boolean;
   /** Active focused Managed Task id for a Studio session, reused across iterative revision rounds. */
   getFocusedTaskForSession?: (sessionId: string) => string | null;
+  /** Task id whose owner decision/acceptance was just resolved in this Studio turn (auto-parents rework/companion delegations). */
+  getRecentDecisionTaskForSession?: (sessionId: string) => string | null;
   runWorkerTurn?: (params: RunOrchestratorSkillTurnParams) => Promise<string>;
   /**
    * Round-4 r6: worker-completion notification to the Twin. Defaults to the
@@ -1028,6 +1032,36 @@ export class TwinOrchestrationService {
         const originMessageId =
           (this.deps.coworkStore as unknown as { getLatestHumanMessageId?: (sid: string) => string | null })
             .getLatestHumanMessageId?.(sourceSessionId) ?? null;
+
+        // Infer parentTaskId when this Studio delegation is a rework, companion
+        // asset, or follow-up spawned while reviewing/advancing an existing task:
+        //  1) explicit `input.parentTaskId`;
+        //  2) task whose decision/acceptance was JUST resolved in this session;
+        //  3) focused open task sharing domain keywords + rework/companion cues.
+        const inferParentTaskId = (): string | null => {
+          const explicitParent = String(input.parentTaskId ?? '').trim();
+          if (explicitParent) {
+            return ltStore.resolveRootParentTaskId(explicitParent);
+          }
+          const recentRulingTask = this.deps.getRecentDecisionTaskForSession?.(sourceSessionId) ?? null;
+          if (recentRulingTask) {
+            return ltStore.resolveRootParentTaskId(recentRulingTask);
+          }
+          const focusedId = this.deps.getFocusedTaskForSession?.(sourceSessionId) ?? null;
+          if (!focusedId) return null;
+          const focusedTask = ltStore.getTask(focusedId);
+          if (!focusedTask || focusedTask.stage === 'done' || focusedTask.stage === 'cancelled') return null;
+          const combined = `${quickTitle} ${objective}`;
+          const isReworkOrCompanion = /退回|改写|重写|返工|补写|补充|配套|配图|插画|v2|v3|revision|rework|illustration/i.test(combined);
+          if (!isReworkOrCompanion) return null;
+          const parentWords = (focusedTask.title.match(/[\u4e00-\u9fa5]{2,}|[a-z0-9]{3,}/gi) ?? [])
+            .map((w) => w.toLowerCase());
+          const lowerCombined = combined.toLowerCase();
+          const hasSharedTopic = parentWords.some((w) => lowerCombined.includes(w));
+          return hasSharedTopic ? ltStore.resolveRootParentTaskId(focusedTask.id) : null;
+        };
+
+        const resolvedParentId = inferParentTaskId();
         const quickCreated = ltStore.createQuickTask(
           {
             title: quickTitle,
@@ -1035,6 +1069,7 @@ export class TwinOrchestrationService {
             acceptanceCriteria: (input.acceptanceCriteria ?? []).map((item) => String(item)),
             preferredChannel: 'delegate_bot',
             assigneeMetabotId: worker.id,
+            parentTaskId: resolvedParentId,
             definitionSessionId: sourceSessionId,
             originSessionId: sourceSessionId,
             originMessageId,
@@ -1043,6 +1078,19 @@ export class TwinOrchestrationService {
           'twin',
         );
         if (quickCreated.ok && quickCreated.value && quickCreated.value.subtasks[0]) {
+          if (resolvedParentId) {
+            ltStore.supersedeCompletedWorkerSiblingChildren({
+              parentTaskId: resolvedParentId,
+              newChildTaskId: quickCreated.value.id,
+              workerMetabotId: worker.id,
+              hasActiveAttemptForTask: (sibTaskId) => {
+                const sibSubId = ltStore.getTask(sibTaskId)?.subtasks[0]?.id;
+                if (!sibSubId) return false;
+                const orchTasks = this.deps.orchestrationStore.listTasksForLongTermSubtask(sibTaskId, sibSubId);
+                return orchTasks.some((ot) => ['planning', 'running'].includes(ot.status));
+              },
+            });
+          }
           longtermContext = {
             taskId: quickCreated.value.id,
             subtaskId: quickCreated.value.subtasks[0].id,

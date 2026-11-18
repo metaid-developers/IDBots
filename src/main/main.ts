@@ -8093,9 +8093,18 @@ const getCoworkRunner = () => {
           if (!twin) return [];
           return getStudioDecisionQueueStore().listOpen(twin.id);
         },
-        resolveDecision: (_sid, queueItemId, resolutionNote) => {
+        resolveDecision: (sid, queueItemId, resolutionNote) => {
           const resolved = getStudioDecisionQueueStore().resolve(queueItemId, resolutionNote);
           if (!resolved) return { ok: false, error: 'QUEUE_ITEM_NOT_FOUND' };
+          if (resolved.longtermTaskId) {
+            const rootParent = getLongTermTaskStore().resolveRootParentTaskId(resolved.longtermTaskId);
+            if (rootParent) {
+              getStudioChiefOfStaffService().recordRecentDecisionTask(sid, rootParent);
+              if (resolved.originStudioSessionId && resolved.originStudioSessionId !== sid) {
+                getStudioChiefOfStaffService().recordRecentDecisionTask(resolved.originStudioSessionId, rootParent);
+              }
+            }
+          }
           getStudioDecisionQueueStore().cancelSiblingQueuedForTask(
             resolved.twinMetabotId,
             resolved.longtermTaskId,
@@ -9868,7 +9877,14 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
       drainInteractions: (tabId, sessionId) => drainStudioLiveStageInteractions({
         getWindows: () => BrowserWindow.getAllWindows(),
         executeTabCommand: (command) => getBotBrowserTabBridge().execute(command),
-      }, { tabId, sessionId }),
+      }, {
+        tabId,
+        sessionId,
+        botKey: (() => {
+          const botId = sessionId ? getCoworkStore().getSessionWithoutMessages(sessionId)?.metabotId : null;
+          return typeof botId === 'number' && botId > 0 ? `bot:${botId}` : undefined;
+        })(),
+      }),
       // Human turns and turn errors bring the stage forward through the
       // renderer binding's role activation — background, open-session guarded.
       activateStageTab: (sessionId) => getBotBrowserTabBridge().execute(
@@ -10694,6 +10710,7 @@ const getTwinOrchestrationService = () => new TwinOrchestrationService({
   longTermTaskStore: () => getLongTermTaskStore(),
   isStudioSourceSession: (sid) => getStudioChiefOfStaffService().isStudioOwnerSession(sid),
   getFocusedTaskForSession: (sid) => getStudioChiefOfStaffService().getFocusedTaskId(sid),
+  getRecentDecisionTaskForSession: (sid) => getStudioChiefOfStaffService().getRecentDecisionTask(sid),
   onStudioWorkerTerminalState: (event) =>
     getStudioChiefOfStaffService().onStudioWorkerTerminalState(event),
   directory: {

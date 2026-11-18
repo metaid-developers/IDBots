@@ -14494,6 +14494,7 @@ export class CoworkRunner extends EventEmitter {
             idempotencyKey: z.string().optional(),
             longtermTaskId: z.string().optional().describe('Optional Managed Task Tree id (ltt_...) to bind this Worker delegation to.'),
             longtermSubtaskId: z.string().optional().describe('Optional Managed Task Tree subtask id (lts_...) to bind this Worker delegation to.'),
+            parentTaskId: z.string().optional().describe('Optional parent Task id (ltt_...) when delegating a rework, companion asset (e.g. illustrations), or follow-up revision spawned from an existing task so it indents cleanly under that parent task.'),
             parallelSameWorker: z.boolean().optional().describe('Leave false/omitted when updating or revising an in-flight instruction for the SAME Worker (the host will automatically stop their obsolete in-flight run and replace it cleanly). Set true ONLY when you intentionally want the exact same Worker running two separate parallel jobs at once.'),
           },
           async (args) => {

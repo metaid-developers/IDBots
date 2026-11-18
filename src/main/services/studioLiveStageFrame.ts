@@ -38,11 +38,12 @@ export function liveStageFrameErrorReason(error: unknown): string {
 
 const STAGE_PAGE_PROBE_SCRIPT = `(() => {
   const bridge = window.IDBotsLiveStage;
-  if (!bridge || typeof bridge.getState !== 'function') return { bridge: false, sessionId: null, turnId: null, turnStartedAt: null };
+  if (!bridge || typeof bridge.getState !== 'function') return { bridge: false, sessionId: null, botKey: null, turnId: null, turnStartedAt: null };
   const state = bridge.getState();
   return {
     bridge: true,
-    sessionId: state && typeof state.sessionId === 'string' ? state.sessionId : null,
+    sessionId: state && typeof state.sessionId === 'string' && state.sessionId ? state.sessionId : null,
+    botKey: state && typeof state.botKey === 'string' && state.botKey ? state.botKey : null,
     turnId: state && typeof state.turnId === 'string' ? state.turnId : null,
     turnStartedAt: state && typeof state.turnStartedAt === 'number' ? state.turnStartedAt : null,
   };
@@ -52,11 +53,17 @@ type StagePageProbe = {
   frame: ActFrameShape;
   bridge: boolean;
   sessionId: string | null;
+  botKey: string | null;
   turnId: string | null;
   turnStartedAt: number | null;
 };
 
-async function locateLiveStageFrame(deps: LiveStageFrameDeps, tabId: number, expectedSessionId?: string): Promise<ActFrameShape> {
+async function locateLiveStageFrame(
+  deps: LiveStageFrameDeps,
+  tabId: number,
+  expectedSessionId?: string,
+  expectedBotKey?: string,
+): Promise<ActFrameShape> {
   let info: BotBrowserTabCommandResult;
   try {
     // Host-side frame lookup: stay off the app surface (controlTabsSilent).
@@ -74,30 +81,31 @@ async function locateLiveStageFrame(deps: LiveStageFrameDeps, tabId: number, exp
     frames.push(...collectMatchingFrames(window.webContents.mainFrame, renderer.url));
   }
   if (!frames.length) throw new LiveStageFrameError('frame-not-found', 'The Live Stage frame is not ready');
-  if (expectedSessionId == null) return frames[0];
-  // The persistent entry URI is shared by every session's stage tab: several
-  // frames can match the renderer URL. Probe each page and deliver to the one
-  // claimed by THIS session — or to an unclaimed page, which claims it on the
-  // first accepted patch.
+  if (expectedSessionId == null && expectedBotKey == null) return frames[0];
+  // The persistent entry URI is shared across Studio sessions of the same Bot:
+  // match exact sessionId first, then same botKey (seamless cross-session stage
+  // sharing for one Bot), then an unclaimed page.
   const probed = await Promise.all(frames.map(async (frame): Promise<StagePageProbe> => {
     try {
       const result = await frame.executeJavaScript(STAGE_PAGE_PROBE_SCRIPT, true) as {
-        bridge?: boolean; sessionId?: unknown; turnId?: unknown; turnStartedAt?: unknown;
+        bridge?: boolean; sessionId?: unknown; botKey?: unknown; turnId?: unknown; turnStartedAt?: unknown;
       } | null;
       return {
         frame,
         bridge: result?.bridge === true,
         sessionId: typeof result?.sessionId === 'string' && result.sessionId ? result.sessionId : null,
+        botKey: typeof result?.botKey === 'string' && result.botKey ? result.botKey : null,
         turnId: typeof result?.turnId === 'string' ? result.turnId : null,
         turnStartedAt: typeof result?.turnStartedAt === 'number' ? result.turnStartedAt : null,
       };
     } catch {
-      return { frame, bridge: false, sessionId: null, turnId: null, turnStartedAt: null };
+      return { frame, bridge: false, sessionId: null, botKey: null, turnId: null, turnStartedAt: null };
     }
   }));
   const bridged = probed.filter((entry) => entry.bridge);
   if (!bridged.length) throw new LiveStageFrameError('not-ready', 'The Live Stage frame is not ready');
-  const match = bridged.find((entry) => entry.sessionId === expectedSessionId)
+  const match = (expectedSessionId ? bridged.find((entry) => entry.sessionId === expectedSessionId) : undefined)
+    ?? (expectedBotKey ? bridged.find((entry) => entry.botKey === expectedBotKey) : undefined)
     ?? bridged.find((entry) => entry.sessionId == null);
   if (!match) throw new LiveStageFrameError('session-mismatch', 'The Live Stage frame belongs to a different session');
   return match.frame;
@@ -133,7 +141,7 @@ export async function applyStudioLiveStagePatch(
   deps: LiveStageFrameDeps,
   input: { tabId: number; state: LiveStageState },
 ): Promise<void> {
-  const frame = await locateLiveStageFrame(deps, input.tabId, input.state.sessionId);
+  const frame = await locateLiveStageFrame(deps, input.tabId, input.state.sessionId, input.state.botKey);
   const result = await frame.executeJavaScript(buildLiveStagePatchScript(input.state), true) as { ok?: boolean; reason?: string } | null;
   if (result?.ok === true) return;
   const reason = typeof result?.reason === 'string' && result.reason ? result.reason : 'rejected';
@@ -159,9 +167,9 @@ export function buildLiveStageDrainScript(): string {
  */
 export async function drainStudioLiveStageInteractions(
   deps: LiveStageFrameDeps,
-  input: { tabId: number; sessionId?: string },
+  input: { tabId: number; sessionId?: string; botKey?: string },
 ): Promise<DrainedLiveStageInteraction[]> {
-  const frame = await locateLiveStageFrame(deps, input.tabId, input.sessionId);
+  const frame = await locateLiveStageFrame(deps, input.tabId, input.sessionId, input.botKey);
   const result = await frame.executeJavaScript(buildLiveStageDrainScript(), true) as { ok?: boolean; reason?: string; items?: DrainedLiveStageInteraction[] } | null;
   // A not-ready stage (stale page, missing bridge) must surface as an error,
   // not as an empty queue — an empty array here is indistinguishable from

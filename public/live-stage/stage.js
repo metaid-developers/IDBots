@@ -464,12 +464,18 @@
 
   function buildTaskHudRow(task, highlightCurrent) {
     const row = document.createElement('div');
-    row.className = highlightCurrent ? 'task-hud-row is-current' : 'task-hud-row';
+    const isChild = task?.isChild === true;
+    row.className = `${highlightCurrent ? 'task-hud-row is-current' : 'task-hud-row'}${isChild ? ' is-child' : ''}`;
     const top = document.createElement('div');
     top.className = 'task-hud-top';
     const titleWrap = document.createElement('div');
     titleWrap.className = 'task-hud-title-wrap';
-    if (highlightCurrent) {
+    if (isChild) {
+      const childMark = document.createElement('span');
+      childMark.className = 'task-hud-child-mark';
+      childMark.textContent = '↳';
+      titleWrap.append(childMark);
+    } else if (highlightCurrent) {
       const pinBadge = document.createElement('span');
       pinBadge.className = 'task-hud-current-pill';
       pinBadge.textContent = tr('推进中', 'Active');
@@ -551,7 +557,7 @@
 
     if (tasks.length > 0) {
       const currentIdx = tasks.findIndex((t) => t?.isCurrent === true);
-      const currentTasks = tasks.filter((t) => t?.isCurrent === true).slice(0, 5);
+      const currentTasks = tasks.filter((t) => t?.isCurrent === true).slice(0, 7);
       currentTasks.forEach((curTask) => {
         hud.append(buildTaskHudRow(curTask, true));
       });
@@ -1179,12 +1185,16 @@
         image.src = avatarSrc;
       }
     });
-    // The report button follows state.reportUri: enabled only while a
-    // projected report URI is present, labelled from the current language.
+    // The report button follows state.reportUri: shown and enabled only while a
+    // projected report URI is present (or while a projection is actively in
+    // flight), so a stale/disabled button from a previous conversation never
+    // lingers in the bottom-left corner.
     const reportUri = typeof state.reportUri === 'string' ? state.reportUri : '';
     const canOpenReport = reportUri.startsWith('preview-metaapp://localhost/');
+    const projectionInFlight = Array.isArray(state.pendingProjectionIds) && state.pendingProjectionIds.length > 0;
     body.dataset.hasReport = canOpenReport ? 'true' : 'false';
     reportOpen.disabled = !canOpenReport;
+    reportOpen.hidden = !canOpenReport && !projectionInFlight;
     if (reportReadyText) reportReadyText.textContent = tr('汇报就绪', 'Report ready');
     const reportOpenLabel = $('[data-report-open-label]');
     if (reportOpenLabel) reportOpenLabel.textContent = canOpenReport ? tr('打开汇报', 'Open report') : tr('正在打开最终页面', 'Opening the final page');
@@ -1315,10 +1325,19 @@
       if (patch.protocol !== PROTOCOL) return { ok: false, reason: 'protocol' };
       if (patch.draft === true) {
         // Pre-claim draft identity (bot name/avatar on the idle family):
-        // applies while unclaimed; if already claimed by the SAME Bot, keep
-        // the Bot's live stage intact without rejecting or wiping state.
+        // applies while unclaimed; if already claimed by the SAME Bot and
+        // sitting in a finished/resting family (`idle`, `complete`, `report-ready`,
+        // `problem`), reset to the clean `idle` draft (clearing old `reportUri`
+        // and "汇报已投到大屏" from the previous conversation) while preserving
+        // any live in-flight working animation.
         if (claimedSessionId != null) {
           if (claimedBotKey && typeof patch.botKey === 'string' && patch.botKey === claimedBotKey) {
+            const restingFamilies = new Set(['idle', 'complete', 'report-ready', 'problem']);
+            if (restingFamilies.has(state.family)) {
+              heldPatch = null;
+              stopHeldRelease();
+              commitStagePatch({ ...patch, reportUri: null, taskHud: state.taskHud ?? null });
+            }
             return true;
           }
           return { ok: false, reason: 'already-claimed' };
@@ -1342,12 +1361,13 @@
       if (patch.sessionId !== claimedSessionId) {
         // Single Live Stage per Bot: switching or starting a new conversation
         // with the SAME Bot (`patch.botKey === claimedBotKey`) seamlessly
-        // adopts the new session on the existing stage without reloading.
+        // adopts the new session on the existing stage without reloading, and
+        // never leaks a previous session's `reportUri`.
         if (claimedBotKey && typeof patch.botKey === 'string' && patch.botKey === claimedBotKey) {
           claimedSessionId = patch.sessionId;
           heldPatch = null;
           stopHeldRelease();
-          commitStagePatch(patch);
+          commitStagePatch({ ...patch, reportUri: patch.reportUri ?? null });
           return true;
         }
         return { ok: false, reason: 'session-mismatch' };
