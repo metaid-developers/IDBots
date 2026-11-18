@@ -69,6 +69,9 @@ test('Issues 1, 2 & 3: Studio browser sessions get a 400-row view window, panel 
     assert.doesNotMatch(stageJs, /constellationEl|layoutHandoff|handoff-flow/, 'no duplicate handoff arc path remains');
     const scenesJs = fs.readFileSync(path.resolve('public/live-stage/stage-scenes.js'), 'utf8');
     assert.match(scenesJs, /function drawWorker\(g, item, status, fx, t, index, reduced\)/, 'worker connectors render via the scene engine');
+    assert.doesNotMatch(scenesJs, /R \* \(4 \/ 3\)/, 'worker connectors anchor at the rendered ball edge, not 4/3 R beyond it');
+    assert.match(scenesJs, /tickO\(now\);\s*\n\s*syncOrb\(\);/, 'per-frame orb re-sync keeps connector endpoints glued to the ball during hero/resize transitions');
+    assert.doesNotMatch(scenesJs, /12px dashed stub/, 'every visible private-chat thread draws its full arc to the orb instead of a stub');
     assert.match(
       stageJs,
       /const currentTasks = tasks\.filter\(\(t\) => t\?\.isCurrent === true\)\.slice\(0, 7\)/,
