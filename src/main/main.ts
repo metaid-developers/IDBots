@@ -11527,6 +11527,11 @@ const getSurfService = (): SurfService => {
       // surf failures in dev data were one stale binding burning a session
       // + 49k-char prompt every night).
       checkModelBinding: (metabotId) => getCoworkRunner().checkAutomationModelBinding(metabotId),
+      // Second source of truth for the rendered report (2026-11-18): the same
+      // markdown the run row stores also lands on disk under
+      // <userData>/daily-reports/surf — sqlite alone meant the 20k store cap
+      // was the only copy of the tail.
+      reportDir: path.join(app.getPath('userData'), 'daily-reports', 'surf'),
       runSurfSession: async (context) => {
         const coworkStore = getCoworkStore();
         const cwd = resolveSessionWorkingDirectory(
