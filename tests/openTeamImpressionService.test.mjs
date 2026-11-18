@@ -683,7 +683,10 @@ test('hook bridge acceptGroupTask: pending deliverables accepted; verdict impres
     h.wireDeps();
     const appendCalls = h.spyOnAppend();
 
-    const { groupTask } = bridge.acceptGroupTask(task.id);
+    // P0-b (task #149): explicit owner actor — verdict impressions are the
+    // OWNER's acceptance record; a no-actor accept no longer flips rows to
+    // 'accepted' nor writes impressions.
+    const { groupTask } = bridge.acceptGroupTask(task.id, { kind: 'owner' });
     assert.equal(groupTask.status, 'done');
     const deliverables = h.groupTaskStore.listDeliverables(task.id);
     assert.ok(deliverables.every((deliverable) => deliverable.status === 'accepted'), 'all pending deliverables accepted');
@@ -749,7 +752,9 @@ test('hook bridge acceptGroupTask: a kicked remote author\'s swept-up deliverabl
 
     h.wireDeps();
     const appendCalls = h.spyOnAppend();
-    const { groupTask } = bridge.acceptGroupTask(task.id);
+    // P0-b (task #149): explicit owner actor — the bulk-accept sweep below is
+    // an owner acceptance; a no-actor accept now lands 'delivered' instead.
+    const { groupTask } = bridge.acceptGroupTask(task.id, { kind: 'owner' });
     assert.equal(groupTask.status, 'done');
     assert.equal(
       h.groupTaskStore.listDeliverables(task.id).find((item) => item.id === deliverable.id)?.status,

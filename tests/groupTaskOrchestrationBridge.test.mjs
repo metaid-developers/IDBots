@@ -134,7 +134,10 @@ test('Worker handoff, deliverable evidence, review, and owner acceptance close b
     h.groupTaskStore.updateTaskStatus(h.groupTask.id, 'review');
     assert.equal(h.bridge.syncStatus(h.groupTask.id).status, 'review');
 
-    const accepted = h.bridge.acceptGroupTask(h.groupTask.id);
+    // P0-b (task #149): explicit owner actor — this test is the owner
+    // acceptance lifecycle; a no-actor accept now flips deliverables to
+    // 'delivered' instead of 'accepted'.
+    const accepted = h.bridge.acceptGroupTask(h.groupTask.id, { kind: 'owner' });
     assert.equal(accepted.groupTask.status, 'done');
     assert.equal(accepted.canonicalTask.status, 'completed');
     assert.equal(h.orchestrationStore.getStep(started.step.id).status, 'completed');

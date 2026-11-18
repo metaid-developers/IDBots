@@ -9,6 +9,7 @@ import {
   GroupTaskStore,
   type GroupTask,
   type GroupTaskDeliverable,
+  type GroupTaskDeliverableStatus,
   type GroupTaskStatusEventActor,
 } from '../groupTaskStore';
 import { recordDeliverableVerdictImpression } from './openTeamImpressionService';
@@ -500,19 +501,34 @@ export class GroupTaskOrchestrationBridge {
       }
       this.deps.orchestrationStore.updateStepStatus(step.id, 'completed', { acceptedResult: accepted });
     }
+    // P0-b (task #149): acceptance is the OWNER's verdict. A chair close (the
+    // bearer RPC path) or any other non-owner accept must NOT write
+    // deliverable.status='accepted' on the owner's behalf — that flipped the
+    // ledger to "owner accepted" with nobody having accepted. Non-owner done
+    // closes flip pending rows to 'delivered' instead: the rows stay visible
+    // in the acceptance summary and member readouts (both filter
+    // delivered||accepted), and the chair's closure_note carries the
+    // "closed on behalf, owner acceptance pending" semantics. The verdict
+    // impression below is likewise owner-only — it records the OWNER's
+    // verdict, and recording it for a chair close would sediment the same
+    // false acceptance into the remote collaborator's culture base.
+    const ownerAccepting = actor?.kind === 'owner';
+    const closeVerdict: GroupTaskDeliverableStatus = ownerAccepting ? 'accepted' : 'delivered';
     for (const deliverable of this.deps.groupTaskStore.listDeliverables(groupTask.id)) {
       if (deliverable.status === 'pending') {
-        this.deps.groupTaskStore.updateDeliverableStatus(deliverable.id, 'accepted');
+        this.deps.groupTaskStore.updateDeliverableStatus(deliverable.id, closeVerdict);
         // OpenTeam M3: the chair sediments a delivery impression for REMOTE
         // authors (local authors are covered by the canonical attempt
         // projection in recordDeliverable plus the dream pipeline).
         // Best-effort, never throws.
-        recordDeliverableVerdictImpression(
-          groupTask.id,
-          deliverable.authorGlobalmetaid ?? '',
-          'accepted',
-          deliverable.uri,
-        );
+        if (ownerAccepting) {
+          recordDeliverableVerdictImpression(
+            groupTask.id,
+            deliverable.authorGlobalmetaid ?? '',
+            'accepted',
+            deliverable.uri,
+          );
+        }
       }
     }
     canonical = this.deps.orchestrationStore.getTask(canonical.id)!;
