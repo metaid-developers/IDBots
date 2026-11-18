@@ -279,6 +279,8 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'dream:runNow': { tier: 'P2' },
   'surf:listRuns': { tier: 'P2' },
   'surf:runNow': { tier: 'P2' },
+  'surf:listRunsByDay': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop-only surf day index for the reports calendar, 2026-11-18); read-only half-open UTC-day query the mobile gateway does not use.' },
+  'surf:listRunDays': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop-only surf calendar marker days, 2026-11-18); read-only distinct-day list the mobile gateway does not use.' },
   'memoryHygiene:get': { tier: 'P2' },
   'memoryHygiene:setConfig': { tier: 'P2' },
   'memoryHygiene:runNow': { tier: 'P2' },

@@ -3271,12 +3271,30 @@
       ]
     },
     {
+      "path": "surf.listRunDays",
+      "kind": "invoke",
+      "channel": "surf:listRunDays",
+      "args": [
+        "metabotId"
+      ]
+    },
+    {
       "path": "surf.listRuns",
       "kind": "invoke",
       "channel": "surf:listRuns",
       "args": [
         "metabotId",
         "limit"
+      ]
+    },
+    {
+      "path": "surf.listRunsByDay",
+      "kind": "invoke",
+      "channel": "surf:listRunsByDay",
+      "args": [
+        "metabotId",
+        "dayStartIso",
+        "dayEndIso"
       ]
     },
     {
