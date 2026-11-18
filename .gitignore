@@ -1031,6 +1031,7 @@ blob-report/
 !tests/studioLiveStageTemplate.test.mjs
 # Studio Live Stage scene system (26 families, places, companions, transients)
 !tests/studioLiveStageScenes.test.mjs
+!tests/studioLiveStageSceneEngine.test.mjs
 !tests/studioLiveStageStoreQueries.test.mjs
 !tests/surfaceSessionName.test.ts
 

@@ -1,6 +1,6 @@
 {
   "templateId": "studio-live-stage-official",
-  "templateVersion": "1.0.0",
+  "templateVersion": "1.1.0",
   "stageProtocol": "idbots.live-stage.v1",
   "entry": "index.html",
   "render": "stage.html",

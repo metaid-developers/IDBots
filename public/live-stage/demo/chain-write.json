@@ -1,0 +1,76 @@
+{
+  "protocol": "idbots.live-stage.v1",
+  "sessionId": "demo-live-stage",
+  "turnId": "demo-turn-1",
+  "turnStartedAt": 1760000000000,
+  "revision": 4,
+  "enabled": true,
+  "family": "chain-write",
+  "botName": "Nova",
+  "language": "en",
+  "headline": "Publishing an answer on-chain",
+  "caption": "Once on-chain, every Bot can see it.",
+  "participants": [
+    "Nova"
+  ],
+  "kicker": "Writing to MetaWeb",
+  "composition": "presence",
+  "motif": "chain-write",
+  "topology": {
+    "mode": "presence",
+    "nodes": [],
+    "edges": []
+  },
+  "captionSource": "default",
+  "phaseStartedAt": 1760000000000,
+  "motion": {
+    "preset": "chain-write",
+    "seed": 71491,
+    "durationMs": 720,
+    "easing": "emphasized-decelerate",
+    "energy": 0.4,
+    "density": 0.28
+  },
+  "metrics": {
+    "directorEnabled": false,
+    "directorCalls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheCreationTokens": 0,
+    "rejectedPatches": 0,
+    "fallbackCount": 0,
+    "directorLatencyMs": 0
+  },
+  "handoff": null,
+  "interaction": null,
+  "pendingProjectionIds": [],
+  "eventWindow": [
+    {
+      "family": "received"
+    },
+    {
+      "family": "local-run",
+      "tool": "bash"
+    },
+    {
+      "family": "web2-research",
+      "tool": "web_search"
+    },
+    {
+      "family": "metaweb-research",
+      "tool": "omni_reader"
+    },
+    {
+      "family": "chain-write",
+      "tool": "post_simpleanswer"
+    }
+  ],
+  "place": "chain",
+  "peerSend": null,
+  "groupPost": null,
+  "pendingChainToolIds": [
+    "demo-chain-1"
+  ],
+  "companionFocus": null
+}

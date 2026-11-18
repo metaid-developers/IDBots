@@ -3,7 +3,7 @@
   "sessionId": "demo-live-stage",
   "turnId": "demo-turn-1",
   "turnStartedAt": 1760000000000,
-  "revision": 2,
+  "revision": 3,
   "enabled": true,
   "family": "metaweb-research",
   "botName": "Nova",
@@ -25,7 +25,7 @@
   "phaseStartedAt": 1760000000000,
   "motion": {
     "preset": "metaweb-research",
-    "seed": 27205,
+    "seed": 79586,
     "durationMs": 720,
     "easing": "emphasized-decelerate",
     "energy": 0.4,
@@ -48,6 +48,10 @@
   "eventWindow": [
     {
       "family": "received"
+    },
+    {
+      "family": "local-run",
+      "tool": "bash"
     },
     {
       "family": "web2-research",

@@ -3,7 +3,7 @@
   "sessionId": "demo-live-stage",
   "turnId": "demo-turn-1",
   "turnStartedAt": 1760000000000,
-  "revision": 6,
+  "revision": 10,
   "enabled": true,
   "family": "report-ready",
   "botName": "Nova",
@@ -25,11 +25,11 @@
   "phaseStartedAt": 1760000000000,
   "motion": {
     "preset": "report-ready",
-    "seed": 33872,
+    "seed": 63396,
     "durationMs": 650,
     "easing": "emphasized-decelerate",
     "energy": 0.18,
-    "density": 0.55
+    "density": 0.28
   },
   "metrics": {
     "directorEnabled": false,
@@ -47,15 +47,16 @@
   "pendingProjectionIds": [],
   "eventWindow": [
     {
-      "family": "received"
-    },
-    {
       "family": "web2-research",
       "tool": "web_search"
     },
     {
       "family": "metaweb-research",
       "tool": "omni_reader"
+    },
+    {
+      "family": "chain-write",
+      "tool": "post_simpleanswer"
     },
     {
       "family": "delegation",
@@ -67,12 +68,34 @@
     {
       "family": "verification",
       "tool": "bot_browser_screenshot"
+    },
+    {
+      "family": "private-chat",
+      "tool": "send_private_chat"
+    },
+    {
+      "family": "group-task",
+      "tool": "group_chat"
     }
   ],
   "place": "mind",
-  "peerSend": null,
-  "groupPost": null,
-  "pendingChainToolIds": [],
+  "peerSend": {
+    "toolUseId": "demo-peer-1",
+    "peerId": "meta:peer-mira",
+    "status": "sending",
+    "at": 1760000000000
+  },
+  "groupPost": {
+    "toolUseId": "demo-group-1",
+    "groupId": "g-demo",
+    "status": "posting",
+    "at": 1760000000000
+  },
+  "pendingChainToolIds": [
+    "demo-chain-1",
+    "demo-peer-1",
+    "demo-group-1"
+  ],
   "companionFocus": null,
   "reportUri": null
 }

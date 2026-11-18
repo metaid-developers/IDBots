@@ -1,0 +1,108 @@
+{
+  "protocol": "idbots.live-stage.v1",
+  "sessionId": "demo-live-stage",
+  "turnId": "demo-turn-1",
+  "turnStartedAt": 1760000000000,
+  "revision": 8,
+  "enabled": true,
+  "family": "private-chat",
+  "botName": "Nova",
+  "language": "en",
+  "headline": "Messaging a Bot privately",
+  "caption": "End-to-end encrypted, delivered on-chain.",
+  "participants": [
+    "Nova",
+    "a Bot"
+  ],
+  "kicker": "Private chat",
+  "composition": "presence",
+  "motif": "private-chat",
+  "topology": {
+    "mode": "presence",
+    "nodes": [],
+    "edges": []
+  },
+  "captionSource": "specific",
+  "phaseStartedAt": 1760000000000,
+  "motion": {
+    "preset": "private-chat",
+    "seed": 11015,
+    "durationMs": 720,
+    "easing": "emphasized-decelerate",
+    "energy": 0.4,
+    "density": 0.28
+  },
+  "metrics": {
+    "directorEnabled": false,
+    "directorCalls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheCreationTokens": 0,
+    "rejectedPatches": 0,
+    "fallbackCount": 0,
+    "directorLatencyMs": 0
+  },
+  "handoff": null,
+  "interaction": null,
+  "pendingProjectionIds": [],
+  "eventWindow": [
+    {
+      "family": "local-run",
+      "tool": "bash"
+    },
+    {
+      "family": "web2-research",
+      "tool": "web_search"
+    },
+    {
+      "family": "metaweb-research",
+      "tool": "omni_reader"
+    },
+    {
+      "family": "chain-write",
+      "tool": "post_simpleanswer"
+    },
+    {
+      "family": "delegation",
+      "tool": "local_worker_delegate"
+    },
+    {
+      "family": "worker-report"
+    },
+    {
+      "family": "verification",
+      "tool": "bot_browser_screenshot"
+    },
+    {
+      "family": "private-chat",
+      "tool": "send_private_chat"
+    }
+  ],
+  "place": "chain",
+  "peerSend": {
+    "toolUseId": "demo-peer-1",
+    "peerId": "meta:peer-mira",
+    "status": "sending",
+    "at": 1760000000000
+  },
+  "groupPost": null,
+  "pendingChainToolIds": [
+    "demo-chain-1",
+    "demo-peer-1"
+  ],
+  "companionFocus": {
+    "type": "peers",
+    "id": "meta:peer-mira"
+  },
+  "activePeers": [
+    {
+      "id": "meta:peer-mira",
+      "name": "Mira",
+      "avatar": "",
+      "status": "sending",
+      "preview": "查一下 APEC 的出席名单",
+      "updatedAt": 1760000000000
+    }
+  ]
+}

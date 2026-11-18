@@ -26,6 +26,7 @@ export function renderLiveStageHtml(input: {
     .replaceAll('__FALLBACK_AVATAR_DATA_URI__', () => inlineJson(input.assets.fallbackAvatarDataUri))
     .replace('__ORB_EFFECT__', () => read('liquid-orb-effect.js'))
     .replace('__ORB_RENDERER__', () => read('liquid-orb.js'))
+    .replace('__STAGE_SCENES_JS__', () => read('stage-scenes.js'))
     .replace('__STAGE_JS__', () => read('stage.js'))
     .replaceAll('__AVATAR_DATA_URI__', () => input.avatarDataUri);
 }

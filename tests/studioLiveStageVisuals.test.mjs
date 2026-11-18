@@ -92,33 +92,34 @@ test('text pacing and the equalizer follow actual character updates only', () =>
   assert.match(css, /\.core-caret\{[^}]*animation:core-caret-blink/);
 });
 
-test('Avatar stays above glass and Worker handoff is a timed curved interaction', () => {
+test('Avatar stays above glass and the scene engine replaces the handoff/hybrid/particle visuals', () => {
   const css = read('stage.css');
   assert.match(css, /\.core-avatar\{[^}]*z-index:2;[^}]*width:112px;[^}]*height:112px/);
-  assert.match(css, /\.hybrid-avatar\{[^}]*width:42px;[^}]*height:42px/);
-  assert.match(css, /\.handoff-avatar\{[^}]*width:28px;[^}]*height:28px/);
-  assert.match(css, /\.handoff-person\{display:flex;align-items:center;gap:8px\}/);
   assert.match(css, /\.liquid-orb-canvas\{[^}]*z-index:1/);
   assert.match(css, /transition:opacity \.9s/);
   assert.match(css, /@keyframes core-breathe/);
   assert.match(css, /body\[data-motion="reduced"\] \.membrane-wrap\{animation:none;scale:1;filter:none\}/);
+  // retired layers are gone; the scene rail + hero slide replace them
+  assert.doesNotMatch(css, /hybrid-avatar|handoff-avatar|worker-constellation|handoff-flow|data-topology/);
+  assert.match(css, /\.companion-back\{z-index:2\}/);
+  assert.match(css, /\.companion-front\{z-index:4\}/);
+  assert.match(css, /body\[data-hero="true"\] \.core-entity\{left:56%/);
+  assert.match(css, /\.companion-rail\{[^}]*right:4\.5%;top:14%/);
   const stage = read('stage.js');
   assert.match(stage, /previous\.canvas\.dataset\.active = 'false'/);
   assert.match(stage, /previous\.fadeTimer = setTimeout\(\(\) => disposeOrbLayer\(previous\), 950\)/);
-  assert.match(stage, /handoff\.direction === 'return' \? '0;1' : '1;0'/);
-  assert.match(stage, /handoffTimer = setTimeout\(stopHandoff, 5000\)/);
-  assert.match(stage, /function layoutHandoff\(\)/);
-  assert.match(stage, /ctx\.quadraticCurveTo/);
-  assert.match(stage, /updateWorkerVisual\(nodes\.worker\)/);
-  assert.match(stage, /flow\.setAttribute\('hidden', ''\)/);
-  assert.match(stage, /flow\.removeAttribute\('hidden'\)/);
-  assert.doesNotMatch(stage, /\$\('\[data-handoff-flow\]'\)\.hidden/);
   assert.match(stage, /sharedResources: previous\?\.controller\?\.getSharedResources\(\)/);
   assert.match(stage, /if \(orbStarting \|\| orbFailed \|\| !state.enabled \|\| document.hidden\) return;/);
-  assert.match(stage, /reduced !== \(body\.dataset\.motion === 'reduced'\)/);
-  assert.match(read('stage.html'), /<animateMotion data-handoff-motion begin="indefinite" dur="2.8s" repeatCount="1"/);
-  assert.match(read('stage.html'), /data-worker-avatar/);
-  assert.match(read('stage.html'), /data-handoff-avatar/);
+  assert.doesNotMatch(stage, /handoff|worker-constellation|hybrid-node|drawParticles|restartParticles|particleClock/);
+  const html = read('stage.html');
+  assert.match(html, /data-companion-back/);
+  assert.match(html, /data-companion-front/);
+  assert.match(html, /data-group-members/);
+  assert.match(html, /data-companion-rail/);
+  assert.match(html, /data-transient-chip/);
+  assert.doesNotMatch(html, /handoff-flow|hybrid-node|worker-constellation|animateMotion/);
+  // the scene engine ships as its own asset, loaded before stage.js
+  assert.ok(html.indexOf('__STAGE_SCENES_JS__') < html.indexOf('__STAGE_JS__'));
   const window = {};
   vm.runInNewContext(read('liquid-orb-effect.js'), { window });
   assert.match(window.LiquidOrbEffectSource, /max\(ballA, emissionAlpha\)/);
@@ -128,7 +129,7 @@ test('Avatar stays above glass and Worker handoff is a timed curved interaction'
 test('interaction card renders through textContent only and drains clicks exactly once', () => {
   const stage = read('stage.js');
   assert.match(stage, /function renderInteraction\(\)/);
-  assert.match(stage, /renderInteraction\(\);\n    restartParticles\(\);/);
+  assert.match(stage, /renderInteraction\(\);\n    scenesApi\?\.update\(state\);/);
   assert.match(stage, /drainInteractions\(\) \{\n      const items = interactionQueue\.splice\(0, interactionQueue\.length\);\n      return items;\n    \}/);
   assert.match(stage, /data-interaction-question/);
   assert.match(stage, /interaction-custom/);
@@ -220,18 +221,24 @@ test('speaking keeps the base headline size and a wider brighter caption', () =>
   assert.match(css, /body\[data-family="speaking"\] \.core-copy p\{max-width:480px;color:#c9d3df;font-size:clamp\(16px,1\.5vw,20px\);line-height:1\.7\}/);
 });
 
-test('particles integrate phase and follow the orb activity multiplier', () => {
+test('the scene engine owns the rAF loop and applies state through update(state)', () => {
   const stage = read('stage.js');
-  // No absolute-time angle: energy/family changes retune velocity without
-  // teleporting the field, and reduced motion freezes the accumulated phase.
-  assert.doesNotMatch(stage, /t \* particle\.speed \* state\.motion\.energy/);
-  assert.match(stage, /particle\.phase \+= dt \* particle\.speed \* rate/);
-  assert.match(stage, /particle\.angle \+ particle\.phase/);
-  assert.match(stage, /PARTICLE_ACTIVITY = \{ working: 1\.75, speaking: \.6, resting: \.5 \}/);
+  const scenes = read('stage-scenes.js');
+  // the old ambient particle field is gone — the place renderers + companion
+  // rail + hero connectors draw into the three scene canvases instead.
+  assert.doesNotMatch(stage, /particleClock|drawParticles|restartParticles/);
+  assert.match(stage, /scenesApi\?\.update\(state\)/, 'applyState drives the scene engine');
+  assert.match(stage, /onFrame: updateTextMotion/, 'the engine frame hook keeps text pacing alive');
+  assert.match(stage, /scene: scenesApi\?\.debug\?\.\(\) \?\? null/, 'debug hook reports scene state');
+  assert.match(scenes, /window\.IDBotsLiveStageScenes/);
+  assert.match(scenes, /requestAnimationFrame\(loop\)/);
+  assert.match(scenes, /placeFactories\.mind/);
+  assert.match(scenes, /placeFactories\.machine/);
+  assert.match(scenes, /placeFactories\['web-a'\]/);
+  assert.match(scenes, /placeFactories\['chain-a'\]/);
+  // prototype-only variants stay out of the production package
+  assert.doesNotMatch(scenes, /placeFactories\['web-b'\]|placeFactories\['chain-b'\]|wire globe|hex lattice/i);
   assert.match(stage, /liquidOrbActivityForFamily\(state\.family\)/);
-  assert.match(stage, /1 - Math\.exp\(-dt \/ \.8\)/, '~0.8 s ease toward the activity target');
-  assert.match(stage, /if \(!reduced && dt > 0\)/, 'reduced motion never advances the phase');
-  assert.match(stage, /particles: \{ activity: particleClock\.activity/, 'debug hook exposes the eased multiplier');
 });
 
 test('WebGPU orb compiles pipelines asynchronously and tears down late timed-out devices', () => {
@@ -295,11 +302,10 @@ test('WebGPU orb specializes and dead-code strips WGSL and provides a pixel-equi
   assert.match(main, /\\\[\(\?:LiveStage\|GenesisStage\|LiquidOrb\)\\\]\|WebGPU\|WebGL/);
 });
 
-test('worker visual sets avatar src without flickering and derives fallback initial from worker label', () => {
-  const stage = read('stage.js');
-  assert.match(stage, /fallback\.textContent = initial \|\| 'W'/);
-  assert.match(stage, /image\.dataset\.workerAvatarSrc !== avatar/);
-  assert.match(stage, /handoffImage\.dataset\.workerAvatarSrc !== avatar/);
+test('companion rail avatars only accept the validated avatar schemes', () => {
+  const scenes = read('stage-scenes.js');
+  assert.match(scenes, /VALID_AVATAR = \/\^\(\?:data:image\\\/\|https\?:\\\/\\\/\|avatars\\\/\)\/i/);
   const css = read('stage.css');
-  assert.match(css, /\.hybrid-avatar\[hidden\],\.handoff-avatar\[hidden\],\[data-worker-fallback\]\[hidden\]\{display:none\}/);
+  assert.match(css, /\.rail-avatar\{width:28px;height:28px/);
+  assert.match(css, /\.rail-item\[data-hero="peer"\] \.rail-avatar\{width:40px;height:40px/);
 });

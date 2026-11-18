@@ -103,12 +103,12 @@ const REDUCED_MOTION_BEHAVIORS = new Set(['static-frame']);
 /** Placeholder contract `renderLiveStageHtml` depends on; a broken one would blank the projector. */
 const RENDER_TEMPLATE_PLACEHOLDERS = [
   '__STAGE_CSS__', '__INITIAL_STATE__', '__FALLBACK_AVATAR_DATA_URI__',
-  '__ORB_EFFECT__', '__ORB_RENDERER__', '__STAGE_JS__', '__AVATAR_DATA_URI__',
+  '__ORB_EFFECT__', '__ORB_RENDERER__', '__STAGE_SCENES_JS__', '__STAGE_JS__', '__AVATAR_DATA_URI__',
 ] as const;
 
 /** Asset files the built-in render path reads next to the render template. */
 const RENDER_TEMPLATE_ASSETS = [
-  'stage.css', 'liquid-orb-effect.js', 'liquid-orb.js', 'stage.js', 'liquid-orb-LICENSE.txt',
+  'stage.css', 'liquid-orb-effect.js', 'liquid-orb.js', 'stage-scenes.js', 'stage.js', 'liquid-orb-LICENSE.txt',
 ] as const;
 
 const defaultFs: StudioLiveStageTemplateFs = {
