@@ -4,11 +4,12 @@ import type { Page } from '@playwright/test';
 async function openTasks(page: Page): Promise<void> {
   await page.goto('/app/');
   await page.getByRole('button', { name: 'Tasks', exact: true }).click();
-  await expect(page.getByTestId('activity-longterm-lt-document')).toBeVisible();
+  await expect(page.getByTestId('unified-task-lt-mobile-task-center')).toBeVisible();
 }
 
 async function createTask(page: Page, name: string) {
-  await page.getByRole('button', { name: 'New task', exact: true }).click();
+  await page.getByRole('tab', { name: 'Scheduled', exact: true }).click();
+  await page.locator('.twin-unified-schedule-tools').getByRole('button', { name: 'New task', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'New scheduled task' })).toBeVisible();
   await expect(page.getByText('Runs as: Twin Bot')).toBeVisible();
   await page.getByPlaceholder('Task name').fill(name);
@@ -94,20 +95,29 @@ test.describe('scheduled tasks and background results', () => {
     await expect(page.getByTestId(`task-row-${created.id}`)).toHaveCount(0);
     const remainingRuns = await page.evaluate(async (id) => window.electron.scheduledTasks.listRuns(id), created.id);
     expect(remainingRuns.runs).toEqual([]);
-    await expect(page.getByTestId('work-activity')).not.toContainText('E2E digest edited');
+    await expect(page.getByText('E2E digest edited', { exact: true })).toHaveCount(0);
   });
 
-  test('long-term progress, owner actions and existing result session stay separate from Twin chat', async ({ page }, testInfo) => {
+  test('unified task progress, owner actions and existing result session stay separate from Twin chat', async ({ page }, testInfo) => {
     await page.goto('/app/');
     await expect(page.getByText('Long-term document result', { exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
-    const card = page.getByTestId('activity-longterm-lt-document');
-    await expect(card).toContainText('Participants: Twin Bot');
-    await expect(card).toContainText('Current: Produce a document');
-    await expect(card).toContainText('Waiting: Owner review required');
-    await expect(card).toContainText('1/3 accepted · 33%');
-    await expect(page.getByRole('progressbar', { name: 'Long-term task progress' })).toHaveAttribute('value', '33');
-    await attachScreen(testInfo, page, 'tasks-longterm-progress');
+    const active = page.getByTestId('unified-task-lt-mobile-task-center');
+    await expect(active).toHaveClass(/twin-unified-card-featured/);
+    await expect(active).toContainText('Current step');
+    await expect(active).toContainText('Confirm the Native Library and current-step card');
+    await attachScreen(testInfo, page, 'tasks-unified-active');
+
+    await page.getByRole('button', { name: /Needs you · 1 decision waiting/ }).click();
+    const card = page.getByTestId('unified-task-lt-document');
+    await expect(card).toContainText('Twin Bot');
+    await expect(card).toContainText('Produce a document');
+    await expect(card).toContainText('Owner review required');
+    await expect(card).toContainText('1/3 · 33%');
+    await expect(card.getByRole('progressbar', { name: 'Task progress' })).toHaveAttribute('value', '33');
+    await page.getByTestId('task-details-lt-document').click();
+    const detailView = page.getByTestId('task-detail-lt-document');
+    await expect(detailView).toContainText('Acceptance criteria');
 
     await page.evaluate(() => {
       const scheduled = window.electron.longtermTask;
@@ -117,24 +127,26 @@ test.describe('scheduled tasks and background results', () => {
         return { ok: false, error: 'Long-term write rejected by fixture' };
       };
     });
-    await page.getByRole('button', { name: 'Pause · Long-term document' }).click();
-    await expect(page.getByTestId('work-activity')).toContainText('Long-term write rejected by fixture');
-    await expect(card).toContainText('Waiting');
-
-    await page.getByRole('button', { name: 'Pause · Long-term document' }).click();
-    await expect(card).toContainText('Paused');
-    await page.getByRole('button', { name: 'Resume · Long-term document' }).click();
-    await expect(card).toContainText('Waiting');
-    await page.getByRole('button', { name: 'Open result · Long-term document · lt-document', exact: true }).click();
+    await page.getByRole('button', { name: 'Pause', exact: true }).click();
+    await expect(detailView).toContainText('Long-term write rejected by fixture');
+    await page.getByRole('button', { name: 'Pause', exact: true }).click();
+    await expect(detailView).toContainText('Paused');
+    await page.getByRole('button', { name: 'Resume', exact: true }).click();
+    await expect(detailView).toContainText('Needs you');
+    await detailView.locator('.twin-unified-detail-footer').getByRole('button', { name: 'Open chat', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Long-term document result', exact: true })).toBeVisible();
     await expect(page.getByText('Mock artifacts ready.', { exact: true })).toBeVisible();
     await expect(page.getByText('Produce a document', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
-    await page.getByRole('button', { name: 'Cancel task · Long-term document' }).click();
-    await expect(page.getByRole('dialog', { name: 'Cancel long-term task?' })).toBeVisible();
-    await page.getByRole('button', { name: 'Confirm cancellation' }).click();
-    await expect(page.getByTestId('activity-longterm-lt-document')).toHaveCount(0);
+    await page.getByRole('button', { name: /Needs you · 1 decision waiting/ }).click();
+    await page.getByTestId('task-details-lt-document').click();
+    await page.getByRole('button', { name: 'Cancel task', exact: true }).click();
+    const confirmation = page.getByRole('dialog', { name: 'Cancel this task?' });
+    await expect(confirmation).toBeVisible();
+    await confirmation.getByRole('button', { name: 'Cancel task', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
+    await expect(page.getByTestId('unified-task-lt-document')).toHaveCount(0);
     const detail = await page.evaluate(async () => window.electron.longtermTask.get({ taskId: 'lt-document' }));
     expect(detail.detail.stage).toBe('cancelled');
     expect(detail.detail.currentSubtaskStatus).toBe('waiting_owner');
@@ -158,6 +170,7 @@ test.describe('scheduled tasks and background results', () => {
     await expect(page.getByRole('heading', { name: previous.title, exact: true })).toBeVisible();
     const beforeCount = await page.evaluate(async () => (await window.electron.cowork.listSessions()).sessions.length);
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+    await page.getByRole('button', { name: /Needs you · 1 decision waiting/ }).click();
     await page.evaluate(async () => {
       const detail = (await window.electron.longtermTask.get({ taskId: 'lt-document' })).detail;
       const current = detail.subtasks.find((subtask: { id: string }) => subtask.id === detail.currentSubtaskId);
@@ -170,9 +183,9 @@ test.describe('scheduled tasks and background results', () => {
           : original(sessionId, options)
       );
     });
-    await page.getByRole('button', { name: 'Open result · Long-term document · lt-document', exact: true }).click();
-    await expect(page.getByTestId('work-activity')).toContainText('This result session is unavailable');
-    await expect(page.getByRole('heading', { name: 'Scheduled tasks', exact: true, level: 1 })).toBeVisible();
+    await page.getByTestId('task-open-chat-lt-document').click();
+    await expect(page.getByTestId('work-activity')).toContainText('This bound session is unavailable');
+    await expect(page.getByRole('heading', { name: 'Tasks', exact: true, level: 1 })).toBeVisible();
     const afterCount = await page.evaluate(async () => (await window.electron.cowork.listSessions()).sessions.length);
     expect(afterCount).toBe(beforeCount);
     await page.getByRole('button', { name: 'Chat', exact: true }).click();
@@ -219,5 +232,47 @@ test.describe('scheduled tasks and background results', () => {
     await confirmation.getByRole('button', { name: 'Delete task', exact: true }).click();
     await expect(confirmation).toContainText('Delete rejected by fixture');
     await expect(page.getByTestId(`task-row-${created.id}`)).toBeVisible();
+  });
+
+  test('new task opens a Twin draft and global scheduled history opens the result', async ({ page }) => {
+    await openTasks(page);
+    await page.getByTestId('task-center-create').click();
+    await expect(page.getByTestId('chat-composer-input')).toHaveValue('I want to create a task: ');
+
+    await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+    await page.getByRole('tab', { name: 'Scheduled', exact: true }).click();
+    const run = await page.evaluate(async () => {
+      const result = await window.electron.scheduledTasks.runManually('mock-task-2');
+      return result.run;
+    });
+    await expect.poll(async () => page.evaluate(async (runId) => {
+      const result = await window.electron.scheduledTasks.listRuns('mock-task-2');
+      return result.runs.find((candidate: { id: string }) => candidate.id === runId)?.status;
+    }, run.id)).toBe('success');
+    await page.getByRole('tab', { name: 'History', exact: true }).click();
+    await expect(page.getByTestId(`scheduled-history-run-${run.id}`)).toBeVisible();
+    await page.getByRole('button', { name: `Open result · ${run.id}`, exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Scheduled run: Weekly wallet report', exact: true })).toBeVisible();
+  });
+
+  test('task center follows Chinese copy and explicit light or dark appearances', async ({ page }, testInfo) => {
+    await openTasks(page);
+    await page.getByRole('button', { name: 'Me', exact: true }).click();
+    await page.getByTestId('me-entry-general').click();
+    await page.getByRole('button', { name: '中文', exact: true }).click();
+    await page.getByRole('button', { name: '浅色', exact: true }).click();
+    await page.getByTestId('mobile-tab-tasks').click();
+    await expect(page.getByText('当前步骤', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('task-open-chat-lt-mobile-task-center')).toHaveText('打开聊天');
+    await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(false);
+    await attachScreen(testInfo, page, 'tasks-unified-light-zh');
+
+    await page.getByTestId('mobile-tab-me').click();
+    await page.getByTestId('me-entry-general').click();
+    await page.getByRole('button', { name: '深色', exact: true }).click();
+    await page.getByTestId('mobile-tab-tasks').click();
+    await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(true);
+    await expect(page.getByText('当前步骤', { exact: true })).toBeVisible();
+    await attachScreen(testInfo, page, 'tasks-unified-dark-zh');
   });
 });

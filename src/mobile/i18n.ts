@@ -15,7 +15,7 @@ import { MOCK_LOGIN_API } from './buildFlags';
 
 export type MobileLanguage = 'zh' | 'en';
 
-type MobileDictionary = Record<string, string>;
+export type MobileDictionary = Record<string, string>;
 
 /**
  * Demo notice values (mobile.login.demoNote). Defined as constants so
@@ -301,6 +301,10 @@ const zhTranslations: MobileDictionary = {
   'mobile.activity.status.waiting': '等待处理',
   'mobile.activity.status.paused': '已暂停',
   'mobile.activity.status.done': '已完成',
+  'mobile.tasks.runStatus.completed': '已完成',
+  'mobile.tasks.runStatus.completed_empty': '已完成，无新内容',
+  'mobile.tasks.runStatus.crashed': '异常退出',
+  'mobile.tasks.runStatus.timeout': '已超时',
   // S9 ME points (mobile): balance home, tier cards, usage & credits, purchase.
   'mobile.common.back': '返回',
   'mobile.me.points.title': 'ME 积分',
@@ -1139,6 +1143,10 @@ const enTranslations: MobileDictionary = {
   'mobile.activity.status.waiting': 'Waiting',
   'mobile.activity.status.paused': 'Paused',
   'mobile.activity.status.done': 'Completed',
+  'mobile.tasks.runStatus.completed': 'Completed',
+  'mobile.tasks.runStatus.completed_empty': 'Completed with no new items',
+  'mobile.tasks.runStatus.crashed': 'Crashed',
+  'mobile.tasks.runStatus.timeout': 'Timed out',
   // S9 ME points (mobile): balance home, tier cards, usage & credits, purchase.
   'mobile.common.back': 'Back',
   'mobile.me.points.title': 'ME credits',
@@ -1705,6 +1713,11 @@ const dictionaries: Record<MobileLanguage, MobileDictionary> = {
   zh: zhTranslations,
   en: enTranslations,
 };
+
+export function registerMobileTranslations(translations: Record<MobileLanguage, MobileDictionary>): void {
+  Object.assign(dictionaries.zh, translations.zh);
+  Object.assign(dictionaries.en, translations.en);
+}
 
 /** Same locale rule as the desktop inferLanguageFromLocale (services/i18n.ts). */
 export function inferLanguageFromLocale(systemLocale: string): MobileLanguage {

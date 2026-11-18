@@ -899,6 +899,7 @@ deploy/hosts/prometheus.yml
 !tests/mobileArtifactPreview.test.ts
 !tests/mobileBackgroundTasks.test.ts
 !tests/mobileActivity.test.ts
+!tests/mobileUnifiedTasks.test.tsx
 !tests/localFileUrl.test.ts
 
 # WS-E T3 integration slice: reconnect resync (REQ-E-5) tests

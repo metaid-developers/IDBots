@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 /**
  * REQ-E-18 static checks for the mobile client:
  *
- *   1. src/mobile/i18n.ts dictionaries: zh/en key parity, no empty values,
- *      every key prefixed `mobile.`.
+ *   1. src/mobile/i18n.ts and lazily registered feature dictionaries: zh/en
+ *      key parity, no empty values, every key prefixed `mobile.`.
  *   2. Hard-coded user-facing string scan over every .ts/.tsx under
  *      src/mobile (excluding i18n.ts): fail on any CJK character in source,
  *      and on JSX text nodes / placeholder|title|alt|aria-label literals
@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 const MOBILE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src/mobile');
 const I18N_FILE = path.join(MOBILE_ROOT, 'i18n.ts');
+const TASK_CENTER_I18N_FILE = path.join(MOBILE_ROOT, 'taskCenterI18n.ts');
 
 /** Walks a string-literal-aware `{ ... }` body starting at `openIndex`. */
 function extractObjectBody(source, openIndex) {
@@ -83,8 +84,19 @@ function constantTrueBranch(source, name) {
 }
 
 const i18nSource = readFileSync(I18N_FILE, 'utf8');
-const zh = parseDictionary(i18nSource, 'zhTranslations');
-const en = parseDictionary(i18nSource, 'enTranslations');
+const taskCenterI18nSource = readFileSync(TASK_CENTER_I18N_FILE, 'utf8');
+const zhBase = parseDictionary(i18nSource, 'zhTranslations');
+const enBase = parseDictionary(i18nSource, 'enTranslations');
+const zhTaskCenter = parseDictionary(taskCenterI18nSource, 'zhTaskCenterTranslations');
+const enTaskCenter = parseDictionary(taskCenterI18nSource, 'enTaskCenterTranslations');
+const zh = {
+  body: zhBase.body + zhTaskCenter.body,
+  entries: new Map([...zhBase.entries, ...zhTaskCenter.entries]),
+};
+const en = {
+  body: enBase.body + enTaskCenter.body,
+  entries: new Map([...enBase.entries, ...enTaskCenter.entries]),
+};
 
 test('mobile i18n: zh/en key parity, no empty values, mobile. prefix', () => {
   const zhKeys = [...zh.entries.keys()].sort();
@@ -137,7 +149,7 @@ function listSourceFiles(dir, extensions) {
 const CJK_PATTERN = /[぀-ヿ㐀-䶿一-鿿豈-﫿]/;
 
 const scannedFiles = listSourceFiles(MOBILE_ROOT, ['.ts', '.tsx']).filter(
-  (file) => !file.endsWith('/i18n.ts') && !statSync(file).isDirectory(),
+  (file) => !file.endsWith('/i18n.ts') && !file.endsWith('/taskCenterI18n.ts') && !statSync(file).isDirectory(),
 );
 
 test('mobile sources contain no CJK characters outside i18n.ts', () => {
