@@ -102,6 +102,43 @@ test('listRunsByMetabot is newest first and capped', () => {
   assert.equal(runs[0].id, 'run-4');
 });
 
+test('listRunsByMetabotAndDay returns one day newest first over a half-open range', () => {
+  const { store } = setup();
+  // Two runs inside the day, one just past its end, one for another bot.
+  store.createRun({ id: 'day-a-late', metabotId: 7, trigger: 'pre-dream', nowIso: '2026-09-13T23:30:00.000Z' });
+  store.createRun({ id: 'day-a-early', metabotId: 7, trigger: 'manual-ui', nowIso: '2026-09-13T02:10:00.000Z' });
+  store.createRun({ id: 'day-b', metabotId: 7, trigger: 'pre-dream', nowIso: '2026-09-14T01:00:00.000Z' });
+  store.createRun({ id: 'other-bot', metabotId: 8, trigger: 'pre-dream', nowIso: '2026-09-13T05:00:00.000Z' });
+
+  const dayRuns = store.listRunsByMetabotAndDay(7, '2026-09-13T00:00:00.000Z', '2026-09-14T00:00:00.000Z');
+  assert.deepEqual(
+    dayRuns.map((run) => run.id),
+    ['day-a-late', 'day-a-early'],
+    'the day view lists exactly that day\'s runs for that bot, newest first',
+  );
+  // Half-open: the end boundary itself is excluded (created_at < dayEndIso).
+  const touchingEnd = store.listRunsByMetabotAndDay(7, '2026-09-14T00:59:00.000Z', '2026-09-14T01:00:00.000Z');
+  assert.deepEqual(touchingEnd.map((run) => run.id), []);
+  // A day with no runs comes back empty rather than erroring.
+  assert.deepEqual(store.listRunsByMetabotAndDay(7, '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z'), []);
+});
+
+test('listRunDays lists distinct UTC days newest first, per bot', () => {
+  const { store } = setup();
+  store.createRun({ id: 'r1', metabotId: 7, trigger: 'pre-dream', nowIso: '2026-09-13T23:30:00.000Z' });
+  store.createRun({ id: 'r2', metabotId: 7, trigger: 'manual-chat', nowIso: '2026-09-13T02:10:00.000Z' });
+  store.createRun({ id: 'r3', metabotId: 7, trigger: 'pre-dream', nowIso: '2026-09-11T01:00:00.000Z' });
+  store.createRun({ id: 'r4', metabotId: 8, trigger: 'pre-dream', nowIso: '2026-09-13T01:00:00.000Z' });
+
+  assert.deepEqual(
+    store.listRunDays(7),
+    ['2026-09-13', '2026-09-11'],
+    'multiple runs on one day collapse to a single marker, newest day first',
+  );
+  assert.deepEqual(store.listRunDays(8), ['2026-09-13']);
+  assert.deepEqual(store.listRunDays(9), [], 'a bot with no runs marks no days');
+});
+
 test('stale running runs fail on crash recovery', () => {
   const { store } = setup();
   store.createRun({ id: 'run-live', metabotId: 7, trigger: 'manual-chat', nowIso: NOW });
