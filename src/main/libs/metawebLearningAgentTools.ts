@@ -251,7 +251,80 @@ export type MetawebBatchReadReceipt = {
   truncation_point_count: number;
   /** Per-cut detail, capped at METAWEB_BATCH_RECEIPT_MAX_LIST. */
   truncation_points: MetawebBatchTruncationPoint[];
+  /** Exact per-cause split of `unreadable` — the four failure modes stay separate. */
+  unreadable_causes: Record<MetawebBatchUnreadableCause, number>;
+  /** Per-pin failure attribution, capped at METAWEB_BATCH_RECEIPT_MAX_LIST — counts stay exact. */
+  unreadable_pins: MetawebBatchUnreadablePin[];
   caliber: string;
+};
+
+/**
+ * Why one requested pin produced no readable body. The four modes are kept
+ * apart on purpose (2026-11-18 live audit): the old receipt collapsed every
+ * failure into one `unreadable` label, so a typo'd pinId, a pin the indexer
+ * cannot resolve at all, an encrypted/binary pin and an upstream extraction
+ * error were indistinguishable — the caller could not tell "fix your id" from
+ * "give up on this pin" from "this pin will never be text" from "retry later".
+ * Each maps to exactly one existing render branch; no branch merges two causes:
+ *
+ *  - malformed_id      — the requested id is not a pin id at all (`64 lowercase
+ *                        hex + iN`); decided locally, before trusting upstream.
+ *  - not_found         — the upstream batch map carried no entry for the id, or
+ *                        the entry's error says the pin could not be located.
+ *  - content_contract  — the pin resolved, but its content cannot be delivered
+ *                        as text (encrypted, binary, or empty).
+ *  - extraction_failed — anything else the upstream reported while trying to
+ *                        build the pin (parser/index failure, transient error).
+ */
+export const METAWEB_BATCH_UNREADABLE_CAUSES = [
+  'malformed_id',
+  'not_found',
+  'content_contract',
+  'extraction_failed',
+] as const;
+export type MetawebBatchUnreadableCause = (typeof METAWEB_BATCH_UNREADABLE_CAUSES)[number];
+
+/** One per-pin failure attribution carried by the machine-readable receipt. */
+export type MetawebBatchUnreadablePin = {
+  pin_id: string;
+  cause: MetawebBatchUnreadableCause;
+  /** The upstream error text (or the shape violation), capped for receipt size. */
+  detail: string | null;
+};
+
+/** Canonical pin id: 64 lowercase hex + `i` + output index (`…i0`). */
+const PIN_ID_PATTERN = /^[0-9a-f]{64}i\d+$/;
+/** Cap on one `detail` string inside the receipt. */
+const METAWEB_BATCH_UNREADABLE_DETAIL_MAX_CHARS = 120;
+
+export function isWellFormedMetawebPinId(pinId: string): boolean {
+  return PIN_ID_PATTERN.test(String(pinId ?? '').trim());
+}
+
+/**
+ * Classify one upstream per-pin error string into a cause. Order matters: a
+ * malformed-id complaint must win over a generic "not found" phrasing, because
+ * the fix the caller needs is different (correct the id vs stop asking for the
+ * pin). Unknown wording falls to `extraction_failed` — the honest bucket for
+ * "upstream tried and reported something we cannot attribute further", never
+ * silently merged into `not_found`.
+ */
+export function classifyMetawebBatchErrorText(errorText: string): MetawebBatchUnreadableCause {
+  const text = String(errorText ?? '').trim().toLowerCase();
+  if (/invalid|malformed|bad pin|pin ?id .*(invalid|format)|not a (valid )?pin|格式|无效/.test(text)) {
+    return 'malformed_id';
+  }
+  if (/not found|not_found|notfound|no such|missing|unknown pin|gone|deleted|removed|does not exist|doesn't exist|404|不存在|未找到/.test(text)) {
+    return 'not_found';
+  }
+  return 'extraction_failed';
+}
+
+const clampUnreadableDetail = (detail: string | null): string | null => {
+  if (detail == null) return null;
+  const text = detail.trim();
+  if (text.length <= METAWEB_BATCH_UNREADABLE_DETAIL_MAX_CHARS) return text;
+  return `${text.slice(0, METAWEB_BATCH_UNREADABLE_DETAIL_MAX_CHARS - 1)}…`;
 };
 
 /**
@@ -422,7 +495,7 @@ export function buildMetawebLearningAgentTools(deps: {
 
   const readMetawebPinsBatch = tool(
     'read_metaweb_pins_batch',
-    'Read up to 50 MetaWeb pins in ONE call — prefer over looping read_metaweb_pin for a shortlist to deep-read. Returns each pinId mapped to its sheet (protocol, title/meta, author, body) or an isolated per-pin error — single failures never fail the batch. Output is budget-capped: long bodies are trimmed or omitted (labeled per-pin) while every meta block stays complete — a missing body does NOT mean unreadable; follow up with read_metaweb_pin on trimmed/omitted pins you need in full. The receipt carries a one-line machine-readable summary (`- RECEIPT read_metaweb_pins_batch: {…}`) with requested/readable_upstream/returned/omitted/truncation_points/bytes_written/caliber, so "read out" and "delivered" are separately checkable. ~10-15 pins per call keeps bodies mostly whole; null content means encrypted/empty — skip.',
+    'Read up to 50 MetaWeb pins in ONE call — prefer over looping read_metaweb_pin for a shortlist to deep-read. Returns each pinId mapped to its sheet (protocol, title/meta, author, body) or an isolated per-pin error — single failures never fail the batch. Output is budget-capped: long bodies are trimmed or omitted (labeled per-pin) while every meta block stays complete — a missing body does NOT mean unreadable; follow up with read_metaweb_pin on trimmed/omitted pins you need in full. The receipt carries a one-line machine-readable summary (`- RECEIPT read_metaweb_pins_batch: {…}`) with requested/readable_upstream/returned/omitted/unreadable_causes/truncation_points/bytes_written/caliber, so "read out" and "delivered" are separately checkable. Every unreadable pin carries a cause (malformed_id = fix your id, not_found = the pin could not be located upstream, content_contract = encrypted/binary/empty content, extraction_failed = upstream error while building the pin) — do not treat a malformed_id as a missing pin. ~10-15 pins per call keeps bodies mostly whole; null content means encrypted/empty — skip.',
     {
       pinIds: z.array(z.string().min(1)).min(1).max(50),
     },
@@ -452,30 +525,73 @@ export function buildMetawebLearningAgentTools(deps: {
         const readableSlots: ReadableSlot[] = [];
         let firstReadable: ReadableSlot | null = null;
         // Requested ids that produced no usable body upstream — carried into the
-        // machine-readable receipt as `unreadable_ids`.
+        // machine-readable receipt as `unreadable_ids` / `unreadable_pins`.
         const unreadableIds: string[] = [];
+        const unreadablePins: MetawebBatchUnreadablePin[] = [];
+        const unreadableCauseCounts: Record<MetawebBatchUnreadableCause, number> = {
+          malformed_id: 0,
+          not_found: 0,
+          content_contract: 0,
+          extraction_failed: 0,
+        };
+        // Single attribution point: the id list, the per-cause counts and the
+        // per-pin receipt list move together, so a future branch cannot record
+        // an unreadable id without a cause (or vice versa).
+        const recordUnreadable = (
+          requestedId: string,
+          cause: MetawebBatchUnreadableCause,
+          detail: string | null = null,
+        ): void => {
+          unreadableIds.push(requestedId);
+          unreadableCauseCounts[cause] += 1;
+          unreadablePins.push({ pin_id: requestedId, cause, detail: clampUnreadableDetail(detail) });
+        };
         for (const requestedId of pinIds) {
           const entry: MetawebBatchEntry | undefined = entries[requestedId];
+          if (entry && !isBatchErrorEntry(entry)) {
+            const pin = entry as MetawebBatchPin;
+            if (pin.text == null) {
+              recordUnreadable(requestedId, 'content_contract', `no readable text content (${pin.protocol || 'unknown protocol'}; encrypted, binary, or empty)`);
+              slots.push(`## ${requestedId}\n- unreadable (cause: content_contract): (${pin.protocol || 'unknown protocol'}) has no readable text content (encrypted, binary, or empty) — skip it; do NOT invent its content.`);
+              continue;
+            }
+            const slot: ReadableSlot = { pin, skeleton: formatMetawebPinDetail({ ...pin, text: null }) };
+            if (!firstReadable) firstReadable = slot;
+            readableSlots.push(slot);
+            slots.push(slot);
+            continue;
+          }
+          // No readable pin object came back, so this id is unreadable — and only
+          // NOW does its shape decide the cause. A successful read never depends
+          // on the local shape check: the server resolving the pin wins over it
+          // (the check exists to separate the caller's typo from an upstream miss,
+          // not to narrow what the tool can read). An id that cannot name a pin
+          // outranks the upstream wording: an upstream "not found" for such an id
+          // is the expected consequence of the typo, not a fact about a real pin —
+          // the upstream text is still echoed verbatim for the audit trail.
+          const shapeViolation = isWellFormedMetawebPinId(requestedId)
+            ? null
+            : 'not a pin id: expected 64 lowercase hex + iN (e.g. …i0)';
           if (!entry) {
-            unreadableIds.push(requestedId);
-            slots.push(`## ${requestedId}\n(no entry returned for this pinId — treat it as unreadable and move on)`);
+            if (shapeViolation) {
+              recordUnreadable(requestedId, 'malformed_id', shapeViolation);
+              slots.push(`## ${requestedId}\n- unreadable (cause: malformed_id): ${shapeViolation}. Fix the id and retry; do NOT search for it as content.`);
+            } else {
+              recordUnreadable(requestedId, 'not_found', 'no entry returned for this pinId');
+              slots.push(`## ${requestedId}\n- unreadable (cause: not_found): no entry returned for this pinId — treat it as unreadable and move on`);
+            }
             continue;
           }
-          if (isBatchErrorEntry(entry)) {
-            unreadableIds.push(requestedId);
-            slots.push(`## ${requestedId}\n- error: ${entry.error}`);
+          if (!isBatchErrorEntry(entry)) {
+            // Defensive: the readable-pin branch above exits before this point,
+            // so a non-error entry can only arrive with an unusable shape.
+            recordUnreadable(requestedId, 'extraction_failed', 'unexpected batch entry shape');
+            slots.push(`## ${requestedId}\n- unreadable (cause: extraction_failed): unexpected batch entry shape — treat it as unreadable and move on`);
             continue;
           }
-          const pin = entry as MetawebBatchPin;
-          if (pin.text == null) {
-            unreadableIds.push(requestedId);
-            slots.push(`## ${requestedId}\n- (${pin.protocol || 'unknown protocol'}) has no readable text content (encrypted, binary, or empty) — skip it; do NOT invent its content.`);
-            continue;
-          }
-          const slot: ReadableSlot = { pin, skeleton: formatMetawebPinDetail({ ...pin, text: null }) };
-          if (!firstReadable) firstReadable = slot;
-          readableSlots.push(slot);
-          slots.push(slot);
+          const cause = shapeViolation ? 'malformed_id' : classifyMetawebBatchErrorText(entry.error);
+          recordUnreadable(requestedId, cause, shapeViolation ?? entry.error);
+          slots.push(`## ${requestedId}\n- unreadable (cause: ${cause}) error: ${shapeViolation ? `${entry.error} — ${shapeViolation}` : entry.error}`);
         }
         if (readableSlots.length === 0) {
           const header = `0/${pinIds.length} pin(s) readable in this batch:`;
@@ -492,6 +608,8 @@ export function buildMetawebLearningAgentTools(deps: {
               omitted_ids: [],
               unreadable: unreadableIds.length,
               unreadable_ids: unreadableIds.slice(0, METAWEB_BATCH_RECEIPT_MAX_LIST),
+              unreadable_causes: unreadableCauseCounts,
+              unreadable_pins: unreadablePins.slice(0, METAWEB_BATCH_RECEIPT_MAX_LIST),
               truncation_point_count: 0,
               truncation_points: [],
               caliber: METAWEB_BATCH_READ_CALIBER,
@@ -622,6 +740,8 @@ export function buildMetawebLearningAgentTools(deps: {
               omitted_ids: omittedIds.slice(0, METAWEB_BATCH_RECEIPT_MAX_LIST),
               unreadable: unreadableIds.length,
               unreadable_ids: unreadableIds.slice(0, METAWEB_BATCH_RECEIPT_MAX_LIST),
+              unreadable_causes: unreadableCauseCounts,
+              unreadable_pins: unreadablePins.slice(0, METAWEB_BATCH_RECEIPT_MAX_LIST),
               truncation_point_count: truncationPoints.length,
               truncation_points: truncationPoints.slice(0, METAWEB_BATCH_RECEIPT_MAX_LIST),
               caliber: METAWEB_BATCH_READ_CALIBER,
