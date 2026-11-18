@@ -1095,3 +1095,4 @@ blob-report/
 !tests/studioFallbackEffortFloor.test.ts
 !tests/studioQuotaBypassRouting.test.ts
 !tests/studioBrowserTabsTool.test.ts
+!tests/studioChapterStore.test.mjs

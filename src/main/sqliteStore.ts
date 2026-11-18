@@ -1227,6 +1227,36 @@ export class SqliteStore {
       ON a2a_conversation_episodes(thread_id, episode_index DESC);
     `);
 
+    // Studio single-conversation chapters (2026-11-19 Phase 1, in-session
+    // model — owner ruling "方案 B"): one row per chapter of a Studio owner
+    // chat. A chapter closes on manual command / task boundary / context
+    // budget (slice 2+); its structured card survives compaction and feeds
+    // the chapter index injection + conversation_recall. Additive table —
+    // safe first-run migration for every existing install.
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS cowork_session_chapters (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        metabot_id INTEGER,
+        chapter_index INTEGER NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        close_reason TEXT,
+        summary_markdown TEXT NOT NULL DEFAULT '',
+        content_json TEXT NOT NULL DEFAULT '{}',
+        token_watermark INTEGER,
+        llm_id TEXT,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(session_id, chapter_index),
+        FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
+      );
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_cowork_session_chapters_session
+      ON cowork_session_chapters(session_id, chapter_index DESC);
+    `);
+
     // Create scheduled tasks tables
     this.db.run(`
       CREATE TABLE IF NOT EXISTS scheduled_tasks (
