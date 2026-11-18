@@ -2865,9 +2865,16 @@ export async function closeGroupTask(
       const chair = getMetabotStore().getMetabotById(closed.chairMetabotId);
       if (closed.groupId && chair) {
         await sendGroupChatMessageFn(closed.chairMetabotId, closed.groupId, {
+          // P0-b (task #149): the done close-out must not claim owner
+          // acceptance when the closer was not the owner — a chair RPC close
+          // used to announce "accepted by the owner" while the ledger only
+          // carried delivered rows awaiting the owner's verdict. The owner's
+          // own close (UI path) keeps the acceptance wording.
           content:
             (closed.status === 'done'
-              ? '[STATUS:DONE] Task closed: accepted by the owner.'
+              ? (opts.actor?.kind === 'owner'
+                ? '[STATUS:DONE] Task closed: accepted by the owner.'
+                : '[STATUS:DONE] Task closed: closed by the chair on behalf of the owner; owner acceptance pending.')
               : '[STATUS:CANCELLED] Task closed: cancelled by the owner.') +
             (opts.reason?.trim() ? ` Reason: ${opts.reason.trim()}` : ''),
           nickName: chair.name?.trim() || `bot-${closed.chairMetabotId}`,
