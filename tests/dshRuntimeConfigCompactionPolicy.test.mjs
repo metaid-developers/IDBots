@@ -105,7 +105,7 @@ test('a custom provider key riding the Command Code host is detected by baseUrl'
   assert.equal(policy.thresholdRatio, 0.5)
 })
 
-test('ID.Bots relay routes keep the default 0.8 threshold and no retainRatio override', () => {
+test('ID.Bots relay large-window routes compact at 0.35 across all 1M models without retainRatio override', () => {
   const config = generateRuntimeConfig(baseInput([
     {
       key: 'idbots',
@@ -115,13 +115,28 @@ test('ID.Bots relay routes keep the default 0.8 threshold and no retainRatio ove
       models: [
         { id: 'deepseek-4.1-flash', contextWindow: 1_000_000 },
         { id: 'glm-5.3-flash', contextWindow: 1_048_576 },
+        { id: 'IDBots-v1-free', contextWindow: 1_000_000 },
       ],
     },
   ]))
-  const dsPolicy = compactionPolicyFor(config, 'deepseek-4.1-flash')
-  assert.equal(dsPolicy.thresholdRatio, 0.8)
-  assert.equal(dsPolicy.retainRatio, undefined)
-  const glmPolicy = compactionPolicyFor(config, 'glm-5.3-flash')
-  assert.equal(glmPolicy.thresholdRatio, 0.8)
-  assert.equal(glmPolicy.retainRatio, undefined)
+  for (const modelId of ['deepseek-4.1-flash', 'glm-5.3-flash', 'IDBots-v1-free']) {
+    const policy = compactionPolicyFor(config, modelId)
+    assert.equal(policy.thresholdRatio, 0.35, `${modelId} should compact at 0.35`)
+    assert.equal(policy.retainRatio, undefined, `${modelId} should keep default retainRatio`)
+  }
+})
+
+test('custom key pointing at metaso.network host inherits the 0.35 relay compaction threshold', () => {
+  const config = generateRuntimeConfig(baseInput([
+    {
+      key: 'custom-metaso',
+      apiFormat: 'openai',
+      baseUrl: 'https://www.metaso.network/assist-open-api/v2/assist/llm/v1',
+      apiKeyEnv: 'CUSTOM_KEY',
+      models: [{ id: 'glm-5.3-flash', contextWindow: 1_048_576 }],
+    },
+  ]))
+  const policy = compactionPolicyFor(config, 'glm-5.3-flash')
+  assert.equal(policy.provider, 'custom-metaso')
+  assert.equal(policy.thresholdRatio, 0.35)
 })

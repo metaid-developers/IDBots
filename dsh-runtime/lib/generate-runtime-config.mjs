@@ -272,18 +272,29 @@ const isCommandCodeGatewayRoute = (provider) => {
  *  `z-ai/glm-5.3-flash`, `zai-org/GLM-5.3`. */
 const isGlmFamilyModelId = (modelId) => /(?:^|\/)glm-/i.test(String(modelId ?? ''))
 
-/** ID.Bots relay (assist-base-service on MetaSo) previously needed a 0.22
- *  threshold × 0.04 retainRatio carve-out for DeepSeek-family routes: an
- *  upstream provider in the relay's chain served a real ~256K window under a
- *  1M catalog row (2026-11-12 cw-4b78a0fd, CONTEXT_WINDOW_EXCEEDED at ~262K).
- *  The fix moved server-side — assist-base-service now fails context-overflow
- *  rejections over to the next chain provider (context_overflow class,
- *  abs e402759), so a short-window SKU gets routed around per request instead
- *  of dragging the route down. Product decision: the catalog advertises 1M
- *  and clients plan for 1M — providers that cannot serve it are removed from
- *  the relay's chains rather than lowering the client-side threshold. */
+/** ID.Bots relay (assist-base-service on MetaSo) advertises 1M-class models
+ *  (deepseek-4.1-flash, glm-5.3-flash, etc.). Letting sessions grow to the
+ *  default 0.8 threshold (~800K-839K tokens) creates severe tail-burn on
+ *  per-token ME billing, long prefill latency, and heavy pressure on
+ *  subscription-capped upstream plans (e.g. BigModel Coding Plan). Lowering
+ *  thresholdRatio to 0.35 (~350K-367K tokens) for all large-window models on
+ *  the ID.Bots relay triggers proactive compaction much earlier while still
+ *  allowing single-turn 1M-window requests and preserving default 0.16 tail
+ *  retention (~109K-147K tokens) without retainRatio override. Small-window
+ *  models (<256K) keep the 0.9 tier. */
+const COMPACTION_THRESHOLD_RATIO_IDBOTS_RELAY = 0.35
+const IDBOTS_RELAY_HOST = 'metaso.network'
+
+const isIdBotsRelayRoute = (provider) => {
+  const key = String(provider?.key ?? '').trim().toLowerCase()
+  if (key === 'idbots' || key === 'metaid-free') return true
+  const host = hostOf(provider?.baseUrl)
+  return host === IDBOTS_RELAY_HOST || host.endsWith(`.${IDBOTS_RELAY_HOST}`)
+}
+
 const compactionThresholdRatio = (provider, modelId, window) => {
   if (window < COMPACTION_SMALL_WINDOW_TOKENS) return COMPACTION_THRESHOLD_RATIO_SMALL_WINDOW
+  if (isIdBotsRelayRoute(provider)) return COMPACTION_THRESHOLD_RATIO_IDBOTS_RELAY
   if (isCommandCodeGatewayRoute(provider) && isGlmFamilyModelId(modelId)) return COMPACTION_THRESHOLD_RATIO_COMMANDCODE_GLM
   return COMPACTION_THRESHOLD_RATIO_DEFAULT
 }
