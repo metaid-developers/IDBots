@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { LIVE_STAGE_PROTOCOL, type LiveStageFamily } from './studioLiveStageModel';
+import { LIVE_STAGE_FAMILIES, LIVE_STAGE_PROTOCOL, type LiveStageFamily } from './studioLiveStageModel';
 
 /**
  * Template registry for the Studio Live Stage renderer (Phase 1 of
@@ -92,12 +92,7 @@ const TEMPLATE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const TEMPLATE_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
 const RELATIVE_PATH_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*(?:\/[a-zA-Z0-9][a-zA-Z0-9._-]*)*$/;
 
-const LIVE_STAGE_FAMILIES: readonly LiveStageFamily[] = [
-  'idle', 'received', 'reasoning', 'speaking', 'local-recall', 'web2-research',
-  'metaweb-research', 'making', 'delegation', 'waiting', 'worker-report',
-  'verification', 'browser-action', 'owner-needed', 'problem',
-  'report-ready', 'complete',
-];
+// LIVE_STAGE_FAMILIES is imported from the model — the single source of truth.
 
 const LIVE_STAGE_COMPOSITIONS = new Set(['presence', 'gather', 'topology', 'converge', 'ready']);
 const LIVE_STAGE_TOPOLOGY_MODES = new Set(['presence', 'structured']);
@@ -108,12 +103,12 @@ const REDUCED_MOTION_BEHAVIORS = new Set(['static-frame']);
 /** Placeholder contract `renderLiveStageHtml` depends on; a broken one would blank the projector. */
 const RENDER_TEMPLATE_PLACEHOLDERS = [
   '__STAGE_CSS__', '__INITIAL_STATE__', '__FALLBACK_AVATAR_DATA_URI__',
-  '__ORB_EFFECT__', '__ORB_RENDERER__', '__STAGE_JS__', '__AVATAR_DATA_URI__',
+  '__ORB_EFFECT__', '__ORB_RENDERER__', '__STAGE_SCENES_JS__', '__STAGE_JS__', '__AVATAR_DATA_URI__',
 ] as const;
 
 /** Asset files the built-in render path reads next to the render template. */
 const RENDER_TEMPLATE_ASSETS = [
-  'stage.css', 'liquid-orb-effect.js', 'liquid-orb.js', 'stage.js', 'liquid-orb-LICENSE.txt',
+  'stage.css', 'liquid-orb-effect.js', 'liquid-orb.js', 'stage-scenes.js', 'stage.js', 'liquid-orb-LICENSE.txt',
 ] as const;
 
 const defaultFs: StudioLiveStageTemplateFs = {

@@ -1,0 +1,62 @@
+{
+  "protocol": "idbots.live-stage.v1",
+  "sessionId": "demo-live-stage",
+  "turnId": "demo-turn-1",
+  "turnStartedAt": 1760000000000,
+  "revision": 1,
+  "enabled": true,
+  "family": "local-run",
+  "botName": "Nova",
+  "language": "en",
+  "headline": "Working on the computer",
+  "caption": "",
+  "participants": [
+    "Nova"
+  ],
+  "kicker": "On this computer",
+  "composition": "presence",
+  "motif": "local-run",
+  "topology": {
+    "mode": "presence",
+    "nodes": [],
+    "edges": []
+  },
+  "captionSource": "default",
+  "phaseStartedAt": 1760000000000,
+  "motion": {
+    "preset": "local-run",
+    "seed": 4348,
+    "durationMs": 720,
+    "easing": "emphasized-decelerate",
+    "energy": 0.4,
+    "density": 0.28
+  },
+  "metrics": {
+    "directorEnabled": false,
+    "directorCalls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheCreationTokens": 0,
+    "rejectedPatches": 0,
+    "fallbackCount": 0,
+    "directorLatencyMs": 0
+  },
+  "handoff": null,
+  "interaction": null,
+  "pendingProjectionIds": [],
+  "eventWindow": [
+    {
+      "family": "received"
+    },
+    {
+      "family": "local-run",
+      "tool": "bash"
+    }
+  ],
+  "place": "machine",
+  "peerSend": null,
+  "groupPost": null,
+  "pendingChainToolIds": [],
+  "companionFocus": null
+}

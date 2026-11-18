@@ -197,7 +197,7 @@ test('gate: a hanging endpoint is aborted at the deadline', async () => {
   );
   const elapsed = Date.now() - startedAt;
   assert.ok(elapsed < 1000, `abort deadline honored (took ${elapsed}ms)`);
-  assert.equal(CEREBELLUM_MEMORY_WRITE_GATE_TIMEOUT_MS, 1500, 'default deadline stays at 1.5s');
+  assert.equal(CEREBELLUM_MEMORY_WRITE_GATE_TIMEOUT_MS, 2500, 'default deadline aligned to 2.5s');
 });
 
 // ---------------------------------------------------------------------------

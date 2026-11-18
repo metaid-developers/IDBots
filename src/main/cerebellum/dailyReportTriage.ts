@@ -42,7 +42,7 @@ function collapseWhitespace(value: unknown): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
 
-export const CEREBELLUM_DAILY_REPORT_TRIAGE_TIMEOUT_MS = 1500;
+export const CEREBELLUM_DAILY_REPORT_TRIAGE_TIMEOUT_MS = 2500;
 
 /**
  * Fraction of candidates that must come back with a usable noul before the

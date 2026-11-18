@@ -107,11 +107,10 @@ const sessionRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-compact-pol
   console.log('PASS  models without a context window get no policy entry')
 }
 
-// ID.Bots relay (metaid-free / metaso.network) routes keep the default 0.8
-// tier: the relay's old ~256K real-window carve-out (thresholdRatio 0.22 +
-// retainRatio 0.04) was reverted once the relay started failing
-// context-overflow rejections over to the next chain provider — the catalog
-// contract is advertise-1M/serve-1M, not lower the client threshold.
+// ID.Bots relay (idbots / metaid-free / metaso.network) large-window routes
+// compact at 0.35 (~350K-367K on 1M models) to curb ME token burn and
+// subscription-plan quota pressure, while keeping default retainRatio and
+// leaving non-relay routes (and evil-subdomain lookalikes) at 0.8.
 {
   const root = sessionRoot()
   const config = generateRuntimeConfig({
@@ -123,6 +122,7 @@ const sessionRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-compact-pol
         models: [
           { id: 'deepseek-4.1-flash', contextWindow: 1048576, maxOutputTokens: 256000 },
           { id: 'glm-5.3-flash', contextWindow: 1048576, maxOutputTokens: 131072 },
+          { id: 'small-relay-model', contextWindow: 131072, maxOutputTokens: 8192 },
         ],
       },
       { key: 'deepseek', native: true, apiFormat: 'openai', baseUrl: 'https://api.deepseek.com', apiKeyEnv: 'K2', models: [{ id: 'deepseek-flash', contextWindow: 1000000, maxOutputTokens: 256000 }] },
@@ -133,19 +133,29 @@ const sessionRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-compact-pol
   const policies = compactionEntry(config).config.modelPolicies
   assert.deepEqual(
     policies.find((p) => p.provider === 'metaid-free' && p.model === 'deepseek-4.1-flash'),
-    { provider: 'metaid-free', model: 'deepseek-4.1-flash', thresholdRatio: 0.8, headroomTokens: 41943 },
-    'relay×DeepSeek keeps the default tier and no retainRatio override',
+    { provider: 'metaid-free', model: 'deepseek-4.1-flash', thresholdRatio: 0.35, headroomTokens: 41943 },
+    'relay×DeepSeek large-window compacts at 0.35 with no retainRatio override',
   )
   assert.equal(
     policies.find((p) => p.provider === 'metaid-free' && p.model === 'glm-5.3-flash').thresholdRatio,
-    0.8,
-    'relay×GLM keeps the default tier',
+    0.35,
+    'relay×GLM large-window compacts at 0.35',
+  )
+  assert.equal(
+    policies.find((p) => p.provider === 'metaid-free' && p.model === 'small-relay-model').thresholdRatio,
+    0.9,
+    'relay small-window (<256K) stays at 0.9',
   )
   assert.equal(
     policies.find((p) => p.provider === 'deepseek-official' && p.model === 'deepseek-flash').thresholdRatio,
     0.8,
     'official DeepSeek keeps the default tier',
   )
+  assert.equal(
+    policies.find((p) => p.provider === 'other-relay' && p.model === 'deepseek-4.1-flash').thresholdRatio,
+    0.8,
+    'lookalike subdomain host must not match metaso.network relay policy',
+  )
   fs.rmSync(root, { recursive: true, force: true })
-  console.log('PASS  ID.Bots relay routes keep the default 0.8 compaction tier')
+  console.log('PASS  ID.Bots relay large-window routes compact at 0.35')
 }

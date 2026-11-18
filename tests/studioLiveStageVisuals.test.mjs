@@ -13,6 +13,8 @@ test('orb families keep one dark-glass material with calm-only autonomous breath
     'received', 'reasoning', 'speaking', 'local-recall', 'web2-research',
     'metaweb-research', 'making', 'delegation', 'waiting', 'worker-report',
     'verification', 'browser-action', 'owner-needed', 'problem', 'report-ready', 'complete',
+    'local-run', 'local-read', 'desktop-control', 'projecting', 'web-read',
+    'chain-write', 'chain-transfer', 'private-chat', 'group-task',
   ];
   for (const family of families) assert.equal(window.liquidOrbStyleForFamily(family), 9, family);
   const source = read('liquid-orb.js');
@@ -90,33 +92,34 @@ test('text pacing and the equalizer follow actual character updates only', () =>
   assert.match(css, /\.core-caret\{[^}]*animation:core-caret-blink/);
 });
 
-test('Avatar stays above glass and Worker handoff is a timed curved interaction', () => {
+test('Avatar stays above glass and the scene engine replaces the handoff/hybrid/particle visuals', () => {
   const css = read('stage.css');
   assert.match(css, /\.core-avatar\{[^}]*z-index:2;[^}]*width:112px;[^}]*height:112px/);
-  assert.match(css, /\.hybrid-avatar\{[^}]*width:42px;[^}]*height:42px/);
-  assert.match(css, /\.handoff-avatar\{[^}]*width:28px;[^}]*height:28px/);
-  assert.match(css, /\.handoff-person\{display:flex;align-items:center;gap:8px\}/);
   assert.match(css, /\.liquid-orb-canvas\{[^}]*z-index:1/);
   assert.match(css, /transition:opacity \.9s/);
   assert.match(css, /@keyframes core-breathe/);
   assert.match(css, /body\[data-motion="reduced"\] \.membrane-wrap\{animation:none;scale:1;filter:none\}/);
+  // retired layers are gone; the scene rail + hero slide replace them
+  assert.doesNotMatch(css, /hybrid-avatar|handoff-avatar|worker-constellation|handoff-flow|data-topology/);
+  assert.match(css, /\.companion-back\{z-index:2\}/);
+  assert.match(css, /\.companion-front\{z-index:4\}/);
+  assert.match(css, /body\[data-hero="true"\] \.core-entity\{left:56%/);
+  assert.match(css, /\.companion-rail\{[^}]*right:4\.5%;top:14%/);
   const stage = read('stage.js');
   assert.match(stage, /previous\.canvas\.dataset\.active = 'false'/);
   assert.match(stage, /previous\.fadeTimer = setTimeout\(\(\) => disposeOrbLayer\(previous\), 950\)/);
-  assert.match(stage, /handoff\.direction === 'return' \? '0;1' : '1;0'/);
-  assert.match(stage, /handoffTimer = setTimeout\(stopHandoff, 5000\)/);
-  assert.match(stage, /function layoutHandoff\(\)/);
-  assert.match(stage, /ctx\.quadraticCurveTo/);
-  assert.match(stage, /updateWorkerVisual\(nodes\.worker\)/);
-  assert.match(stage, /flow\.setAttribute\('hidden', ''\)/);
-  assert.match(stage, /flow\.removeAttribute\('hidden'\)/);
-  assert.doesNotMatch(stage, /\$\('\[data-handoff-flow\]'\)\.hidden/);
   assert.match(stage, /sharedResources: previous\?\.controller\?\.getSharedResources\(\)/);
   assert.match(stage, /if \(orbStarting \|\| orbFailed \|\| !state.enabled \|\| document.hidden\) return;/);
-  assert.match(stage, /reduced !== \(body\.dataset\.motion === 'reduced'\)/);
-  assert.match(read('stage.html'), /<animateMotion data-handoff-motion begin="indefinite" dur="2.8s" repeatCount="1"/);
-  assert.match(read('stage.html'), /data-worker-avatar/);
-  assert.match(read('stage.html'), /data-handoff-avatar/);
+  assert.doesNotMatch(stage, /handoff|worker-constellation|hybrid-node|drawParticles|restartParticles|particleClock/);
+  const html = read('stage.html');
+  assert.match(html, /data-companion-back/);
+  assert.match(html, /data-companion-front/);
+  assert.match(html, /data-group-members/);
+  assert.match(html, /data-companion-rail/);
+  assert.match(html, /data-transient-chip/);
+  assert.doesNotMatch(html, /handoff-flow|hybrid-node|worker-constellation|animateMotion/);
+  // the scene engine ships as its own asset, loaded before stage.js
+  assert.ok(html.indexOf('__STAGE_SCENES_JS__') < html.indexOf('__STAGE_JS__'));
   const window = {};
   vm.runInNewContext(read('liquid-orb-effect.js'), { window });
   assert.match(window.LiquidOrbEffectSource, /max\(ballA, emissionAlpha\)/);
@@ -126,7 +129,7 @@ test('Avatar stays above glass and Worker handoff is a timed curved interaction'
 test('interaction card renders through textContent only and drains clicks exactly once', () => {
   const stage = read('stage.js');
   assert.match(stage, /function renderInteraction\(\)/);
-  assert.match(stage, /renderInteraction\(\);\n    restartParticles\(\);/);
+  assert.match(stage, /renderInteraction\(\);\n    scenesApi\?\.update\(state\);/);
   assert.match(stage, /drainInteractions\(\) \{\n      const items = interactionQueue\.splice\(0, interactionQueue\.length\);\n      return items;\n    \}/);
   assert.match(stage, /data-interaction-question/);
   assert.match(stage, /interaction-custom/);
@@ -218,18 +221,123 @@ test('speaking keeps the base headline size and a wider brighter caption', () =>
   assert.match(css, /body\[data-family="speaking"\] \.core-copy p\{max-width:480px;color:#c9d3df;font-size:clamp\(16px,1\.5vw,20px\);line-height:1\.7\}/);
 });
 
-test('particles integrate phase and follow the orb activity multiplier', () => {
+test('the scene engine owns the rAF loop and applies state through update(state)', () => {
   const stage = read('stage.js');
-  // No absolute-time angle: energy/family changes retune velocity without
-  // teleporting the field, and reduced motion freezes the accumulated phase.
-  assert.doesNotMatch(stage, /t \* particle\.speed \* state\.motion\.energy/);
-  assert.match(stage, /particle\.phase \+= dt \* particle\.speed \* rate/);
-  assert.match(stage, /particle\.angle \+ particle\.phase/);
-  assert.match(stage, /PARTICLE_ACTIVITY = \{ working: 1\.75, speaking: \.6, resting: \.5 \}/);
+  const scenes = read('stage-scenes.js');
+  // the ambient particle field lives in the scene engine again (one shared
+  // persistent instance for mind+machine); stage.js only drives the engine.
+  assert.doesNotMatch(stage, /particleClock|drawParticles|restartParticles/);
+  assert.match(stage, /scenesApi\?\.update\(state\)/, 'applyState drives the scene engine');
+  assert.match(stage, /onFrame: updateTextMotion/, 'the engine frame hook keeps text pacing alive');
+  assert.match(stage, /scene: scenesApi\?\.debug\?\.\(\) \?\? null/, 'debug hook reports scene state');
+  assert.match(scenes, /window\.IDBotsLiveStageScenes/);
+  assert.match(scenes, /requestAnimationFrame\(loop\)/);
+  assert.match(scenes, /placeFactories\.particles/);
+  assert.match(scenes, /mind: 'particles', machine: 'particles'/, 'mind + machine share one persistent particle field');
+  assert.match(scenes, /placeFactories\['web-a'\]/);
+  assert.match(scenes, /placeFactories\['chain-a'\]/);
+  // prototype-only variants stay out of the production package
+  assert.doesNotMatch(scenes, /placeFactories\['web-b'\]|placeFactories\['chain-b'\]|wire globe|hex lattice/i);
+  // the starfield and circuit-board renderers are gone with the PCB route
+  assert.doesNotMatch(scenes, /starfield|const far = \[|const mid = \[|workerRoute|circuit/i);
   assert.match(stage, /liquidOrbActivityForFamily\(state\.family\)/);
-  assert.match(stage, /1 - Math\.exp\(-dt \/ \.8\)/, '~0.8 s ease toward the activity target');
-  assert.match(stage, /if \(!reduced && dt > 0\)/, 'reduced motion never advances the phase');
-  assert.match(stage, /particles: \{ activity: particleClock\.activity/, 'debug hook exposes the eased multiplier');
+});
+
+test('particles integrate phase and follow the orb activity multiplier', () => {
+  const scenes = read('stage-scenes.js');
+  // Ported verbatim from the pre-scene-system drawParticles: no absolute-time
+  // angle — energy/family changes retune velocity without teleporting the
+  // field, and reduced motion freezes the accumulated phase.
+  assert.doesNotMatch(scenes, /now \* particle\.speed \* state\.motion\.energy/);
+  assert.match(scenes, /p\.phase \+= dt \* p\.speed \* rate/);
+  assert.match(scenes, /p\.angle \+ p\.phase \+ seed \* \.0001/);
+  assert.match(scenes, /PARTICLE_ACTIVITY = \{ working: 1\.75, speaking: \.6, resting: \.5 \}/);
+  assert.match(scenes, /bucket === 'waiting' \? \.95/, 'waiting keeps its slow .95 multiplier');
+  assert.match(scenes, /1 - Math\.exp\(-dt \/ \.8\)/, '~0.8 s ease toward the activity target');
+  assert.match(scenes, /if \(!reduced && dt > 0\)/, 'reduced motion never advances the phase');
+  assert.match(scenes, /110 \+ random\(2\) \* 250/, 'radius band 110–360 from the original seed formula');
+  assert.match(scenes, /\.18 \+ p\.drift \* \.35/, 'original alpha formula');
+  assert.match(scenes, /index % 7 === 0/, 'cyan every seventh particle');
+  // gather pull returns for the recall/run/read families (old local-recall)
+  assert.match(scenes, /GATHER_FAMILIES = new Set\(\['local-recall', 'local-run', 'local-read'\]\)/);
+  assert.match(scenes, /\.68 \+ Math\.sin\(tNow \* \.8 \+ p\.drift \* 6\) \* \.18/);
+  // compressed orbit while a hero is active; presence orbit otherwise
+  assert.match(scenes, /heroNow\) return \{ x: \.65, y: \.45 \}/);
+  assert.match(scenes, /return \{ x: 1\.1, y: \.62 \}/);
+  // report-ready / complete fixed arc
+  assert.match(scenes, /-Math\.PI \* \.85 \+ \(index \/ particles\.length\) \* Math\.PI \* 1\.7/);
+});
+
+test('original worker connector curves: quadratic, dashed low-frequency, chevron head', () => {
+  const scenes = read('stage-scenes.js');
+  // Ported verbatim from the 36ff3c60d constellation block — curves only,
+  // never polylines; no orthogonal/45° route helper may remain.
+  assert.match(scenes, /g\.quadraticCurveTo\(ctrl\.x, ctrl\.y, toPt\.x, toPt\.y\)/);
+  assert.match(scenes, /const bend = Math\.min\(34, Math\.max\(12, Math\.abs\(dx\) \* \.12\)\)/);
+  assert.match(scenes, /x: r\.x - 4, y: r\.y \+ r\.h \/ 2/, 'card left-middle anchor');
+  assert.match(scenes, /g\.setLineDash\(\[5, 7\]\)/, 'dashed low-frequency waiting/verifying link');
+  assert.match(scenes, /dir === 'return' \|\| dir === 'verifying'/, 'returning direction');
+  assert.match(scenes, /family\(\) === 'waiting' \|\| dir === 'waiting' \|\| dir === 'verifying'/, 'low-frequency gate');
+  assert.match(scenes, /returning \? \.44 : \.38/, 'gold .44 / cyan .38 stroke alpha');
+  assert.match(scenes, /headLen = 7/, 'chevron head length');
+  assert.match(scenes, /angle - \.46/, 'chevron ±.46 rad');
+  assert.match(scenes, /lowFreqWait \? \.11 : \.32/, 'pulse speeds');
+  assert.match(scenes, /lowFreqWait \? 2 : 1/, 'two pulses while waiting');
+  assert.match(scenes, /lowFreqWait \? 2\.8 : 3\.5/, 'pulse radii');
+  assert.match(scenes, /t \* speed \+ index \* \.23 \+ pIdx \* \.5/, 'original pulse phase');
+  assert.doesNotMatch(scenes, /workerRoute/, 'no orthogonal route helper remains');
+});
+
+test('SCENE_TIME_SCALE slows only the new scene animations', () => {
+  const scenes = read('stage-scenes.js');
+  assert.match(scenes, /LS\.SCENE_TIME_SCALE = 0\.6;/);
+  // applied to place clocks, the scene clock, the group ring and reveals
+  assert.match(scenes, /entry\.key === 'particles' \? dt : dt \* LS\.SCENE_TIME_SCALE/, 'particle field exempt');
+  assert.match(scenes, /S\.tScene \+= dt \* LS\.SCENE_TIME_SCALE/, 'scene clock drives transients/verification/peers');
+  assert.match(scenes, /drawGroupRing\(gBack, gFront, dt \* LS\.SCENE_TIME_SCALE, ts, fx\)/, 'group ring slowed');
+  assert.match(scenes, /\(now - entry\.revealT0\) \* 1000 \* LS\.SCENE_TIME_SCALE/, 'reveal duration ×1/0.6');
+  // worker curves take the real clock t, not the slowed ts
+  assert.match(scenes, /drawWorker\(gFront, el, c\.status, fx, t, i, reduced\)/, 'worker curves exempt');
+});
+
+test('web/chain scene alpha is dimmed: base ×0.6, highlights ×0.75', () => {
+  const scenes = read('stage-scenes.js');
+  assert.match(scenes, /LS\.SCENE_ALPHA_BASE = 0\.6;/);
+  assert.match(scenes, /LS\.SCENE_ALPHA_HI = 0\.75;/);
+  assert.match(scenes, /g\.globalAlpha \*= aBase/, 'web mesh statics dimmed');
+  assert.match(scenes, /0\.12 \* fade \* m \* aHi/, 'web waves are highlights');
+  assert.match(scenes, /0\.13 \* m \* dimMul \+ \(boost \* 0\.42 \+ flash\) \* mHi \* dimMul/, 'chain block base vs lift/flash split');
+});
+
+test('scene avatars always resolve to a valid src and swap to the fallback once', () => {
+  const scenes = read('stage-scenes.js');
+  assert.match(scenes, /function setAvatar\(img, src\)/);
+  assert.match(scenes, /window\.__FALLBACK_AVATAR__/);
+  assert.match(scenes, /addEventListener\('error', \(\) => \{\s*if \(img\.src !== fb\) img\.src = fb;\s*\}, \{ once: true \}\)/, 'one-shot error swap, no retry loop');
+  const stack = scenes.match(/setAvatar\(img, person\(pid\)\.avatar\)/);
+  assert.ok(stack, 'group rail stack avatars use the fallback helper');
+  assert.match(scenes, /setAvatar\(img, person\(c\.who\)\.avatar\)/, 'rail avatars use the fallback helper');
+  assert.match(scenes, /setAvatar\(img, p\.avatar\)/, 'member/twin avatars use the fallback helper');
+});
+
+test('orb presets for the computer families revert to their original equivalents', () => {
+  const orb = read('liquid-orb.js');
+  assert.match(orb, /'local-recall': \{ style: 9, speed: \.85, radius: \.72, warp: 3\.5, contourDeform: \.55, glassOpacity: \.64, edgeGlow: \.08 \}/);
+  assert.match(orb, /'local-run': \{ style: 9, speed: \.85, radius: \.72, warp: 3\.5, contourDeform: \.55, glassOpacity: \.64, edgeGlow: \.08 \}/, 'local-run = local-recall values');
+  assert.match(orb, /'local-read': \{ style: 9, speed: \.85, radius: \.72, warp: 3\.5, contourDeform: \.55, glassOpacity: \.64, edgeGlow: \.08 \}/, 'local-read = local-recall values');
+  assert.match(orb, /'browser-action': \{ style: 9, speed: \.92, radius: \.72, warp: 3\.6, contourDeform: \.48, glassOpacity: \.64, edgeGlow: \.08 \}/);
+  assert.match(orb, /'desktop-control': \{ style: 9, speed: \.92, radius: \.72, warp: 3\.6, contourDeform: \.48, glassOpacity: \.64, edgeGlow: \.08 \}/, 'desktop-control = browser-action values');
+  assert.match(orb, /projecting: \{ style: 9, speed: \.92, radius: \.72, warp: 3\.6, contourDeform: \.48, glassOpacity: \.64, edgeGlow: \.08 \}/, 'projecting = browser-action values');
+});
+
+test('the family membrane poses survive the scene engine (resting breathing regression)', () => {
+  const css = read('stage.css');
+  // The 2026-11-18 regression: a blanket body[data-family] reset added after
+  // the family rules killed the report-ready/complete membrane transforms at
+  // equal specificity. It must never come back.
+  assert.doesNotMatch(css, /body\[data-family\] \.membrane-wrap\{transform:none/);
+  assert.match(css, /body\[data-family="complete"\] \.membrane-wrap\{transform:scale\(\.88\)\}/);
+  assert.match(css, /body\[data-family="report-ready"\] \.membrane-wrap\{transform:translateY\(-14px\) scale\(\.9\)\}/);
 });
 
 test('WebGPU orb compiles pipelines asynchronously and tears down late timed-out devices', () => {
@@ -293,11 +401,10 @@ test('WebGPU orb specializes and dead-code strips WGSL and provides a pixel-equi
   assert.match(main, /\\\[\(\?:LiveStage\|GenesisStage\|LiquidOrb\)\\\]\|WebGPU\|WebGL/);
 });
 
-test('worker visual sets avatar src without flickering and derives fallback initial from worker label', () => {
-  const stage = read('stage.js');
-  assert.match(stage, /fallback\.textContent = initial \|\| 'W'/);
-  assert.match(stage, /image\.dataset\.workerAvatarSrc !== avatar/);
-  assert.match(stage, /handoffImage\.dataset\.workerAvatarSrc !== avatar/);
+test('companion rail avatars only accept the validated avatar schemes', () => {
+  const scenes = read('stage-scenes.js');
+  assert.match(scenes, /VALID_AVATAR = \/\^\(\?:data:image\\\/\|https\?:\\\/\\\/\|avatars\\\/\)\/i/);
   const css = read('stage.css');
-  assert.match(css, /\.hybrid-avatar\[hidden\],\.handoff-avatar\[hidden\],\[data-worker-fallback\]\[hidden\]\{display:none\}/);
+  assert.match(css, /\.rail-avatar\{width:28px;height:28px/);
+  assert.match(css, /\.rail-item\[data-hero="peer"\] \.rail-avatar\{width:40px;height:40px/);
 });

@@ -13,7 +13,7 @@
 import type { ResolvedCerebellumConfig } from '../libs/cerebellumConfig';
 import type { CerebellumFetchLike } from './memoryRank';
 
-export const CEREBELLUM_WORKER_RANK_TIMEOUT_MS = 1500;
+export const CEREBELLUM_WORKER_RANK_TIMEOUT_MS = 2500;
 export const CEREBELLUM_WORKER_RANK_MAX_OPTIONS = 255;
 /** How many ranked workers the planning hint shows. */
 export const CEREBELLUM_WORKER_RANK_TOP_K = 3;

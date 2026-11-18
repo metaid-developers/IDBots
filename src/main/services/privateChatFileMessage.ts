@@ -244,7 +244,6 @@ const resolveInboundDir = (): string => {
     // Lazy require: this module must stay loadable outside a running Electron
     // app (unit tests, headless harnesses) where `require('electron')` either
     // throws or resolves to a path string instead of the API object.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const electron = require('electron') as { app?: { getPath?: (name: string) => string } };
     baseDir = electron?.app?.getPath?.('userData') ?? '';
   } catch {

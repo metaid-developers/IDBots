@@ -24,7 +24,7 @@ import type { ResolvedCerebellumConfig } from '../libs/cerebellumConfig';
 import type { CerebellumFetchLike } from './memoryRank';
 
 /** Same hard abort deadline as the other per-turn cerebellum calls. */
-export const CEREBELLUM_KNOWLEDGE_RANK_TIMEOUT_MS = 1500;
+export const CEREBELLUM_KNOWLEDGE_RANK_TIMEOUT_MS = 2500;
 
 /**
  * How many newest active points are sent in one request. The hot layer only

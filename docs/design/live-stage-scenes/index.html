@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Stage 场景系统 · 设计原型</title>
+  <link rel="stylesheet" href="../../../public/live-stage/stage.css" />
+  <link rel="stylesheet" href="proto.css" />
+</head>
+<body data-orb-backend="loading" data-motion="full" data-activity="resting" data-family="idle" data-voice="off" data-has-report="false">
+<div class="proto-shell">
+  <aside class="proto-sidebar">
+    <div class="proto-brand">
+      <span data-i18n-brand>Live Stage 场景系统</span>
+      <small data-i18n-brand-sub>design prototype · draft for owner review</small>
+    </div>
+    <nav class="proto-catalog" data-catalog></nav>
+  </aside>
+  <div class="proto-main">
+    <div class="proto-topbar">
+      <div class="proto-topbar-group" data-scenario-buttons></div>
+      <div class="proto-topbar-group">
+        <button class="proto-btn" data-step-prev title="←">‹</button>
+        <button class="proto-btn proto-btn-primary" data-play-pause>▶</button>
+        <button class="proto-btn" data-step-next title="→">›</button>
+        <button class="proto-btn" data-speed>1×</button>
+      </div>
+      <div class="proto-topbar-group proto-topbar-right">
+        <button class="proto-btn" data-open-table>状态总表 · Catalog</button>
+        <button class="proto-btn" data-open-tweaks>调参 · Tweaks</button>
+      </div>
+    </div>
+    <div class="proto-stagewrap" data-stagewrap>
+      <div class="stage-frame" data-stage-frame>
+        <main class="live-stage" aria-live="polite">
+          <div class="core-aurora"></div>
+          <canvas class="core-canvas" data-place-canvas aria-hidden="true"></canvas>
+          <canvas class="companion-back" data-companion-back aria-hidden="true"></canvas>
+          <div class="core-topline">
+            <div class="core-presence"><img data-avatar src="../../../public/live-stage/default_metabot.png" alt="" /><span data-bot-name>AI_Sunny</span></div>
+            <span class="core-family" data-core-family></span>
+          </div>
+          <section class="core-copy">
+            <div class="core-kicker" data-core-verb><span class="core-elapsed" data-core-elapsed hidden></span></div>
+            <h1 data-core-title></h1>
+            <p data-core-caption></p>
+          </section>
+          <div class="core-entity" data-core-entity>
+            <div class="membrane-wrap">
+              <div class="orb-halo" data-orb-halo></div>
+              <div class="membrane"><img class="core-avatar" data-avatar src="../../../public/live-stage/default_metabot.png" alt="Current bot avatar" /></div>
+              <div class="core-voice" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+            </div>
+          </div>
+          <canvas class="companion-front" data-companion-front aria-hidden="true"></canvas>
+          <div class="group-members" data-group-members aria-hidden="true"></div>
+          <aside class="companion-rail" data-companion-rail aria-hidden="true"></aside>
+          <div class="transient-chip" data-transient-chip hidden></div>
+          <button class="core-report-ready" type="button" data-report-open hidden><span data-report-ready-text>汇报就绪</span><span data-report-open-label>打开汇报</span></button>
+          <section class="interaction-card" data-interaction-card hidden></section>
+        </main>
+      </div>
+    </div>
+    <div class="proto-inspector" data-inspector></div>
+  </div>
+</div>
+
+<div class="proto-drawer" data-tweaks hidden>
+  <div class="proto-drawer-head">
+    <strong data-i18n-tweaks>调参 · Tweaks</strong>
+    <button class="proto-btn" data-close-tweaks>×</button>
+  </div>
+  <div class="proto-drawer-body" data-tweaks-body></div>
+</div>
+
+<div class="proto-table-overlay" data-table-overlay hidden>
+  <div class="proto-table-panel">
+    <div class="proto-drawer-head">
+      <strong data-i18n-table>状态总表 · Catalog table</strong>
+      <button class="proto-btn" data-close-table>×</button>
+    </div>
+    <div class="proto-table-body" data-table-body></div>
+  </div>
+</div>
+
+<script src="catalog.js"></script>
+<script src="../../../public/live-stage/liquid-orb-effect.js"></script>
+<script src="../../../public/live-stage/liquid-orb.js"></script>
+<script src="places.js"></script>
+<script src="places-machine.js"></script>
+<script src="places-web.js"></script>
+<script src="places-chain.js"></script>
+<script src="companions.js"></script>
+<script src="proto.js"></script>
+</body>
+</html>

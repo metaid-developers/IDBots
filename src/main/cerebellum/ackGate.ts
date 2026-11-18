@@ -44,7 +44,7 @@ import type { CerebellumFetchLike } from './memoryRank';
  * onto first-sentence latency. The 2026-10-16 server baseline (relay P50
  * 217ms / P99 412ms) leaves ~3x headroom, and a timeout simply fails open.
  */
-export const CEREBELLUM_TURN_ACK_GATE_TIMEOUT_MS = 1500;
+export const CEREBELLUM_TURN_ACK_GATE_TIMEOUT_MS = 2500;
 
 /**
  * Noul probability at or above which the turn keeps its first-sentence bubble.

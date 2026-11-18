@@ -937,6 +937,8 @@ export interface CoworkSessionSummary {
   /** Only populated by listArchivedSessions. */
   archivedAt?: number | null;
   sessionType?: CoworkSessionType;
+  /** Remote peer MetaBot's globalmetaid (A2A sessions only). */
+  peerGlobalMetaId?: string | null;
   peerName?: string | null;
   /** Remote peer MetaBot's avatar (A2A sessions only) */
   peerAvatar?: string | null;
@@ -990,6 +992,18 @@ export interface CoworkSessionSummary {
   projectId?: string | null;
   /** Working directory the session runs in; used by the sidebar's by-project grouping. */
   cwd?: string | null;
+}
+
+/** Slim a2a peer-session row for the Live Stage companion rail. */
+export interface CoworkRecentPeerSession {
+  id: string;
+  status: CoworkSessionStatus;
+  peerGlobalMetaId: string;
+  peerName: string | null;
+  peerAvatar: string | null;
+  peerAvatarVersion?: number | null;
+  /** COALESCE(activity_at, updated_at) — the last real conversation event. */
+  activityAt: number;
 }
 
 export type CoworkUserMemoryStatus = 'created' | 'stale' | 'deleted';
@@ -4737,6 +4751,7 @@ export class CoworkStore implements MemoryBackend {
       pinned: number | null;
       metabot_id?: number | null;
       session_type?: string | null;
+      peer_global_metaid?: string | null;
       peer_name?: string | null;
       peer_avatar?: string | null;
       peer_avatar_version?: number | null;
@@ -4793,6 +4808,7 @@ export class CoworkStore implements MemoryBackend {
         s.pinned,
         s.metabot_id,
         s.session_type,
+        s.peer_global_metaid,
         s.peer_name,
         ${peerAvatarColumnsSql}
         mb.name AS metabot_name,
@@ -4878,6 +4894,7 @@ export class CoworkStore implements MemoryBackend {
       updatedAt: parseIdNumber(row.activity_at) ?? row.updated_at,
       metabotId: parseIdNumber(row.metabot_id),
       sessionType: (row.session_type === 'agent_agent' ? 'a2a' : row.session_type as CoworkSessionType) || 'standard',
+      peerGlobalMetaId: row.peer_global_metaid ?? null,
       peerName: row.peer_name ?? null,
       peerAvatar: row.peer_avatar ?? null,
       ...(row.peer_avatar_version != null ? { peerAvatarVersion: parseIdNumber(row.peer_avatar_version) } : {}),
@@ -4957,6 +4974,90 @@ export class CoworkStore implements MemoryBackend {
     }));
   }
 
+  /**
+   * Recent a2a peer sessions of one MetaBot — the bounded read backing the
+   * Live Stage companion rail. Ordering and superseded-episode exclusion
+   * mirror listSessions; the peer-avatar column logic is the same so rail
+   * avatars render identically to the session list.
+   */
+  listRecentPeerSessions(options: {
+    metabotId: number;
+    sinceMs: number;
+    limit?: number;
+    omitInlinePeerDataAvatar?: boolean;
+  }): CoworkRecentPeerSession[] {
+    const metabotId = Math.trunc(options?.metabotId ?? 0);
+    if (!Number.isFinite(metabotId) || metabotId <= 0) return [];
+    const sinceMs = Math.max(0, Math.trunc(options?.sinceMs ?? 0));
+    const limit = Math.max(1, Math.min(50, Math.trunc(options?.limit ?? 4)));
+    const peerAvatarColumnsSql = options?.omitInlinePeerDataAvatar === true
+      ? `CASE WHEN s.peer_avatar LIKE 'data:%' THEN NULL ELSE s.peer_avatar END AS peer_avatar,
+        CASE WHEN s.peer_avatar LIKE 'data:%' THEN (s.updated_at * 1000 + (LENGTH(s.peer_avatar) % 1000)) ELSE NULL END AS peer_avatar_version,`
+      : `s.peer_avatar,
+        NULL AS peer_avatar_version,`;
+    const rows = this.getAll<{
+      id: string;
+      status: string;
+      peer_global_metaid: string | null;
+      peer_name: string | null;
+      peer_avatar?: string | null;
+      peer_avatar_version?: number | null;
+      activity_at: number;
+    }>(`
+      SELECT
+        s.id,
+        s.status,
+        s.peer_global_metaid,
+        s.peer_name,
+        ${peerAvatarColumnsSql}
+        COALESCE(s.activity_at, s.updated_at) AS activity_at
+      FROM cowork_sessions s
+      WHERE s.session_type IN ('a2a', 'agent_agent')
+        AND s.metabot_id = ?
+        AND s.archived_at IS NULL
+        AND s.peer_global_metaid IS NOT NULL
+        AND TRIM(s.peer_global_metaid) != ''
+        AND COALESCE(s.activity_at, s.updated_at) >= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM a2a_conversation_episodes episode
+          WHERE episode.session_id = s.id AND episode.next_session_id IS NOT NULL
+        )
+      ORDER BY COALESCE(s.activity_at, s.updated_at) DESC, s.updated_at DESC, s.id DESC
+      LIMIT ?
+    `, [metabotId, sinceMs, limit]);
+    return rows.map((row) => ({
+      id: row.id,
+      status: row.status as CoworkSessionStatus,
+      peerGlobalMetaId: (row.peer_global_metaid ?? '').trim(),
+      peerName: row.peer_name ?? null,
+      peerAvatar: row.peer_avatar ?? null,
+      ...(row.peer_avatar_version != null ? { peerAvatarVersion: parseIdNumber(row.peer_avatar_version) } : {}),
+      activityAt: Number(row.activity_at),
+    })).filter((row) => row.peerGlobalMetaId.length > 0);
+  }
+
+  /**
+   * Latest identity snapshot of an a2a peer — one indexed row lookup, used
+   * by Live Stage peer synthesis instead of scanning the session list.
+   */
+  getLatestPeerSessionIdentity(
+    peerGlobalMetaId: string,
+  ): { peerName: string | null; peerAvatar: string | null } | null {
+    const peer = (peerGlobalMetaId ?? '').trim();
+    if (!peer) return null;
+    const row = this.getOne<{ peer_name: string | null; peer_avatar: string | null }>(`
+      SELECT s.peer_name, s.peer_avatar
+      FROM cowork_sessions s
+      WHERE s.session_type IN ('a2a', 'agent_agent')
+        AND s.peer_global_metaid = ?
+        AND s.archived_at IS NULL
+      ORDER BY COALESCE(s.activity_at, s.updated_at) DESC, s.updated_at DESC, s.id DESC
+      LIMIT 1
+    `, [peer]);
+    if (!row) return null;
+    return { peerName: row.peer_name ?? null, peerAvatar: row.peer_avatar ?? null };
+  }
+
   getSessionSummary(
     sessionId: string,
     options?: { omitInlinePeerDataAvatar?: boolean },
@@ -4977,6 +5078,7 @@ export class CoworkStore implements MemoryBackend {
       pinned: number | null;
       metabot_id?: number | null;
       session_type?: string | null;
+      peer_global_metaid?: string | null;
       peer_name?: string | null;
       peer_avatar?: string | null;
       peer_avatar_version?: number | null;
@@ -5010,6 +5112,7 @@ export class CoworkStore implements MemoryBackend {
         s.pinned,
         s.metabot_id,
         s.session_type,
+        s.peer_global_metaid,
         s.peer_name,
         ${peerAvatarColumnsSql}
         mb.name AS metabot_name,
@@ -5067,6 +5170,7 @@ export class CoworkStore implements MemoryBackend {
       updatedAt: parseIdNumber(row.activity_at) ?? row.updated_at,
       metabotId,
       sessionType: (row.session_type === 'agent_agent' ? 'a2a' : row.session_type as CoworkSessionType) || 'standard',
+      peerGlobalMetaId: row.peer_global_metaid ?? null,
       peerName: row.peer_name ?? null,
       peerAvatar: row.peer_avatar ?? null,
       ...(row.peer_avatar_version != null ? { peerAvatarVersion: parseIdNumber(row.peer_avatar_version) } : {}),
@@ -6404,6 +6508,42 @@ export class CoworkStore implements MemoryBackend {
     };
   }
 
+  /**
+   * Latest a2a chat message that carries a direction marker (incoming/outgoing)
+   * — the Live Stage private-chat rail's recency/status signal. Skips thinking
+   * drafts and no-reply bookkeeping, scanning the newest `scanLimit` chat
+   * bubbles so a direction-less row in between cannot hide the real one.
+   */
+  getSessionLatestDirectionalMessage(sessionId: string, scanLimit = 12): CoworkMessage | null {
+    const rows = this.getAll<CoworkMessageRow>(`
+      SELECT id, type, content, metadata, created_at, sequence
+      FROM cowork_messages
+      WHERE session_id = ?
+        AND type IN ('user', 'assistant')
+        AND (metadata IS NULL OR metadata NOT LIKE '%"isThinking":true%')
+        AND (metadata IS NULL OR metadata NOT LIKE '%"privateChatNoReply":true%')
+      ORDER BY
+        created_at DESC,
+        COALESCE(sequence, 0) DESC,
+        ROWID DESC
+      LIMIT ?
+    `, [sessionId, Math.max(1, Math.min(50, Math.trunc(scanLimit)))]);
+
+    for (const row of rows) {
+      const metadata = row.metadata ? JSON.parse(row.metadata) : undefined;
+      const direction = (metadata as { direction?: unknown } | undefined)?.direction;
+      if (direction !== 'incoming' && direction !== 'outgoing') continue;
+      return {
+        id: row.id,
+        type: row.type as CoworkMessageType,
+        content: row.content,
+        timestamp: row.created_at,
+        metadata,
+      };
+    }
+    return null;
+  }
+
   private shouldApplyExplicitMemoryFromUserText(text: string, guardLevel: CoworkMemoryGuardLevel): boolean {
     const trimmed = text?.trim();
     if (!trimmed) return false;
@@ -6646,8 +6786,28 @@ export class CoworkStore implements MemoryBackend {
       sequence,
       metadata: message.metadata,
     };
+    if (this.chatMessagePersistedHook && metadataJson && metadataJson.includes('"direction"')) {
+      const sessionType = this.getOne<{ session_type?: string | null }>(
+        'SELECT session_type FROM cowork_sessions WHERE id = ? LIMIT 1',
+        [sessionId],
+      )?.session_type;
+      if (sessionType === 'a2a' || sessionType === 'agent_agent') {
+        try {
+          this.chatMessagePersistedHook(sessionId);
+        } catch {
+          // Hook failures never break message persistence.
+        }
+      }
+    }
     this.enqueueExplicitMemoryUpdate(sessionId, createdMessage);
     return createdMessage;
+  }
+
+  /** Optional hook fired when an a2a (private-chat) message is persisted (Live Stage rail refresh). */
+  private chatMessagePersistedHook: ((sessionId: string) => void) | null = null;
+
+  setChatMessagePersistedHook(hook: ((sessionId: string) => void) | null): void {
+    this.chatMessagePersistedHook = hook;
   }
 
   getMessageById(sessionId: string, messageId: string): CoworkMessage | null {

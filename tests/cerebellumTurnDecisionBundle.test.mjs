@@ -420,7 +420,7 @@ test('runCerebellumTurnDecisions: abort/timeout degrades to null and keeps the 1
   });
   assert.equal(results, null);
   assert.ok(Date.now() - startedAt < 1000, 'abort deadline honored');
-  assert.equal(CEREBELLUM_TURN_DECISION_TIMEOUT_MS, 1500, 'default deadline stays at 1.5s');
+  assert.equal(CEREBELLUM_TURN_DECISION_TIMEOUT_MS, 2500, 'default deadline aligned to 2.5s');
 });
 
 test('runCerebellumTurnDecisions: payload accounting counts every decision once', async () => {

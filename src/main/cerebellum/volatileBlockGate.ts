@@ -41,7 +41,7 @@ import type { ResolvedCerebellumConfig } from '../libs/cerebellumConfig';
 import type { CerebellumFetchLike } from './memoryRank';
 
 /** Same hard abort deadline as every other cerebellum call site. */
-export const CEREBELLUM_VOLATILE_GATE_TIMEOUT_MS = 1500;
+export const CEREBELLUM_VOLATILE_GATE_TIMEOUT_MS = 2500;
 
 /**
  * Cap for `state.user_message`: a single chat message is normally small, but

@@ -53,6 +53,7 @@ import type { MemoryBackend } from './memory/memoryBackend';
 import { createOwnerMemoryScope } from './memory/memoryScope';
 import { CEREBELLUM_FREE_PROVIDER, resolveCerebellumConfig, type ResolvedCerebellumConfig } from './libs/cerebellumConfig';
 import {
+  createDirectFirstFetch,
   createJevRelayCallRecorder,
   createJevRelayFetchWithKeyRetry,
   createSignalBoundedFetch,
@@ -600,7 +601,8 @@ import {
   initBotBrowserProjectionService,
 } from './services/botBrowserProjectionService';
 import { createStudioLiveStageService, type StudioLiveStageService } from './services/studioLiveStageService';
-import { buildStudioLiveTaskHud } from './services/studioLiveStageModel';
+import { buildStudioLiveTaskHud, type LiveStageGroupMember, type LiveStageGroupThread, type LiveStagePeerThread } from './services/studioLiveStageModel';
+import { deriveGroupThreadStatus, derivePrivateChatStatus, groupThreadTitle, privateChatPreview, GROUP_THREAD_ACTIVE_WINDOW_MS, MAX_ACTIVE_GROUPS, MAX_ACTIVE_PEERS, MAX_GROUP_MEMBERS, PRIVATE_CHAT_ACTIVE_WINDOW_MS } from './services/studioLiveStageCompanions';
 import { listStudioOpenDelegations } from './services/studioOpenDelegations';
 import { describeStudioProjectionBlock } from './services/studioProjectionGate';
 import { applyStudioLiveStagePatch, drainStudioLiveStageInteractions, executeStageFrameScript } from './services/studioLiveStageFrame';
@@ -3745,15 +3747,23 @@ const cerebellumFetchFor = (config: ResolvedCerebellumConfig) => {
   // included. The bind's overloaded signature defeats the wrappers' generic
   // inference, so pin the shape every cerebellum call site consumes
   // (ok/status/json).
-  const rawFetch = createSignalBoundedFetch(
-    session.defaultSession.fetch.bind(session.defaultSession) as unknown as (
-      url: string,
-      init: Record<string, unknown>,
-    ) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>,
-  );
+  type CerebellumFetch = (
+    url: string,
+    init: Record<string, unknown>,
+  ) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+  const sessionFetch = session.defaultSession.fetch.bind(session.defaultSession) as unknown as CerebellumFetch;
   if (config.provider !== CEREBELLUM_FREE_PROVIDER) {
-    return rawFetch;
+    // Direct TypeSafe (`api.typesafe.ai`) may be region-blocked unless routed
+    // through the system proxy via session.defaultSession.fetch.
+    return createSignalBoundedFetch(sessionFetch);
   }
+  // IDBots-JEV (`www.metaso.network`) prefers direct Node fetch (~20ms warm,
+  // avoiding slow local proxy TLS handshakes) and falls back to sessionFetch
+  // only when direct transport fails.
+  const directFetch = globalThis.fetch.bind(globalThis) as unknown as CerebellumFetch;
+  const rawFetch = createSignalBoundedFetch(
+    createDirectFirstFetch(directFetch, sessionFetch),
+  );
   return createJevRelayCallRecorder(createJevRelayFetchWithKeyRetry(rawFetch));
 };
 
@@ -4588,7 +4598,12 @@ const runIdleStartupSteps = (steps: StartupIdleStep[]): void => {
  * the chain indexer flip-flops on (EP28 "claude bot" display bug).
  */
 const wireGroupChatIngestHooks = (): void => {
-  setGroupMessageInsertedHook((groupId) => getAgentGameHost()?.onGroupMessage(groupId));
+  setGroupMessageInsertedHook((groupId) => {
+    getAgentGameHost()?.onGroupMessage(groupId);
+    scheduleLiveStageCompanionsRefresh();
+  });
+  // a2a (private-chat) message persistence → debounced stage rail refresh.
+  getCoworkStore().setChatMessagePersistedHook(() => scheduleLiveStageCompanionsRefresh());
   setLocalSenderNameResolver(
     (globalMetaId) => getMetabotStore().getMetabotByGlobalMetaId(globalMetaId)?.name?.trim() || null,
   );
@@ -9712,6 +9727,241 @@ const listOpenStudioDelegationsForBotStage = (sessionId: string) => {
   return merged;
 };
 
+/** group_chat_messages.chain_timestamp and group_tasks.last_driven_at are unix seconds; normalize to ms. */
+const stageTimestampToMs = (value: number | null | undefined): number | null => {
+  if (value == null || !Number.isFinite(value) || value <= 0) return null;
+  return value < 1e12 ? Math.floor(value * 1000) : Math.floor(value);
+};
+
+/**
+ * Live Stage companion rail: the Studio session's MetaBot's recent A2A
+ * (private-chat) sessions — not archived, active within 10 minutes, newest
+ * first, capped at 4.
+ */
+const listActivePrivateChatsForStage = (sessionId: string): LiveStagePeerThread[] => {
+  const session = getCoworkStore().getSessionWithoutMessages(sessionId);
+  const metabotId = session?.metabotId ?? null;
+  if (metabotId == null) return [];
+  const nowMs = Date.now();
+  const store = getCoworkStore();
+  return store
+    .listRecentPeerSessions({ metabotId, sinceMs: nowMs - PRIVATE_CHAT_ACTIVE_WINDOW_MS, limit: MAX_ACTIVE_PEERS })
+    .map((s) => {
+      const latest = store.getSessionLatestDirectionalMessage(s.id);
+      const status = derivePrivateChatStatus({
+        sessionRunning: s.status === 'running',
+        latest: latest ? {
+          direction: latest.metadata?.direction === 'incoming' ? 'incoming' : 'outgoing',
+          at: latest.timestamp,
+        } : null,
+      }, nowMs);
+      const preview = privateChatPreview(latest?.content);
+      return {
+        id: s.peerGlobalMetaId,
+        name: (s.peerName ?? '').trim() || s.peerGlobalMetaId,
+        ...(s.peerAvatar ? { avatar: s.peerAvatar } : {}),
+        status,
+        ...(preview ? { preview } : {}),
+        updatedAt: latest?.timestamp ?? s.activityAt,
+      };
+    });
+};
+
+/**
+ * Build one stage group-thread entry. `chairMetabotId`/`taskId` identify a
+ * local group task (members from listMembers + chair); `membershipOnly`
+ * builds a remote OpenTeam group whose only known member is this bot.
+ */
+const buildStageGroupThread = (input: {
+  groupId: string;
+  title: string;
+  metabotId: number;
+  taskId?: number;
+  chairMetabotId?: number | null;
+  membershipOnly?: boolean;
+}): LiveStageGroupThread => {
+  const { groupId, title, metabotId } = input;
+  const selfBot = getMetabotStore().getMetabotById(metabotId);
+  const selfGlobalMetaId = (selfBot?.globalmetaid ?? '').trim();
+  const selfId = selfGlobalMetaId || `bot:${metabotId}`;
+  const members: LiveStageGroupMember[] = [];
+  if (input.membershipOnly === true) {
+    const { avatar, avatarRef } = resolveMetabotStageAvatarBundle(selfBot);
+    members.push({
+      id: selfId,
+      name: (selfBot?.name ?? '').trim().slice(0, 80) || 'Bot',
+      ...(avatar ? { avatar } : {}),
+      ...(avatarRef ? { avatarRef } : {}),
+      self: true,
+    });
+  } else if (input.taskId != null) {
+    for (const row of getGroupTaskStore().listMembers(input.taskId)) {
+      const bot = row.metabotId != null ? getMetabotStore().getMetabotById(row.metabotId) : null;
+      const globalId = (row.globalmetaid ?? bot?.globalmetaid ?? '').trim();
+      const { avatar, avatarRef } = resolveMetabotStageAvatarBundle(bot);
+      members.push({
+        id: globalId || (row.metabotId != null ? `bot:${row.metabotId}` : `member:${row.id}`),
+        name: (row.displayName ?? row.name ?? bot?.name ?? '').trim().slice(0, 80) || 'Bot',
+        ...(avatar ? { avatar } : {}),
+        ...(avatarRef ? { avatarRef } : {}),
+        role: row.role === 'chair' ? 'chair' : 'worker',
+        // A member without a local metabots row is a remote OpenTeam guest.
+        ...(row.metabotId == null ? { openteam: true } : {}),
+        ...(row.metabotId === metabotId ? { self: true } : {}),
+      });
+    }
+    if (input.chairMetabotId != null) {
+      const chairBot = getMetabotStore().getMetabotById(input.chairMetabotId);
+      const chairGlobalId = (chairBot?.globalmetaid ?? '').trim();
+      const chairId = chairGlobalId || `bot:${input.chairMetabotId}`;
+      if (!members.some((member) => member.id === chairId)) {
+        const { avatar, avatarRef } = resolveMetabotStageAvatarBundle(chairBot);
+        members.unshift({
+          id: chairId,
+          name: (chairBot?.name ?? '').trim().slice(0, 80) || 'Bot',
+          ...(avatar ? { avatar } : {}),
+          ...(avatarRef ? { avatarRef } : {}),
+          role: 'chair',
+          ...(input.chairMetabotId === metabotId ? { self: true } : {}),
+        });
+      }
+    }
+  }
+  return {
+    id: groupId,
+    title: groupThreadTitle(title) || groupId.slice(0, 12),
+    status: 'active',
+    members: members.slice(0, MAX_GROUP_MEMBERS),
+    memberCount: members.length,
+    openteam: input.membershipOnly === true || members.some((member) => member.openteam === true),
+    updatedAt: 0,
+  };
+};
+
+/**
+ * Live Stage companion rail: group tasks this MetaBot chairs or works in
+ * (planning/executing/review, not archived) plus its active OpenTeam
+ * memberships — only those with chat or daemon activity in the last 30
+ * minutes, max 2 by recency.
+ */
+const listActiveGroupThreadsForStage = (sessionId: string): LiveStageGroupThread[] => {
+  const session = getCoworkStore().getSessionWithoutMessages(sessionId);
+  const metabotId = session?.metabotId ?? null;
+  if (metabotId == null) return [];
+  const nowMs = Date.now();
+  const store = getGroupTaskStore();
+  const selfGlobalMetaId = (getMetabotStore().getMetabotById(metabotId)?.globalmetaid ?? '').trim();
+  const selfId = selfGlobalMetaId || `bot:${metabotId}`;
+  const seen = new Set<string>();
+  const ranked: LiveStageGroupThread[] = [];
+  const consider = (groupId: string | null | undefined, base: LiveStageGroupThread, drivenAtMs: number | null): void => {
+    if (!groupId || seen.has(groupId)) return;
+    seen.add(groupId);
+    const latest = store.listGroupChatMessages(groupId, { limit: 1 })[0] ?? null;
+    const latestAtMs = stageTimestampToMs(latest?.chainTimestamp);
+    const recencyMs = Math.max(latestAtMs ?? 0, drivenAtMs ?? 0);
+    if (recencyMs <= 0 || nowMs - recencyMs > GROUP_THREAD_ACTIVE_WINDOW_MS) return;
+    const senderGlobalId = (latest?.senderGlobalMetaId ?? '').trim();
+    const senderMember = senderGlobalId ? base.members.find((member) => member.id === senderGlobalId) : undefined;
+    const senderId = senderMember?.id ?? (senderGlobalId || undefined);
+    const derived = deriveGroupThreadStatus(latestAtMs != null ? {
+      at: latestAtMs,
+      senderId: senderId ?? null,
+      senderIsSelf: senderId === selfId || senderMember?.self === true,
+    } : null, nowMs);
+    ranked.push({
+      ...base,
+      status: derived.status,
+      ...(derived.senderId ? { senderId: derived.senderId } : {}),
+      updatedAt: recencyMs,
+    });
+  };
+  for (const task of store.listOpenTasksForMetabot(metabotId)) {
+    if (!task.groupId) continue;
+    consider(task.groupId, buildStageGroupThread({
+      groupId: task.groupId,
+      title: task.displayName ?? task.title,
+      metabotId,
+      taskId: task.id,
+      chairMetabotId: task.chairMetabotId,
+    }), stageTimestampToMs(task.lastDrivenAt));
+  }
+  for (const membership of getOpenTeamMembershipStore().listActiveMemberships()) {
+    if (membership.metabotId !== metabotId) continue;
+    consider(membership.groupId, buildStageGroupThread({
+      groupId: membership.groupId,
+      title: membership.taskTitle ?? '',
+      metabotId,
+      membershipOnly: true,
+    }), null);
+  }
+  return ranked
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, MAX_ACTIVE_GROUPS);
+};
+
+/** Peer identity for a globalMetaId: local bot, else the newest a2a thread snapshot. */
+const resolvePeerIdentityForStage = (globalMetaId: string): { name: string; avatar?: string; avatarRef?: string } | null => {
+  const id = (globalMetaId ?? '').trim();
+  if (!id) return null;
+  const bot = getMetabotStore().getMetabotByGlobalMetaId(id);
+  if (bot) {
+    const { avatar, avatarRef } = resolveMetabotStageAvatarBundle(bot);
+    return { name: (bot.name ?? '').trim() || id, ...(avatar ? { avatar } : {}), ...(avatarRef ? { avatarRef } : {}) };
+  }
+  const peerSession = getCoworkStore().getLatestPeerSessionIdentity(id);
+  if (!peerSession) return null;
+  return {
+    name: (peerSession.peerName ?? '').trim() || id,
+    ...(peerSession.peerAvatar ? { avatar: peerSession.peerAvatar } : {}),
+  };
+};
+
+/** Group thread for a groupId: local group task first, else an OpenTeam membership. */
+const resolveGroupThreadForStage = (groupId: string, sessionId: string): LiveStageGroupThread | null => {
+  const id = (groupId ?? '').trim();
+  if (!id) return null;
+  // `self` is the Studio session's bot, not the task chair — a non-chair bot
+  // posting must mark itself as the sender, not the chair.
+  const selfMetabotId = getCoworkStore().getSessionWithoutMessages(sessionId)?.metabotId ?? null;
+  const store = getGroupTaskStore();
+  const task = store.getTaskByGroupId(id);
+  if (task && task.archivedAt == null) {
+    return buildStageGroupThread({
+      groupId: id,
+      title: task.displayName ?? task.title,
+      metabotId: selfMetabotId ?? task.chairMetabotId,
+      taskId: task.id,
+      chairMetabotId: task.chairMetabotId,
+    });
+  }
+  const membership = getOpenTeamMembershipStore().listActiveMemberships().find((entry) => entry.groupId === id);
+  if (membership) {
+    return buildStageGroupThread({
+      groupId: id,
+      title: membership.taskTitle ?? '',
+      metabotId: selfMetabotId ?? membership.metabotId,
+      membershipOnly: true,
+    });
+  }
+  return null;
+};
+
+const LIVE_STAGE_COMPANION_REFRESH_DEBOUNCE_MS = 1500;
+let liveStageCompanionRefreshTimer: NodeJS.Timeout | null = null;
+/** Trailing-debounced stage rail refresh after chat persistence (a2a + group). */
+const scheduleLiveStageCompanionsRefresh = (): void => {
+  if (liveStageCompanionRefreshTimer) clearTimeout(liveStageCompanionRefreshTimer);
+  liveStageCompanionRefreshTimer = setTimeout(() => {
+    liveStageCompanionRefreshTimer = null;
+    try {
+      studioLiveStageService?.refreshChiefOfStaffHud();
+    } catch {
+      // Stage refresh is best-effort; chat persistence already succeeded.
+    }
+  }, LIVE_STAGE_COMPANION_REFRESH_DEBOUNCE_MS);
+};
+
 let studioLiveStageService: StudioLiveStageService | null = null;
 const getStudioLiveStageService = (): StudioLiveStageService => {
   if (!studioLiveStageService) {
@@ -9765,6 +10015,16 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           });
         }
         return open.slice(0, 5);
+      },
+      listActivePrivateChats: listActivePrivateChatsForStage,
+      listActiveGroupThreads: listActiveGroupThreadsForStage,
+      resolvePeerIdentity: resolvePeerIdentityForStage,
+      resolveGroupThread: (groupId, sessionId) => {
+        try {
+          return resolveGroupThreadForStage(groupId, sessionId);
+        } catch {
+          return null;
+        }
       },
       getLiveTaskHud: (sessionId) => {
         const ltStore = getLongTermTaskStore();

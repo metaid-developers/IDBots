@@ -3,7 +3,7 @@
   "sessionId": "demo-live-stage",
   "turnId": "demo-turn-1",
   "turnStartedAt": 1760000000000,
-  "revision": 4,
+  "revision": 6,
   "enabled": true,
   "family": "worker-report",
   "botName": "Nova",
@@ -42,7 +42,7 @@
   "phaseStartedAt": 1760000000000,
   "motion": {
     "preset": "worker-report",
-    "seed": 71491,
+    "seed": 56729,
     "durationMs": 720,
     "easing": "emphasized-decelerate",
     "energy": 0.4,
@@ -70,6 +70,10 @@
       "family": "received"
     },
     {
+      "family": "local-run",
+      "tool": "bash"
+    },
+    {
       "family": "web2-research",
       "tool": "web_search"
     },
@@ -78,11 +82,24 @@
       "tool": "omni_reader"
     },
     {
+      "family": "chain-write",
+      "tool": "post_simpleanswer"
+    },
+    {
       "family": "delegation",
       "tool": "local_worker_delegate"
     },
     {
       "family": "worker-report"
     }
-  ]
+  ],
+  "place": "machine",
+  "peerSend": null,
+  "groupPost": null,
+  "pendingChainToolIds": [
+    "demo-chain-1"
+  ],
+  "companionFocus": {
+    "type": "workers"
+  }
 }

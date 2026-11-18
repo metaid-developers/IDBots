@@ -3,7 +3,7 @@
   "sessionId": "demo-live-stage",
   "turnId": "demo-turn-1",
   "turnStartedAt": 1760000000000,
-  "revision": 1,
+  "revision": 2,
   "enabled": true,
   "family": "web2-research",
   "botName": "Nova",
@@ -25,7 +25,7 @@
   "phaseStartedAt": 1760000000000,
   "motion": {
     "preset": "web2-research",
-    "seed": 4348,
+    "seed": 27205,
     "durationMs": 720,
     "easing": "emphasized-decelerate",
     "energy": 0.4,
@@ -50,8 +50,17 @@
       "family": "received"
     },
     {
+      "family": "local-run",
+      "tool": "bash"
+    },
+    {
       "family": "web2-research",
       "tool": "web_search"
     }
-  ]
+  ],
+  "place": "web",
+  "peerSend": null,
+  "groupPost": null,
+  "pendingChainToolIds": [],
+  "companionFocus": null
 }

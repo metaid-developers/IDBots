@@ -40,7 +40,7 @@ async function createSqliteHarness() {
   return { dir, sqliteStore, db: sqliteStore.getDatabase(), saveDb: sqliteStore.getSaveFunction() };
 }
 
-test('Issues 1, 2 & 4: Liquid-Orb has dedicated waiting activity, layoutHandoff refuses hidden (0,0) anchors, dashed low-frequency link renders in waiting/verifying, and HUD only highlights explicit isCurrent===true', () => {
+test('Issues 1, 2 & 4: Liquid-Orb has dedicated waiting activity, scene engine draws connectors only for laid-out rail items, dashed low-frequency link renders in waiting/verifying, and HUD only highlights explicit isCurrent===true', () => {
   const window = {};
   vm.runInNewContext(fs.readFileSync(path.resolve('public/live-stage/liquid-orb.js'), 'utf8'), { window });
   assert.equal(window.liquidOrbActivityForFamily('waiting'), 'waiting');
@@ -48,9 +48,14 @@ test('Issues 1, 2 & 4: Liquid-Orb has dedicated waiting activity, layoutHandoff 
   assert.ok(waitingParams.contourDeform > 0.1 && waitingParams.contourDeform < 0.3, 'gentle waiting deformation');
 
   const stageJs = fs.readFileSync(path.resolve('public/live-stage/stage.js'), 'utf8');
-  assert.match(stageJs, /if \(worker\.width < 4 \|\| worker\.height < 4 \|\| orb\.width < 4 \|\| orb\.height < 4\) return false;/, 'prevents (0,0) top-left handoff curve when hidden');
-  assert.match(stageJs, /if \(!layoutHandoff\(\)\) \{\s*\n\s*stopHandoff\(\);/);
-  assert.match(stageJs, /ctx\.setLineDash\(\[5, 7\]\)/, 'dashed low-frequency waiting link');
+  const scenesJs = fs.readFileSync(path.resolve('public/live-stage/stage-scenes.js'), 'utf8');
+  // The scene engine replaced layoutHandoff: connectors draw only for laid-out
+  // rail items (hidden/zero-size items never enter M.items), and verifying
+  // workers get the dashed low-frequency link.
+  assert.doesNotMatch(stageJs, /layoutHandoff|handoff-flow|worker-constellation/);
+  assert.match(scenesJs, /M\.items\.get\(`\$\{M\.hero\.type\}:\$\{id\}`\) \|\| null/, 'hero connector resolves only a visible rail item');
+  assert.match(scenesJs, /if \(lowFreqWait\) g\.setLineDash\(\[5, 7\]\)/, 'dashed low-frequency waiting/verifying link');
+  assert.match(scenesJs, /dir === 'waiting' \|\| dir === 'verifying'/, 'waiting + verifying directions take the low-frequency dash');
   assert.match(stageJs, /const currentIdx = tasks\.findIndex\(\(t\) => t\?\.isCurrent === true\)/, 'never highlights non-current tasks');
 
   const base = createLiveStageState({

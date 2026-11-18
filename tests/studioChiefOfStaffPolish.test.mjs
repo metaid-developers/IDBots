@@ -46,16 +46,21 @@ async function createSqliteHarness() {
   return { dir, sqliteStore, db: sqliteStore.getDatabase(), saveDb: sqliteStore.getSaveFunction() };
 }
 
-test('Issue 1 & 6: Live Stage measures live DOM card endpoints, hides duplicate single-worker bubble, blocks orphan curves, strips <studio_*> tags, and preserves speechRest + reportUri', () => {
+test('Issue 1 & 6: Live Stage measures live DOM card endpoints, paints no duplicate single-worker bubble, drops orphan connectors, strips <studio_*> tags, and preserves speechRest + reportUri', () => {
   const stageJs = fs.readFileSync(path.resolve('public/live-stage/stage.js'), 'utf8');
+  const stageScenes = fs.readFileSync(path.resolve('public/live-stage/stage-scenes.js'), 'utf8');
+  const stageHtml = fs.readFileSync(path.resolve('public/live-stage/stage.html'), 'utf8');
   const stageCss = fs.readFileSync(path.resolve('public/live-stage/stage.css'), 'utf8');
 
-  // Exact DOM-measured endpoints + directional arrowheads (never guessed percentages):
-  assert.match(stageJs, /const cards = constellationEl\.querySelectorAll\('\.constellation-item'\)/);
-  assert.match(stageJs, /const cardRect = cardEl\.getBoundingClientRect\(\)/);
+  // Exact DOM-measured endpoints: connector anchors come from the measured
+  // rail item rects walked up to .live-stage offsets — never guessed percentages:
+  assert.match(stageScenes, /function itemRect\(el\) \{\s*const stage = M\.rail\.offsetParent/);
+  assert.match(stageScenes, /function itemAnchor\(el\) \{\s*const r = itemRect\(el\)/);
+  assert.match(stageScenes, /function avatarAnchor\(el\)/);
+  assert.match(stageScenes, /M\.items\.get\(`\$\{M\.hero\.type\}:\$\{id\}`\)/, 'hero connectors only anchor rail items that exist');
   assert.doesNotMatch(stageJs, /height \* \(\.22 \+ index \* \.11\)/, 'guessed percentage Y anchors retired');
-  assert.match(stageJs, /id === 'worker' && constellationActive/, 'single hybrid-worker bubble hides when constellation is active');
-  assert.match(stageJs, /restingScene[\s\S]{0,320}direction === 'dispatch'[\s\S]{0,120}direction === 'working'/, 'completed turns never leave stale return curves');
+  assert.doesNotMatch(stageHtml, /hybrid/, 'no .hybrid-worker bubble in the template at all');
+  assert.match(stageScenes, /resting && dir === 'return'/, 'completed turns never leave stale return connectors');
 
   // Focused task highlighted on top + collapsible background tasks:
   assert.match(stageJs, /task-hud-current-pill/);
@@ -64,6 +69,7 @@ test('Issue 1 & 6: Live Stage measures live DOM card endpoints, hides duplicate 
   assert.match(stageCss, /body\[data-has-report="true"\]\[data-family="complete"\] \.core-report-ready/);
   assert.match(stageCss, /body\[data-speech-rest="true"\] \.core-copy/);
   assert.doesNotMatch(stageJs, /innerHTML|insertAdjacentHTML|document\.write/);
+  assert.doesNotMatch(stageScenes, /innerHTML|insertAdjacentHTML|document\.write/);
 
   // Internal <studio_proactive_briefing> never flashes on Live Stage:
   const initial = createLiveStageState({

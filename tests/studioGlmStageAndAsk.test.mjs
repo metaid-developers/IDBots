@@ -111,7 +111,7 @@ test('Issue 2 & 4: Mid-turn projection guard error never flashes "这一轮没�
     timestamp: 1,
     metadata: { toolName: 'bot_browser_preview_local', toolInput: { projection: true }, toolUseId: 'proj-err-1' },
   });
-  assert.equal(state.family, 'browser-action');
+  assert.equal(state.family, 'projecting');
 
   state = reduceLiveStageMessage(state, {
     id: 'p-res',
