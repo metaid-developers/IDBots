@@ -15,9 +15,10 @@ interface BotBrowserModeSwitchProps {
   /**
    * Gap ABOVE the band row. macOS 42.375 — sized so the tray's visible top
    * edge lands on the bot-home panel's header divider (y=50.625; owner
-   * baseline ruling 2026-11-15 08:27). Elsewhere 12 px of quiet air. An
-   * explicit value is accepted so tests can pin BOTH platform branches
-   * without a DOM.
+   * baseline ruling 2026-11-15 08:27). Windows + browser face 36 — h-9,
+   * strictly level with the right column's Windows title-bar strip (owner
+   * alignment ruling 2026-11-17). Elsewhere 12 px of quiet air. An explicit
+   * value is accepted so tests can pin the platform branches without a DOM.
    */
   topGapPx?: number;
 }
@@ -32,20 +33,36 @@ interface SurfaceSegment {
  * 2026-11-15 08:27: the tray's visible top edge lands on the bot-home
  * panel's header divider line — measured y=50.625; 50.625 − tray centering
  * offset 7.25 − 1 px tray border = 42.375, supersedes the y=45 tabstrip
- * baseline). The rail's mac top track mirrors this height so the rail's
- * avatar slot stays aligned with the band row.
+ * baseline). Windows + browser face: a 36 px strip, strictly level with the
+ * right column's h-9 Windows title-bar strip (owner alignment ruling
+ * 2026-11-17). The rail's top track mirrors BOTH tiers so the rail's avatar
+ * slot stays aligned with the band row.
  */
 export const TOP_GAP_MAC_PX = 42.375;
-/** Non-macOS: no system corner to share, keep a quiet 12 px breath. */
+/**
+ * Windows, browser face ONLY: 36 px = the `h-9` WindowTitleBar strip App.tsx
+ * mounts at the top of the right column's browser pane (the
+ * windowsStandaloneTitleBar form; owner alignment ruling 2026-11-17). That
+ * strip exists only while the browser pane is visible — home/catalog faces
+ * mount none — so win32 + any other face falls back to TOP_GAP_DEFAULT_PX.
+ */
+export const TOP_GAP_WINDOWS_PX = 36;
+/** Everything else: no system corner to share, keep a quiet 12 px breath. */
 export const TOP_GAP_DEFAULT_PX = 12;
 
 /**
- * The platform's top gap. Guarded for the static tests, which render this
- * component in Node where `window` does not exist.
+ * The platform's top gap, mode-aware (owner alignment ruling 2026-11-17):
+ * darwin → MAC; win32 → WINDOWS only on the browser face — the right
+ * column's 36 px h-9 strip exists only while that pane is visible, so win32
+ * + any other face falls back to DEFAULT; everything else → DEFAULT.
+ * Guarded for the static tests, which render this component in Node where
+ * `window` does not exist.
  */
-const readPlatformTopGapPx = (): number => {
+const readPlatformTopGapPx = (mode: BotBrowserSurfaceMode): number => {
   if (typeof window === 'undefined') return TOP_GAP_DEFAULT_PX;
-  return window.electron?.platform === 'darwin' ? TOP_GAP_MAC_PX : TOP_GAP_DEFAULT_PX;
+  if (window.electron?.platform === 'darwin') return TOP_GAP_MAC_PX;
+  if (window.electron?.platform === 'win32' && mode === 'browser') return TOP_GAP_WINDOWS_PX;
+  return TOP_GAP_DEFAULT_PX;
 };
 
 const segmentClass = (active: boolean) => [
@@ -111,7 +128,7 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
 
   // The lights no longer share the band's row, so no face needs a horizontal
   // lights reserve: both columns start the row at their own small inset.
-  const resolvedTopGapPx = topGapPx ?? readPlatformTopGapPx();
+  const resolvedTopGapPx = topGapPx ?? readPlatformTopGapPx(mode);
 
   const select = (id: BotBrowserSurfaceMode) => {
     if (id === 'home') onSelectHome();

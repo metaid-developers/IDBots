@@ -173,7 +173,15 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
   onShowSettings,
   showSettings = true,
 }) => {
+  // Row-1 top band is platform+face aware (owner alignment ruling
+  // 2026-11-17): darwin keeps the 42.375 px traffic-light reservation; win32
+  // + browser face rises to 36 px (h-9) to sit strictly level with the right
+  // column's Windows title-bar strip — App.tsx mounts that h-9 strip at the
+  // browser pane's top ONLY while the pane is visible, so every other
+  // platform/face keeps the quiet 12 px breath (the mid column's switch
+  // header parses the matching tier from its own top-gap helper).
   const isMac = window.electron.platform === 'darwin';
+  const isWindowsBrowserFace = window.electron.platform === 'win32' && mode === 'browser';
   const language = i18nService.getLanguage();
 
   const scheduledTasks = useSelector((state: RootState) => state.scheduledTask.tasks);
@@ -237,18 +245,27 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
          #6b7280 read as a bright white line in dark mode (11-17 report). */
       className="relative z-30 flex w-16 shrink-0 flex-col items-center dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted border-r border-claude-border/60 dark:border-white/10"
     >
-      {/* Row 1 is the pure traffic-light reservation (42.375 px on mac —
-          owner baseline ruling 2026-11-15 08:27: sized so the tray's visible
-          top edge lands on the bot-home panel's header divider y=50.625;
-          mirrors the switch's TOP_GAP_MAC_PX). Row 2 is the identity AVATAR
-          slot (owner D-line final ruling 2026-11-09): the same 52 px height
-          as the mid column's band row (the switch's surface-header-bar), so
-          the avatar's centerline rides the band labels' centerline, and the
-          rail's own centerline puts it on the icon column's X — the
-          Mac-WeChat form. The nav's 8 px top margin then lands the first
-          function icon at 42.375 + 52 + 8 = 102.375 px — below the avatar,
-          never in the top cell. */}
-      <div className={`draggable w-full shrink-0 ${isMac ? 'h-[42.375px]' : 'h-3'}`} />
+      {/* Row 1 is the pure top reservation, three tiers (owner alignment
+          ruling 2026-11-17): darwin 42.375 px — owner baseline ruling
+          2026-11-15 08:27: sized so the tray's visible top edge lands on the
+          bot-home panel's header divider y=50.625 (mirrors the switch's
+          TOP_GAP_MAC_PX); win32 + browser face 36 px (h-9), strictly level
+          with the right column's Windows title-bar strip — that h-9 strip
+          exists only while the browser pane is visible, so home/catalog
+          faces keep the next tier down; every other platform/face 12 px of
+          quiet air. Row 2 is the identity AVATAR slot (owner D-line final
+          ruling 2026-11-09): the same 52 px height as the mid column's band
+          row (the switch's surface-header-bar), so the avatar's centerline
+          rides the band labels' centerline, and the rail's own centerline
+          puts it on the icon column's X — the Mac-WeChat form. The nav's
+          8 px top margin then lands the first function icon below the
+          avatar, never in the top cell: darwin 42.375 + 52 + 8 = 102.375 px;
+          win32 + browser face 36 + 52 + 8 = 96 px. */}
+      <div
+        className={`draggable w-full shrink-0 ${
+          isMac ? 'h-[42.375px]' : isWindowsBrowserFace ? 'h-9' : 'h-3'
+        }`}
+      />
       <div
         data-slot="workspace-rail-avatar-slot"
         className="flex h-[52px] w-full shrink-0 items-center justify-center"
