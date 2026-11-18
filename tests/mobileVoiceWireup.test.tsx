@@ -59,6 +59,14 @@ test('VoiceButton SSR: idle shows the mic affordance with the right testid/aria'
   assert.doesNotMatch(html, /voice-overlay-/, 'no overlay while idle');
 });
 
+test('VoiceButton SSR: wide voice mode renders the hold-to-talk surface', () => {
+  const html = renderButton({ variant: 'hold' });
+  assert.match(html, /data-testid="voice-hold-button"/);
+  assert.match(html, /data-variant="hold"/);
+  assert.match(html, /按住说话/);
+  assert.doesNotMatch(html, /data-testid="voice-btn-idle"/);
+});
+
 test('VoiceButton SSR: recording shows stop affordance, aria-pressed, and elapsed badge', () => {
   const html = renderButton({ state: state({ phase: 'recording' }), elapsedSec: 42 });
   assert.match(html, /data-testid="voice-btn-recording"/);
@@ -187,11 +195,22 @@ test('reduced motion turns off the pulse/dot animation', () => {
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
-test('a short press is still the accessible tap toggle (click path present)', () => {
+test('a short tap only switches modes; the microphone starts only after the hold delay', () => {
+  const source = readSource('../src/mobile/app/voice/VoiceButton.tsx');
+  assert.match(source, /holdActivationRef\.current = setTimeout/);
+  assert.match(source, /hold\.sessionStarted = true;\s*onStartHold\(\);/);
+  assert.match(source, /\}, HOLD_START_DELAY_MS\)/);
+  assert.match(source, /sessionStarted: false/);
+  assert.match(source, /decision\.reason === 'too_short' && !sessionStarted && variant === 'icon'/);
+});
+
+test('icon activation switches modes; wide-button keyboard activation retains the recording fallback', () => {
   const source = readSource('../src/mobile/app/voice/VoiceButton.tsx');
   assert.match(source, /const handleClick = \(\): void =>/, 'click/Enter/Space path exists');
-  assert.match(source, /if \(state\.phase === 'recording'\) onStop\(\);/, 'second activation stops');
-  assert.match(source, /pointerHandledRef/, 'pointer gestures do not double-fire the tap path');
+  assert.match(source, /if \(variant === 'icon'\) \{\s*onToggleMode\?\.\(\);/, 'icon click switches composer modes');
+  assert.match(source, /if \(state\.phase === 'recording'\) onStop\(\);/, 'wide-button second activation stops');
+  assert.match(source, /decision\.reason === 'too_short' && !sessionStarted && variant === 'icon'/, 'only an unstarted icon short-press toggles modes');
+  assert.match(source, /pointerHandledRef/, 'pointer gestures do not double-fire the click path');
 });
 
 // ---------------------------------------------------------------------------
@@ -247,6 +266,8 @@ test('voiceErrorCopyKey: error classes route through the protocol mapping', () =
 
 const VOICE_I18N_KEYS = [
   'mobile.chat.voice.start',
+  'mobile.chat.voice.keyboard',
+  'mobile.chat.voice.holdToTalk',
   'mobile.chat.voice.stop',
   'mobile.chat.voice.errorDismiss',
   'mobile.chat.voice.error.unsupported',
@@ -304,11 +325,14 @@ test('ChatScreen wires hold-to-send: final text bypasses the composer and goes t
   assert.match(source, /sendVoiceMessage\(chat, text, \{ blocked: composerBlocked \}\)/, 'new-message hand-off');
   assert.match(source, /pendingCaretRef\.current = caret/, 'caret restore plumbing reused');
   assert.match(source, /<VoiceErrorBanner state=\{voice\.state\} onDismiss=\{voice\.dismissError\} \/>/);
-  assert.match(source, /onStartHold=\{voice\.startHold\}/);
-  assert.match(source, /onEndHold=\{voice\.endHold\}/);
-  assert.match(source, /onCancelHold=\{voice\.cancelHold\}/);
-  assert.match(source, /onSalvage=\{voice\.commitToDraft\}/);
-  assert.match(source, /onHoldCancelled=\{handleVoiceHoldCancelled\}/);
+  assert.match(source, /onStartHold: voice\.startHold/);
+  assert.match(source, /onEndHold: voice\.endHold/);
+  assert.match(source, /onCancelHold: voice\.cancelHold/);
+  assert.match(source, /onSalvage: voice\.commitToDraft/);
+  assert.match(source, /onHoldCancelled: handleVoiceHoldCancelled/);
+  assert.match(source, /<VoiceButton variant="icon" \{\.\.\.voiceButtonProps\} \/>/);
+  assert.match(source, /<VoiceButton variant="hold" \{\.\.\.voiceButtonProps\} \/>/);
+  assert.match(source, /data-testid="voice-keyboard-button"/);
   assert.match(source, /data-testid="voice-hint"/);
 });
 

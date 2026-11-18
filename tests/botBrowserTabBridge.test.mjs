@@ -53,6 +53,38 @@ test('background tab activation preserves the current app surface and OS focus',
   bridge.dispose();
 });
 
+test('a background command never steals OS focus even without focusWindow opts, a foreground one still does', async () => {
+  const harness = createWindow();
+  const bridge = createBotBrowserTabBridge({
+    getWindows: () => [harness.window],
+    timeoutMs: 1_000,
+  });
+
+  // Studio stage patches / interaction drains ride the bridge as background
+  // get-tab-info lookups on every state update — they must not raise the
+  // window over whatever app the owner is in (owner-reported focus steal).
+  const patch = bridge.execute({ action: 'get-tab-info', tabId: 7, background: true });
+  assert.equal(harness.focusCalls(), 0, 'a background command never calls window.focus()');
+  bridge.handleResponse(harness.webContents, {
+    requestId: harness.sent[0].payload.requestId,
+    success: true,
+    result: { action: 'get-tab-info', tabs: [], activeTab: null, info: null },
+  });
+  await patch;
+
+  // The gate must not over-suppress: foreground commands keep the
+  // restore/show/focus behavior.
+  const foreground = bridge.execute({ action: 'get-active-tab', background: false });
+  assert.equal(harness.focusCalls(), 1, 'a foreground command still focuses the window');
+  bridge.handleResponse(harness.webContents, {
+    requestId: harness.sent[1].payload.requestId,
+    success: true,
+    result: { action: 'get-active-tab', tabs: [], activeTab: null },
+  });
+  await foreground;
+  bridge.dispose();
+});
+
 
 test('tab bridge relays a command and resolves only the target renderer response', async () => {
   const target = createWindow();

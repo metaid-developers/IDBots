@@ -10,6 +10,7 @@
   --twin-border-strong: #d7d9de;
   --twin-accent: #ffdc51;
   --twin-accent-foreground: #6b5200;
+  --twin-message-link: #8a6500;
   --twin-accent-ink: #2c290f;
   --twin-header: rgba(248, 249, 250, 0.88);
   --twin-tabbar: rgba(250, 251, 252, 0.9);
@@ -43,6 +44,7 @@
   --twin-border: rgba(255, 255, 255, 0.09);
   --twin-border-strong: #49494d;
   --twin-accent-foreground: #ffdc51;
+  --twin-message-link: #ffe36e;
   --twin-header: rgba(17, 17, 18, 0.9);
   --twin-tabbar: rgba(24, 24, 26, 0.9);
   --twin-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
@@ -79,7 +81,7 @@ button {
 }
 
 button:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: scale(0.96);
 }
 
 button:focus-visible,
@@ -410,6 +412,26 @@ textarea.twin-input {
   margin-top: 15px;
 }
 
+.twin-model-advanced {
+  border-radius: 14px;
+  background: var(--twin-surface-inset);
+  padding: 0 13px 13px;
+}
+
+.twin-model-advanced summary {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  color: var(--twin-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.twin-model-advanced .twin-input {
+  background: var(--twin-surface);
+}
+
 .twin-segmented {
   display: flex;
   gap: 3px;
@@ -683,6 +705,17 @@ textarea.twin-input {
   max-width: none;
 }
 
+.twin-message-assistant a {
+  color: var(--twin-message-link);
+  text-decoration-color: color-mix(in srgb, var(--twin-message-link) 65%, transparent);
+}
+
+.twin-message-assistant a:hover,
+.twin-message-assistant a:active {
+  color: var(--twin-message-link);
+  text-decoration-color: var(--twin-message-link);
+}
+
 .twin-message-system,
 .twin-message-error {
   width: 100%;
@@ -739,6 +772,32 @@ textarea.twin-input {
 
 .twin-composer-input::placeholder {
   color: var(--twin-text-secondary);
+}
+
+.twin-composer-input:focus,
+.twin-composer-input:focus-visible {
+  border-color: transparent;
+  outline: none;
+  box-shadow: none;
+}
+
+.twin-composer-input:focus::placeholder {
+  color: transparent;
+  opacity: 0;
+}
+
+.twin-voice-hold-button {
+  min-width: 0;
+  min-height: 44px;
+  flex: 1 1 auto;
+  border: 0;
+  border-radius: 22px;
+  background: transparent;
+  color: var(--twin-text-primary);
+  padding: 10px 12px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
 }
 
 .twin-composer-accessory {

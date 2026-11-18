@@ -20,6 +20,12 @@
  * triple and misjudged a correct deposit as foreign. Both spellings are now
  * accepted. The same page also repeats its row on the `flag=0` follow-up page,
  * so outpoints are deduped before returning.
+ *
+ * Cover-preservation fix (2026-11-19, root-cause report §4.2 step 1): the row
+ * mapper now also keeps `name` and `imgUrl`. `imgUrl` is the ONLY pre-burn
+ * image source the mint-time cover gate consumes, and `name` feeds the
+ * engine's partName; both live on the same v4 row and were silently dropped
+ * before, which is what produced every cover-less `item_desc` (report §3.2a).
  */
 
 export const VAULT_POLL_PAGE_CAP = 50;
@@ -35,7 +41,7 @@ export const MVP_CONFIRMATIONS = 6;
  * @param {string} [args.net]        default 'livenet' (PRD §3 measured口径)
  * @param {string} [args.baseUrl]    default https://www.metalet.space
  * @param {(url: string) => Promise<{ json: (any) => object }>} [args.fetchImpl] injectable for tests
- * @returns {Promise<Array<{ txid, outIndex, genesis, codehash, tokenIndex, sensibleId, height, satoshis }>>}
+ * @returns {Promise<Array<{ txid, outIndex, genesis, codehash, tokenIndex, sensibleId, height, satoshis, name, imgUrl }>>}
  */
 export async function fetchVaultTokenRows({ address, net = 'livenet', baseUrl = 'https://www.metalet.space', fetchImpl = fetch }) {
   const rows = [];
@@ -63,6 +69,12 @@ export async function fetchVaultTokenRows({ address, net = 'livenet', baseUrl = 
         sensibleId: item.sensibleId != null ? String(item.sensibleId) : null,
         height: Number(item.height ?? -1),
         satoshis: Number(item.satoshis ?? item.value ?? 0),
+        // legacy display fields (2026-11-19 cover-loss fix, report §4.2 step 1):
+        // `name` feeds the engine's partName; `imgUrl` is the only pre-burn
+        // image source the mint-time cover gate consumes. Both are on the same
+        // v4 row and were dropped here before (report §3.2a).
+        name: String(item.name || ''),
+        imgUrl: String(item.imgUrl ?? item.imageUrl ?? ''),
       };
       // the `flag=0` follow-up page repeats the same row — one outpoint counts once
       const outpoint = `${row.txid}:${row.outIndex}`;

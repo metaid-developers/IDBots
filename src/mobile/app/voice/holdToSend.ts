@@ -12,6 +12,8 @@
  *    the state does not flicker while the finger hovers near the line.
  */
 
+/** Sustained-press gate: a quick tap must never start the microphone. */
+export const HOLD_START_DELAY_MS = 180;
 export const HOLD_MIN_MS = 400;
 export const HOLD_CANCEL_DISTANCE_PX = 80;
 /** Re-arm band: travel must fall back below this before cancel disarms. */
@@ -57,7 +59,7 @@ export function resolveHoldRelease(input: {
 
 /** Minimal chat surface the final-text hand-off needs (ChatScreen's chat). */
 export interface VoiceSendTarget {
-  send(text: string, attachments?: unknown[]): unknown;
+  send(text: string, attachments?: unknown[], options?: { preserveDraft?: boolean }): unknown;
   setDraft?(text: string): void;
   readonly draft?: string;
 }
@@ -68,8 +70,8 @@ export type VoiceSendOutcome = 'sent' | 'empty' | 'kept_in_draft';
  * Hands a finished transcript to the chat as a BRAND-NEW message.
  *
  * Contract (acceptance-critical):
- *  - `chat.send(finalText, [])` is called with the transcript and no
- *    attachments; the composer draft is neither read nor written.
+ *  - `chat.send(finalText, [], { preserveDraft: true })` sends the transcript
+ *    with no attachments and keeps the existing composer draft untouched.
  *  - Empty transcript = accidental press: no send, caller shows a hint.
  *  - `blocked` (the composer is busy: streaming / waiting permission):
  *    the words are never dropped — they are appended to the existing draft
@@ -88,6 +90,6 @@ export function sendVoiceMessage(
     target.setDraft?.(`${draft}${glue}${text}`);
     return 'kept_in_draft';
   }
-  void target.send(text, []);
+  void target.send(text, [], { preserveDraft: true });
   return 'sent';
 }

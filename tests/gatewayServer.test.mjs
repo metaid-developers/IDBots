@@ -462,7 +462,7 @@ test('ws: store:get app_config redacts every providers.*.apiKey end-to-end', asy
   assert.deepEqual(calls[0].args, ['app_config']);
 });
 
-test('ws: store:set merges provider entries against the stored config before dispatch', async (t) => {
+test('ws: store:set merges provider edits and additions against the stored config before dispatch', async (t) => {
   const storedAppConfig = {
     providers: {
       deepseek: { apiKey: 'stored-key', baseUrl: 'https://stored.example', apiFormat: 'openai', enabled: true },
@@ -475,7 +475,13 @@ test('ws: store:set merges provider entries against the stored config before dis
   await client.welcome();
   const result = await client.invoke('store:set', [
     'app_config',
-    { providers: { deepseek: { apiKey: 'hacked', baseUrl: 'https://evil.example', apiFormat: 'x', enabled: false } }, theme: 'light' },
+    {
+      providers: {
+        deepseek: { apiKey: '__redacted__', baseUrl: 'https://new.example', apiFormat: 'anthropic', enabled: false },
+        'custom-mobile': { apiKey: 'new-secret', baseUrl: 'https://mobile.example/v1', apiFormat: 'openai', enabled: true, models: [] },
+      },
+      theme: 'light',
+    },
   ]);
   assert.equal(result.ok, true);
   assert.equal(calls.length, 1);
@@ -484,19 +490,19 @@ test('ws: store:set merges provider entries against the stored config before dis
     'app_config',
     {
       providers: {
-        deepseek: { apiKey: 'stored-key', baseUrl: 'https://stored.example', apiFormat: 'openai', enabled: false },
+        deepseek: { apiKey: 'stored-key', baseUrl: 'https://new.example', apiFormat: 'anthropic', enabled: false },
+        'custom-mobile': { apiKey: 'new-secret', baseUrl: 'https://mobile.example/v1', apiFormat: 'openai', enabled: true, models: [] },
       },
       theme: 'light',
     },
   ]);
-  // Adding a provider entry fails without dispatching.
   const rejected = await client.invoke('store:set', [
     'app_config',
-    { providers: { deepseek: { enabled: true }, newp: { apiKey: 'x' } } },
+    { providers: {} },
   ]);
   assert.equal(rejected.ok, false);
   assert.equal(rejected.error.code, 'INVALID_ARGS');
-  assert.equal(calls.length, 1, 'invalid set-merge must not dispatch');
+  assert.equal(calls.length, 1, 'provider removal must not dispatch');
 });
 
 test('ws: store:set serializes field patches against the latest config and preserves bootstrap/provider data', async (t) => {

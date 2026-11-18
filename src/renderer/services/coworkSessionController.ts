@@ -767,6 +767,7 @@ export class CoworkSessionController {
     startOptions: Omit<CoworkStartOptions, 'prompt'>,
     attachments: MobileChatAttachment[] = [],
     inputFileLabel = 'Input file',
+    options: { preserveDraft?: boolean } = {},
   ): Promise<CoworkActionResult> {
     const sessionId = this.currentSessionId;
     const draftToken = this.draftStore.tokenForSession(sessionId);
@@ -812,8 +813,8 @@ export class CoworkSessionController {
     let outcome: CoworkActionResult | undefined;
     try {
       await submitCoworkComposerDraft({
-        draftField: this.draftStore.field(draftToken, 'text', text),
-        attachmentField: this.draftStore.field(draftToken, 'attachments', draftAttachments),
+        draftField: this.draftStore.field(draftToken, 'text', text, { clearOnTake: !options.preserveDraft }),
+        attachmentField: this.draftStore.field(draftToken, 'attachments', draftAttachments, { clearOnTake: !options.preserveDraft }),
         onSubmit: async () => {
           outcome = sessionId ? await this.submitAttempt(attempt) : await this.startAttempt(attempt);
           return outcome.status === 'accepted';

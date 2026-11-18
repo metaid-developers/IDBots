@@ -27,7 +27,7 @@ public class NativeShellWebView extends CapacitorWebView {
             try {
                 String script = NativeBootstrap.script(getContext(), BuildConfig.NATIVE_REMOTE_ORIGIN, "android");
                 WebViewCompat.addDocumentStartJavaScript(this, script, Collections.singleton(BuildConfig.NATIVE_REMOTE_ORIGIN));
-            } catch (IOException | IllegalArgumentException error) {
+            } catch (IOException | RuntimeException error) {
                 super.loadUrl(offlineUrl());
                 return;
             }

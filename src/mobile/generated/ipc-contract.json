@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.0.0",
-  "allowlistVersion": "1.0.3",
+  "allowlistVersion": "1.0.4",
   "source": "src/main/preload.ts",
   "methods": [
     {
@@ -472,6 +472,14 @@
       "path": "cowork.clearSessionError",
       "kind": "invoke",
       "channel": "cowork:session:clearError",
+      "args": [
+        "sessionId"
+      ]
+    },
+    {
+      "path": "cowork.closeSessionChapter",
+      "kind": "invoke",
+      "channel": "cowork:session:closeChapter",
       "args": [
         "sessionId"
       ]
@@ -3271,12 +3279,30 @@
       ]
     },
     {
+      "path": "surf.listRunDays",
+      "kind": "invoke",
+      "channel": "surf:listRunDays",
+      "args": [
+        "metabotId"
+      ]
+    },
+    {
       "path": "surf.listRuns",
       "kind": "invoke",
       "channel": "surf:listRuns",
       "args": [
         "metabotId",
         "limit"
+      ]
+    },
+    {
+      "path": "surf.listRunsByDay",
+      "kind": "invoke",
+      "channel": "surf:listRunsByDay",
+      "args": [
+        "metabotId",
+        "dayStartIso",
+        "dayEndIso"
       ]
     },
     {

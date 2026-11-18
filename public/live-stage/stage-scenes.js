@@ -1129,6 +1129,13 @@
   const O = LS.O_BASE;
   const AMBER = '255,220,81';
   const CYAN = '96,226,236', CYAN_HI = '190,250,255', OT = '197,169,255';
+  /* Worker/peer connectors anchor just inside the rendered ball edge: R tracks
+     the active orb's live rect (.72 of the canvas half-width, matching the
+     liquid-orb family `radius: .72`), so the anchor kisses that edge ~4%
+     inside — the same inset the pre-scene port had (membrane width × .48 = 94
+     against the 98px membrane edge) — and contour deform / edge glow can never
+     leave a visible gap between the ball and the line. */
+  const ORB_EDGE_INSET = 0.96;
 
   const STATUS_RANK = {
     dispatch: 0, return: 0, sending: 0, incoming: 0, posting: 0,
@@ -1448,11 +1455,6 @@
     return M.items.get(`${M.hero.type}:${id}`) || null;
   }
 
-  function itemAnchor(el) {
-    const r = itemRect(el);
-    return { x: r.x - 6, y: r.y + r.h / 2 };
-  }
-
   function avatarAnchor(el) {
     const img = el.querySelector('.rail-avatar');
     const r = itemRect(el);
@@ -1468,7 +1470,7 @@
      an original-speed animation — SCENE_TIME_SCALE does not apply. */
   function drawWorker(g, item, status, fx, t, index, reduced) {
     const orbCenter = { x: M.env.O.x, y: M.env.O.y };
-    const orbRadius = Math.max(44, R * (4 / 3)); // original: .membrane width × .48
+    const orbRadius = Math.max(44, R * ORB_EDGE_INSET);
     const r = itemRect(item);
     if (r.w < 4 || r.h < 4) return;
     const cardAnchor = { x: r.x - 4, y: r.y + r.h / 2 };
@@ -1534,7 +1536,8 @@
   function peerArc(to) {
     const o = M.env.O;
     const d = Math.hypot(to.x - o.x, to.y - o.y) || 1;
-    const from = { x: o.x + ((to.x - o.x) / d) * R, y: o.y + ((to.y - o.y) / d) * R };
+    const edgeR = R * ORB_EDGE_INSET;
+    const from = { x: o.x + ((to.x - o.x) / d) * edgeR, y: o.y + ((to.y - o.y) / d) * edgeR };
     const ctrl = { x: (from.x + to.x) / 2, y: Math.min(from.y, to.y) - 40 };
     return { from, ctrl, to, table: LS.arcTable(LS.sampleQuadratic(from, ctrl, to, 24)) };
   }
@@ -1544,29 +1547,34 @@
     const arc = peerArc(to);
     const m = fx.aMul;
     const h = fx.slate ? '148,163,184' : CYAN;
-    const a = hero ? 0.38 : 0;
-    if (hero) {
-      g.save();
-      g.strokeStyle = LS.rgba(h, a * m);
-      g.lineWidth = 1.1;
-      g.setLineDash([3, 5]);
-      g.beginPath();
-      arc.table.pts.forEach((p, i) => (i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)));
-      g.stroke();
-      g.setLineDash([]);
-      g.restore();
-    } else {
-      // non-hero: 12px dashed stub from the rail item
-      const r = itemAnchor(item);
-      g.save();
-      g.strokeStyle = LS.rgba(h, 0.3 * m);
-      g.lineWidth = 1;
-      g.setLineDash([2, 3]);
-      g.beginPath();
-      g.moveTo(r.x, r.y);
-      g.lineTo(r.x - 12, r.y);
-      g.stroke();
-      g.restore();
+    const a = hero ? 0.38 : 0.24;
+    // Every visible private-chat thread keeps its dashed arc from the orb
+    // edge to the card avatar — like the worker connectors — with the hero
+    // emphasised by opacity plus the travelling-capsule effects below.
+    g.save();
+    g.strokeStyle = LS.rgba(h, a * m);
+    g.lineWidth = hero ? 1.1 : 1;
+    g.setLineDash([3, 5]);
+    g.beginPath();
+    arc.table.pts.forEach((p, i) => (i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)));
+    g.stroke();
+    g.setLineDash([]);
+    g.restore();
+    if (!hero) {
+      // non-hero: a stateless pulse rides the arc while a message is in
+      // flight (the shared peerCycle state stays hero-only)
+      if (status === 'sending' || status === 'incoming') {
+        const local = t % 2.6;
+        if (local < 1.3) {
+          const raw = M.env.reduced && M.env.reduced() ? 0.35 : local / 1.3;
+          const e = LS.easeInOutCubic(raw);
+          const pt = arc.table.pointAt((status === 'sending' ? e : 1 - e) * arc.table.L);
+          g.beginPath();
+          g.arc(pt.x, pt.y, 2.6, 0, Math.PI * 2);
+          g.fillStyle = LS.rgba(fx.slate ? '148,163,184' : CYAN_HI, 0.8 * m);
+          g.fill();
+        }
+      }
       return;
     }
 
@@ -2198,6 +2206,12 @@
   };
 
   /* ------------------------------ geometry ------------------------------ */
+  /* Visible ball radius from the live rect: the WebGPU/WebGL canvas draws the
+     ball at .72 of its half-width (liquid-orb.js family `radius: .72`), while
+     the CSS membrane fallback's own border IS the visible edge. */
+  function orbRadiusFromRect(width, isOrbCanvas) {
+    return Math.max(30, (width / 2) * (isOrbCanvas ? 0.72 : 1));
+  }
   function measure() {
     const stage = S.els.stage;
     if (!stage) return;
@@ -2210,7 +2224,7 @@
     let r = 0;
     if (orbEl) {
       const rect = orbEl.getBoundingClientRect();
-      r = Math.max(30, (rect.width / 2) * 0.72);
+      r = orbRadiusFromRect(rect.width, Boolean(orbCv));
       if (!S.oAnim && rect.width > 4) {
         S.O.x = rect.left + rect.width / 2 - stageRect.left;
         S.O.y = rect.top + rect.height / 2 - stageRect.top;
@@ -2313,6 +2327,29 @@
     S.O.x = LS.lerp(S.oAnim.from.x, S.oAnim.to.x, e);
     S.O.y = LS.lerp(S.oAnim.from.y, S.oAnim.to.y, e);
     if (p >= 1) S.oAnim = null;
+  }
+  /* Connectors must follow the RENDERED ball, not the last measured snapshot:
+     .core-entity's left transitions (hero slide, window resize) and the family
+     lift translate .membrane-wrap continuously, so re-sync the orb centre and
+     visible radius from the live rect every frame. Two getBoundingClientRect
+     reads per frame; layout stays clean because the orb animates through
+     compositor transforms, so this stays cheap. */
+  function syncOrb() {
+    const root = S.els.entity;
+    if (!root) return;
+    const orbCv = root.querySelector('.liquid-orb-canvas[data-active="true"]');
+    const orbEl = orbCv || S.els.membrane;
+    if (!orbEl) return;
+    const rect = orbEl.getBoundingClientRect();
+    if (rect.width < 4 || !S.els.stage) return;
+    const stageRect = S.els.stage.getBoundingClientRect();
+    S.O.x = rect.left + rect.width / 2 - stageRect.left;
+    S.O.y = rect.top + rect.height / 2 - stageRect.top;
+    const r = orbRadiusFromRect(rect.width, Boolean(orbCv));
+    if (Math.abs(r - LS.R) > 0.25) {
+      LS.R = r;
+      for (const sync of LS.__geomSyncs) sync();
+    }
   }
 
   /* ------------------------------ spec build ---------------------------- */
@@ -2575,6 +2612,7 @@
     S.frames += 1;
     S.tScene += dt * LS.SCENE_TIME_SCALE;
     tickO(now);
+    syncOrb();
     if (S.opts && S.opts.onFrame) S.opts.onFrame(performance.now());
     const W = S.W, H = S.H;
     S.ctxs.place.clearRect(0, 0, W, H);
@@ -2722,7 +2760,7 @@
     },
     __test: {
       chainSlotLayout, chainFrontSlots, resolveSceneModifiers, pickHero,
-      railOrder, shouldPlayTransient, placeGlow,
+      railOrder, shouldPlayTransient, placeGlow, orbRadiusFromRect,
       placeFactories: () => LS.placeFactories,
       makePlace: (key, envOverride) => LS.placeFactories[key](envOverride || env),
       placeKeys: () => ({ ...PLACE_KEYS }),

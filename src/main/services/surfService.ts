@@ -11,6 +11,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 import {
   emptySurfRunStats,
@@ -31,6 +33,13 @@ export const SURF_STATUS_CHANNEL = 'metabot:surfStatusChanged';
 export const PRE_DREAM_SURF_RECENCY_MS = 20 * 60 * 60 * 1000;
 /** Longest dream-diary excerpt carried into a surf prompt (P2a bloat cap). */
 export const SURF_DREAM_DIGEST_MAX_CHARS = 1200;
+
+/** Local (host timezone) `YYYY-MM-DD` key for the on-disk report file name. */
+const formatLocalDateKey = (ms: number): string => {
+  const date = new Date(ms);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
 
 export interface SurfStatusEvent {
   metabotId: number;
@@ -179,6 +188,13 @@ export interface SurfServiceDeps {
    * prompt. Absent → no dream section.
    */
   getLatestDreamDigest?: (metabotId: number) => string | null;
+  /**
+   * Second source of truth for the rendered report (2026-11-18): absolute
+   * directory receiving one `<YYYY-MM-DD>-<runId>.md` per finished run
+   * (`<userData>/daily-reports/surf` in production). Absent → no disk copy
+   * (tests/harnesses) — the store row stays the only record.
+   */
+  reportDir?: string;
 }
 
 export class SurfService {
@@ -197,6 +213,7 @@ export class SurfService {
   private readonly fetchProtocolRadar?: SurfServiceDeps['fetchProtocolRadar'];
   private readonly fetchHotPosts?: SurfServiceDeps['fetchHotPosts'];
   private readonly getLatestDreamDigest?: SurfServiceDeps['getLatestDreamDigest'];
+  private readonly reportDir?: string;
   private readonly runningByMetabot = new Map<number, string>();
   private readonly backgroundDeferral?: SurfServiceDeps['backgroundDeferral'];
   private readonly checkModelBinding?: SurfServiceDeps['checkModelBinding'];
@@ -227,6 +244,7 @@ export class SurfService {
     this.fetchProtocolRadar = deps.fetchProtocolRadar;
     this.fetchHotPosts = deps.fetchHotPosts;
     this.getLatestDreamDigest = deps.getLatestDreamDigest;
+    this.reportDir = deps.reportDir?.trim() ? deps.reportDir : undefined;
     this.checkModelBinding = deps.checkModelBinding;
   }
 
@@ -594,6 +612,11 @@ export class SurfService {
         reportJson,
         finishedAtIso: nowIso,
       });
+      // Second source of truth (2026-11-18): sqlite was the ONLY place the
+      // rendered report lived, and the 20k store cap silently cut its tail.
+      // The same markdown now also lands on disk best-effort — a failed write
+      // never blocks or fails the run (the row stays authoritative).
+      this.persistReportToDisk({ runId, finishedAtMs: this.nowMs(), markdown: reportMarkdown });
       finish('done', null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -609,6 +632,46 @@ export class SurfService {
         finishedAtIso: new Date(this.nowMs()).toISOString(),
       });
       finish('failed', message);
+    }
+  }
+
+  /**
+   * Best-effort markdown copy of the report next to the store record
+   * (2026-11-18): `metaweb_surf_runs.report_markdown` was the only copy of the
+   * rendered report, and its 20k cap silently cut the tail. This writes
+   * `<reportDir>/<YYYY-MM-DD>-<runId>.md`; when the store's copy was clamped,
+   * the file carries the FULL report and a header saying the row is the
+   * truncated copy (the stored row itself is never changed).
+   *
+   * Contract: never throws and never writes outside `reportDir`. A missing
+   * `reportDir` (tests, harnesses) or an empty report means "no file", not an
+   * error — the run has already succeeded at this point.
+   */
+  private persistReportToDisk(input: { runId: string; finishedAtMs: number; markdown: string | null }): void {
+    const dir = this.reportDir;
+    if (!dir) return;
+    const markdown = typeof input.markdown === 'string' ? input.markdown : '';
+    if (!markdown.trim()) return;
+    try {
+      const stored = this.store.getRun(input.runId)?.reportMarkdown ?? null;
+      const storeIsTruncated = typeof stored === 'string' && stored.length < markdown.length;
+      const header = storeIsTruncated
+        ? [
+            '> [!NOTE] store copy truncated',
+            `> metaweb_surf_runs.report_markdown holds ${stored!.length} of the full ${markdown.length} chars (the store cap cut the tail).`,
+            '> This file is the full report; the stored row is unchanged.',
+            '',
+            '',
+          ].join('\n')
+        : '';
+      fs.mkdirSync(dir, { recursive: true });
+      const filePath = path.join(dir, `${formatLocalDateKey(input.finishedAtMs)}-${input.runId}.md`);
+      fs.writeFileSync(filePath, `${header}${markdown}`, 'utf8');
+    } catch (error) {
+      console.warn(
+        '[Surf] report disk write failed (best effort — the run row remains authoritative):',
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 }

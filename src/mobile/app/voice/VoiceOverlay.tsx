@@ -1,8 +1,8 @@
 /**
  * VoiceOverlay — the hold-to-talk surface (voice P1).
  *
- * Rises from the bottom over the composer while the user holds the mic
- * button. Four variants, each with a stable data-testid:
+ * Rises from the bottom over the composer while the user holds either voice
+ * press surface. Four variants, each with a stable data-testid:
  *   voice-overlay-recording   live transcript + PCM-driven level bars + timer
  *   voice-overlay-recognizing release happened, waiting for `asr.done`
  *   voice-overlay-cancel      finger crossed the swipe-up threshold

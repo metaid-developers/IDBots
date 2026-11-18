@@ -5,9 +5,9 @@
  * Runs the voice spec against the MOCK dev server (port 5196, same base as
  * run-mobile-e2e.mjs) plus the standalone voice stub gateway
  * (scripts/voice-stub-gateway.mjs on 8791, injected via VITE_VOICE_WS_URL).
- * The browser uses Chromium's fake media device, so "speech" is a synthetic
- * tone but the WHOLE frontend pipeline is real: getUserMedia → AudioWorklet →
- * PCM chunker → WebSocket → stub → streaming partials → draft backfill.
+ * The browser uses the mock-build synthetic microphone, so "speech" is a
+ * deterministic tone but the frontend pipeline is real: capture → AudioWorklet
+ * → PCM chunker → WebSocket → stub → streaming partials → release-to-send.
  *
  * Scope: --project=pixel7 only (fake-media flags are Chromium switches;
  * iOS Safari behavior is covered by the compatibility path + delivery notes,

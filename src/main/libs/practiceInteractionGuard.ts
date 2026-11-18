@@ -15,8 +15,10 @@
  *     run is capped at PRACTICE_MAX_TOOL_CALLS_PER_RUN evaluated calls — the
  *     host-side proxy for the design's 60-iteration budget (the DSH kernel has
  *     no per-turn iteration knob).
- *  3. PRACTICE_RUN_WATCHDOG_MS is the wall-clock budget the scheduler enforces
- *     by stopping the session.
+ *  3. The practice run's wall-clock budget is resolved per practice task
+ *     category (resolvePracticeRunWatchdogMs: shipped tiers → store/config
+ *     overrides, clamped) and the scheduler stops the session past it. Every
+ *     tier ships at the historical 20 minutes, so the default is unchanged.
  *
  * The counters live on the session marker object (ActiveSession.practiceSession)
  * so a per-turn tool-surface rebuild cannot reset them mid-run (same lesson as
@@ -27,8 +29,115 @@ import type { DreamPracticeProposal } from './dreamPrompt';
 
 /** Hard cap on evaluated tool calls per practice run (the 60-iteration proxy). */
 export const PRACTICE_MAX_TOOL_CALLS_PER_RUN = 60;
-/** Wall-clock budget per practice run; the scheduler stops the session past it. */
+/**
+ * Built-in wall-clock budget per practice run; the scheduler stops the session
+ * past it. This stays the DEFAULT for every practice task category (2026-11-18:
+ * changing the shipped default would silently alter every existing run) — the
+ * tier ladder below is resolved per category, and a store/config value can lift
+ * one category without touching the rest.
+ */
 export const PRACTICE_RUN_WATCHDOG_MS = 20 * 60 * 1000;
+
+/**
+ * Practice task category: the proposal's risk class doubles as the task
+ * category the watchdog budget is keyed on (read_only / interact_local /
+ * chain_write — a chain_write practice run executes the read_only posture, so
+ * it starts from the same budget).
+ */
+export type PracticeRunWatchdogCategory = DreamPracticeProposal['riskClass'];
+
+/**
+ * Shipped tier ladder — the single place the host's per-category budgets live.
+ * Every tier ships at the historical 20 minutes so behaviour is unchanged
+ * until an operator (or a store value) lifts a category; a category's entry can
+ * be changed here in one line without touching the others.
+ */
+export const PRACTICE_RUN_WATCHDOG_TIERS_MS: Readonly<Record<PracticeRunWatchdogCategory, number>> = {
+  read_only: PRACTICE_RUN_WATCHDOG_MS,
+  interact_local: PRACTICE_RUN_WATCHDOG_MS,
+  chain_write: PRACTICE_RUN_WATCHDOG_MS,
+};
+
+/**
+ * KV-store key backing the per-category overrides (app settings store, the
+ * same `getStore()` the host settings use). Accepted shapes:
+ *   - number                        → global budget for every category
+ *   - { defaultMs?: number,
+ *       categories?: { <category>?: number } } → per-category budgets
+ * Anything else (missing, malformed, non-finite, <= 0) is ignored.
+ */
+export const PRACTICE_RUN_WATCHDOG_SETTING_KEY = 'practice_run_watchdog_ms';
+
+/** A corrupt/absent config must never disable the watchdog entirely. */
+export const PRACTICE_RUN_WATCHDOG_MIN_MS = 60_000;
+/** …nor turn an unattended practice run into a multi-day zombie. */
+export const PRACTICE_RUN_WATCHDOG_MAX_MS = 6 * 60 * 60_000;
+
+/** Structured override shape accepted from the store (see the setting key). */
+export type PracticeRunWatchdogOverrides = {
+  defaultMs?: number;
+  categories?: Partial<Record<PracticeRunWatchdogCategory, number>>;
+};
+
+const clampWatchdogMs = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
+  return Math.min(PRACTICE_RUN_WATCHDOG_MAX_MS, Math.max(PRACTICE_RUN_WATCHDOG_MIN_MS, Math.floor(value)));
+};
+
+/**
+ * An explicitly injected budget (deps wiring / tests) is honoured as-is when it
+ * is a positive finite number: it is a deliberate caller decision, not untrusted
+ * store config, and shrinking it is exactly how the watchdog is exercised.
+ */
+const readExplicitBudget = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
+  return Math.floor(value);
+};
+
+/** Read one category budget out of a store value of either accepted shape. */
+const readConfiguredBudget = (
+  overrides: unknown,
+  category: PracticeRunWatchdogCategory | null | undefined,
+): number | null => {
+  if (typeof overrides === 'number') return clampWatchdogMs(overrides);
+  if (!overrides || typeof overrides !== 'object') return null;
+  const record = overrides as PracticeRunWatchdogOverrides;
+  if (category && record.categories && typeof record.categories === 'object') {
+    const perCategory = clampWatchdogMs(record.categories[category]);
+    if (perCategory !== null) return perCategory;
+  }
+  return clampWatchdogMs(record.defaultMs);
+};
+
+/**
+ * Resolve the wall-clock budget for one practice run (tiered + configurable):
+ *
+ *   1. `explicitMs` — a caller-injected budget (deps wiring / tests). Deliberate
+ *      and narrowest, so it wins.
+ *   2. the store/config value for THIS category,
+ *   3. the store/config default,
+ *   4. the shipped tier for the category (`PRACTICE_RUN_WATCHDOG_TIERS_MS`),
+ *   5. `PRACTICE_RUN_WATCHDOG_MS` as the last resort.
+ *
+ * Every store/config candidate is clamped to [1 minute, 6 hours] (a corrupt
+ * value must neither disable the watchdog nor create a multi-day zombie);
+ * an explicit injected budget is honoured as-is when positive. Invalid
+ * candidates are skipped instead of coerced (a NaN would otherwise arm an
+ * immediate timeout, and 0 would arm a timeout that never waits).
+ */
+export function resolvePracticeRunWatchdogMs(input: {
+  category?: PracticeRunWatchdogCategory | null;
+  overrides?: unknown;
+  explicitMs?: number | null;
+}): number {
+  const category = input.category ?? null;
+  const explicit = readExplicitBudget(input.explicitMs);
+  if (explicit !== null) return explicit;
+  const configured = readConfiguredBudget(input.overrides, category);
+  if (configured !== null) return configured;
+  if (category && PRACTICE_RUN_WATCHDOG_TIERS_MS[category]) return PRACTICE_RUN_WATCHDOG_TIERS_MS[category];
+  return PRACTICE_RUN_WATCHDOG_MS;
+}
 /** Side-effecting tool calls allowed per interact_local practice run. */
 export const PRACTICE_INTERACT_LOCAL_SIDE_EFFECT_BUDGET = 10;
 /** Max characters of one practice outcome rendered into the dream prompt. */

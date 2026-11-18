@@ -86,6 +86,14 @@ test('pickHero honours focus ids and falls back per type', () => {
   assert.equal(T.pickHero({ type: 'groups' }, { workers: spec.workers }), null);
 });
 
+test('orb radius from the live rect: canvas uses the .72 shader ball factor, membrane fallback uses its own edge', () => {
+  // 340px liquid-orb canvas → the WebGL ball edge sits at .72 × half-width
+  assert.ok(Math.abs(T.orbRadiusFromRect(340, true) - 122.4) < 1e-9);
+  // 196px CSS membrane (220 wrap with inset 12) → its border IS the visible edge
+  assert.equal(T.orbRadiusFromRect(196, false), 98);
+  assert.ok(T.orbRadiusFromRect(2, true) >= 30, 'radius floors at 30px');
+});
+
 test('railOrder pins the hero, caps at 5, emits +N, and never leaves an orphan heading', () => {
   const spec = {
     workers: [

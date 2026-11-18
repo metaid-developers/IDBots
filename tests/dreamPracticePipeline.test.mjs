@@ -30,6 +30,11 @@ const require = Module.createRequire(import.meta.url);
 const {
   PRACTICE_MAX_TOOL_CALLS_PER_RUN,
   PRACTICE_RUN_WATCHDOG_MS,
+  PRACTICE_RUN_WATCHDOG_TIERS_MS,
+  PRACTICE_RUN_WATCHDOG_MIN_MS,
+  PRACTICE_RUN_WATCHDOG_MAX_MS,
+  PRACTICE_RUN_WATCHDOG_SETTING_KEY,
+  resolvePracticeRunWatchdogMs,
   PRACTICE_INTERACT_LOCAL_SIDE_EFFECT_BUDGET,
   PRACTICE_READ_ONLY_INLINE_TOOLS,
   PRACTICE_INTERACT_LOCAL_INLINE_TOOLS,
@@ -549,7 +554,7 @@ function loadSchedulerWithElectronStub() {
   }
 }
 
-function createSchedulerHarness({ proposal, practiceRunWatchdogMs, startSessionError } = {}) {
+function createSchedulerHarness({ proposal, practiceRunWatchdogMs, practiceRunWatchdogConfig, startSessionError } = {}) {
   const { Scheduler } = loadSchedulerWithElectronStub();
   const recording = {
     runnerCalls: [],
@@ -611,6 +616,11 @@ function createSchedulerHarness({ proposal, practiceRunWatchdogMs, startSessionE
         return run;
       },
       markTaskRunning: () => {},
+      // Harness repair (2026-11-18): the scheduler claims the task through this
+      // store predicate before running it; the stub predates that contract, so
+      // the whole scheduler section failed with "not a function" on this worktree's
+      // baseline. Claiming always succeeds here (single-process test harness).
+      tryMarkTaskRunning: () => true,
       recordSkippedRun: (taskId, reason, trigger) => ({
         id: 'skip-1', taskId, sessionId: null, status: 'skipped',
         startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
@@ -652,7 +662,7 @@ function createSchedulerHarness({ proposal, practiceRunWatchdogMs, startSessionE
       startSession: async (sessionId, prompt, options) => {
         recording.runnerCalls.push({ sessionId, prompt, options });
         if (startSessionError) throw startSessionError;
-        if (practiceRunWatchdogMs !== undefined) {
+        if (practiceRunWatchdogMs !== undefined || practiceRunWatchdogConfig !== undefined) {
           // Watchdog test: the session "runs" until the watchdog stops it.
           await new Promise((resolve) => {
             settleStartSession = resolve;
@@ -667,6 +677,7 @@ function createSchedulerHarness({ proposal, practiceRunWatchdogMs, startSessionE
     getIMGatewayManager: () => null,
     getSkillsPrompt: async () => null,
     ...(practiceRunWatchdogMs !== undefined ? { practiceRunWatchdogMs } : {}),
+    ...(practiceRunWatchdogConfig !== undefined ? { getPracticeRunWatchdogConfig: () => practiceRunWatchdogConfig } : {}),
   });
   return { scheduler, recording, task };
 }
@@ -692,7 +703,9 @@ test('scheduler starts a practice run with the practice marker and writes back c
     'run completion writes back onto the proposal with the run id',
   );
   assert.equal(recording.failedProposals.length, 0);
-  assert.equal(recording.completedRuns[0].status, 'success');
+  // Run receipt tiering (PR #172): normal completion records `completed`
+  // (executor exited normally with work), not the legacy `success` label.
+  assert.equal(recording.completedRuns[0].status, 'completed');
 });
 
 test('scheduler writes back failure (with the error) and never touches ordinary tasks', async () => {
@@ -721,8 +734,91 @@ test('scheduler wall-clock watchdog stops an overrunning practice run and marks 
   await scheduler.executeTask(task, 'manual');
   assert.equal(recording.stopCalls.length, 1, 'the watchdog stopped the session');
   assert.match(recording.stopCalls[0].options.reason, /wall-clock budget/);
-  assert.equal(recording.completedRuns[0].status, 'error');
+  // Run receipt tiering (PR #172) + the tiered watchdog naming the category:
+  // a wall-clock kill records the `timeout` tier (not the legacy `error`).
+  assert.equal(recording.completedRuns[0].status, 'timeout');
   assert.match(recording.completedRuns[0].error, /wall-clock budget/);
   assert.equal(recording.failedProposals.length, 1);
   assert.equal(recording.failedProposals[0].id, 43);
 });
+
+// ---------------------------------------------------------------------------
+// Tiered + configurable watchdog (2026-11-18)
+// ---------------------------------------------------------------------------
+
+test('watchdog: every shipped tier still defaults to the historical 20 minutes', () => {
+  // Regression: the default must not move. A run with no config and no
+  // injected budget keeps the exact pre-2026-11-18 budget in every category.
+  assert.equal(PRACTICE_RUN_WATCHDOG_MS, 20 * 60 * 1000);
+  for (const category of ['read_only', 'interact_local', 'chain_write']) {
+    assert.equal(PRACTICE_RUN_WATCHDOG_TIERS_MS[category], PRACTICE_RUN_WATCHDOG_MS, `${category} ships at 20 min`);
+    assert.equal(resolvePracticeRunWatchdogMs({ category }), PRACTICE_RUN_WATCHDOG_MS, `${category} resolves to 20 min`);
+  }
+  // Unknown/absent category falls back to the same built-in default.
+  assert.equal(resolvePracticeRunWatchdogMs({}), PRACTICE_RUN_WATCHDOG_MS);
+  assert.equal(resolvePracticeRunWatchdogMs({ category: null }), PRACTICE_RUN_WATCHDOG_MS);
+});
+
+test('watchdog: a per-category store override lifts exactly one tier', () => {
+  const override = { categories: { read_only: 45 * 60 * 1000 } };
+  assert.equal(resolvePracticeRunWatchdogMs({ category: 'read_only', overrides: override }), 45 * 60 * 1000);
+  // Other categories keep the shipped 20 minutes — the override is not global.
+  assert.equal(resolvePracticeRunWatchdogMs({ category: 'interact_local', overrides: override }), PRACTICE_RUN_WATCHDOG_MS);
+  assert.equal(resolvePracticeRunWatchdogMs({ category: 'chain_write', overrides: override }), PRACTICE_RUN_WATCHDOG_MS);
+  // A bare number is the global form of the same setting.
+  assert.equal(resolvePracticeRunWatchdogMs({ category: 'interact_local', overrides: 35 * 60 * 1000 }), 35 * 60 * 1000);
+  // {defaultMs} applies to categories with no entry of their own.
+  assert.equal(
+    resolvePracticeRunWatchdogMs({ category: 'interact_local', overrides: { defaultMs: 30 * 60 * 1000, categories: { read_only: 45 * 60 * 1000 } } }),
+    30 * 60 * 1000,
+  );
+});
+
+test('watchdog: store values are clamped and invalid ones are skipped, never coerced', () => {
+  // Sub-minute / negative / non-finite values must not disable or instantly
+  // trip the watchdog: the floor wins.
+  assert.equal(resolvePracticeRunWatchdogMs({ category: 'read_only', overrides: 30 }), PRACTICE_RUN_WATCHDOG_MIN_MS);
+  assert.equal(resolvePracticeRunWatchdogMs({ category: 'read_only', overrides: -1 }), PRACTICE_RUN_WATCHDOG_MS);
+  assert.equal(resolvePracticeRunWatchdogMs({ category: 'read_only', overrides: NaN }), PRACTICE_RUN_WATCHDOG_MS);
+  assert.equal(resolvePracticeRunWatchdogMs({ category: 'read_only', overrides: 'not-a-number' }), PRACTICE_RUN_WATCHDOG_MS);
+  assert.equal(resolvePracticeRunWatchdogMs({ category: 'read_only', overrides: { categories: { read_only: 'x' } } }), PRACTICE_RUN_WATCHDOG_MS);
+  // The ceiling holds against an absurd value.
+  assert.equal(resolvePracticeRunWatchdogMs({ category: 'read_only', overrides: 48 * 60 * 60_000 }), PRACTICE_RUN_WATCHDOG_MAX_MS);
+  // An explicit injected budget is a caller decision, not store config: honoured
+  // as-is (this is the seam tests use to shrink the watchdog), but only when positive.
+  assert.equal(resolvePracticeRunWatchdogMs({ category: 'read_only', explicitMs: 30 }), 30);
+  assert.equal(resolvePracticeRunWatchdogMs({ category: 'read_only', explicitMs: 0 }), PRACTICE_RUN_WATCHDOG_MS);
+  // Precedence: explicit > category override > default override > shipped tier.
+  assert.equal(
+    resolvePracticeRunWatchdogMs({ category: 'read_only', explicitMs: 50, overrides: { categories: { read_only: 45 * 60 * 1000 } } }),
+    50,
+  );
+});
+
+test('watchdog: the scheduler enforces the per-category budget from the store', async () => {
+  const proposal = { id: 44, metabotId: 5, status: 'scheduled', riskClass: 'read_only' };
+  const { scheduler, recording, task } = createSchedulerHarness({
+    proposal,
+    practiceRunWatchdogConfig: { categories: { read_only: 2 * 60 * 1000 } },
+  });
+  // Fire the watchdog immediately instead of waiting two minutes: the delay
+  // the scheduler armed is recorded before it is collapsed to zero.
+  const realSetTimeout = globalThis.setTimeout;
+  const armedDelays = [];
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    if (typeof delay === 'number' && delay >= 1000) armedDelays.push(delay);
+    return realSetTimeout(callback, typeof delay === 'number' && delay >= 60_000 ? 0 : delay, ...args);
+  };
+  try {
+    await scheduler.executeTask(task, 'manual');
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  // Only the watchdog uses a minute-scale delay on this path.
+  assert.deepEqual(armedDelays, [2 * 60 * 1000], 'the store override is the armed watchdog duration');
+  assert.equal(recording.stopCalls.length, 1);
+  assert.match(recording.stopCalls[0].options.reason, /Practice run \(read_only\) exceeded its 2-minute wall-clock budget/);
+  assert.match(recording.completedRuns[0].error, /2-minute wall-clock budget/);
+  assert.equal(recording.failedProposals.length, 1);
+});
+

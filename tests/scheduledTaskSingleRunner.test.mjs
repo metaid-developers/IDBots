@@ -591,7 +591,9 @@ test('Heartbeat is cleared on the failure path too', async () => {
   }
 
   assert.equal(recording.completedRuns.length, 1);
-  assert.equal(recording.completedRuns[0].status, 'error');
+  // T-A tiered receipt: a submission throw is a `crashed` run (the old
+  // two-state receipt called it `error`; the run history keeps both readable).
+  assert.equal(recording.completedRuns[0].status, 'crashed');
 });
 
 test('Heartbeat tick refreshes the marker with a newer timestamp', async () => {

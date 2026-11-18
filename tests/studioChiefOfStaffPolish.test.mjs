@@ -55,7 +55,7 @@ test('Issue 1 & 6: Live Stage measures live DOM card endpoints, paints no duplic
   // Exact DOM-measured endpoints: connector anchors come from the measured
   // rail item rects walked up to .live-stage offsets — never guessed percentages:
   assert.match(stageScenes, /function itemRect\(el\) \{\s*const stage = M\.rail\.offsetParent/);
-  assert.match(stageScenes, /function itemAnchor\(el\) \{\s*const r = itemRect\(el\)/);
+  assert.match(stageScenes, /const to = avatarAnchor\(item\);/, 'peer connectors anchor at the measured card avatar (the itemAnchor stub retired with the stub line)');
   assert.match(stageScenes, /function avatarAnchor\(el\)/);
   assert.match(stageScenes, /M\.items\.get\(`\$\{M\.hero\.type\}:\$\{id\}`\)/, 'hero connectors only anchor rail items that exist');
   assert.doesNotMatch(stageJs, /height \* \(\.22 \+ index \* \.11\)/, 'guessed percentage Y anchors retired');

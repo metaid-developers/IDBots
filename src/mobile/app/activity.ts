@@ -4,6 +4,23 @@ import type { MockMetabot, ScheduledTask, ScheduledTaskRun } from '../bridge/typ
 export type ActivityKind = 'scheduled' | 'longterm';
 export type ActivityStatus = 'running' | 'success' | 'error' | 'skipped' | 'waiting' | 'paused' | 'done';
 
+/**
+ * Run receipt tiering (desktop 2026-11-18) widened ScheduledTaskRun.status
+ * with terminal tiers. The phone's activity list keeps the coarse tri-state,
+ * mapped exactly like the desktop's task-level bookkeeping contract: a
+ * normal executor exit (completed / completed_empty) reads as success, an
+ * abnormal exit (crashed / timeout) reads as error, legacy labels and the
+ * in-flight states pass through untouched.
+ */
+const runStatusToActivityStatus = (
+  runStatus: ScheduledTaskRun['status'],
+): ActivityStatus =>
+  runStatus === 'completed' || runStatus === 'completed_empty'
+    ? 'success'
+    : runStatus === 'crashed' || runStatus === 'timeout'
+      ? 'error'
+      : runStatus;
+
 export interface WorkActivity {
   id: string;
   kind: ActivityKind;
@@ -37,7 +54,7 @@ export function buildWorkActivity(input: {
       runId: run.id,
       title: task?.name ?? run.taskName ?? run.taskId,
       participants: task?.metabotId == null ? [] : [botById.get(task.metabotId) ?? `Bot ${task.metabotId}`],
-      status: run.status,
+      status: runStatusToActivityStatus(run.status),
       waitingReason: run.error ?? run.skipReason,
       updatedAt: Date.parse(run.startedAt) || 0,
       sessionId: run.sessionId,

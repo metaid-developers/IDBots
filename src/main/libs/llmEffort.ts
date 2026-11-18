@@ -52,6 +52,31 @@ export function isLlmEffortLevel(value: unknown): value is LlmEffortLevel {
   return typeof value === 'string' && LEVEL_SET.has(value);
 }
 
+/** Ladder rank: off(0) < low(1) < high(2) < max(3); null/unknown ranks -1. */
+const LEVEL_RANK: Record<LlmEffortLevel, number> = { off: 0, low: 1, high: 2, max: 3 };
+
+export function effortLevelRank(level: LlmEffortLevel | null | undefined): number {
+  return level != null && LEVEL_SET.has(level) ? LEVEL_RANK[level] : -1;
+}
+
+/**
+ * The higher of two effort levels. `null` means "no say" and loses to any
+ * concrete level (two nulls → null). Used to pin an IN-TURN effort floor: a
+ * GT-02 fallback attempt may not run the remainder of a turn below the
+ * effort the primary attempt already started with — swapping the model AND
+ * silently dropping the reasoning tier is a double downgrade (2026-11-18
+ * Studio session post-mortem: GLM pinned 'low' → deepseek fallback 'off',
+ * 16 turns in one evening).
+ */
+export function maxLlmEffortLevel(
+  a: LlmEffortLevel | null | undefined,
+  b: LlmEffortLevel | null | undefined,
+): LlmEffortLevel | null {
+  if (a == null) return b ?? null;
+  if (b == null) return a;
+  return effortLevelRank(a) >= effortLevelRank(b) ? a : b;
+}
+
 /**
  * Map a leftover five-step effort token onto the current four-step ladder.
  * Canonical off/low/high/max pass through unchanged — `low` is a current

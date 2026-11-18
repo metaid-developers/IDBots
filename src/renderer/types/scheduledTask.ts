@@ -92,7 +92,7 @@ export interface ScheduledTaskRun {
   id: string;
   taskId: string;
   sessionId: string | null;
-  status: 'running' | 'success' | 'error' | 'skipped';
+  status: 'running' | 'skipped' | 'success' | 'error' | 'completed' | 'completed_empty' | 'crashed' | 'timeout';
   startedAt: string;
   finishedAt: string | null;
   durationMs: number | null;

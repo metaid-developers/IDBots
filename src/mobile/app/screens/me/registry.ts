@@ -8,6 +8,7 @@ import {
   InformationCircleIcon,
   PuzzlePieceIcon,
   ShieldCheckIcon,
+  SparklesIcon,
   Squares2X2Icon,
 } from '@heroicons/react/24/outline';
 import { t } from '../../../i18n';
@@ -20,6 +21,7 @@ export type MeRoute =
   | 'weixinBind'
   | 'skills'
   | 'memory'
+  | 'model'
   | 'general'
   | 'account'
   | 'about';
@@ -102,6 +104,13 @@ export const ME_ENTRIES: readonly MeEntry[] = [
       input.memoryEnabled === null
         ? null
         : t(input.memoryEnabled ? 'mobile.me.summary.memoryOn' : 'mobile.me.summary.memoryOff'),
+  },
+  {
+    id: 'model',
+    group: 'general',
+    icon: SparklesIcon,
+    titleKey: 'mobile.me.entry.model',
+    testId: 'me-entry-model',
   },
   {
     id: 'general',

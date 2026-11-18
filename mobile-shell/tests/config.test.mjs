@@ -51,10 +51,13 @@ test('Android has API 26 and explicit staging and production variants', () => {
   assert.match(backPlugin, /getBridge\(\)\.getActivity\(\)\.finish\(\)/);
 });
 
-test('production startup uses declarative config, safe lifecycle, version 0.1.1, and branded launcher assets', () => {
+test('production startup uses declarative config, safe lifecycle, version 0.1.2, and branded launcher assets', () => {
   const build = read('../android/app/build.gradle');
-  assert.match(build, /versionCode 3/);
-  assert.match(build, /versionName "0\.1\.1"/);
+  assert.match(build, /versionCode 4/);
+  assert.match(build, /versionName "0\.1\.2"/);
+  const bootstrap = read('../android/app/src/main/java/com/idbots/world/NativeBootstrap.java');
+  assert.doesNotMatch(bootstrap, /readAllBytes\s*\(/);
+  assert.match(bootstrap, /ByteArrayOutputStream/);
   const activity = read('../android/app/src/main/java/com/idbots/world/MainActivity.java');
   assert.doesNotMatch(activity, /CapConfig|setServerUrl|setErrorPath/);
   assert.ok(activity.indexOf('registerPlugin(NativeBackPlugin.class)') < activity.indexOf('super.onCreate(savedInstanceState)'));

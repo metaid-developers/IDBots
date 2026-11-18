@@ -24,6 +24,34 @@ test.describe('chat', () => {
     await attachScreen(testInfo, page, 'chat-streamed-reply');
   });
 
+  test('focused composer hides its placeholder and never gains a gold outline', async ({ page }) => {
+    await page.goto('/app/');
+    const composer = page.getByTestId('chat-composer-input');
+    const wrapper = composer.locator('..');
+    const borderBefore = await wrapper.evaluate((element) => getComputedStyle(element).borderColor);
+    await composer.click();
+    await expect(composer).toBeFocused();
+    const placeholder = await composer.evaluate((element) => {
+      const style = getComputedStyle(element, '::placeholder');
+      return { color: style.color, opacity: style.opacity };
+    });
+    expect(placeholder.color).toBe('rgba(0, 0, 0, 0)');
+    expect(placeholder.opacity).toBe('0');
+    await expect(composer).toHaveCSS('outline-style', 'none');
+    await expect(composer).toHaveCSS('box-shadow', 'none');
+    expect(await wrapper.evaluate((element) => getComputedStyle(element).borderColor)).toBe(borderBefore);
+  });
+
+  test('chat links use a light gold color in dark mode', async ({ page }, testInfo) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.goto('/app/');
+    await sendMessage(page, 'show artifacts');
+    const link = page.getByRole('link', { name: 'chart.png', exact: true });
+    await expect(link).toBeVisible({ timeout: 30_000 });
+    await expect(link).toHaveCSS('color', 'rgb(255, 227, 110)');
+    await attachScreen(testInfo, page, 'chat-link-dark-gold');
+  });
+
   test('composer keeps a wide input, groups emoji under plus, and sends with Enter', async ({ page }, testInfo) => {
     await page.goto('/app/');
     const composer = page.getByTestId('chat-composer-input');

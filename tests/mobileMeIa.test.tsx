@@ -20,6 +20,7 @@ import { BotEditPage } from '../src/mobile/app/screens/me/BotEditPage.tsx';
 import { SkillsPage } from '../src/mobile/app/screens/me/SkillsPage.tsx';
 import { MemoryPage } from '../src/mobile/app/screens/me/MemoryPage.tsx';
 import { GeneralPage } from '../src/mobile/app/screens/me/GeneralPage.tsx';
+import { ModelPage } from '../src/mobile/app/screens/me/ModelPage.tsx';
 import { AccountDeleteSheet, AccountPage } from '../src/mobile/app/screens/me/AccountPage.tsx';
 import { WeixinBindPage, classifyWeixinPoll } from '../src/mobile/app/screens/me/WeixinBindPage.tsx';
 import { AboutPage } from '../src/mobile/app/screens/me/AboutPage.tsx';
@@ -33,16 +34,16 @@ import type { MobileUserIdentity } from '../src/mobile/app/hooks/useIdentity.ts'
  * (e2e/mobile/me-ia.spec.ts) — renderToStaticMarkup never runs effects.
  */
 
-test('registry: nine list entries in three groups, profile rides the card', () => {
+test('registry: ten list entries in three groups, profile rides the card', () => {
   assert.deepEqual(
     ME_ENTRIES.map((entry) => entry.id),
-    ['bots', 'nfts', 'weixinBind', 'usage', 'skills', 'memory', 'general', 'account', 'about'],
+    ['bots', 'nfts', 'weixinBind', 'usage', 'skills', 'memory', 'model', 'general', 'account', 'about'],
   );
   assert.deepEqual(ME_ENTRY_GROUPS.map((group) => group.group), ['bots', 'general', 'account']);
   // The bots group renders without a heading (My Bots + NFTs + WeChat bot rows on top).
   assert.equal(ME_ENTRY_GROUPS[0].titleKey, null);
   assert.deepEqual(meEntriesForGroup('bots').map((entry) => entry.id), ['bots', 'nfts', 'weixinBind']);
-  assert.deepEqual(meEntriesForGroup('general').map((entry) => entry.id), ['usage', 'skills', 'memory', 'general']);
+  assert.deepEqual(meEntriesForGroup('general').map((entry) => entry.id), ['usage', 'skills', 'memory', 'model', 'general']);
   assert.deepEqual(meEntriesForGroup('account').map((entry) => entry.id), ['account', 'about']);
   // profile is NOT a registry row (card entry, IA-PLAN §2.1); the retired
   // traffic route is gone from the navigation surface (S9 §3 下线清单).
@@ -243,6 +244,10 @@ test('remaining secondary pages render their shells', () => {
   assert.match(
     renderToStaticMarkup(React.createElement(MemoryPage, { onBack: () => undefined })),
     /data-testid="memory-row-memoryEnabled"/,
+  );
+  assert.match(
+    renderToStaticMarkup(React.createElement(ModelPage, { onBack: () => undefined })),
+    /data-testid="me-page-model"/,
   );
   assert.match(
     renderToStaticMarkup(React.createElement(GeneralPage, { onBack: () => undefined })),

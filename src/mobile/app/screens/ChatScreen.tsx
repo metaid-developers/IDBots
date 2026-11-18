@@ -11,7 +11,8 @@ import { insertEmojiAtCaret } from '../chat/emojiTextInsert';
 import { isNearBottom } from '../chat/autoScroll';
 import { mapWechatBracketCodesForDisplay } from '../chat/wechatEmojiDisplay';
 import TwemojiText from '@/components/chat/TwemojiText';
-import { t } from '../../i18n';
+import { mobileI18n, t } from '../../i18n';
+import { i18nService } from '@/services/i18n';
 import type { MockMetabot } from '../../bridge/types';
 import type { useChat } from '../hooks/useChat';
 import { formatDiagnosticCopy, type ChatMessageView } from '../chatProjection';
@@ -36,6 +37,24 @@ const GROUP_LABEL_KEYS = {
   yesterday: 'mobile.chat.group.yesterday',
   earlier: 'mobile.chat.group.earlier',
 } as const;
+
+function KeyboardIcon(props: { className?: string; 'aria-hidden'?: boolean }): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className}
+      aria-hidden={props['aria-hidden']}
+    >
+      <rect x="2.75" y="5.25" width="18.5" height="13.5" rx="2" />
+      <path d="M6 9h.01M9 9h.01M12 9h.01M15 9h.01M18 9h.01M6 12h.01M9 12h.01M12 12h.01M15 12h.01M18 12h.01M7.5 15h9" />
+    </svg>
+  );
+}
 
 /**
  * Chat drawer (UE rework 2026-10-29, A4; search/rename/delete 2026-11-02).
@@ -525,6 +544,7 @@ export default function ChatScreen(props: {
   const [attachmentSourceOpen, setAttachmentSourceOpen] = useState(false);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [emojiPanelOpen, setEmojiPanelOpen] = useState(false);
+  const [voiceComposerMode, setVoiceComposerMode] = useState<'text' | 'voice'>('text');
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [, refreshDismissedErrors] = useState(0);
   const visibleMessages = filterDismissedErrorMessages(chat.messages);
@@ -572,13 +592,10 @@ export default function ChatScreen(props: {
     steerDisabled: chat.pendingPermissionCount > 0 || turnPhase === 'stopping',
   }) && !chat.isUploading;
 
-  // Voice input (voice P1: hold to send). Press and hold the mic to record;
-  // release sends the transcript as a NEW message via chat.send, so the
-  // composer draft (whatever the user already typed) is never touched. Swipe
-  // up cancels, and a pointer press shorter than 400 ms is discarded as an
-  // accidental press (one-shot hint, never a send). The accessible path is the
-  // click/keyboard activation, which keeps the P0 tap toggle and its streaming
-  // backfill into the draft.
+  // Voice input: a short mic press switches between the text field and the
+  // wide "hold to talk" surface. Holding either press surface records; release
+  // sends the transcript as a NEW message without touching the existing draft.
+  // The wide surface keeps click/keyboard recording as the accessibility path.
   const [voiceHint, setVoiceHint] = useState<string | null>(null);
   const voiceHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showVoiceHint = useCallback((copy: string) => {
@@ -615,10 +632,38 @@ export default function ChatScreen(props: {
     },
   });
   const handleVoiceHoldCancelled = (reason: HoldCancelReason) => {
-    // One-shot hint for an accidental short press; the swipe path already has
-    // its own visual feedback in the overlay.
-    if (reason === 'too_short') showVoiceHint(t('mobile.chat.voice.hintTooShort'));
+    if (reason === 'too_short' && voiceComposerMode === 'voice') {
+      showVoiceHint(t('mobile.chat.voice.hintTooShort'));
+    }
   };
+  const toggleVoiceComposer = () => {
+    textareaRef.current?.blur();
+    setEmojiPanelOpen(false);
+    setComposerMenuOpen(false);
+    setVoiceComposerMode((current) => current === 'text' ? 'voice' : 'text');
+  };
+  const voiceButtonProps = {
+    state: voice.state,
+    elapsedSec: voice.elapsedSec,
+    recognizedText: voice.recognizedText,
+    levelRef: voice.levelRef,
+    bottomInset: keyboardInset,
+    onStart: voice.start,
+    onStop: voice.stop,
+    onStartHold: voice.startHold,
+    onEndHold: voice.endHold,
+    onCancelHold: voice.cancelHold,
+    onSalvage: voice.commitToDraft,
+    onDismissError: voice.dismissError,
+    onHoldCancelled: handleVoiceHoldCancelled,
+    onToggleMode: toggleVoiceComposer,
+  };
+
+  useEffect(() => {
+    const syncLanguage = () => i18nService.setLanguage(mobileI18n.getLanguage(), { persist: false });
+    syncLanguage();
+    return mobileI18n.subscribe(syncLanguage);
+  }, []);
 
   // Track stickiness on user scroll: leaving the near-bottom zone releases
   // auto-follow; returning to it re-arms follow and dismisses the pill.
@@ -761,9 +806,12 @@ export default function ChatScreen(props: {
               <AssistantActivityIndicator
                 messages={chat.activityMessages}
                 avatar={headerBot.avatar}
-                fallbackText={t(`mobile.chat.phase.${turnPhase}`)}
+                fallbackText={turnPhase === 'stopping' || turnPhase === 'offline_unknown'
+                  ? t(`mobile.chat.phase.${turnPhase}`)
+                  : undefined}
                 inline
                 sessionId={chat.sessionId}
+                waitingForOwner={turnPhase === 'waiting_permission'}
               />
             </div>
           ) : null}
@@ -839,26 +887,30 @@ export default function ChatScreen(props: {
           >
             <PlusIcon className="h-6 w-6" aria-hidden />
           </button>
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            onChange={(event) => chat.setDraft(event.target.value)}
-            onFocus={() => {
-              setEmojiPanelOpen(false);
-              setComposerMenuOpen(false);
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
-              event.preventDefault();
-              if (canSubmit) submit();
-            }}
-            enterKeyHint="send"
-            placeholder={t('mobile.chat.composerPlaceholder')}
-            aria-label={t('mobile.chat.composerPlaceholder')}
-            rows={1}
-            className="twin-composer-input max-h-32 resize-none"
-            data-testid="chat-composer-input"
-          />
+          {voiceComposerMode === 'text' ? (
+            <textarea
+              ref={textareaRef}
+              value={draft}
+              onChange={(event) => chat.setDraft(event.target.value)}
+              onFocus={() => {
+                setEmojiPanelOpen(false);
+                setComposerMenuOpen(false);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                if (canSubmit) submit();
+              }}
+              enterKeyHint="send"
+              placeholder={t('mobile.chat.composerPlaceholder')}
+              aria-label={t('mobile.chat.composerPlaceholder')}
+              rows={1}
+              className="twin-composer-input max-h-32 resize-none"
+              data-testid="chat-composer-input"
+            />
+          ) : (
+            <VoiceButton variant="hold" {...voiceButtonProps} />
+          )}
           {chat.isStreaming ? (
             <button
               type="button"
@@ -869,26 +921,20 @@ export default function ChatScreen(props: {
             >
               <StopIcon className="h-5 w-5" aria-hidden />
             </button>
+          ) : voiceComposerMode === 'text' ? (
+            <div className="twin-composer-tail">
+              <VoiceButton variant="icon" {...voiceButtonProps} />
+            </div>
           ) : (
-            <>
-              <div className="twin-composer-tail">
-                <VoiceButton
-                state={voice.state}
-                elapsedSec={voice.elapsedSec}
-                recognizedText={voice.recognizedText}
-                levelRef={voice.levelRef}
-                bottomInset={keyboardInset}
-                onStart={voice.start}
-                onStop={voice.stop}
-                onStartHold={voice.startHold}
-                onEndHold={voice.endHold}
-                onCancelHold={voice.cancelHold}
-                onSalvage={voice.commitToDraft}
-                onDismissError={voice.dismissError}
-                onHoldCancelled={handleVoiceHoldCancelled}
-              />
-              </div>
-            </>
+            <button
+              type="button"
+              onClick={toggleVoiceComposer}
+              aria-label={t('mobile.chat.voice.keyboard')}
+              className="twin-icon-button twin-composer-accessory twin-composer-tail"
+              data-testid="voice-keyboard-button"
+            >
+              <KeyboardIcon className="h-5 w-5" aria-hidden />
+            </button>
           )}
         </div>
       </div>

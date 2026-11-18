@@ -136,7 +136,15 @@ export function useScheduledTasks({ twinMetabotId, onOpenSession, resyncCounter 
         return { ...previous, [run.taskId]: nextRuns };
       });
       if (run.status === 'skipped') return;
-      const lastStatus: 'running' | 'success' | 'error' = run.status;
+      // Receipt tiering (desktop 2026-11-18): map terminal tiers onto the
+      // coarse task state — normal exit (completed / completed_empty) is
+      // success, abnormal exit (crashed / timeout) is error.
+      const lastStatus: 'running' | 'success' | 'error'
+        = run.status === 'running'
+          ? 'running'
+          : run.status === 'success' || run.status === 'completed' || run.status === 'completed_empty'
+            ? 'success'
+            : 'error';
       setTasks((previous) => previous.map((task) => {
         if (task.id !== run.taskId) return task;
         return {

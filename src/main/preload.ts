@@ -425,6 +425,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:setGoal', { sessionId, goal }),
     requestManualCompaction: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:compact', sessionId),
+    closeSessionChapter: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:closeChapter', sessionId),
     exportTranscript: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:exportTranscript', sessionId),
     stopTask: (sessionId: string, taskId: string) =>

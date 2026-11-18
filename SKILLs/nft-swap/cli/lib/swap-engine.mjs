@@ -88,6 +88,17 @@ export function buildItemDisplay({ tokenIndex, depositTxid, album, cover, partNa
   return { name: title, desc: null, cover: cover || undefined, metadata };
 }
 
+/**
+ * Inverse of buildItemDisplay's title rule: recover partName from a
+ * previously persisted display title ("MetaBot Avatar - Arms 8 #2671" →
+ * "Arms 8"). Used when a cover-less recorded display must be rebuilt with a
+ * cover on the item_desc resume path (cover-loss fix, 2026-11-19).
+ */
+export function partNameFromTitle(title) {
+  const match = /^MetaBot Avatar - (.+) #\d+$/.exec(String(title || ''));
+  return match ? match[1] : null;
+}
+
 /** Album constants from the pilot config (same shape as ISSUER_CONFIG). */
 export function albumFromConfig(config) {
   return {
@@ -394,6 +405,11 @@ export async function verifyAndClaim({
  *    broadcast and the ledger write);
  *  - never mint when ANY other ledger row already carries a minted pin for
  *    this tokenIndex (one tokenIndex, one swap for life);
+ *  - cover is MANDATORY at mint time (2026-11-19 cover-loss fix, report
+ *    §4.2 step 3): the live vault row's `imgUrl` is the only pre-burn image
+ *    source, so a mint without a produced cover is refused — on broadcast a
+ *    COVER_UNAVAILABLE row is rejected (owner-approved refund path stays
+ *    open), transient fetch/upload failures leave it claimed (retryable);
  *  - a missing output/outputValue in item/info is INDEX LAG: stay in
  *    mint_pending and retry, never report failure and never re-mint;
  *  - creatorMinted / createAddress mismatch is an ANOMALY: halt without a
@@ -444,10 +460,11 @@ export async function mintAndSend({
     // Belt and braces: the token must still sit at the recorded vault
     // outpoint. A claim whose deposit moved (manual rescue, wrong claim)
     // must never mint.
+    let live = null;
     let partName = null;
     if (deps.fetchVaultRows) {
       const vaultRows = await deps.fetchVaultRows();
-      const live = vaultRows.find((r) => `${r.txid}:${r.outIndex}` === current.deposit_outpoint) ?? null;
+      live = vaultRows.find((r) => `${r.txid}:${r.outIndex}` === current.deposit_outpoint) ?? null;
       if (!live) {
         fail('DEPOSIT_NOT_IN_VAULT', `outpoint ${current.deposit_outpoint} left the vault after the claim — refusing to mint`);
       }
@@ -461,13 +478,78 @@ export async function mintAndSend({
       partName = live.name || null;
     }
 
+    // ---- cover gate (2026-11-19 cover-loss fix, report §4.2 step 3) ------
+    // The legacy image is only fetchable while the old token sits in the
+    // vault — and the DEPOSIT_NOT_IN_VAULT assert above just proved that
+    // window is open. Minting without a produced cover is exactly the
+    // silent data loss this gate exists to stop: no cover ⇒ no mint.
+    let coverFinal = cover;
+    let coverSource = cover ? 'explicit' : null;
+    let coverPlan = null; // dry-run-only: what the cover WOULD be
+    if (!coverFinal) {
+      if (deps.resolveCover) {
+        const resolved = await deps.resolveCover({ row: current, live, broadcast, album });
+        if (resolved?.cover) {
+          coverFinal = resolved.cover;
+          coverSource = resolved.source ?? 'resolver';
+        } else if (broadcast && resolved?.code === 'COVER_UNAVAILABLE') {
+          // Permanent: no image can be produced. Reject the row — this opens
+          // the owner-approved refund path (rejected → refunded); the deposit
+          // is never consumed by this run and the old token stays in the
+          // vault, so the attach-cover window stays open too.
+          const reason = `cover unavailable: ${resolved?.message ?? 'no legacy image could be produced'}`;
+          ledger.reject(current.id, reason);
+          steps.push({ step: 'cover_unavailable_reject', ledgerId: current.id, code: 'COVER_UNAVAILABLE' });
+          fail('COVER_UNAVAILABLE', `${reason} — mint aborted, ledger row ${current.id} rejected (refund path available)`, {
+            tokenIndex,
+            itemPath,
+            sourceUrl: resolved?.sourceUrl ?? null,
+          });
+        } else if (broadcast) {
+          // Transient infra (download/upload): retryable — the row stays
+          // claimed and nothing was broadcast.
+          fail(
+            resolved?.code ?? 'COVER_FETCH_FAILED',
+            `${resolved?.message ?? 'cover resolution failed'} — retryable; the row stays claimed and no mint was broadcast`,
+            { tokenIndex, itemPath, retryable: true },
+          );
+        } else {
+          // Dry-run: surface the resolver's plan in the returned plan payload
+          // instead of failing (ok+planOnly = image validates, upload is
+          // deferred to --broadcast; ok:false = the gap itself).
+          coverPlan = resolved ?? { ok: false, code: 'COVER_UNAVAILABLE', message: 'resolver returned nothing' };
+        }
+      } else if (broadcast) {
+        fail(
+          'COVER_UNAVAILABLE',
+          'no explicit --cover and no deps.resolveCover — minting here would silently drop the legacy image (cover-loss root cause); pass --cover or wire a resolver',
+          { tokenIndex, itemPath },
+        );
+      } else {
+        coverPlan = { ok: false, code: 'COVER_UNAVAILABLE', message: 'no resolver wired and no explicit --cover', sourceUrl: live?.imgUrl ?? null };
+      }
+    }
+
     display = buildItemDisplay({
       tokenIndex,
       depositTxid: current.deposit_txid,
       album,
-      cover,
+      cover: coverFinal,
       partName,
     });
+    // Belt and braces (report §4.2 step 3 item 4): never persist a cover-less
+    // display — that is what made crash recovery replay the no-cover decision
+    // (report §3.2d). Guards BOTH the fresh mint and the adopt path below:
+    // adopting a pre-fix orphan pin whose image is gone cannot pass here —
+    // resolve that pin's cover via attach-cover/backfill and resume with an
+    // explicit --cover.
+    if (broadcast && !display.cover) {
+      fail('COVER_MISSING_BEFORE_MINT', `display for ${itemPath} has no cover — refusing to record any mint broadcast`, {
+        tokenIndex,
+        itemPath,
+        coverSource,
+      });
+    }
 
     const probe = await deps.probeItemPath({ collectionName: album.collectionName, itemPath });
     const pathState = classifyItemPathProbe({ pins: probe.pins, issuerAddress: album.issuerAddress });
@@ -528,7 +610,13 @@ export async function mintAndSend({
           tokenIndex,
           itemPath,
           state: current.state,
-          plan: { itemPath, display, estimate, feeCeilingSats },
+          plan: {
+            itemPath,
+            display,
+            estimate,
+            feeCeilingSats,
+            coverStatus: coverFinal ? { decided: true, cover: coverFinal, source: coverSource } : { decided: false, plan: coverPlan },
+          },
           next: 'mint_broadcast',
           steps,
         };
@@ -574,10 +662,46 @@ export async function mintAndSend({
     } catch {
       recordedDisplay = null;
     }
-    const descDisplay =
+    let descDisplay =
       recordedDisplay ||
       display ||
       buildItemDisplay({ tokenIndex, depositTxid: current.deposit_txid, album, cover });
+    // Cover guard on the ONLY other display write site (2026-11-19 fix):
+    // item_desc is per-field first-write-wins, so a cover-less write here
+    // would repeat the original mistake permanently (report §3.2d). Rebuild
+    // the display with a resolved cover when possible; refuse the write when
+    // none can be produced — the row stays mint_pending and retryable (the
+    // mint pin already exists on chain, so this path never rejects the row).
+    if (!descDisplay.cover && broadcast) {
+      let resolvedCover = cover;
+      if (!resolvedCover && deps.resolveCover) {
+        const resolved = await deps.resolveCover({ row: current, live: null, broadcast, album });
+        if (resolved?.cover) {
+          resolvedCover = resolved.cover;
+        } else {
+          fail(
+            resolved?.code ?? 'COVER_UNAVAILABLE',
+            `item_desc cover unavailable (${resolved?.message ?? 'no image could be produced'}) — display write refused; the row stays mint_pending (retryable)`,
+            { tokenIndex, itemPath, mintPinId: current.mint_pin_id },
+          );
+        }
+      }
+      if (!resolvedCover) {
+        fail(
+          'COVER_MISSING_BEFORE_ITEM_DESC',
+          'item_desc would be written without a cover and no resolver is wired — refusing a permanently coverless display; pass --cover',
+          { tokenIndex, itemPath, mintPinId: current.mint_pin_id },
+        );
+      }
+      descDisplay = buildItemDisplay({
+        tokenIndex,
+        depositTxid: current.deposit_txid,
+        album,
+        cover: resolvedCover,
+        partName: partNameFromTitle(descDisplay.name),
+      });
+      steps.push({ step: 'cover_resolved_for_item_desc', cover: resolvedCover });
+    }
     if (!broadcast) {
       return {
         ok: true,
@@ -779,12 +903,21 @@ export async function mintAndSend({
  * re-checked against the live vault. A row whose token already left the vault
  * is an anomaly (it must be in the vault until the burn spends it) and is
  * reported, never burned blind.
+ *
+ * Cover gate (2026-11-19 cover-loss fix, report §4.2 step 4): each candidate's
+ * minted item must ALSO carry a non-empty cover (item/info read). A cover-less
+ * item must never be burned — the burn destroys the last chance to fetch the
+ * legacy artwork. Requires deps.fetchItemInfo.
  */
 export async function planBurnBatch({ ledger, deps, limit = 50 }) {
+  if (typeof deps.fetchItemInfo !== 'function') {
+    fail('COVER_GATE_UNAVAILABLE', "burn gate needs deps.fetchItemInfo to read each item's cover (cover-loss fix 2026-11-19)");
+  }
   const rows = ledger.burnCandidates().slice(0, Math.max(0, limit));
   const vaultRows = await deps.fetchVaultRows();
   const present = new Set(vaultRows.map((r) => `${r.txid}:${r.outIndex}`));
-  const candidates = rows.map((row) => {
+  const candidates = [];
+  for (const row of rows) {
     const inVault = present.has(row.deposit_outpoint);
     const outpointMatches = inVault
       ? vaultRows.some(
@@ -795,17 +928,28 @@ export async function planBurnBatch({ ledger, deps, limit = 50 }) {
             Number(r.tokenIndex) === Number(row.token_index),
         )
       : false;
-    return {
+    const info = row.mint_pin_id ? await deps.fetchItemInfo(row.mint_pin_id) : null;
+    const cover = String(info?.cover || '').trim() || null;
+    const coverOk = Boolean(cover);
+    candidates.push({
       ledgerId: row.id,
       tokenIndex: Number(row.token_index),
       itemPath: row.item_path,
       depositOutpoint: row.deposit_outpoint,
+      itemPinId: row.mint_pin_id ?? null,
       transferCount: row.transfer_count,
       state: row.state,
-      eligible: inVault && outpointMatches,
-      reason: inVault ? (outpointMatches ? null : 'OUTPOINT_TRIPLE_MISMATCH') : 'TOKEN_NOT_IN_VAULT',
-    };
-  });
+      cover,
+      eligible: inVault && outpointMatches && coverOk,
+      reason: !inVault
+        ? 'TOKEN_NOT_IN_VAULT'
+        : !outpointMatches
+        ? 'OUTPOINT_TRIPLE_MISMATCH'
+        : !coverOk
+        ? 'COVER_MISSING_BEFORE_BURN'
+        : null,
+    });
+  }
   return { candidates, vaultScanned: vaultRows.length };
 }
 
@@ -821,6 +965,12 @@ export async function planBurnBatch({ ledger, deps, limit = 50 }) {
  * landed — the row is reported for manual txid reconciliation and is never
  * re-broadcast (double-spending an already-spent token input cannot succeed,
  * but a blind retry would hide the missing evidence).
+ *
+ * Cover gate (2026-11-19 cover-loss fix): a broadcast refuses the WHOLE batch
+ * while any candidate or recoverable burn_pending row points at a cover-less
+ * item (COVER_MISSING_BEFORE_BURN with the roster) — burning would destroy
+ * the last chance to fetch the legacy artwork. Backfill/attach covers first,
+ * then re-run.
  */
 export async function runBurnBatch({
   ledger,
@@ -840,24 +990,39 @@ export async function runBurnBatch({
     .filter((row) => row.burn_batch_id === batchId && !row.burn_txid);
   const vaultRows = await deps.fetchVaultRows();
   const vaultByOutpoint = new Map(vaultRows.map((r) => [`${r.txid}:${r.outIndex}`, r]));
-  const recovery = pendingRows.map((row) => {
+  const recovery = [];
+  for (const row of pendingRows) {
     const live = vaultByOutpoint.get(row.deposit_outpoint) ?? null;
     const tripleOk =
       Boolean(live) &&
       live.genesis === row.genesis &&
       live.codehash === row.code_hash &&
       Number(live.tokenIndex) === Number(row.token_index);
-    return {
+    const info = row.mint_pin_id ? await deps.fetchItemInfo(row.mint_pin_id) : null;
+    const cover = String(info?.cover || '').trim() || null;
+    const coverOk = Boolean(cover);
+    recovery.push({
       ledgerId: row.id,
       tokenIndex: Number(row.token_index),
       depositOutpoint: row.deposit_outpoint,
+      itemPath: row.item_path ?? null,
+      itemPinId: row.mint_pin_id ?? null,
+      cover,
       inVault: Boolean(live),
       tripleOk,
-      reason: !live ? 'TOKEN_NOT_IN_VAULT' : tripleOk ? null : 'OUTPOINT_TRIPLE_MISMATCH',
-    };
-  });
+      coverOk,
+      reason: !live
+        ? 'TOKEN_NOT_IN_VAULT'
+        : !tripleOk
+        ? 'OUTPOINT_TRIPLE_MISMATCH'
+        : !coverOk
+        ? 'COVER_MISSING_BEFORE_BURN'
+        : null,
+    });
+  }
 
-  const blocked = recovery.filter((r) => !r.tripleOk);
+  const blocked = recovery.filter((r) => !r.tripleOk || !r.coverOk);
+  const blockedForTxidFail = recovery.filter((r) => !r.tripleOk);
   if (!broadcast) {
     return {
       ok: true,
@@ -873,18 +1038,39 @@ export async function runBurnBatch({
   if (!ownerConfirmed) {
     fail('OWNER_CONFIRMATION_REQUIRED', 'burn-batch broadcast requires explicit owner sign-off (--confirm-owner)');
   }
-  if (blocked.length) {
+  if (blockedForTxidFail.length) {
     fail(
       'BURN_RECOVERY_TXID_UNKNOWN',
       'a burn_pending row is no longer in the vault but has no recorded txid — reconcile the txid manually before continuing',
-      { blocked },
+      { blocked: blockedForTxidFail },
+    );
+  }
+  // Cover gate (report §4.2 step 4): refuse the whole broadcast while ANY
+  // candidate or recoverable row points at a cover-less item, and surface
+  // the roster as the alert.
+  const coverBlocked = [
+    ...plan.candidates.filter((c) => c.reason === 'COVER_MISSING_BEFORE_BURN'),
+    ...recovery.filter((r) => r.reason === 'COVER_MISSING_BEFORE_BURN'),
+  ];
+  if (coverBlocked.length) {
+    fail(
+      'COVER_MISSING_BEFORE_BURN',
+      `${coverBlocked.length} token(s) have no cover on their new item — burning now would destroy the last chance to fetch the legacy image. Backfill/attach covers first (cli/attach-cover.mjs / cli/backfill-covers.mjs), then re-run this batch`,
+      {
+        blockedTokens: coverBlocked.map((r) => ({
+          ledgerId: r.ledgerId,
+          tokenIndex: r.tokenIndex,
+          itemPath: r.itemPath ?? null,
+          itemPinId: r.itemPinId ?? null,
+        })),
+      },
     );
   }
 
   const executed = [];
   const executable = [
     ...plan.candidates.filter((candidate) => candidate.eligible).map((candidate) => ({ ledgerId: candidate.ledgerId, resumed: false })),
-    ...recovery.filter((r) => r.tripleOk).map((r) => ({ ledgerId: r.ledgerId, resumed: true })),
+    ...recovery.filter((r) => r.tripleOk && r.coverOk).map((r) => ({ ledgerId: r.ledgerId, resumed: true })),
   ];
   for (const item of executable) {
     const row = ledger.rowById(item.ledgerId);

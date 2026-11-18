@@ -34,13 +34,20 @@ function makePin(pinId, overrides = {}) {
   };
 }
 
-function makeHarness(batchEntries) {
+/**
+ * `omitIds` drops ids from the upstream response map entirely — the "no entry
+ * returned" branch, which a defaulted `{error}` entry cannot exercise.
+ */
+function makeHarness(batchEntries, omitIds = []) {
   const metawebLearning = {
     search: async () => { throw new Error('not used'); },
     readPin: async () => { throw new Error('not used'); },
     readPinsBatch: async (pinIds) => {
       const out = {};
-      for (const id of pinIds) out[id] = batchEntries[id] ?? { pinId: id, error: 'pin missing from batch response' };
+      for (const id of pinIds) {
+        if (omitIds.includes(id)) continue;
+        out[id] = batchEntries[id] ?? { pinId: id, error: 'pin missing from batch response' };
+      }
       return out;
     },
     pinVersions: async () => { throw new Error('not used'); },
@@ -154,8 +161,11 @@ test('error and no-text entries never lose their lines', async () => {
   const { batch } = makeHarness(entries);
   const result = await batch.handler({ pinIds: [goodId, errId, nullId] });
   const text = resultText(result);
-  assert.ok(text.includes('- error: indexer gap'));
+  // Per-pin failures now name their cause on the human line too (2026-11-18):
+  // "indexer gap" is not a located miss, so it must NOT be labelled not_found.
+  assert.match(text, /- unreadable \(cause: extraction_failed\) error: indexer gap/);
   assert.ok(text.includes('has no readable text content'));
+  assert.match(text, /- unreadable \(cause: content_contract\): /);
   assert.ok(text.includes(`Pin ${goodId}:`));
   assert.match(text, /1\/3 pin\(s\) readable/);
 });
@@ -321,3 +331,71 @@ test('a batch with no readable body still carries the machine-readable receipt',
   assert.deepEqual(receipt.unreadable_ids, [errId]);
   assert.equal(receipt.bytes_written, Buffer.byteLength(text, 'utf8'));
 });
+
+// ---------------------------------------------------------------------------
+// Per-pin failure attribution (2026-11-18): four causes, never merged.
+// ---------------------------------------------------------------------------
+
+test('unreadable pins carry four distinct causes and the receipt splits them per pin', async () => {
+  const hexId = (letter) => `${letter.repeat(64)}i0`;
+  const goodId = hexId('a');
+  const typoId = `pin://${'b'.repeat(64)}`;   // not a pin id at all
+  const missingId = hexId('c');                // valid shape, absent from the upstream map
+  const notFoundId = hexId('d');               // valid shape, upstream cannot locate the pin
+  const nullId = hexId('e');                   // resolved pin, no text content
+  const extractionId = hexId('f');             // resolved attempt, upstream parser error
+  const entries = {
+    [goodId]: makePin(goodId, { text: 'whole body' }),
+    // A typo'd id that upstream also answered with an error: the id's shape
+    // decides the cause, so the caller is told to fix the id.
+    [typoId]: { pinId: typoId, error: 'pin not found' },
+    [notFoundId]: { pinId: notFoundId, error: 'pin not found upstream' },
+    [nullId]: makePin(nullId, { text: null, truncated: null, totalLength: null }),
+    [extractionId]: { pinId: extractionId, error: 'payload parse failed (gzip)' },
+  };
+  const { batch } = makeHarness(entries, [missingId]);
+  const text = resultText(await batch.handler({ pinIds: [goodId, typoId, missingId, notFoundId, nullId, extractionId] }));
+  const receipt = receiptOf(text);
+
+  assert.equal(receipt.requested, 6);
+  assert.equal(receipt.readable_upstream, 1);
+  assert.equal(receipt.unreadable, 5);
+  // `not_found` has two sub-branches (no entry at all, and an upstream
+  // not-found error) — both must land in the same cause, so the count is 2.
+  assert.deepEqual(receipt.unreadable_causes, {
+    malformed_id: 1,
+    not_found: 2,
+    content_contract: 1,
+    extraction_failed: 1,
+  });
+  // Sum invariant: the per-cause split is exact, not a sample of the list.
+  const summed = Object.values(receipt.unreadable_causes).reduce((a, b) => a + b, 0);
+  assert.equal(summed, receipt.unreadable);
+  // Per-pin attribution, in requested order, one cause each.
+  assert.deepEqual(
+    receipt.unreadable_pins.map((pin) => [pin.pin_id, pin.cause]),
+    [
+      [typoId, 'malformed_id'],
+      [missingId, 'not_found'],
+      [notFoundId, 'not_found'],
+      [nullId, 'content_contract'],
+      [extractionId, 'extraction_failed'],
+    ],
+  );
+  // Human lines carry the same causes (a reader without the receipt can still act).
+  assert.match(text, /- unreadable \(cause: malformed_id\) error: pin not found — not a pin id: /);
+  assert.match(text, /- unreadable \(cause: not_found\): no entry returned/);
+  assert.match(text, /- unreadable \(cause: not_found\) error: pin not found upstream/);
+  assert.match(text, /- unreadable \(cause: content_contract\): /);
+  assert.match(text, /- unreadable \(cause: extraction_failed\) error: payload parse failed \(gzip\)/);
+  // The typo is never *caused* by a missing pin: its upstream error text is
+  // echoed verbatim for the audit trail, but the cause is the id's shape.
+  const typoStart = text.indexOf(`## ${typoId}`);
+  assert.ok(typoStart >= 0, 'no rendered failure block for the typo id');
+  const typoEnd = text.indexOf('\n\n## ', typoStart + 1);
+  const typoLine = text.slice(typoStart, typoEnd === -1 ? undefined : typoEnd);
+  assert.match(typoLine, /cause: malformed_id/);
+  assert.doesNotMatch(typoLine, /cause: not_found/);
+  assert.equal(receipt.bytes_written, Buffer.byteLength(text, 'utf8'));
+});
+

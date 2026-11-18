@@ -1,12 +1,14 @@
 /**
  * VoiceButton + VoiceErrorBanner + hold gesture host (voice P1).
  *
- * Interaction: HOLD TO TALK. Pointerdown starts a hold session, pointerup
- * sends the transcript as a new message, swiping up arms cancel. The bottom
+ * Interaction: HOLD TO TALK. Pointerdown arms a hold, and only a sustained
+ * press starts the microphone; a short tap never requests mic permission.
+ * Pointerup sends the transcript as a new message, swiping up arms cancel. The bottom
  * overlay (VoiceOverlay) rises over the composer while the finger is down.
- * A SHORT press (< 400 ms, i.e. a tap) falls back to the voice-P0 tap-toggle:
- * that is the accessibility path (keyboard Enter/Space produces a click, and
- * screen readers activate a focused button through click too).
+ * In the icon variant a short press switches composer modes; in the wide
+ * "hold to talk" variant it is only an accidental press. Keyboard and
+ * screen-reader activation switches modes on the icon, or toggles recording
+ * on the wide button as the accessibility fallback.
  *
  * iOS guard set (each one answers a concrete failure; see the inline notes):
  *  1. `touch-action: none` — without it iOS claims the gesture for scrolling
@@ -36,6 +38,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, MutableRefObject, PointerEvent as ReactPointerEvent } from 'react';
 import { t } from '../../i18n';
 import {
+  HOLD_START_DELAY_MS,
   holdCancelArmed,
   resolveHoldRelease,
   type HoldCancelReason,
@@ -50,13 +53,14 @@ export { formatElapsed } from './VoiceOverlay';
 export interface VoiceButtonProps {
   state: VoiceUiState;
   elapsedSec: number;
+  variant?: 'icon' | 'hold';
   /** Live transcript for the overlay. */
   recognizedText: string;
   /** 0..1 PCM level, polled by the overlay's rAF loop. */
   levelRef: MutableRefObject<number>;
   /** Keyboard inset (px) forwarded to the overlay. */
   bottomInset?: number;
-  /** a11y tap toggle (short press / keyboard / screen reader). */
+  /** Wide-button keyboard / screen-reader recording toggle. */
   onStart: () => void;
   onStop: () => void;
   onStartHold: () => void;
@@ -67,6 +71,8 @@ export interface VoiceButtonProps {
   onDismissError: () => void;
   /** Fired after a cancelled gesture so the screen can show a one-shot hint. */
   onHoldCancelled?: (reason: HoldCancelReason) => void;
+  /** Icon variant: a short press switches between text and voice composer modes. */
+  onToggleMode?: () => void;
 }
 
 interface HoldState {
@@ -75,6 +81,7 @@ interface HoldState {
   startedAt: number;
   armed: boolean;
   active: boolean;
+  sessionStarted: boolean;
 }
 
 /** Non-passive guards live only for the duration of one hold. */
@@ -108,6 +115,7 @@ const PRESS_STYLE: CSSProperties = {
 export function VoiceButton({
   state,
   elapsedSec,
+  variant = 'icon',
   recognizedText,
   levelRef,
   bottomInset = 0,
@@ -119,6 +127,7 @@ export function VoiceButton({
   onSalvage,
   onDismissError,
   onHoldCancelled,
+  onToggleMode,
 }: VoiceButtonProps): JSX.Element {
   const [cancelArmed, setCancelArmed] = useState(false);
   const holdRef = useRef(null as HoldState | null);
@@ -128,8 +137,13 @@ export function VoiceButton({
   // The synthesized click may never arrive (pointercancel, AT quirk); let the
   // suppression flag heal so keyboard activation is never swallowed for good.
   const pointerResetRef = useRef(null as ReturnType<typeof setTimeout> | null);
+  const holdActivationRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const releaseGesture = useCallback(() => {
+    if (holdActivationRef.current !== null) {
+      clearTimeout(holdActivationRef.current);
+      holdActivationRef.current = null;
+    }
     holdRef.current = null;
     setCancelArmed(false);
     setPageGestureLock(false);
@@ -140,6 +154,7 @@ export function VoiceButton({
     () => () => {
       setPageGestureLock(false);
       if (pointerResetRef.current !== null) clearTimeout(pointerResetRef.current);
+      if (holdActivationRef.current !== null) clearTimeout(holdActivationRef.current);
     },
     [],
   );
@@ -161,10 +176,17 @@ export function VoiceButton({
       startedAt: typeof performance !== 'undefined' ? performance.now() : Date.now(),
       armed: false,
       active: true,
+      sessionStarted: false,
     };
     setCancelArmed(false);
     setPageGestureLock(true);
-    onStartHold();
+    const pointerId = event.pointerId;
+    holdActivationRef.current = setTimeout(() => {
+      const hold = holdRef.current;
+      if (!hold?.active || hold.pointerId !== pointerId) return;
+      hold.sessionStarted = true;
+      onStartHold();
+    }, HOLD_START_DELAY_MS);
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>): void => {
@@ -181,6 +203,7 @@ export function VoiceButton({
     const hold = holdRef.current;
     if (!hold?.active || hold.pointerId !== event.pointerId) return;
     hold.active = false;
+    const sessionStarted = hold.sessionStarted;
     const heldMs =
       (typeof performance !== 'undefined' ? performance.now() : Date.now()) - hold.startedAt;
     const decision = resolveHoldRelease({
@@ -202,9 +225,9 @@ export function VoiceButton({
       onEndHold();
       return;
     }
-    // Too-short / swipe / interrupted: discard, never send.
     onCancelHold();
     onHoldCancelled?.(decision.reason);
+    if (decision.reason === 'too_short' && !sessionStarted && variant === 'icon') onToggleMode?.();
   };
 
   const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>): void => {
@@ -224,15 +247,18 @@ export function VoiceButton({
   };
 
   const handleClick = (): void => {
-    // Pointer gestures own their own semantics: a short one is cancelled as an
-    // accidental press, and the synthesized click must not resurrect it. A
-    // click that reaches here without a handled pointerdown is a keyboard or
-    // screen-reader activation — that is the accessible tap toggle.
+    // Pointer gestures own their own semantics and the synthesized click must
+    // not toggle a second time. A click without a handled pointerdown is a
+    // keyboard or screen-reader activation.
     if (pointerHandledRef.current) {
       pointerHandledRef.current = false;
       return;
     }
-    if (state.phase === 'error') return; // dismissal belongs to the error card
+    if (state.phase === 'error') return;
+    if (variant === 'icon') {
+      onToggleMode?.();
+      return;
+    }
     if (state.phase === 'recording') onStop();
     else if (state.phase === 'idle') onStart();
   };
@@ -245,14 +271,19 @@ export function VoiceButton({
   const label = errored
     ? t('mobile.chat.voice.errorDismiss')
     : recording
-      ? t('mobile.chat.voice.stop')
-      : t('mobile.chat.voice.start');
+      ? t(variant === 'hold' ? 'mobile.chat.voice.holdReleaseToSend' : 'mobile.chat.voice.stop')
+      : stopping && variant === 'hold'
+        ? t('mobile.chat.voice.recognizing')
+        : variant === 'hold'
+          ? t('mobile.chat.voice.holdToTalk')
+          : t('mobile.chat.voice.start');
 
   return (
     <>
       <button
         type="button"
-        data-testid={voicePhaseTestid(state)}
+        data-testid={variant === 'hold' ? 'voice-hold-button' : voicePhaseTestid(state)}
+        data-variant={variant}
         aria-label={label}
         aria-pressed={recording}
         style={PRESS_STYLE}
@@ -262,7 +293,7 @@ export function VoiceButton({
         onPointerCancel={handlePointerCancel}
         onLostPointerCapture={handleLostPointerCapture}
         onClick={handleClick}
-        className={`twin-icon-button twin-composer-accessory relative shrink-0 select-none ${
+        className={`${variant === 'hold' ? 'twin-voice-hold-button' : 'twin-icon-button twin-composer-accessory'} relative shrink-0 select-none ${
           errored
             ? 'text-[var(--twin-warning)]'
             : recording
@@ -272,8 +303,10 @@ export function VoiceButton({
                 : ''
         } ${inFlight ? 'opacity-70' : ''}`}
       >
-        {recording ? <StopIcon className="h-5 w-5" aria-hidden /> : <MicrophoneIcon className="h-5 w-5" aria-hidden />}
-        {recording && elapsedSec > 0 ? (
+        {variant === 'hold' ? (
+          <span className="pointer-events-none">{label}</span>
+        ) : recording ? <StopIcon className="h-5 w-5" aria-hidden /> : <MicrophoneIcon className="h-5 w-5" aria-hidden />}
+        {variant === 'icon' && recording && elapsedSec > 0 ? (
           <span
             data-testid="voice-elapsed"
             className="absolute -top-2 left-1/2 -translate-x-1/2 rounded-full bg-red-500 px-1.5 text-[10px] font-medium leading-4 text-white"

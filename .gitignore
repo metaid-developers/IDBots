@@ -80,6 +80,7 @@ docs/*
 !docs/qq-channel-verification.md
 !docs/qq-channel-pr.md
 tests/*
+!tests/unwired-exclusions.json
 !tests/dataGuard.test.mjs
 !tests/privateChatFileMessage.test.mjs
 !tests/a2aPendingAskBridge.test.mjs
@@ -129,6 +130,7 @@ tests/*
 !tests/creditPullService.test.mjs
 !tests/relayCatalogFreshness.test.mjs
 !tests/mobileSettings.test.ts
+!tests/mobileModelSettings.test.tsx
 !tests/mobileRechargeRecovery.test.ts
 !tests/mobileBotLifecycle.test.ts
 !tests/mobileBotEditor.test.tsx
@@ -795,6 +797,9 @@ man_base_data_pebble/
 !tests/scheduledTaskLifecycleUi.test.mjs
 !tests/scheduledTaskLifecycleSeams.test.mjs
 !tests/schedulerLifecyclePreamble.test.mjs
+!tests/scheduledRunOutcome.test.mjs
+!tests/scheduledRunReceiptWritePath.test.mjs
+!tests/dshSessionLogGuard.test.mjs
 !tests/settingsUnarchiveRefreshStatic.test.mjs
 !tests/settingsInputContextMenu.test.tsx
 !tests/coworkDshSessionTitle.test.mjs
@@ -1089,3 +1094,9 @@ blob-report/
 !tests/firstClassTaskPhase4.test.mjs
 !tests/studioTaskSessionDecouple.test.mjs
 !tests/taskHierarchyAndStageSync.test.mjs
+!tests/studioFallbackEffortFloor.test.ts
+!tests/studioQuotaBypassRouting.test.ts
+!tests/studioBrowserTabsTool.test.ts
+!tests/studioChapterStore.test.mjs
+!tests/studioChapterClose.test.ts
+!tests/studioChapterTriggers.test.ts
