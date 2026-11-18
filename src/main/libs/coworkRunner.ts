@@ -398,12 +398,9 @@ import {
 // bd646510/c3419940, where both bounded calls outlasted every abort budget
 // while the process was starved). The underlying calls keep their own abort
 // budgets and settle in the background; only the WAITING stops early.
-// Bundle budget 1000ms (owner call, same day): the relay's real-world
-// latency is ~750-1000ms even when healthy (the 217-412ms server baseline
-// excludes the network leg), so a 600ms budget degraded the cerebellum on
-// most healthy turns; 1000ms keeps the enhancement live for them while a
-// genuine stall still degrades inside ~1s.
-const CEREBELLUM_TURN_DECISION_RACE_BUDGET_MS = 1000;
+// Bundle budget 1500ms: leaves headroom for cold TLS or overseas RTT while
+// capping worst-case pre-turn wait to 1.5s when the backend genuinely stalls.
+const CEREBELLUM_TURN_DECISION_RACE_BUDGET_MS = 1500;
 // Effort-verdict race budget. Must clear the selector's real settle latency
 // beyond the pre-turn window: with 400ms and a 1s selector timeout, 72% of
 // production turns (cowork.log 2026-11-04..09) got no verdict at all — the

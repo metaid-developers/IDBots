@@ -179,7 +179,7 @@ test('classify: a hanging endpoint is aborted at the deadline', async () => {
     null,
   );
   assert.ok(Date.now() - startedAt < 1000, 'abort deadline honored');
-  assert.equal(CEREBELLUM_DAILY_REPORT_TRIAGE_TIMEOUT_MS, 1500, 'default deadline stays at 1.5s');
+  assert.equal(CEREBELLUM_DAILY_REPORT_TRIAGE_TIMEOUT_MS, 2500, 'default deadline stays at 2.5s');
 });
 
 // ---------------------------------------------------------------------------

@@ -32,7 +32,7 @@ import type { CerebellumFetchLike } from './memoryRank';
  * Same hard abort deadline as every other cerebellum call site: one shot,
  * then the turn proceeds without a shortlist.
  */
-export const CEREBELLUM_SKILL_SHORTLIST_TIMEOUT_MS = 1500;
+export const CEREBELLUM_SKILL_SHORTLIST_TIMEOUT_MS = 2500;
 
 /** JEV Choice hard limit: up to 255 options per question. */
 export const CEREBELLUM_SKILL_MAX_OPTIONS = 255;

@@ -46,7 +46,7 @@ export type CerebellumFetchLike = (
  * call gets a hard abort deadline, after which the turn proceeds with the
  * lexical ranking.
  */
-export const CEREBELLUM_MEMORY_RANK_TIMEOUT_MS = 1500;
+export const CEREBELLUM_MEMORY_RANK_TIMEOUT_MS = 2500;
 
 /**
  * Candidate cap for one /v1/systemone request — state size and question

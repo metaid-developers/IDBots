@@ -113,3 +113,40 @@ test('jevRelayService opens a 90s circuit breaker after 3 consecutive timeouts a
     resetJevRelayCallStatsForTests();
   }
 });
+
+test('jevRelayService resets failure streak after 90s cooldown expires (half-open recovery)', async () => {
+  resetJevRelayCallStatsForTests();
+  try {
+    let nowMs = 2_000_000;
+    const timeoutRecorder = createJevRelayCallRecorder(
+      async () => {
+        const err = new Error('timed out');
+        err.name = 'AbortError';
+        throw err;
+      },
+      { now: () => nowMs },
+    );
+
+    // Trip the breaker with 3 consecutive timeouts.
+    for (let i = 0; i < 3; i += 1) {
+      await assert.rejects(() => timeoutRecorder('https://relay.example/v1/systemone', {}));
+    }
+    assert.equal(isJevRelayTimeoutCircuitOpen(nowMs), true);
+
+    // Advance past the 90s cooldown. A single timeout must act as a half-open
+    // probe and NOT immediately re-open the 90s breaker.
+    nowMs += 91_000;
+    assert.equal(isJevRelayTimeoutCircuitOpen(nowMs), false);
+    await assert.rejects(() => timeoutRecorder('https://relay.example/v1/systemone', {}));
+    assert.equal(isJevRelayTimeoutCircuitOpen(nowMs), false, '1 post-cooldown timeout must not re-trip breaker');
+
+    await assert.rejects(() => timeoutRecorder('https://relay.example/v1/systemone', {}));
+    assert.equal(isJevRelayTimeoutCircuitOpen(nowMs), false, '2 post-cooldown timeouts must not re-trip breaker');
+
+    // Only a fresh streak of 3 consecutive timeouts re-opens the breaker.
+    await assert.rejects(() => timeoutRecorder('https://relay.example/v1/systemone', {}));
+    assert.equal(isJevRelayTimeoutCircuitOpen(nowMs), true, '3rd consecutive timeout re-opens breaker');
+  } finally {
+    resetJevRelayCallStatsForTests();
+  }
+});

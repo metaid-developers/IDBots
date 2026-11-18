@@ -15,7 +15,7 @@
 import type { ResolvedCerebellumConfig } from '../libs/cerebellumConfig';
 import type { CerebellumFetchLike } from './memoryRank';
 
-export const CEREBELLUM_GROUP_REPLY_TIMEOUT_MS = 1500;
+export const CEREBELLUM_GROUP_REPLY_TIMEOUT_MS = 2500;
 
 /**
  * Reply when P(should_reply) is at least this. Live calibration 2026-10-23
