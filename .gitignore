@@ -797,6 +797,7 @@ man_base_data_pebble/
 !tests/schedulerLifecyclePreamble.test.mjs
 !tests/scheduledRunOutcome.test.mjs
 !tests/scheduledRunReceiptWritePath.test.mjs
+!tests/dshSessionLogGuard.test.mjs
 !tests/settingsUnarchiveRefreshStatic.test.mjs
 !tests/settingsInputContextMenu.test.tsx
 !tests/coworkDshSessionTitle.test.mjs
