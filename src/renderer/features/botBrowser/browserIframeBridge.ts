@@ -1,9 +1,11 @@
 import type { BrowserPageDefinition } from '@openagentinternet/agent-browser-ui/browser';
+import { buildLegacyWebViewUrlCompatibilityScript } from './legacyWebViewUrl';
 
 export const BROWSER_INIT_MARKER = "if (document.readyState === 'loading') {";
 
 export function buildBrowserIframeBridgeScript(): string {
   return `
+${buildLegacyWebViewUrlCompatibilityScript()}
 (function installIdbotsBrowserIframeBridge() {
   var BRIDGE_SOURCE = 'idbots-browser-iframe-bridge';
   var PARENT_SOURCE = 'idbots-browser-surface';
@@ -158,10 +160,8 @@ export function buildBrowserIframeBridgeScript(): string {
     });
   }
 
-  // Default 30s is fine for gallery/resolve. llm-complete (and other trusted
-  // actions that wait on the host LLM / user confirm) can take up to the
-  // bridge contract max (180s). A hard 30s here aborts while the host is still
-  // running — MetaApp then sees llm_unavailable "Browser endpoint request timed out."
+  // Trusted actions and large MetaApp resolution (download, unpack and publish)
+  // can take up to the bridge contract max (180s). Other endpoints keep 30s.
   var ENDPOINT_TIMEOUT_DEFAULT_MS = 30000;
   var ENDPOINT_TIMEOUT_ACTIONS_MS = 180000;
 
@@ -170,6 +170,7 @@ export function buildBrowserIframeBridgeScript(): string {
     // Trusted actions (llm-complete / pin-write / permissions) all go here and
     // may wait on the host LLM or a user confirmation card.
     if (url.indexOf('/api/browser/actions') !== -1) return ENDPOINT_TIMEOUT_ACTIONS_MS;
+    if (url.indexOf('/api/browser/resolve') !== -1) return ENDPOINT_TIMEOUT_ACTIONS_MS;
     return ENDPOINT_TIMEOUT_DEFAULT_MS;
   }
 
