@@ -248,6 +248,18 @@ const readComponent = (relative: string): string =>
   fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'components', 'groupTasks', relative), 'utf8');
 
 for (const component of ['GroupTaskDetailView.tsx', 'OpenTeamCollabDetailView.tsx']) {
+  // Merge integration (task #149): P0-a nests a ledger-actor tier INSIDE the
+  // accepted arm of GroupTaskDetailView's statusHintKey ternary
+  // (status === 'accepted' ? (acceptedActorKind === 'chair' ? ByChair : owner) : …),
+  // so that component carries THREE accepted-key lines (status label, owner
+  // hint, chair hint) and the accepted check may sit up to 3 lines above the
+  // key. The guard stays intent-preserving: every accepted-key line must have
+  // an explicit `status === 'accepted'` check within its upward window — a key
+  // reachable from any other arm still fails.
+  const expectedAcceptedKeyLines: Record<string, number> = {
+    'GroupTaskDetailView.tsx': 3,
+    'OpenTeamCollabDetailView.tsx': 2,
+  };
   test(`source guard ${component}: accepted label only behind an explicit accepted check; fallback is pending`, () => {
     const source = readComponent(component);
     const lines = source.split('\n');
@@ -255,19 +267,31 @@ for (const component of ['GroupTaskDetailView.tsx', 'OpenTeamCollabDetailView.ts
     for (let i = 0; i < lines.length; i += 1) {
       // Prefix match on purpose: it must catch BOTH the status label
       // ('groupTasksDeliverableStatusAccepted') and its hint
-      // ('groupTasksDeliverableStatusAcceptedHint').
+      // ('groupTasksDeliverableStatusAcceptedHint') and, since P0-a, the
+      // chair tier ('groupTasksDeliverableStatusAcceptedHintByChair').
       if (lines[i].includes("'groupTasksDeliverableStatusAccepted")) {
         acceptedKeyLines += 1;
-        // The key is the ternary CONSEQUENT; its `status === 'accepted'`
-        // check lives on the same line or the one above (multi-line ternary).
-        const context = `${lines[i - 1] ?? ''}\n${lines[i]}`;
+        // The key is a ternary CONSEQUENT; its `status === 'accepted'`
+        // check lives on the same line or within a few lines above
+        // (multi-line ternary, P0-a adds one nested actor tier).
+        let guarded = false;
+        for (let up = 1; up <= 4 && i - up >= 0; up += 1) {
+          if (/===\s*'accepted'/.test(lines[i - up])) {
+            guarded = true;
+            break;
+          }
+        }
         assert.ok(
-          /===\s*'accepted'/.test(context),
+          guarded || /===\s*'accepted'/.test(lines[i]),
           `${component}: the accepted label sits behind an explicit status === 'accepted' check (line: ${lines[i].trim()})`,
         );
       }
     }
-    assert.equal(acceptedKeyLines, 2, `${component}: statusKey + statusHintKey each reference the accepted tier once`);
+    assert.equal(
+      acceptedKeyLines,
+      expectedAcceptedKeyLines[component],
+      `${component}: each accepted tier (status label + hints) referenced exactly once`,
+    );
     // Prefix match on purpose: catches both the status label and its hint.
     const pendingFallbacks = (source.match(/'groupTasksDeliverableStatusPending/g) ?? []).length;
     assert.ok(
