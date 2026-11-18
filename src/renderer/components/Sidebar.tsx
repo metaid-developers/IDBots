@@ -786,7 +786,8 @@ const Sidebar: React.FC<SidebarProps> = ({
       onMouseLeave={(event) => {
         const nextTarget = event.relatedTarget as Node | null;
         if (nextTarget && event.currentTarget.contains(nextTarget)) return;
-        if (!event.currentTarget.contains(document.activeElement)) scheduleTitleHide();
+        const activeEl = document.activeElement;
+        if (!activeEl || !event.currentTarget.contains(activeEl)) scheduleTitleHide();
       }}
       onBlur={(event) => {
         const leaveTarget = event.relatedTarget as Node | null;

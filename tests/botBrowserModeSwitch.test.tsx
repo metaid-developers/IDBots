@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import BotBrowserModeSwitch, {
   TOP_GAP_DEFAULT_PX,
   TOP_GAP_MAC_PX,
+  TOP_GAP_WINDOWS_PX,
 } from '../src/renderer/features/botBrowser/BotBrowserModeSwitch';
 import MacWindowLights, {
   MAC_LIGHT_DOT_COLORS,
@@ -268,9 +269,12 @@ test('both faces mount the SAME band; the session actions ride the row below', (
  * band row (TOP_GAP_MAC_PX = 42.375) — the lights own row 1 alone and the
  * identity+band row starts at the strip's bottom edge, with the strip sized
  * so the tray's VISIBLE top border lands on the bot-home panel's header
- * divider (y=50.625); elsewhere a 12 px gap precedes it. Both platform
- * branches are pinned through the explicit `topGapPx` prop, because a Node
- * render has no window.
+ * divider (y=50.625); elsewhere a 12 px gap precedes it. Windows + browser
+ * face is the third tier (TOP_GAP_WINDOWS_PX = 36, the right column's h-9
+ * Windows title-bar strip, owner alignment ruling 2026-11-17); its
+ * mode-aware parse is pinned at source level because a Node render has no
+ * window, so the render-level branches are pinned through the explicit
+ * `topGapPx` prop.
  */
 test('macOS: a 42.375 px traffic-light strip precedes the band row; elsewhere 12 px', () => {
   const mac = render('home', { topGapPx: TOP_GAP_MAC_PX });
@@ -278,6 +282,21 @@ test('macOS: a 42.375 px traffic-light strip precedes the band row; elsewhere 12
 
   assert.equal(TOP_GAP_MAC_PX, 42.375);
   assert.equal(TOP_GAP_DEFAULT_PX, 12);
+
+  // Windows tier: TOP_GAP_WINDOWS_PX = 36, and the parse is mode-aware —
+  // win32 resolves to WINDOWS only on the browser face (the right column's
+  // 36 px h-9 strip exists only while that pane is visible); win32 + any
+  // other face falls back to DEFAULT. A Node render has no window, so the
+  // gate itself is pinned at source level; the constant renders through the
+  // same explicit-prop path the other two tiers are pinned with.
+  assert.equal(TOP_GAP_WINDOWS_PX, 36);
+  assert.match(
+    switchSource,
+    /if \(window\.electron\?\.platform === 'win32' && mode === 'browser'\) return TOP_GAP_WINDOWS_PX;/,
+  );
+  const windows = render('home', { topGapPx: TOP_GAP_WINDOWS_PX });
+  assert.ok(windows.includes('data-top-gap-px="36"'));
+  assert.ok(windows.includes('height:36px'));
 
   // macOS: the 42.375 px gap node is the FIRST element of the header — the
   // lights' own row, strictly above the band row (tray top edge lands on the
@@ -365,7 +384,9 @@ test('mac: the band row starts below the 42.375 px traffic-light strip on both f
   // The rail keeps its 42.375 px mac strip — that strip IS the lights' row,
   // kept in lockstep with the switch's TOP_GAP_MAC_PX (baseline change
   // 2026-11-15 08:27) so the avatar's centerline rides the band labels'.
-  assert.match(railSource, /isMac \? 'h-\[42\.375px\]' : 'h-3'/);
+  // (win32 + browser face rides the third tier, 36 px = h-9 — owner
+  // alignment ruling 2026-11-17.)
+  assert.match(railSource, /isMac \? 'h-\[42\.375px\]' : isWindowsBrowserFace \? 'h-9' : 'h-3'/);
   assert.match(railSource, /className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center/);
 
   // The lights' true position: pt-[7.25px] inside the 42.375 px strip
