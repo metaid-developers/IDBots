@@ -27,6 +27,7 @@ export function filterTaskBoardCards(
     const hay = [
       card.title,
       card.goal,
+      card.parentTaskTitle ?? '',
       card.currentSubtaskTitle ?? '',
       card.currentProgressNote ?? '',
       card.currentWaitNote ?? '',
@@ -39,15 +40,14 @@ export function filterTaskBoardCards(
 }
 
 /**
- * Sort cards within a column: inside `waiting_owner`, `[长期]` milestone
- * decisions surface first so strategic multi-day rulings are visually distinct
- * from 10-second standard confirmations; ties sort newest-first.
+ * Sort cards within a column AND group child tasks (`parentTaskId`) directly
+ * beneath their parent card when both sit in the same column.
  */
 export function sortColumnCards(
   column: LongTermColumn,
   cards: readonly LongTermTaskSummary[],
 ): LongTermTaskSummary[] {
-  return [...cards].sort((a, b) => {
+  const baseSorted = [...cards].sort((a, b) => {
     if (column === 'waiting_owner') {
       const aLt = a.isLongTerm ? 1 : 0;
       const bLt = b.isLongTerm ? 1 : 0;
@@ -55,6 +55,29 @@ export function sortColumnCards(
     }
     return String(b.updatedAt).localeCompare(String(a.updatedAt));
   });
+
+  const inColIds = new Set(baseSorted.map((c) => c.id));
+  const childrenByParent = new Map<string, LongTermTaskSummary[]>();
+  const roots: LongTermTaskSummary[] = [];
+  for (const card of baseSorted) {
+    if (card.parentTaskId && inColIds.has(card.parentTaskId)) {
+      const list = childrenByParent.get(card.parentTaskId) ?? [];
+      list.push(card);
+      childrenByParent.set(card.parentTaskId, list);
+    } else {
+      roots.push(card);
+    }
+  }
+
+  const ordered: LongTermTaskSummary[] = [];
+  for (const root of roots) {
+    ordered.push(root);
+    const kids = childrenByParent.get(root.id);
+    if (kids) {
+      ordered.push(...kids);
+    }
+  }
+  return ordered;
 }
 
 /**

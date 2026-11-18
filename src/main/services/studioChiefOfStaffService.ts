@@ -295,6 +295,7 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
         `${item.reportHtmlPath ? `，并附上 \`[查看核验详情页](preview-metaapp://localhost/${item.reportHtmlPath})\` 链接` : ''}，` +
         '然后**直接结束本轮回复**——宿主会自动将包含完整内容与选项的 HTML 页面投到右侧投影屏，主人看完右侧完整文稿/页面后直接在左侧输入框回复 A 或 B 即可！',
       '3. **实物可见硬约束**：凡涉及让主人挑选、确认或验收文稿/方案/图片/设计稿/本地产物，**必须在右侧投影页完整呈现核心内容，并在左侧回复中逐项附上可点击的本地预览链接**（如 `[文稿全文](preview-file://localhost/绝对路径)` 或 `[方案A](preview-file://localhost/绝对路径)`）与一句区分说明，绝不允许不把实际内容呈现给主人看就让主人做 A/B/C 盲选！（若涉及已上链内容，务必同时明文写出**发布账号**和完整 `pin://...i0` ID）。',
+      '4. **禁止前台重复验工（秒级呈报纪律）**：后台 `[督办]` 会话在入队前**已经跑完了文件、字数与图片核验并生成了详情页**；本轮前台汇报严禁再次从头调 `bash` 跑校验脚本或重复调 `read_image` 拖慢响应——除非先做防重收口，否则直接基于上方已核验信息发出简报与链接并结束本轮！',
       '</studio_proactive_briefing>',
     ].join('\n');
   }
@@ -318,6 +319,7 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
     `2. **NEVER call \`ask_user_question\` for reporting, acceptance, or plan selection (hard rule)**: \`ask_user_question\` is strictly for pre-task requirement surveys BEFORE work begins — NEVER call it during a briefing/acceptance/ruling turn (calling it blocks the right-hand projector and forces the owner to pick A/B/C blind without seeing the deliverable!). Leave the queue item in \`presenting\` (do NOT resolve yet), send one brief \`owner_update({ kind: "milestone", message: "..." })\`, write a concise 3–6 line chat reply summarizing the verified result and clearly listing the A / B options (recommended first)` +
       `${item.reportHtmlPath ? ` plus \`[Open full briefing](preview-metaapp://localhost/${item.reportHtmlPath})\`` : ''}, and **end your turn immediately** so the host projects the full HTML report/deliverable onto the right screen while the owner inspects it and types A or B in the left chat input.`,
     '3. **Show full artifacts before asking**: Whenever asking the owner to review, pick, or accept articles, plans, images, designs, or files, ALWAYS present the full content on the right-hand projector and include clickable `[label](preview-file://localhost/abs/path)` links with one-line descriptions in your reply — never ask the owner to choose A/B/C over unseen artifacts! (If on-chain content was published, always state BOTH the publishing Bot identity and the verbatim `pin://...i0` ID.)',
+    '4. **No redundant front-office re-verification**: Back-office supervision has ALREADY verified every artifact and built `reportHtmlPath` before enqueuing; do NOT re-run `bash` verification scripts or `read_image` checks during this front-office presentation turn — deliver the summary, clickable links, and A/B options straight away!',
     '</studio_proactive_briefing>',
   ].join('\n');
 }
@@ -328,6 +330,8 @@ export class StudioChiefOfStaffService {
   private supervisionChain = new Map<string, Promise<void>>();
   private readonly focusedTaskBySession = new Map<string, string>();
   private readonly focusedTaskHistoryBySession = new Map<string, Set<string>>();
+  /** Tracks the task most recently ruled/rejected in a Studio session so follow-up/rework delegations auto-bind `parentTaskId`. */
+  private readonly recentDecisionParentBySession = new Map<string, { taskId: string; atMs: number }>();
   private readonly activeSupervisionsBySession = new Map<string, ActiveStudioSupervisionEntry>();
   private readonly supervisionToOriginStudio = new Map<string, string>();
   private readonly studioToSupervisionIds = new Map<string, Set<string>>();
@@ -409,6 +413,26 @@ export class StudioChiefOfStaffService {
       return single ? [single] : [];
     }
     return [...set].reverse();
+  }
+
+  recordRecentDecisionTask(sessionId: string | null | undefined, taskId: string | null | undefined): void {
+    const sid = (sessionId ?? '').trim();
+    const tid = (taskId ?? '').trim();
+    if (!sid || !tid) return;
+    this.recentDecisionParentBySession.set(sid, { taskId: tid, atMs: this.now() });
+    this.focusTask(sid, tid);
+  }
+
+  getRecentDecisionTask(sessionId: string | null | undefined, maxAgeMs = 5 * 60_000): string | null {
+    const sid = (sessionId ?? '').trim();
+    if (!sid) return null;
+    const hit = this.recentDecisionParentBySession.get(sid);
+    if (!hit) return null;
+    if (this.now() - hit.atMs > maxAgeMs) {
+      this.recentDecisionParentBySession.delete(sid);
+      return null;
+    }
+    return hit.taskId;
   }
 
   isSupervisionBusy(): boolean {
@@ -896,7 +920,7 @@ export class StudioChiefOfStaffService {
     const baselineMs = Math.max(earliestWorkerStart, latestVisibleNonReassuranceAt || earliestWorkerStart);
 
     let state = this.waitingReassuranceState.get(studioSessionId);
-    if (!state || state.signature !== signature || baselineMs > state.lastNoticeMs) {
+    if (!state || baselineMs > state.lastNoticeMs) {
       state = {
         waitBeganMs: earliestWorkerStart,
         lastNoticeMs: baselineMs,
@@ -904,6 +928,12 @@ export class StudioChiefOfStaffService {
         signature,
       };
       this.waitingReassuranceState.set(studioSessionId, state);
+    } else if (state.signature !== signature) {
+      // When one of multiple parallel Workers finishes while another keeps
+      // running, update `signature` WITHOUT rewinding `lastNoticeMs` back to
+      // `baselineMs` (prevents 10s back-to-back reassurance spam).
+      state.signature = signature;
+      state.waitBeganMs = Math.min(state.waitBeganMs, earliestWorkerStart);
     }
 
     const intervals = this.reassuranceIntervalsMs;

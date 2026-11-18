@@ -266,6 +266,9 @@ export interface LongTermTaskSummary {
    *  local .html file shown in the bubble (or pin:// when the owner asked for
    *  an on-chain copy). Null when creation skipped the plan page. */
   planArtifactUri: string | null;
+  /** Optional parent task id (`ltt_...`) when this task is a rework, companion, or temporary child task spawned under a parent task. */
+  parentTaskId?: string | null;
+  parentTaskTitle?: string | null;
   /** Originating session & anchor message pointers (many-to-many session decoupled). */
   originSessionId?: string | null;
   originMessageId?: string | null;
@@ -348,6 +351,7 @@ export interface LongTermQuickTaskCreateInput {
   preferredChannel?: LongTermPreferredChannel;
   expectedMinutes?: number;
   assigneeMetabotId?: number | null;
+  parentTaskId?: string | null;
   definitionSessionId?: string | null;
   originSessionId?: string | null;
   originMessageId?: string | null;
@@ -368,6 +372,7 @@ export interface UnifiedTaskCreateInput {
   /** Default true: immediately activates task and begins eligible dependency-free subtask(s). Set false for defining drafts. */
   activateImmediately?: boolean;
   isLongTerm?: boolean | null;
+  parentTaskId?: string | null;
   definitionSessionId?: string | null;
   originSessionId?: string | null;
   originMessageId?: string | null;
@@ -403,6 +408,8 @@ export interface TaskActiveRadarEntry {
   progressNote: string | null;
   waitNote: string | null;
   originSessionId: string | null;
+  parentTaskId?: string | null;
+  parentTaskTitle?: string | null;
   updatedAt: string;
 }
 
