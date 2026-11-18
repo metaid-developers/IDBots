@@ -56,7 +56,9 @@ export type PaymentCardRefusalCode =
   | 'INVALID_AMOUNT'
   | 'AMOUNT_MISMATCH'
   | 'MEMO_MISMATCH'
-  | 'CARD_INVALID';
+  | 'CARD_INVALID'
+  /** The per-emit owner gate refused (or was unanswered / errored — fail closed). */
+  | 'OWNER_CONFIRMATION_DENIED';
 
 /**
  * Discriminated on the string field `status` ON PURPOSE: this repo's electron
