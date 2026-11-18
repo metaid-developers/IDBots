@@ -544,6 +544,16 @@ const GroupTaskDetailView: React.FC<GroupTaskDetailViewProps> = ({
     ),
     [members],
   );
+  // P0-a (#149): the accepted-hint tier reads the PERSISTED ledger actor — the
+  // actor_kind of the last close-to-done status event (statusEvents is newest
+  // first, so find() takes the latest) — never session state or UI inference.
+  // 'chair' tiers the hint to the chair's proxy close; any other ledger actor
+  // (owner, system, or legacy rows without status events) keeps the owner copy.
+  const acceptedActorKind = useMemo<'owner' | 'chair' | 'system'>(
+    () => (detail && Array.isArray(detail.statusEvents) ? detail.statusEvents : [])
+      .find((event) => event.toStatus === 'done')?.actorKind ?? 'owner',
+    [detail],
+  );
   // P13 (v1.1): the roster wins over the chain nickname. A worker session can
   // post under a runtime identity nickname (task #22 rendered Builder阿码's
   // delivery as "claude bot"), while senderGlobalMetaId always points at the
@@ -1087,8 +1097,14 @@ const GroupTaskDetailView: React.FC<GroupTaskDetailViewProps> = ({
                       : deliverable.status === 'delivered'
                         ? 'groupTasksDeliverableStatusDelivered'
                         : 'groupTasksDeliverableStatusPending';
+                  // P0-a (#149): the accepted hint tiers on the ledger actor
+                  // (acceptedActorKind above): owner acceptance keeps the
+                  // owner copy, a chair proxy close gets its own copy that
+                  // must not claim owner acceptance.
                   const statusHintKey = deliverable.status === 'accepted'
-                    ? 'groupTasksDeliverableStatusAcceptedHint'
+                    ? (acceptedActorKind === 'chair'
+                      ? 'groupTasksDeliverableStatusAcceptedHintByChair'
+                      : 'groupTasksDeliverableStatusAcceptedHint')
                     : deliverable.status === 'rejected'
                       ? 'groupTasksDeliverableStatusRejectedHint'
                       : deliverable.status === 'delivered'
