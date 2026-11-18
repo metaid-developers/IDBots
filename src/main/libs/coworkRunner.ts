@@ -60,6 +60,7 @@ import {
   studioChapterCardToJson,
   STUDIO_CHAPTER_CARD_TIMEOUT_MS,
 } from './studioChapterCard';
+import { resolveStudioChapterAutoClose } from './studioChapterTriggers';
 import { performChatCompletionForOrchestrator } from '../services/cognitiveChatCompletion';
 import {
   CoworkDshSteerWindowClosedError,
@@ -4162,6 +4163,11 @@ export class CoworkRunner extends EventEmitter {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    // Turn-end chapter evaluation (Phase 1 slice 3): with the usage settled,
+    // decide whether the active Studio chapter auto-closes (task boundary /
+    // budget). Runs on every settle path — completed, aborted and error —
+    // but only ever acts on idle studio owner sessions.
+    this.maybeAutoCloseStudioChapter(sessionId);
   }
 
   wasSessionStopped(sessionId: string): boolean {
@@ -10093,6 +10099,103 @@ export class CoworkRunner extends EventEmitter {
 
   /** Sessions with a chapter close currently running — double-click guard. */
   private readonly studioChapterCloseInFlight = new Set<string>();
+
+  /** Task-completed boundary flags (Phase 1 slice 3): consumed by the turn-end auto-close evaluation. */
+  private readonly pendingStudioTaskBoundaryBySession = new Set<string>();
+
+  /** Epoch ms of each session's last AUTO chapter close — bounds retry storms when a close's compaction fails. */
+  private readonly lastStudioChapterAutoCloseBySession = new Map<string, number>();
+
+  /**
+   * A task completed to `done` in `sessionId`'s conversation (fired from the
+   * task_subtask_accept tool): the turn-end chapter evaluation closes the
+   * active chapter with reason `task_boundary` once the turn finishes — the
+   * owner's "章节 = 任务" boundary. Non-Studio sessions flag harmlessly and
+   * the evaluation clears the flag.
+   */
+  noteStudioTaskBoundary(sessionId: string, taskId?: string): void {
+    if (!sessionId) return;
+    this.pendingStudioTaskBoundaryBySession.add(sessionId);
+    coworkLog('INFO', 'noteStudioTaskBoundary', 'Task completed — chapter boundary noted', { sessionId, taskId: taskId ?? null });
+  }
+
+  /**
+   * Turn-end chapter evaluation (Phase 1 slice 3, owner ruling 三者叠加):
+   * after each turn's usage settles, decide whether the ACTIVE chapter of a
+   * Studio owner conversation auto-closes (task boundary first, then the
+   * working-set budget). Fire-and-forget — the close itself guards busy
+   * state, rate limits itself, and must never affect the turn that ended.
+   */
+  private maybeAutoCloseStudioChapter(sessionId: string): void {
+    try {
+      const session = this.store.getSessionWithoutMessages(sessionId);
+      const isStudioOwner = Boolean(
+        session
+        && session.sessionType === 'browser'
+        && this.isAssistantModeOwnerChatSession(sessionId),
+      );
+      if (!isStudioOwner) {
+        // Self-cleaning: worker/BotWorks completions flag their own sessions;
+        // drop the stale flag here instead of letting the set grow.
+        this.pendingStudioTaskBoundaryBySession.delete(sessionId);
+        return;
+      }
+      const chapter = this.store.getActiveStudioChapter(sessionId);
+      if (!chapter) {
+        this.pendingStudioTaskBoundaryBySession.delete(sessionId);
+        return;
+      }
+      const chapterMessageCount = (this.store.getSession(sessionId)?.messages ?? [])
+        .filter((message) => (message.timestamp ?? 0) >= chapter.startedAt)
+        .filter((message) => message.type === 'user' || message.type === 'assistant')
+        .filter((message) => String(message.content ?? '').trim().length > 0)
+        .length;
+      const usage = this.getRealContextUsage(sessionId);
+      const decision = resolveStudioChapterAutoClose({
+        isStudioOwnerSession: true,
+        usage: usage ? { usedTokens: usage.usedTokens, contextWindow: usage.contextWindow, isRealUsage: usage.isRealUsage } : null,
+        pendingTaskBoundary: this.pendingStudioTaskBoundaryBySession.has(sessionId),
+        chapterMessageCount,
+        lastAutoCloseAt: this.lastStudioChapterAutoCloseBySession.get(sessionId) ?? null,
+        now: Date.now(),
+      });
+      if (!decision) return;
+      // Busy sessions keep their flags: the close would be rejected by its
+      // own guard, and stamping the rate limit here would strand the boundary
+      // for the whole interval. The next turn-end evaluation picks it up.
+      const activeSession = this.activeSessions.get(sessionId);
+      if ((activeSession && activeSession.localTurnState !== 'none') || this.isCrossSessionTurnRunning(sessionId)) {
+        return;
+      }
+      this.pendingStudioTaskBoundaryBySession.delete(sessionId);
+      this.lastStudioChapterAutoCloseBySession.set(sessionId, Date.now());
+      if (this.lastStudioChapterAutoCloseBySession.size > 256) {
+        for (const [key, at] of [...this.lastStudioChapterAutoCloseBySession]) {
+          if (Date.now() - at >= 24 * 60 * 60 * 1000) this.lastStudioChapterAutoCloseBySession.delete(key);
+        }
+      }
+      coworkLog('INFO', 'maybeAutoCloseStudioChapter', 'Auto-closing studio chapter', {
+        sessionId,
+        reason: decision.reason,
+        ...(decision.reason === 'budget' ? { usedTokens: decision.usedTokens, threshold: decision.threshold } : {}),
+        chapterMessageCount,
+      });
+      void this.closeSessionChapter(sessionId, { closeReason: decision.reason })
+        .catch((error) => {
+          coworkLog('WARN', 'maybeAutoCloseStudioChapter', 'Auto chapter close failed', {
+            sessionId,
+            reason: decision.reason,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+    } catch (error) {
+      // Chapter bookkeeping must never break the turn-end path.
+      coworkLog('WARN', 'maybeAutoCloseStudioChapter', 'Chapter evaluation failed', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   /**
    * Close the ACTIVE chapter of a Studio owner conversation (Phase 1 slice 2,

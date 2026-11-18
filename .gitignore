@@ -1098,3 +1098,4 @@ blob-report/
 !tests/studioBrowserTabsTool.test.ts
 !tests/studioChapterStore.test.mjs
 !tests/studioChapterClose.test.ts
+!tests/studioChapterTriggers.test.ts

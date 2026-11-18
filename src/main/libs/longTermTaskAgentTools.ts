@@ -249,6 +249,13 @@ export interface LongTermTaskAgentControl {
   }) => TaskOriginContextMessage[] | null;
   /** Notify Studio HUD / session focus immediately when a task is created or focused. */
   onTaskCreatedOrFocused?: (sessionId: string, taskId: string) => void;
+  /**
+   * Fired when a subtask accept completes the WHOLE task to `done`. The
+   * Studio chapter trigger records the boundary and closes the owning
+   * conversation's active chapter at the next turn end (章节 = 任务,
+   * Phase 1 slice 3).
+   */
+  onTaskCompleted?: (sessionId: string, taskId: string) => void;
 }
 
 const CHANNEL_ENUM = ['delegate_bot', 'group_task', 'owner_external', 'owner_together'] as const;
@@ -1092,6 +1099,17 @@ export function buildLongTermTaskAgentTools(deps: {
               title: activeSub.title,
               ...(activeSub.assigneeMetabotId ? { assigneeMetabotId: activeSub.assigneeMetabotId } : {}),
             });
+          }
+        }
+        // Whole-task completion (章节 = 任务, Phase 1 slice 3): when this
+        // accept finishes the LAST open subtask, the owning conversation's
+        // chapter closes at the next turn end. Best-effort — the chapter
+        // trigger validates the session and its own guards.
+        if (detailAfter?.stage === 'done' && mountedSessionId) {
+          try {
+            control.onTaskCompleted?.(mountedSessionId, target.taskId);
+          } catch {
+            // Never fail the accept because a bookkeeping hook threw.
           }
         }
         return jsonResult({
