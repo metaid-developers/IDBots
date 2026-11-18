@@ -1,0 +1,147 @@
+/* Live Stage scene-system prototype — chrome + new stage layers.
+   Quiet dark preview UI; the stage itself reuses public/live-stage/stage.css. */
+
+/* ---------- page chrome ---------- */
+.proto-shell{display:grid;grid-template-columns:300px 1fr;height:100dvh;overflow:hidden;background:#070c16;color:#f4f6fa;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif}
+.proto-sidebar{display:flex;flex-direction:column;border-right:1px solid rgba(255,255,255,.08);background:rgba(13,22,38,.8);min-height:0}
+.proto-brand{padding:16px 16px 12px;border-bottom:1px solid rgba(255,255,255,.08);font-size:14px;font-weight:700;letter-spacing:.01em}
+.proto-brand small{display:block;margin-top:3px;font-size:10px;font-weight:500;color:#8e9baf;letter-spacing:.04em}
+.proto-catalog{flex:1;overflow-y:auto;padding:8px 10px 24px;scrollbar-width:thin;scrollbar-color:rgba(148,163,184,.25) transparent}
+.proto-group{margin:10px 0 4px;padding:0 6px;font-size:10px;font-weight:700;letter-spacing:.06em;color:#94a3b8;text-transform:uppercase}
+.proto-row{display:grid;grid-template-columns:8px 1fr auto;align-items:center;gap:8px;width:100%;margin:2px 0;padding:7px 8px;border:1px solid transparent;border-radius:9px;background:transparent;color:#e6ecf4;font:inherit;font-size:12px;text-align:left;cursor:pointer;transition:background .15s,border-color .15s}
+.proto-row:hover{background:rgba(255,255,255,.04)}
+.proto-row.is-selected{background:rgba(155,244,255,.07);border-color:rgba(155,244,255,.3)}
+.proto-dot{width:7px;height:7px;border-radius:50%;background:#8e9baf}
+.proto-row-names{min-width:0}
+.proto-row-zh{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.proto-row-en{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#8e9baf}
+.proto-badge{flex-shrink:0;padding:1px 6px;border-radius:999px;font-size:9px;font-weight:700;letter-spacing:.02em}
+.proto-badge[data-status="existing"]{background:rgba(148,163,184,.16);color:#a9b6c9}
+.proto-badge[data-status="changed"]{background:rgba(255,214,128,.16);color:#ffd680}
+.proto-badge[data-status="new"]{background:rgba(96,226,236,.14);color:#60e2ec}
+.proto-main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.proto-topbar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(13,22,38,.8);flex-wrap:wrap}
+.proto-topbar-group{display:flex;align-items:center;gap:6px}
+.proto-topbar-right{margin-left:auto}
+.proto-btn{padding:5px 11px;border:1px solid rgba(255,255,255,.1);border-radius:8px;background:rgba(23,37,54,.6);color:#dce3eb;font:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:border-color .15s,background .15s,color .15s}
+.proto-btn:hover{border-color:rgba(155,244,255,.4);color:#fff}
+.proto-btn.is-active{border-color:rgba(255,220,81,.55);background:rgba(255,220,81,.1);color:#ffdc51}
+.proto-btn-primary{min-width:38px}
+.proto-stagewrap{flex:1;min-height:0;display:grid;place-items:center;overflow:hidden;padding:14px}
+.stage-frame{position:relative;width:1280px;height:760px;flex-shrink:0;border-radius:10px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.07);transform-origin:center center}
+.proto-inspector{height:150px;flex-shrink:0;border-top:1px solid rgba(255,255,255,.08);background:rgba(13,22,38,.8);padding:10px 16px;display:grid;grid-template-columns:minmax(300px,1.2fr) minmax(240px,1fr) minmax(220px,.9fr);gap:16px;overflow:hidden;font-size:12px}
+.insp-name{display:flex;align-items:baseline;gap:8px;font-size:15px;font-weight:700}
+.insp-name .en{color:#8e9baf;font-size:11px;font-weight:500}
+.insp-meta{display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap}
+.insp-place{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.05);color:#aab6c6;font-size:10px;font-weight:600}
+.insp-note{margin-top:8px;color:#aab6c6;line-height:1.5;font-size:11px}
+.insp-trigs{display:flex;flex-wrap:wrap;gap:4px;align-content:flex-start}
+.insp-trig{padding:2px 7px;border:1px solid rgba(255,255,255,.1);border-radius:6px;background:rgba(23,37,54,.5);color:#9fb0c8;font-family:"SF Mono",Menlo,monospace;font-size:10px;white-space:nowrap}
+.insp-sec{font-size:10px;font-weight:700;letter-spacing:.06em;color:#94a3b8;text-transform:uppercase;margin-bottom:6px}
+.insp-orb{width:100%;border-collapse:collapse;font-size:10px;font-variant-numeric:tabular-nums}
+.insp-orb td{padding:2px 6px 2px 0;color:#aab6c6}
+.insp-orb td:first-child{color:#75839a;font-family:"SF Mono",Menlo,monospace}
+.insp-step{margin-top:6px;padding:4px 8px;border-left:2px solid rgba(255,220,81,.5);color:#c9d3df;font-size:11px;font-variant-numeric:tabular-nums}
+.insp-tool{color:#8e9baf;font-family:"SF Mono",Menlo,monospace;font-size:10px}
+
+/* ---------- tweaks drawer ---------- */
+.proto-drawer{position:fixed;top:0;right:0;bottom:0;width:308px;z-index:40;display:flex;flex-direction:column;background:rgba(13,22,38,.94);border-left:1px solid rgba(255,255,255,.1);box-shadow:-24px 0 60px rgba(0,0,0,.4);backdrop-filter:blur(12px)}
+.proto-drawer[hidden]{display:none}
+.proto-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);font-size:13px}
+.proto-drawer-body{flex:1;overflow-y:auto;padding:12px 16px 24px;scrollbar-width:thin}
+.tw-row{margin-bottom:14px}
+.tw-label{display:block;margin-bottom:6px;font-size:11px;font-weight:650;color:#aab6c6}
+.tw-seg{display:flex;gap:4px}
+.tw-seg .proto-btn{flex:1}
+.tw-check{display:flex;align-items:center;gap:8px;font-size:12px;color:#dce3eb;cursor:pointer}
+.tw-check input{accent-color:#ffdc51}
+.tw-slider{display:flex;align-items:center;gap:10px}
+.tw-slider input{flex:1;accent-color:#9bf4ff}
+.tw-slider output{width:34px;text-align:right;font-variant-numeric:tabular-nums;color:#9bf4ff;font-size:11px}
+.tw-step{display:flex;align-items:center;gap:8px}
+.tw-step .proto-btn{min-width:28px;padding:3px 0}
+.tw-step output{width:20px;text-align:center;font-variant-numeric:tabular-nums;color:#e6ecf4}
+.tw-trigs{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.tw-hr{height:1px;margin:14px 0;background:rgba(255,255,255,.07)}
+
+/* ---------- catalog table overlay ---------- */
+.proto-table-overlay{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:rgba(4,8,16,.72);backdrop-filter:blur(4px)}
+.proto-table-overlay[hidden]{display:none}
+.proto-table-panel{width:min(1060px,92vw);max-height:86dvh;display:flex;flex-direction:column;background:rgba(13,22,38,.96);border:1px solid rgba(255,255,255,.1);border-radius:12px;overflow:hidden}
+.proto-table-body{overflow:auto;scrollbar-width:thin}
+.proto-table{width:100%;border-collapse:collapse;font-size:11px}
+.proto-table th{position:sticky;top:0;padding:8px 10px;background:rgba(23,37,54,.95);text-align:left;font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:#8e9baf;border-bottom:1px solid rgba(255,255,255,.08)}
+.proto-table td{padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.05);color:#c9d3df;vertical-align:top}
+.proto-table td.mono{font-family:"SF Mono",Menlo,monospace;font-size:10px;color:#9fb0c8}
+.proto-table tr:hover td{background:rgba(255,255,255,.03)}
+
+/* ---------- stage additions ---------- */
+.companion-back,.companion-front{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.companion-back{z-index:2}
+.companion-front{z-index:4}
+.group-members{position:absolute;inset:0;pointer-events:none}
+.group-member{position:absolute;z-index:4;border-radius:50%}
+.group-member[data-side="back"]{z-index:2}
+.group-member.gm-more{display:flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px dashed rgba(155,244,255,.45);background:rgba(13,22,38,.85);color:#9bf4ff;font-size:9px;font-weight:800}
+.core-entity{transition:left .6s cubic-bezier(.16,1,.3,1),translate .35s ease}
+/* The scene system owns the orb's on-stage position; neutralize the
+   family-specific membrane-wrap offsets in stage.css (report-ready lifts,
+   complete shrinks) so the orb stays exactly on O. */
+body[data-family] .membrane-wrap{transform:none;translate:none;scale:1;filter:none;rotate:0deg}
+body[data-motion="reduced"] .membrane-wrap{animation:none}
+.orb-halo{position:absolute;inset:6px;border-radius:50%;pointer-events:none;opacity:0;transition:opacity .5s}
+body[data-family="owner-needed"] .orb-halo{opacity:1;box-shadow:0 0 0 1px rgba(255,220,81,.25),0 0 40px rgba(255,220,81,.12);animation:orb-halo-breathe 3.2s ease-in-out infinite}
+@keyframes orb-halo-breathe{0%,100%{box-shadow:0 0 0 1px rgba(255,220,81,.18),0 0 28px rgba(255,220,81,.07)}50%{box-shadow:0 0 0 1px rgba(255,220,81,.34),0 0 52px rgba(255,220,81,.17)}}
+body[data-has-report="true"][data-family="report-ready"] .core-report-ready{display:flex;animation:core-cta-in .5s cubic-bezier(.16,1,.3,1) both}
+body[data-motion="reduced"] .orb-halo{animation:none}
+
+/* ---------- companion rail ---------- */
+.companion-rail{position:absolute;z-index:5;right:4.5%;top:14%;max-width:248px;max-height:46%;display:flex;flex-direction:column;gap:8px;overflow:hidden;pointer-events:none}
+.rail-section{display:flex;flex-direction:column;gap:8px}
+.rail-heading{padding:0 2px;font-size:10px;font-weight:700;letter-spacing:.06em;color:#94a3b8;text-transform:uppercase}
+.rail-item{position:relative;display:flex;align-items:center;gap:9px;padding:7px 11px;border-radius:12px;border:1px solid rgba(155,244,255,.22);background:rgba(13,22,38,.78);backdrop-filter:blur(8px);box-shadow:0 8px 24px rgba(0,0,0,.28);opacity:0;transform:translateY(6px);filter:blur(4px);transition:opacity .32s cubic-bezier(.2,0,0,1),transform .32s cubic-bezier(.2,0,0,1),filter .32s cubic-bezier(.2,0,0,1),border-color .3s,box-shadow .3s}
+.rail-item.is-in{opacity:1;transform:translateY(0);filter:blur(0)}
+.rail-item.is-out{opacity:0;transform:translateY(-4px);transition-duration:.2s}
+.rail-item[data-hero="worker"]{border-color:rgba(255,214,128,.55);box-shadow:0 0 0 1px rgba(255,214,128,.18),0 8px 26px rgba(0,0,0,.3),0 0 22px rgba(255,214,128,.1)}
+.rail-item[data-hero="peer"],.rail-item[data-hero="group"]{border-color:rgba(96,226,236,.55);box-shadow:0 0 0 1px rgba(96,226,236,.18),0 8px 26px rgba(0,0,0,.3),0 0 22px rgba(96,226,236,.1)}
+.rail-item[data-status="awaiting"],.rail-item[data-status="delivered"],.rail-item[data-status="waiting"]{border-style:dashed}
+.rail-avatar{width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0;background:rgba(148,163,184,.2)}
+.rail-item[data-hero="peer"] .rail-avatar{width:40px;height:40px;box-shadow:0 0 0 5px rgba(155,244,255,.08),0 0 18px rgba(96,226,236,.25)}
+.rail-meta{min-width:0;display:flex;flex-direction:column;gap:1px;flex:1}
+.rail-head{display:flex;align-items:center;flex-wrap:wrap;row-gap:2px;gap:6px;font-size:12px;font-weight:650;color:#f1f5f9}
+.rail-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:112px}
+.rail-chip{flex-shrink:0;padding:1px 6px;border-radius:999px;background:rgba(155,244,255,.14);color:#9bf4ff;font-size:10px;font-weight:700;white-space:nowrap}
+.rail-item[data-status="return"],.rail-item[data-status="verifying"]{border-color:rgba(255,220,81,.48);background:rgba(28,25,18,.78)}
+.rail-item[data-status="return"] .rail-chip,.rail-item[data-status="verifying"] .rail-chip{background:rgba(255,220,81,.18);color:#ffdc51}
+.rail-item[data-status="verifying"]{border-style:dashed}
+.rail-sub{font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px}
+.rail-glyph{flex-shrink:0;width:12px;height:12px;color:#9fb0c8}
+.rail-item[data-hero="worker"] .rail-glyph{color:#ffd680}
+.rail-item[data-hero="peer"] .rail-glyph,.rail-item[data-hero="group"] .rail-glyph{color:#60e2ec}
+.rail-stack{position:relative;width:44px;height:28px;flex-shrink:0}
+.rail-stack img{position:absolute;top:0;width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid rgba(10,18,32,.9);background:#172536}
+.rail-stack img:nth-child(1){left:0;z-index:3}
+.rail-stack img:nth-child(2){left:10px;z-index:2}
+.rail-stack img:nth-child(3){left:20px;z-index:1}
+.rail-stack .rail-more-n{position:absolute;left:31px;top:7px;z-index:4;font-size:9px;font-weight:700;color:#9bf4ff}
+.rail-ot{margin-left:2px;padding:0 4px;border-radius:4px;border:1px dashed rgba(197,169,255,.6);color:#c5a9ff;font-size:8px;font-weight:800;letter-spacing:.03em}
+.rail-more{align-self:stretch;padding:5px 11px;border:1px dashed rgba(155,244,255,.25);border-radius:10px;color:#94a3b8;font-size:11px;text-align:center;background:rgba(13,22,38,.5)}
+
+/* ---------- group ring members ---------- */
+.group-member{position:absolute;border-radius:50%;pointer-events:none;transition:left .6s cubic-bezier(.16,1,.3,1),top .6s cubic-bezier(.16,1,.3,1),transform .3s,box-shadow .3s,opacity .4s}
+.group-member img{display:block;width:100%;height:100%;border-radius:50%;object-fit:cover;border:1px solid rgba(155,244,255,.3);background:#172536}
+.group-member[data-lit="1"]{transform:scale(1.08);box-shadow:0 0 14px rgba(96,226,236,.55)}
+.group-member .gm-chair{position:absolute;left:50%;top:-7px;width:3px;height:3px;margin-left:-1.5px;border-radius:50%;background:#ffdc51;box-shadow:0 0 6px rgba(255,220,81,.8)}
+.group-member .gm-ot{position:absolute;inset:-4px;border:1px dashed rgba(197,169,255,.6);border-radius:50%}
+.group-member .gm-ot-badge{position:absolute;right:-4px;top:-5px;padding:0 3px;border-radius:4px;background:rgba(23,17,38,.9);border:1px solid rgba(197,169,255,.55);color:#c5a9ff;font-size:7px;font-weight:800;letter-spacing:.02em;line-height:1.5}
+
+/* ---------- transient chip ---------- */
+.transient-chip{position:absolute;z-index:6;max-width:300px;padding:8px 13px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(13,22,38,.78);backdrop-filter:blur(8px);color:#e6ecf4;font-size:12px;box-shadow:0 10px 28px rgba(0,0,0,.35);opacity:0;transform:translateY(6px);filter:blur(4px);transition:opacity .28s cubic-bezier(.2,0,0,1),transform .28s cubic-bezier(.2,0,0,1),filter .28s cubic-bezier(.2,0,0,1)}
+.transient-chip.is-in{opacity:1;transform:translateY(0);filter:blur(0)}
+.transient-chip.is-out{opacity:0;transform:translateY(4px);transition-duration:.2s}
+.transient-chip[hidden]{display:none}
+
+/* ---------- misc ---------- */
+.proto-sidebar::-webkit-scrollbar,.proto-drawer-body::-webkit-scrollbar,.proto-table-body::-webkit-scrollbar{width:5px}
+.proto-sidebar::-webkit-scrollbar-thumb,.proto-drawer-body::-webkit-scrollbar-thumb,.proto-table-body::-webkit-scrollbar-thumb{background:rgba(148,163,184,.22);border-radius:999px}
+@media (prefers-reduced-motion:reduce){.rail-item{transition:none}}
