@@ -9017,6 +9017,57 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
+   * Owner gate for payment_card_emit. The card reveals the owner's payee
+   * identity + Alipay receiving code to EVERY participant of the conversation
+   * it is emitted into, with a caller-chosen amount and order id, so every
+   * emit asks first. Timeout is deny: an unanswered card request must not
+   * leave a payable card behind. `ownerOnly` keeps the orchestrator text relay
+   * from answering it inside a delegated worker/group-task session. No
+   * ActiveSession means no owner seat (background / unattended turn): the
+   * card is refused.
+   */
+  private async confirmPaymentCardEmit(
+    sessionId: string,
+    info: { orderId: string; amountCents: number; payeeDisplayName: string | null },
+  ): Promise<boolean> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (!activeSession) {
+      return false;
+    }
+    const yuan = `¥${(info.amountCents / 100).toFixed(2)}`;
+    const payee = info.payeeDisplayName?.trim() || tApp('支付宝收款码', 'Alipay receiving code');
+    const question = tApp(
+      `Agent 准备发出一张真实收款卡（支付宝点对点转账，不经 IDBots 资金流）：\n` +
+      `- 金额: ${yuan}\n` +
+      `- 收款方: ${payee}（来自你保存的收款信息）\n` +
+      `- 订单号/memo: ${info.orderId}\n` +
+      `- 这张卡会展示给本会话里的所有人（群聊或协作会话中的对方都能看到收款方信息）\n` +
+      '是否允许发出这张收款卡？（需要你本人确认；60 秒内未回答视为拒绝）',
+      `The agent is about to emit a REAL payment card (point-to-point Alipay transfer; no funds flow through IDBots):\n` +
+      `- amount: ${yuan}\n` +
+      `- payee: ${payee} (from your saved receiving info)\n` +
+      `- order/memo: ${info.orderId}\n` +
+      `- the card will be visible to EVERYONE in this conversation (group/collab participants see the payee info)\n` +
+      'Allow emitting this payment card? (the owner must confirm; unanswered after 60s = denied)',
+    );
+    const outcome = await this.requestSafetyApproval(
+      sessionId,
+      activeSession.abortController.signal,
+      activeSession,
+      question,
+      'payment_card_emit',
+      {
+        order_id: info.orderId,
+        amount_cents: info.amountCents,
+        payee,
+      } as Record<string, unknown>,
+      'deny',
+      { ownerOnly: true },
+    );
+    return outcome === 'approved';
+  }
+
+  /**
    * Owner gate for multisig signing and broadcast. Timeout is deny: an
    * unanswered prompt must not attach a signature or publish a transaction.
    */
@@ -15916,15 +15967,18 @@ export class CoworkRunner extends EventEmitter {
       );
     }
     // payment_card_emit (G1): the owner's encrypted receiving info → a real
-    // pay-card fence. Mounted unconditionally (no session-bot resolution and
-    // no memory gate): invoicing must work in every provider bot session, and
-    // the card belongs to the machine's owner, not to the acting bot. Zero
-    // funds flow — the control only reads + decrypts locally.
+    // pay-card fence. Mounted in every provider bot session (no session-bot
+    // resolution and no memory gate): invoicing must work everywhere, and the
+    // card belongs to the machine's owner, not to the acting bot. Zero funds
+    // flow — the control only reads + decrypts locally. Every emit still goes
+    // through the per-emit owner gate: the card discloses the owner's payee
+    // identity + receiving code to every participant of the conversation.
     if (this.paymentCards) {
       memoryTools.push(
         ...buildPaymentCardAgentTools({
           tool,
           control: this.paymentCards,
+          confirm: (info) => this.confirmPaymentCardEmit(sessionId, info),
         })
       );
     }

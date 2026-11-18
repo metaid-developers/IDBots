@@ -11,7 +11,10 @@
 //   3. the owner's saved QR image / Alipay PID / ciphertext never appear in the
 //      tool reply,
 //   4. zero funds flow is structural: neither new module imports a wallet,
-//      chain-write budget or pin writer.
+//      chain-write budget or pin writer,
+//   5. the per-emit owner gate: every emit asks first — a refusal, timeout or
+//      gate error leaves NO payable card behind, and the runner wires the gate
+//      fail-closed (ownerOnly + timeout deny).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -59,14 +62,16 @@ const INFO = {
   qrImageDataUrl: TEST_IMAGE,
 };
 
-/** Build the tool set over a fixed control reply and return its handlers. */
-function buildTools(control) {
+/** Build the tool set over a fixed control reply and return its handlers.
+ * `confirm` defaults to an always-approving owner gate; the gate tests below
+ * override it. */
+function buildTools(control, confirm = async () => true) {
   const handlers = {};
   const tool = (name, _description, _schema, handler) => {
     handlers[name] = handler;
     return { name };
   };
-  buildPaymentCardAgentTools({ tool, control });
+  buildPaymentCardAgentTools({ tool, control, confirm });
   return handlers;
 }
 
@@ -148,6 +153,61 @@ test('payment_card_emit refuses a PID-only decrypted info even with a valid amou
   assert.equal(result.isError, true);
   assert.match(textOf(result), /NO_QR_CHANNEL/);
   assert.equal(fenceBodyOf(textOf(result)), null);
+});
+
+test('the per-emit owner gate runs before anything is emitted and receives the exact card face', async () => {
+  const confirmations = [];
+  const handlers = buildTools(okControl, async (info) => {
+    confirmations.push(info);
+    return true;
+  });
+
+  const result = await handlers.payment_card_emit({ order_id: 'gate-1', amount_cents: 250 });
+  assert.notEqual(result.isError, true);
+  assert.ok(fenceBodyOf(textOf(result)), 'an approved gate emits the card');
+
+  assert.deepEqual(confirmations, [{
+    orderId: 'gate-1',
+    amountCents: 250,
+    payeeDisplayName: '张三',
+  }]);
+});
+
+test('an owner refusal / timeout resolves to OWNER_CONFIRMATION_DENIED and emits no card', async () => {
+  for (const deny of [false, Promise.resolve(false)]) {
+    const handlers = buildTools(okControl, async () => deny);
+    const result = await handlers.payment_card_emit({ order_id: 'gate-2', amount_cents: 100 });
+    assert.equal(result.isError, true, 'a denied gate must refuse');
+    const text = textOf(result);
+    assert.match(text, /payment_card_emit refused: OWNER_CONFIRMATION_DENIED/);
+    assert.match(text, /Nothing was emitted\./);
+    assert.equal(fenceBodyOf(text), null, 'a denied gate must never leave a payable card behind');
+  }
+});
+
+test('a throwing owner gate fails closed — no card is emitted', async () => {
+  const handlers = buildTools(okControl, async () => {
+    throw new Error('gate channel exploded');
+  });
+  const result = await handlers.payment_card_emit({ order_id: 'gate-3', amount_cents: 100 });
+  assert.equal(result.isError, true);
+  assert.match(textOf(result), /OWNER_CONFIRMATION_DENIED/);
+  assert.equal(fenceBodyOf(textOf(result)), null);
+});
+
+test('the runner wires the payment-card gate fail-closed (ownerOnly + timeout deny)', () => {
+  const repoRoot = path.resolve(import.meta.dirname, '..');
+  const runnerSource = fs.readFileSync(path.join(repoRoot, 'src/main/libs/coworkRunner.ts'), 'utf8');
+  const gateStart = runnerSource.indexOf('private async confirmPaymentCardEmit');
+  assert.notEqual(gateStart, -1, 'coworkRunner must own a confirmPaymentCardEmit gate');
+  const gate = runnerSource.slice(gateStart, gateStart + 4000);
+  assert.ok(gate.includes("'payment_card_emit'"), 'the gate must tag the approval request with the tool name');
+  assert.ok(gate.includes("'deny'"), 'the gate must time out to deny');
+  assert.ok(gate.includes('ownerOnly: true'), 'the gate must be owner-only (relay seats cannot answer)');
+  assert.ok(
+    /if \(!activeSession\) \{\s*return false;/.test(gate),
+    'a background / unattended turn has no owner seat and must be refused',
+  );
 });
 
 test('the owner\'s saved image / PID / ciphertext never reach the tool reply', async () => {
