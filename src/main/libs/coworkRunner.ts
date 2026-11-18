@@ -51,7 +51,7 @@ import { mapDshReasoningEffort } from './dshReasoningEffort';
 import { shouldIncludeMetawebDeepSections, nextMetawebPromptTier, type MetawebPromptMode, type MetawebPromptTier } from './metawebPromptTier';
 import { dshModelReasoningDeclaration, dshRouteReasoningEffort, isGlmFamilyModelId, undeclaredReasoningRouteWarning } from './dshModelReasoning';
 import { resolveOpenCodeGoApiFormat, openCodeGoWireRouteKey } from './opencodeGoProtocol';
-import { toLlmEffortLevel, type LlmEffortLevel } from './llmEffort';
+import { maxLlmEffortLevel, toLlmEffortLevel, type LlmEffortLevel } from './llmEffort';
 import {
   CoworkDshSteerWindowClosedError,
   CoworkSteerChannel,
@@ -12266,24 +12266,28 @@ export class CoworkRunner extends EventEmitter {
       const pinnedAutoEffortRung = autoEffortRung != null
         ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode, glmFamily: isGlmFamilyModelId(route.model) })
         : null;
+      // The pre-mapping effort level the PRIMARY attempt of this turn runs
+      // with. Hoisted so a later GT-02 fallback attempt (runGuardedTurn's
+      // routeOverride) can hold it as an in-turn floor — see the clamp there.
+      const primaryEffortLevel: LlmEffortLevel | null = sessionEffortPicked
+        ? toLlmEffortLevel(effectiveEffortRung)
+        : unattendedTurn
+          ? resolveUnattendedAutoEffort({
+            brainEffort: automationBrain?.effort,
+            hasBrain: automationBrain != null,
+            globalEffort: getPersistedCoworkEffortLevel(),
+          })
+          : pinnedAutoEffortRung ?? resolveAutoEffortFallback({
+            sentinelDefault: effortSentinelDefault,
+            assistantMode,
+            glmFamily: isGlmFamilyModelId(route.model),
+            brainEffort: automationBrain?.effort,
+            hasBrain: automationBrain != null,
+            globalEffort: getPersistedCoworkEffortLevel(),
+            modelDefault: modelOptions?.reasoningEffort,
+          });
       const dshReasoningEffort = mapDshReasoningEffort(
-        sessionEffortPicked
-          ? toLlmEffortLevel(effectiveEffortRung)
-          : unattendedTurn
-            ? resolveUnattendedAutoEffort({
-              brainEffort: automationBrain?.effort,
-              hasBrain: automationBrain != null,
-              globalEffort: getPersistedCoworkEffortLevel(),
-            })
-            : pinnedAutoEffortRung ?? resolveAutoEffortFallback({
-              sentinelDefault: effortSentinelDefault,
-              assistantMode,
-              glmFamily: isGlmFamilyModelId(route.model),
-              brainEffort: automationBrain?.effort,
-              hasBrain: automationBrain != null,
-              globalEffort: getPersistedCoworkEffortLevel(),
-              modelDefault: modelOptions?.reasoningEffort,
-            }),
+        primaryEffortLevel,
         sessionEffortPicked || pinnedAutoEffortRung != null || !assistantMode
           ? activeSession.thinkingOverride ?? modelOptions?.thinking
           : undefined,
@@ -12516,33 +12520,46 @@ export class CoworkRunner extends EventEmitter {
           // Same effort chain as the primary route above, except the bot-brain
           // rung reads the FALLBACK brain's effort (that brain's model is the
           // one now running the turn). The session override still wins in
-          // assistant mode; without one, assistant mode pins 'off' here too —
-          // a fallback resume must not re-introduce a reasoning pass ahead of
-          // the first visible token.
+          // assistant mode. Without one, assistant mode keeps its conservative
+          // default here too — but never BELOW the in-turn floor: the primary
+          // attempt already started this turn at primaryEffortLevel (e.g. a
+          // cerebellum 'off' verdict pinned UP to 'low' because the primary
+          // route was GLM-family), and a fallback onto a model that CAN
+          // express 'off' must not silently un-pin it back down. Swapping the
+          // model AND dropping the reasoning tier is a double downgrade the
+          // owner never asked for (2026-11-18 Studio session post-mortem:
+          // glm-5.3-flash 'low' → deepseek-flash 'off' on 16 consecutive
+          // quota-fallback turns). Bot-automation turns keep the fallback
+          // brain's own configured effort — that is deliberate bot config,
+          // not an owner-chat experience decision.
           const fallbackModelOptions = resolveModelOptions(routeOverride.model);
           // Same GLM-family floor as the primary route above, read against
           // the fallback brain's model (the one now running the turn).
           const pinnedFallbackAutoEffortRung = autoEffortRung != null
             ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode, glmFamily: isGlmFamilyModelId(routeOverride.model) })
             : null;
+          const fallbackEffortLevel: LlmEffortLevel | null = sessionEffortPicked
+            ? toLlmEffortLevel(effectiveEffortRung)
+            : unattendedTurn
+              ? resolveUnattendedAutoEffort({
+                brainEffort: automationBrain?.fallbackEffort,
+                hasBrain: automationBrain != null,
+                globalEffort: getPersistedCoworkEffortLevel(),
+              })
+              : pinnedFallbackAutoEffortRung ?? resolveAutoEffortFallback({
+                sentinelDefault: effortSentinelDefault,
+                assistantMode,
+                glmFamily: isGlmFamilyModelId(routeOverride.model),
+                brainEffort: automationBrain?.fallbackEffort,
+                hasBrain: automationBrain != null,
+                globalEffort: getPersistedCoworkEffortLevel(),
+                modelDefault: fallbackModelOptions?.reasoningEffort,
+              });
+          const flooredFallbackEffortLevel = assistantMode && !unattendedTurn && !sessionEffortPicked
+            ? maxLlmEffortLevel(fallbackEffortLevel, primaryEffortLevel)
+            : fallbackEffortLevel;
           turnReasoningEffort = mapDshReasoningEffort(
-            sessionEffortPicked
-              ? toLlmEffortLevel(effectiveEffortRung)
-              : unattendedTurn
-                ? resolveUnattendedAutoEffort({
-                  brainEffort: automationBrain?.fallbackEffort,
-                  hasBrain: automationBrain != null,
-                  globalEffort: getPersistedCoworkEffortLevel(),
-                })
-                : pinnedFallbackAutoEffortRung ?? resolveAutoEffortFallback({
-                  sentinelDefault: effortSentinelDefault,
-                  assistantMode,
-                  glmFamily: isGlmFamilyModelId(routeOverride.model),
-                  brainEffort: automationBrain?.fallbackEffort,
-                  hasBrain: automationBrain != null,
-                  globalEffort: getPersistedCoworkEffortLevel(),
-                  modelDefault: fallbackModelOptions?.reasoningEffort,
-                }),
+            flooredFallbackEffortLevel,
             sessionEffortPicked || pinnedFallbackAutoEffortRung != null || !assistantMode
               ? activeSession.thinkingOverride ?? fallbackModelOptions?.thinking
               : undefined,
