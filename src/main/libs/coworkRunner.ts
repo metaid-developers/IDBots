@@ -19103,6 +19103,24 @@ export class CoworkRunner extends EventEmitter {
     }
   }
 
+  /**
+   * Quit-time log-guard roster (T-C): the DSH sessions currently tracked by
+   * the hub with each session's cwd, which is what the on-disk log path is
+   * keyed on (sessionRoot/<projectKey(cwd)>/<sessionId>/session.v4.jsonl*).
+   * Empty when the runtime is not up. The appCleanup quit sequence calls the
+   * guard with this list right before closeDshRuntime.
+   */
+  getActiveDshSessionLogTargets(): Array<{ dshSessionId: string; cwd: string | null }> {
+    const hub = this.dshTurnHub;
+    if (!hub?.listActiveDshSessions) return [];
+    return hub
+      .listActiveDshSessions()
+      .map(({ coworkSessionId, dshSessionId }) => ({
+        dshSessionId,
+        cwd: this.store.getSession(coworkSessionId)?.cwd ?? null,
+      }));
+  }
+
   async closeDshRuntime(): Promise<void> {
     if (!this.dshTurnHub) return;
     await this.dshTurnHub.close();

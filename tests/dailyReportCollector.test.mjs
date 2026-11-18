@@ -31,9 +31,12 @@ import {
   shapeHourlyActivity,
   shapeHumanSessionRows,
   shapeOwnerOrchestrationRows,
+  shapeOverdueRows,
   shapePendingFollowUpRows,
   shapeUpcomingFires,
   stripDailyReportSessionTitlePrefix,
+  DAILY_REPORT_OVERDUE_REVIEW_STALLED_HOURS,
+  DAILY_REPORT_OVERDUE_WAITING_OWNER_HOURS,
 } from '../src/main/services/dailyReportCollector.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -151,11 +154,20 @@ test('computeDailyReportHasAnyActivity: E10 skip bit, digests excluded', () => {
       groupTaskTransitions: [],
       longTermEvents: [],
       twinDelegateOrchestrationsInWindow: 0,
+      overdueItems: [],
     },
     onlineActivity: [],
     newSessionCount: 0,
   };
   assert.equal(computeDailyReportHasAnyActivity(base), false);
+  assert.equal(
+    computeDailyReportHasAnyActivity({
+      ...base,
+      machineActivity: { ...base.machineActivity, overdueItems: [{ kind: 'orchestration_review_stalled' }] },
+    }),
+    true,
+    'T-B: an overdue escalation alone justifies shipping the report',
+  );
   assert.equal(computeDailyReportHasAnyActivity({ ...base, newSessionCount: 1 }), true, 'any new session counts');
   assert.equal(computeDailyReportHasAnyActivity({ ...base, pendingFollowUps: [1] }), true);
   assert.equal(
@@ -668,3 +680,40 @@ test('collectDailyReportFacts: exclusions apply BEFORE the 10-item cap; waiting 
   assert.equal(facts.pendingFollowUps[1].overdue, false, 'waiting item keeps age but drops overdue');
   assert.equal(facts.pendingFollowUps[1].ageDays, 5);
 });
+
+// ── T-B: forced overdue section facts ──────────────────────────────────────
+
+test('shapeOverdueRows T-B: waiting_owner and stalled review cross their thresholds; sorted longest-wait first', () => {
+  const nowMs = Date.parse('2026-11-18T08:00:00Z');
+  const rows = [
+    { kind: 'longterm_waiting_owner', title: '等待拍板的 A', taskId: 'lt-1', status: 'waiting_owner', updated_at: '2026-11-17T07:00:00Z' }, // 25h
+    { kind: 'orchestration_review_stalled', title: '复核停滞的 B', taskId: 'orch-1', status: 'review', updated_at: '2026-11-14T08:00:00Z' }, // 96h
+    { kind: 'longterm_waiting_owner', title: '刚递交的 C', taskId: 'lt-2', status: 'waiting_owner', updated_at: '2026-11-18T02:00:00Z' }, // 6h — under threshold
+    { kind: 'orchestration_review_stalled', title: '贴线的 D', taskId: 'orch-2', status: 'review', updated_at: '2026-11-15T08:00:00Z' }, // 72h — equal counts
+  ];
+  const shaped = shapeOverdueRows(rows, nowMs);
+  assert.equal(shaped.length, 3);
+  assert.deepEqual(shaped.map((item) => item.title), ['复核停滞的 B', '贴线的 D', '等待拍板的 A'], 'longest wait first (96h > 72h > 25h)');
+  assert.equal(shaped[0].ageHours, 96);
+  assert.equal(shaped[0].thresholdHours, DAILY_REPORT_OVERDUE_REVIEW_STALLED_HOURS);
+  assert.equal(shaped[2].thresholdHours, DAILY_REPORT_OVERDUE_WAITING_OWNER_HOURS);
+  assert.equal(shaped[1].ageHours, 72, 'a wait exactly at the threshold is overdue');
+});
+
+test('shapeOverdueRows T-B: unknown timestamps and empty input never become overdue (no false alarms)', () => {
+  const nowMs = Date.parse('2026-11-18T08:00:00Z');
+  assert.deepEqual(shapeOverdueRows([], nowMs), []);
+  assert.deepEqual(
+    shapeOverdueRows([
+      { kind: 'longterm_waiting_owner', title: '没有时间戳', taskId: 'lt-9', status: 'waiting_owner', updated_at: null },
+      { kind: 'longterm_waiting_owner', title: '坏时间戳', taskId: 'lt-8', status: 'waiting_owner', updated_at: 'not-a-date' },
+    ], nowMs),
+    [],
+  );
+  const title = shapeOverdueRows(
+    [{ kind: 'orchestration_review_stalled', title: '', taskId: 'orch-9', status: 'review', updated_at: '2026-10-01T00:00:00Z' }],
+    nowMs,
+  );
+  assert.equal(title[0].title, '(untitled)');
+});
+

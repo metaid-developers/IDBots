@@ -113,7 +113,8 @@ import { generateSessionTitle, setSessionTitleBrainProvider, setTurnAckReplyBrai
 import { ensureSandboxReady, getSandboxStatus, onSandboxProgress } from './libs/coworkSandboxRuntime';
 import { startCoworkOpenAICompatProxy, stopCoworkOpenAICompatProxy, setScheduledTaskDeps, setFreeQuotaExhaustedListener } from './libs/coworkOpenAICompatProxy';
 import { startDshWebToolsProxy, stopDshWebToolsProxy, resolveDeepSeekWebToolsUpstream, relayWebToolsBase } from './services/dshWebToolsProxy';
-import { isOfficialDeepSeekRoute } from './libs/coworkDshTurn';
+import { dshSessionRootFor, isOfficialDeepSeekRoute } from './libs/coworkDshTurn';
+import { formatSessionLogAuditLine, guardActiveSessionLogsAtQuit, scanSessionLogsForHeaderInvariant } from './libs/dshSessionLogGuard';
 import { buildImageSkillEnvOverrides } from './libs/skillImageProviderEnv';
 import { isWorkspaceMetabotId, resolveBotWorkspaceCwd, resolveSessionWorkingDirectory, shouldUseBotWorkspaceCwd } from './libs/botWorkspace';
 import { getGitBranch } from './libs/gitWorkspace';
@@ -22645,6 +22646,22 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       stopPrivateChatDaemon: () => stopPrivateChatDaemon(),
       stopGroupTaskDaemon,
       stopOpenTeamGuestDaemon,
+      guardSessionLogs: async () => {
+        // T-C layer (a): flush + first-frame verify every active session log
+        // before the runtime drains. Read-only on the files.
+        if (coworkRunner) {
+          const sessionRoot = dshSessionRootFor(app.getPath('userData'));
+          const targets = coworkRunner.getActiveDshSessionLogTargets();
+          const result = await guardActiveSessionLogsAtQuit(
+            sessionRoot,
+            targets,
+            (line) => console.log(formatSessionLogAuditLine(line)),
+          );
+          if (result.warned > 0) {
+            console.warn(`[SessionLogGuard] quit: ${result.warned}/${result.checked} active session log(s) need attention (see audit lines above)`);
+          }
+        }
+      },
       closeDshRuntime: async () => {
         if (coworkRunner) {
           console.log('[Main] Closing DSH runtime...');
@@ -22869,6 +22886,28 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
 
     store = await initStore();
     startupLog('store ready');
+
+    // T-C layer (b): startup self-check of the session-log first-frame
+    // invariant. Read-only — it reports 0-byte / header-less artifacts (path +
+    // mtime + size) and NEVER deletes or rewrites one. Fire-and-forget so a
+    // large session root cannot delay boot; the cap keeps the walk cheap.
+    void scanSessionLogsForHeaderInvariant({
+      sessionRoot: dshSessionRootFor(app.getPath('userData')),
+    }).then((result) => {
+      if (result.scanned === 0) return;
+      if (result.problems.length === 0) {
+        startupLog(`session-log self-check: ${result.ok}/${result.scanned} artifact(s) hold the header-frame invariant`);
+        return;
+      }
+      console.warn(
+        `[SessionLogGuard] startup self-check: ${result.problems.length}/${result.scanned} session log artifact(s) fail the header-frame invariant (scan truncated=${result.truncated})`,
+      );
+      for (const problem of result.problems) {
+        console.warn(formatSessionLogAuditLine(problem));
+      }
+    }).catch((error) => {
+      console.warn('[SessionLogGuard] startup self-check failed:', error);
+    });
     // Refresh the data-guard fingerprint so a vanished database stays
     // detectable across junction swaps / data-directory migrations.
     writeDataGuardSnapshot('startup');

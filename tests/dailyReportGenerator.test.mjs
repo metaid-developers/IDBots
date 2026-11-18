@@ -5,10 +5,12 @@
 //      badges; the section is OMITTED ENTIRELY when pendingFollowUps is
 //      empty (markdown + HTML), never an empty-state line;
 //   b. owner-task table — step counts / percent, never the LLM's job;
-//   c. machine rollups — one scheduled-runs summary line (total; "all
-//      succeeded" when true; only failed/skipped NAMED, max 3, with bot),
-//      one group-task count line, twin-delegate count; long-term journal
-//      events never appear;
+//   c. machine rollups — one scheduled-runs summary line (total; the T-A
+//      tiered receipt counts `completed` (+ legacy success) as the success
+//      numerator and presents completed_empty / crashed / timeout / skipped
+//      separately; "all succeeded" only when every run really completed;
+//      only troubled runs are NAMED, max 3, with bot), one group-task count
+//      line, twin-delegate count; long-term journal events never appear;
 //   d. per-bot one-liners — deterministic text (title prefix folded, volume,
 //      top external peer, OpenTeam, chain interactions) replacing the v1
 //      counts table; the counts table is GONE from markdown and HTML;
@@ -41,6 +43,7 @@ import {
   buildDailyReportFollowUpListMarkdown,
   buildDailyReportHtml,
   buildDailyReportMachineRollupMarkdown,
+  buildDailyReportOverdueMarkdown,
   buildDailyReportOwnerTasksMarkdown,
   buildDeterministicBotLines,
   buildDeterministicBriefing,
@@ -71,6 +74,7 @@ const sampleFacts = (overrides = {}) => ({
     { sessionId: 'hs1', title: 'Landing copy', botName: 'Writer', sessionType: 'standard', humanUserMessages: 3, assistantMessages: 5, lastAssistantExcerpt: 'Draft ready', lastUserExcerpt: 'go' },
   ],
   machineActivity: {
+    overdueItems: [],
     scheduledRuns: [{ taskName: 'Nightly inspect', botName: 'Ops', status: 'success', skipReason: null, startedAt: null, error: null }],
     groupTaskTransitions: [{ taskId: 9, title: 'Group push', fromStatus: 'executing', toStatus: 'review', actor: 'chair', reason: null, createdAt: null }],
     longTermEvents: [{ taskId: 'lt1', taskTitle: 'Q4 roadmap', subtaskId: null, kind: 'stage_changed', actor: 'twin', detail: 'active', createdAt: null }],
@@ -199,12 +203,162 @@ test('machine rollups: failed/skipped runs named (max 3) with bot; success still
     },
   });
   const lines = buildDailyReportMachineRollupMarkdown(facts, DAILY_REPORT_STRINGS_EN);
-  assert.match(lines[0], /^Scheduled runs 6 · failed\/skipped 3:/);
+  // T-A tiered line: legacy failed 3 + error 1 count as crashed 4; skipped
+  // is ledger-only and shown separately.
+  assert.match(lines[0], /^Scheduled runs 6 · completed 1 · crashed 4 · skipped 1:/);
   const named = lines.slice(1).filter((l) => l.startsWith('- '));
   assert.equal(named.length, 3, 'at most 3 failed/skipped runs are named');
   assert.match(named.join('\n'), /Backup check · Ops — failed/);
   assert.match(named.join('\n'), /Site patrol · Guard — skipped \(already_running\)/);
   assert.doesNotMatch(named.join('\n'), /Sixth failure/, 'failures beyond the cap are not named');
+});
+
+test('machine rollups T-A: zero-work completion blocks "all succeeded" and is counted separately', () => {
+  const facts = sampleFacts({
+    machineActivity: {
+      ...sampleFacts().machineActivity,
+      scheduledRuns: [
+        { taskName: 'Nightly inspect', botName: 'Ops', status: 'completed', skipReason: null, startedAt: null, error: null },
+        { taskName: 'Pool skeleton', botName: 'Ops', status: 'completed_empty', skipReason: null, startedAt: null, error: null },
+      ],
+    },
+  });
+  const lines = buildDailyReportMachineRollupMarkdown(facts, DAILY_REPORT_STRINGS_EN);
+  assert.match(lines[0], /^Scheduled runs 2 · completed 1 · no-op 1:/);
+  assert.doesNotMatch(lines[0], /all succeeded/, 'a zero-work run must not narrate as all-succeeded');
+  const named = lines.slice(1).filter((l) => l.startsWith('- '));
+  assert.match(named.join('\n'), /Pool skeleton · Ops — completed_empty/, 'the empty run is named');
+  const zh = buildDailyReportMachineRollupMarkdown(facts, DAILY_REPORT_STRINGS_ZH).join('\n');
+  assert.match(zh, /定时任务 2 · 完成 1 · 空转 1:/);
+});
+
+test('machine rollups T-A: crashed and timeout tiers are presented separately', () => {
+  const facts = sampleFacts({
+    machineActivity: {
+      ...sampleFacts().machineActivity,
+      scheduledRuns: [
+        { taskName: 'Nightly inspect', botName: 'Ops', status: 'completed', skipReason: null, startedAt: null, error: null },
+        { taskName: 'Broken runtime', botName: 'Ops', status: 'crashed', skipReason: null, startedAt: null, error: 'executor turn settled without answering' },
+        { taskName: 'Slow practice', botName: 'Twin', status: 'timeout', skipReason: null, startedAt: null, error: 'Practice run exceeded its 20-minute wall-clock budget' },
+        { taskName: 'Site patrol', botName: 'Guard', status: 'skipped', skipReason: 'expired', startedAt: null, error: null },
+      ],
+    },
+  });
+  const lines = buildDailyReportMachineRollupMarkdown(facts, DAILY_REPORT_STRINGS_EN);
+  assert.match(lines[0], /^Scheduled runs 4 · completed 1 · crashed 1 · timed out 1 · skipped 1:/);
+  const named = lines.slice(1).filter((l) => l.startsWith('- '));
+  const namedJoined = named.join('\n');
+  assert.match(namedJoined, /Broken runtime · Ops — crashed/, 'crashed run named with its error');
+  assert.match(namedJoined, /Slow practice · Twin — timeout/, 'timeout run named');
+  assert.match(namedJoined, /Site patrol · Guard — skipped \(expired\)/);
+});
+
+test('machine rollups T-A: zero-count tiers stay off the line, numerator always shown', () => {
+  const facts = sampleFacts({
+    machineActivity: {
+      ...sampleFacts().machineActivity,
+      scheduledRuns: [
+        { taskName: 'Nightly inspect', botName: 'Ops', status: 'completed', skipReason: null, startedAt: null, error: null },
+        { taskName: 'Broken runtime', botName: 'Ops', status: 'crashed', skipReason: null, startedAt: null, error: 'x' },
+      ],
+    },
+  });
+  const lines = buildDailyReportMachineRollupMarkdown(facts, DAILY_REPORT_STRINGS_EN);
+  assert.match(lines[0], /^Scheduled runs 2 · completed 1 · crashed 1:/);
+  assert.doesNotMatch(lines[0], /no-op/, 'a zero-count tier is not rendered');
+  assert.doesNotMatch(lines[0], /timed out/, 'a zero-count tier is not rendered');
+});
+
+test('HTML KPI T-A: a zero-work run removes the all-succeeded badge', () => {
+  const okHtml = buildDailyReportHtml({
+    facts: sampleFacts(),
+    strings: DAILY_REPORT_STRINGS_ZH,
+    dateLabel: '2026-11-18',
+    headlineText: '总览。',
+    proseMarkdown: '',
+  });
+  assert.match(okHtml, /全部成功/, 'single success run keeps the badge');
+  const emptyRunFacts = sampleFacts({
+    machineActivity: {
+      ...sampleFacts().machineActivity,
+      scheduledRuns: [
+        { taskName: 'Nightly inspect', botName: 'Ops', status: 'success', skipReason: null, startedAt: null, error: null },
+        { taskName: 'Pool skeleton', botName: 'Ops', status: 'completed_empty', skipReason: null, startedAt: null, error: null },
+      ],
+    },
+  });
+  const emptyHtml = buildDailyReportHtml({
+    facts: emptyRunFacts,
+    strings: DAILY_REPORT_STRINGS_ZH,
+    dateLabel: '2026-11-18',
+    headlineText: '总览。',
+    proseMarkdown: '',
+  });
+  assert.doesNotMatch(emptyHtml, /全部成功/, 'a zero-work run must remove the all-succeeded badge');
+  assert.match(emptyHtml, /Pool skeleton/, 'the empty run surfaces in the needs-you cards');
+});
+
+test('overdue section T-B: forced present with title and wait durations', () => {
+  const facts = sampleFacts({
+    machineActivity: {
+      ...sampleFacts().machineActivity,
+      overdueItems: [
+        { kind: 'longterm_waiting_owner', title: '挂了 30h 的任务', taskId: 'lt-1', status: 'waiting_owner', ageHours: 30.5, thresholdHours: 24 },
+        { kind: 'orchestration_review_stalled', title: '停了 96h 的复核', taskId: 'orch-1', status: 'review', ageHours: 96, thresholdHours: 72 },
+      ],
+    },
+  });
+  const markdown = buildDailyReportOverdueMarkdown(facts, DAILY_REPORT_STRINGS_ZH);
+  assert.match(markdown, /\*\*逾期处置\*\*/);
+  assert.match(markdown, /挂了 30h 的任务 — 长期任务等待拍板 · 30\.5小时待处理（阈值 24）/);
+  assert.match(markdown, /停了 96h 的复核 — 编排复核停滞 · 96小时待处理（阈值 72）/);
+
+  const en = buildDailyReportOverdueMarkdown(facts, DAILY_REPORT_STRINGS_EN);
+  assert.match(en, /\*\*Overdue\*\*/);
+  assert.match(en, /30\.5h waiting/);
+});
+
+test('overdue section T-B: no overdue keeps the structure stable with a fixed 无 slot', () => {
+  const markdown = buildDailyReportOverdueMarkdown(sampleFacts(), DAILY_REPORT_STRINGS_ZH);
+  assert.equal(markdown, '**逾期处置**\n\n- 无');
+  const en = buildDailyReportOverdueMarkdown(sampleFacts(), DAILY_REPORT_STRINGS_EN);
+  assert.equal(en, '**Overdue**\n\n- None');
+});
+
+test('overdue section T-B: leads the deterministic briefing and renders as an always-present HTML card', () => {
+  const facts = sampleFacts({
+    machineActivity: {
+      ...sampleFacts().machineActivity,
+      overdueItems: [
+        { kind: 'longterm_waiting_owner', title: '挂了 30h 的任务', taskId: 'lt-1', status: 'waiting_owner', ageHours: 30.5, thresholdHours: 24 },
+      ],
+    },
+  });
+  const briefing = buildDeterministicBriefing(facts, DAILY_REPORT_STRINGS_ZH);
+  const overdueAt = briefing.indexOf('**逾期处置**');
+  assert.ok(overdueAt >= 0);
+  assert.ok(briefing.indexOf('需要你') === -1 || overdueAt < briefing.indexOf('需要你'), 'escalations precede every narrative section');
+  const emptyBriefing = buildDeterministicBriefing(sampleFacts(), DAILY_REPORT_STRINGS_ZH);
+  assert.ok(emptyBriefing.startsWith('**逾期处置**\n\n- 无'), 'the section is present (无) even on a quiet day');
+
+  const html = buildDailyReportHtml({
+    facts,
+    strings: DAILY_REPORT_STRINGS_ZH,
+    dateLabel: '2026-11-18',
+    headlineText: '总览。',
+    proseMarkdown: '',
+  });
+  assert.match(html, /<h2>逾期处置<\/h2>/);
+  assert.match(html, /挂了 30h 的任务/);
+  const emptyHtml = buildDailyReportHtml({
+    facts: sampleFacts(),
+    strings: DAILY_REPORT_STRINGS_ZH,
+    dateLabel: '2026-11-18',
+    headlineText: '总览。',
+    proseMarkdown: '',
+  });
+  assert.match(emptyHtml, /<h2>逾期处置<\/h2>/, 'the card always renders');
+  assert.match(emptyHtml, /<div class="t" style="opacity:\.65">无<\/div>/);
 });
 
 test('bot one-liner text: prefix folded, volume + peer + OpenTeam + chain folded in', () => {

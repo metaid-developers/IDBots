@@ -1435,6 +1435,19 @@ export class DshTurnHub {
     await kernel.respondAsk(id, answers)
   }
 
+  /**
+   * Live session roster for the quit-time log guard (T-C): each currently
+   * tracked cowork session with its DSH session id. Read-only snapshot; the
+   * mappings may drain while a caller works through the list, which is fine —
+   * the guard only ever reads and fsyncs what it finds.
+   */
+  listActiveDshSessions(): Array<{ coworkSessionId: string; dshSessionId: string }> {
+    return [...this.dshByCowork.entries()].map(([coworkSessionId, dshSessionId]) => ({
+      coworkSessionId,
+      dshSessionId,
+    }));
+  }
+
   async close(): Promise<void> {
     this.closed = true
     if (this.reapTimer) {

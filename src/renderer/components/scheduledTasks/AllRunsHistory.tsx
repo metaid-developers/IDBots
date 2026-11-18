@@ -18,6 +18,11 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   error: { label: 'scheduledTasksStatusError', color: 'text-red-500' },
   running: { label: 'scheduledTasksStatusRunning', color: 'text-blue-500' },
   skipped: { label: 'scheduledTasksStatusSkipped', color: 'text-amber-500' },
+  // T-A tiered outcomes (legacy success/error rows keep their keys).
+  completed: { label: 'scheduledTasksStatusCompleted', color: 'text-green-500' },
+  completed_empty: { label: 'scheduledTasksStatusCompletedEmpty', color: 'text-amber-500' },
+  crashed: { label: 'scheduledTasksStatusCrashed', color: 'text-red-500' },
+  timeout: { label: 'scheduledTasksStatusTimeout', color: 'text-red-500' },
 };
 
 const AllRunsHistory: React.FC = () => {

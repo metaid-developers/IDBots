@@ -8,6 +8,12 @@ export interface AppCleanupDeps {
    * last turns' telemetry rows land before the database closes. Optional so
    * older cleanup callers still type-check. */
   flushHotLayerExposures?: () => void;
+  /**
+   * Session-log guard (T-C): before the DSH runtime drains, flush and verify
+   * the first-frame invariant of every active session log. Read-only on the
+   * files (fsync only). Optional so older cleanup callers still type-check.
+   */
+  guardSessionLogs?: () => Promise<void>;
   /** Drain every DSH runtime subprocess. Optional so older cleanup
    *  callers that only stop cowork sessions still type-check. */
   closeDshRuntime?: () => Promise<void>;
@@ -58,6 +64,15 @@ export async function runAppCleanup(deps: AppCleanupDeps): Promise<void> {
   } catch (error) {
     deps.error('Failed to flush hot-layer exposure buffer:', error);
   }
+  // T-C: session logs are flushed and first-frame-verified BEFORE the runtime
+  // drains. The 2026-10-19 incident left 0-byte and header-less artifacts with
+  // mtimes on this exact instant; the guard cannot prevent every truncation,
+  // but it makes one durable and visible instead of silent. Read-only: a
+  // failed check logs, never rewrites.
+  await deps.guardSessionLogs?.().catch((error) => {
+    deps.error('[SessionLogGuard] Quit-time session-log guard failed:', error);
+  });
+
   await deps.closeDshRuntime?.().catch((error) => {
     deps.error('Failed to close DSH runtime:', error);
   });
