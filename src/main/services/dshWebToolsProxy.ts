@@ -59,8 +59,12 @@ export interface DshWebToolsProxyDeps {
   now?: () => number;
   /** How long a 401/402/403 DeepSeek result suppresses that upstream. */
   exhaustedTtlMs?: number;
-  /** Per-upstream request timeout (ms); the plugin gives up at 60s. */
+  /** Per-upstream request timeout (ms); strictly below the 60s plugin budget. */
   requestTimeoutMs?: number;
+  /** Primary-upstream timeout (ms) when a relay fallback is available. */
+  fallbackPrimaryTimeoutMs?: number;
+  /** Brief suppression window (ms) after consecutive DeepSeek transport errors. */
+  transportCooldownMs?: number;
 }
 
 export interface DshWebToolsProxy extends DshWebToolsProxyDescriptor {
@@ -69,7 +73,10 @@ export interface DshWebToolsProxy extends DshWebToolsProxyDescriptor {
 }
 
 const DEFAULT_EXHAUSTED_TTL_MS = 15 * 60_000;
-const DEFAULT_REQUEST_TIMEOUT_MS = 75_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 50_000;
+const DEFAULT_FALLBACK_PRIMARY_TIMEOUT_MS = 25_000;
+const DEFAULT_TRANSPORT_COOLDOWN_MS = 60_000;
+const CONSECUTIVE_TRANSPORT_FAILURE_THRESHOLD = 2;
 const MAX_BODY_BYTES = 1024 * 1024;
 
 /** Scan the provider catalog for the user's enabled official DeepSeek entry. */
@@ -151,10 +158,15 @@ export async function createDshWebToolsProxy(deps: DshWebToolsProxyDeps): Promis
   const now = deps.now ?? Date.now;
   const log = deps.log ?? ((line: string) => console.log(line));
   const exhaustedTtlMs = Math.max(1_000, deps.exhaustedTtlMs ?? DEFAULT_EXHAUSTED_TTL_MS);
-  const requestTimeoutMs = deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const requestTimeoutMs = Math.max(1, deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+  const fallbackPrimaryTimeoutMs = Math.max(1, deps.fallbackPrimaryTimeoutMs ?? DEFAULT_FALLBACK_PRIMARY_TIMEOUT_MS);
+  const transportCooldownMs = Math.max(1_000, deps.transportCooldownMs ?? DEFAULT_TRANSPORT_COOLDOWN_MS);
   const token = randomBytes(24).toString('hex');
   /** A 401/402/403 from DeepSeek suppresses that upstream until this time. */
   let deepSeekUnusableUntil: number | null = null;
+  /** Consecutive DeepSeek transport/timeout errors trigger a brief cooldown. */
+  let consecutiveDeepSeekTransportFailures = 0;
+  let deepSeekTransportCooldownUntil: number | null = null;
 
   const server: Server = createServer((req, res) => {
     void handle(req, res).catch((error) => {
@@ -196,13 +208,21 @@ export async function createDshWebToolsProxy(deps: DshWebToolsProxyDeps): Promis
     const candidates: DshWebToolsUpstream[] = [];
     const deepSeek = deps.resolveDeepSeekUpstream();
     if (deepSeek) {
-      if (deepSeekUnusableUntil !== null && now() < deepSeekUnusableUntil) {
+      const currentNow = now();
+      const authSuppressed = deepSeekUnusableUntil !== null && currentNow < deepSeekUnusableUntil;
+      const transportSuppressed = deepSeekTransportCooldownUntil !== null && currentNow < deepSeekTransportCooldownUntil;
+      if (authSuppressed || transportSuppressed) {
         // Suppressed this call; the expiry probe below logs when it re-arms.
       } else {
         if (deepSeekUnusableUntil !== null) {
           log('[DshWebToolsProxy] deepseek upstream suppression elapsed — probing it again');
+          deepSeekUnusableUntil = null;
         }
-        deepSeekUnusableUntil = null;
+        if (deepSeekTransportCooldownUntil !== null) {
+          log('[DshWebToolsProxy] deepseek transport cooldown elapsed — probing it again');
+          deepSeekTransportCooldownUntil = null;
+          consecutiveDeepSeekTransportFailures = 0;
+        }
         candidates.push(deepSeek);
       }
     }
@@ -219,49 +239,90 @@ export async function createDshWebToolsProxy(deps: DshWebToolsProxyDeps): Promis
       return;
     }
 
-    for (let i = 0; i < candidates.length; i += 1) {
-      const upstream = candidates[i];
-      const isLast = i === candidates.length - 1;
-      let response: Response;
-      try {
-        response = await fetchImpl(`${upstream.baseURL}/${kind}`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${upstream.apiKey}`,
-          },
-          body,
-          signal: AbortSignal.timeout(requestTimeoutMs),
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        log(`[DshWebToolsProxy] ${upstream.label} ${kind} transport error: ${message}`);
-        if (!isLast) continue;
-        res.writeHead(502, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: { message: `web search upstream unreachable (${upstream.label}): ${message}` } }));
+    if (res.destroyed || res.writableEnded) {
+      return;
+    }
+
+    const clientAbort = new AbortController();
+    const onClientClose = () => {
+      if (!res.writableEnded) {
+        clientAbort.abort();
+      }
+    };
+    res.once('close', onClientClose);
+
+    try {
+      for (let i = 0; i < candidates.length; i += 1) {
+        if (clientAbort.signal.aborted || res.destroyed || res.writableEnded) {
+          return;
+        }
+        const upstream = candidates[i];
+        const isLast = i === candidates.length - 1;
+        const attemptTimeoutMs = !isLast && upstream.label === 'deepseek'
+          ? Math.min(requestTimeoutMs, fallbackPrimaryTimeoutMs)
+          : requestTimeoutMs;
+        let response: Response;
+        try {
+          response = await fetchImpl(`${upstream.baseURL}/${kind}`, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              authorization: `Bearer ${upstream.apiKey}`,
+            },
+            body,
+            signal: AbortSignal.any([clientAbort.signal, AbortSignal.timeout(attemptTimeoutMs)]),
+          });
+        } catch (error) {
+          if (clientAbort.signal.aborted || res.destroyed || res.writableEnded) {
+            return;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          log(`[DshWebToolsProxy] ${upstream.label} ${kind} transport error: ${message}`);
+          if (upstream.label === 'deepseek') {
+            consecutiveDeepSeekTransportFailures += 1;
+            if (consecutiveDeepSeekTransportFailures >= CONSECUTIVE_TRANSPORT_FAILURE_THRESHOLD && !isLast) {
+              deepSeekTransportCooldownUntil = now() + transportCooldownMs;
+              log(
+                `[DshWebToolsProxy] deepseek upstream suppressed for ${Math.round(transportCooldownMs / 1000)}s ` +
+                `after ${consecutiveDeepSeekTransportFailures} consecutive transport errors — falling back to the ID.Bots relay`,
+              );
+            }
+          }
+          if (!isLast) continue;
+          res.writeHead(502, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: `web search upstream unreachable (${upstream.label}): ${message}` } }));
+          return;
+        }
+        if (upstream.label === 'deepseek') {
+          consecutiveDeepSeekTransportFailures = 0;
+        }
+        const payload = Buffer.from(await response.arrayBuffer());
+        if (clientAbort.signal.aborted || res.destroyed || res.writableEnded) {
+          return;
+        }
+        const credentialProblem = response.status === 401 || response.status === 402 || response.status === 403;
+        if (credentialProblem && upstream.label === 'deepseek') {
+          deepSeekUnusableUntil = now() + exhaustedTtlMs;
+          log(
+            `[DshWebToolsProxy] deepseek upstream marked unusable (HTTP ${response.status}) for ` +
+            `${Math.round(exhaustedTtlMs / 60_000)}m — falling back to the ID.Bots relay`,
+          );
+          if (!isLast) continue;
+        }
+        if (response.status >= 500 && upstream.label === 'deepseek' && !isLast) {
+          log(`[DshWebToolsProxy] deepseek upstream returned HTTP ${response.status} — trying the relay (not marked)`);
+          continue;
+        }
+        if (response.status === 429 && upstream.label === 'deepseek' && !isLast) {
+          log(`[DshWebToolsProxy] deepseek upstream rate-limited this call — trying the relay (not marked)`);
+          continue;
+        }
+        res.writeHead(response.status, { 'content-type': response.headers.get('content-type') ?? 'application/json' });
+        res.end(payload);
         return;
       }
-      const payload = Buffer.from(await response.arrayBuffer());
-      const credentialProblem = response.status === 401 || response.status === 402 || response.status === 403;
-      if (credentialProblem && upstream.label === 'deepseek') {
-        deepSeekUnusableUntil = now() + exhaustedTtlMs;
-        log(
-          `[DshWebToolsProxy] deepseek upstream marked unusable (HTTP ${response.status}) for ` +
-          `${Math.round(exhaustedTtlMs / 60_000)}m — falling back to the ID.Bots relay`,
-        );
-        if (!isLast) continue;
-      }
-      if (response.status >= 500 && upstream.label === 'deepseek' && !isLast) {
-        log(`[DshWebToolsProxy] deepseek upstream returned HTTP ${response.status} — trying the relay (not marked)`);
-        continue;
-      }
-      if (response.status === 429 && upstream.label === 'deepseek' && !isLast) {
-        log(`[DshWebToolsProxy] deepseek upstream rate-limited this call — trying the relay (not marked)`);
-        continue;
-      }
-      res.writeHead(response.status, { 'content-type': response.headers.get('content-type') ?? 'application/json' });
-      res.end(payload);
-      return;
+    } finally {
+      res.off('close', onClientClose);
     }
   }
 

@@ -292,3 +292,149 @@ test('proxy: /fetch rides the same ladder', async (t) => {
   assert.equal(relay.seen[0].url, '/v1/tools/fetch')
   assert.deepEqual(relay.seen[0].body, { url: 'https://example.org' })
 })
+
+test('proxy: hanging DeepSeek primary times out early inside fallback budget and falls back to relay', async (t) => {
+  const relay = await startUpstream()
+  t.after(() => relay.close())
+  relay.script.push({ status: 200, body: OK_RESULTS })
+  const seenSignals = []
+  const proxy = await createDshWebToolsProxy({
+    resolveDeepSeekUpstream: () => ({ label: 'deepseek', baseURL: 'https://deepseek.invalid/v1/tools', apiKey: 'sk-user' }),
+    resolveRelayUpstream: async () => ({ label: 'idbots-free', baseURL: relay.toolsBase, apiKey: 'mrk_relay' }),
+    requestTimeoutMs: 5_000,
+    fallbackPrimaryTimeoutMs: 60,
+    fetchImpl: (input, init) => {
+      const url = String(input)
+      if (url.startsWith('https://deepseek.invalid/')) {
+        seenSignals.push(init?.signal)
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal.reason ?? new Error('aborted')), { once: true })
+        })
+      }
+      return fetch(input, init)
+    },
+    log: () => undefined,
+  })
+  t.after(() => proxy.stop())
+
+  const startedAt = Date.now()
+  const result = await callProxy(proxy, 'search', { query: 'apec' })
+  const elapsedMs = Date.now() - startedAt
+  assert.equal(result.status, 200)
+  assert.deepEqual(result.json, OK_RESULTS)
+  assert.equal(relay.seen.length, 1)
+  assert.equal(seenSignals.length, 1)
+  assert.equal(seenSignals[0]?.aborted, true, 'primary request was aborted after fallbackPrimaryTimeoutMs')
+  assert.ok(elapsedMs < 1_500, `expected early fallback well under requestTimeoutMs, got ${elapsedMs}ms`)
+})
+
+test('proxy: consecutive DeepSeek transport errors enter brief cooldown and recover once elapsed', async (t) => {
+  const relay = await startUpstream()
+  const deepseek = await startUpstream()
+  t.after(async () => { await relay.close(); await deepseek.close() })
+  let now = 2_000_000
+  let failDeepSeek = true
+  let deepSeekAttempts = 0
+  const logs = []
+  relay.script.push(
+    { status: 200, body: OK_RESULTS },
+    { status: 200, body: OK_RESULTS },
+    { status: 200, body: OK_RESULTS },
+  )
+  deepseek.script.push({ status: 200, body: OK_RESULTS })
+
+  const proxy = await createDshWebToolsProxy({
+    resolveDeepSeekUpstream: () => ({ label: 'deepseek', baseURL: deepseek.toolsBase, apiKey: 'sk-user' }),
+    resolveRelayUpstream: async () => ({ label: 'idbots-free', baseURL: relay.toolsBase, apiKey: 'mrk_relay' }),
+    now: () => now,
+    transportCooldownMs: 60_000,
+    fetchImpl: (input, init) => {
+      const url = String(input)
+      if (url.startsWith(deepseek.toolsBase) && failDeepSeek) {
+        deepSeekAttempts += 1
+        return Promise.reject(new TypeError('fetch failed'))
+      }
+      return fetch(input, init)
+    },
+    log: (line) => logs.push(line),
+  })
+  t.after(() => proxy.stop())
+
+  // 1st transport error falls back without suppressing DeepSeek yet
+  assert.equal((await callProxy(proxy, 'search', { query: 'q1' })).status, 200)
+  assert.equal(deepSeekAttempts, 1)
+  assert.equal(relay.seen.length, 1)
+
+  // 2nd consecutive transport error triggers the brief cooldown
+  assert.equal((await callProxy(proxy, 'search', { query: 'q2' })).status, 200)
+  assert.equal(deepSeekAttempts, 2)
+  assert.equal(relay.seen.length, 2)
+  assert.ok(logs.some((l) => l.includes('suppressed for 60s after 2 consecutive transport errors')))
+
+  // Inside cooldown: DeepSeek is skipped and relay serves directly
+  now += 30_000
+  assert.equal((await callProxy(proxy, 'search', { query: 'q3' })).status, 200)
+  assert.equal(deepSeekAttempts, 2, 'DeepSeek skipped while in transport cooldown')
+  assert.equal(relay.seen.length, 3)
+
+  // After cooldown elapses: DeepSeek is probed again and serves when healthy
+  now += 31_000
+  failDeepSeek = false
+  assert.equal((await callProxy(proxy, 'search', { query: 'q4' })).status, 200)
+  assert.equal(deepseek.seen.length, 1, 'recovered DeepSeek served after cooldown')
+  assert.equal(relay.seen.length, 3)
+  assert.ok(logs.some((l) => l.includes('transport cooldown elapsed')))
+})
+
+test('proxy: client abort cancels the in-flight upstream fetch and skips relay fallback', async (t) => {
+  const relay = await startUpstream()
+  t.after(() => relay.close())
+  relay.script.push({ status: 200, body: OK_RESULTS })
+
+  let upstreamSignal = null
+  let notifyUpstreamStarted
+  const upstreamStarted = new Promise((resolve) => { notifyUpstreamStarted = resolve })
+  let notifyUpstreamAborted
+  const upstreamAborted = new Promise((resolve) => { notifyUpstreamAborted = resolve })
+
+  const proxy = await createDshWebToolsProxy({
+    resolveDeepSeekUpstream: () => ({ label: 'deepseek', baseURL: 'https://deepseek.invalid/v1/tools', apiKey: 'sk-user' }),
+    resolveRelayUpstream: async () => ({ label: 'idbots-free', baseURL: relay.toolsBase, apiKey: 'mrk_relay' }),
+    requestTimeoutMs: 10_000,
+    fallbackPrimaryTimeoutMs: 10_000,
+    fetchImpl: (input, init) => {
+      const url = String(input)
+      if (url.startsWith('https://deepseek.invalid/')) {
+        upstreamSignal = init?.signal
+        notifyUpstreamStarted()
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            notifyUpstreamAborted()
+            reject(init.signal.reason ?? new Error('aborted'))
+          }, { once: true })
+        })
+      }
+      return fetch(input, init)
+    },
+    log: () => undefined,
+  })
+  t.after(() => proxy.stop())
+
+  const clientController = new AbortController()
+  const toolsBase = deepSeekWebToolsRoot(proxy.baseURL)
+  const reqPromise = fetch(`${toolsBase}/search`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${proxy.token}` },
+    body: JSON.stringify({ query: 'aborted' }),
+    signal: clientController.signal,
+  }).catch((err) => err)
+
+  await upstreamStarted
+  clientController.abort()
+  const err = await reqPromise
+  assert.equal(err?.name, 'AbortError')
+  await upstreamAborted
+  assert.equal(upstreamSignal?.aborted, true, 'upstream fetch aborted on client disconnect')
+  assert.equal(relay.seen.length, 0, 'relay fallback skipped after client aborted')
+})
+
