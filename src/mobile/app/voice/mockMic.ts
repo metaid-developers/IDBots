@@ -103,7 +103,11 @@ class MockAudioContext implements VoiceAudioContextLike {
  * faked by the mock context, so no worklet URL is needed). */
 export function buildMockMicDeps(): VoiceCaptureDeps {
   return {
-    getUserMedia: () => Promise.resolve(new MockMediaStream() as unknown as MediaStream),
+    getUserMedia: () => {
+      const host = window as unknown as { __voiceMockMicCalls?: number };
+      host.__voiceMockMicCalls = (host.__voiceMockMicCalls ?? 0) + 1;
+      return Promise.resolve(new MockMediaStream() as unknown as MediaStream);
+    },
 /** Constructable: `new` per capture session (arrow fns can't be `new`ed). */
     AudioContextCtor: MockAudioContext as unknown as VoiceCaptureDeps['AudioContextCtor'],
     createWorkletNode: (_ctx) => {
