@@ -49,14 +49,20 @@ export type ScheduledRunOutcome = 'completed' | 'completed_empty' | 'crashed' | 
  * `finalStatus: 'error'`, and the awaiting fire then throws
  * `Practice run exceeded its N-minute wall-clock budget`. That throw is the
  * only wall-clock timeout the scheduler produces today — the `timeout` tier
- * is its receipt label. Both construction sites share this exact template,
- * so a prefix match is the honest discriminator (never guess from free text:
- * this constant and the throw sites move together).
+ * is its receipt label. Both construction sites share this template, so an
+ * anchored match on it is the honest discriminator (never guess from free
+ * text: this constant and the throw sites move together).
+ *
+ * Since the tiered watchdog (2026-11-18) the throw names the practice task's
+ * risk category — `Practice run (read_only) exceeded its …` — while the
+ * no-proposal site keeps the bare form, so the pattern accepts an optional
+ * ` (category)` infix between the two fixed halves.
  */
-export const WALL_CLOCK_BUDGET_EXCEEDED_MARKER = 'Practice run exceeded its';
+export const WALL_CLOCK_BUDGET_EXCEEDED_MARKER =
+  /^Practice run(?: \([^)]+\))? exceeded its \d+-minute wall-clock budget/;
 
 export const isWallClockBudgetError = (errorMessage: string | null): boolean =>
-  typeof errorMessage === 'string' && errorMessage.startsWith(WALL_CLOCK_BUDGET_EXCEEDED_MARKER);
+  typeof errorMessage === 'string' && WALL_CLOCK_BUDGET_EXCEEDED_MARKER.test(errorMessage);
 
 /** Diagnostic recorded on a crashed run whose executor never threw (the turn
  *  pipeline settled the failure itself). Keeps the `error` column non-null so

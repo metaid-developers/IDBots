@@ -73,6 +73,16 @@ test('classify: wall-clock watchdog kill → timeout; other throws → crashed',
     }),
     'timeout',
   );
+  // The tiered watchdog (2026-11-18) names the risk category in the throw.
+  assert.equal(
+    classifyScheduledRunOutcome({
+      submitted: false,
+      errorMessage: 'Practice run (read_only) exceeded its 20-minute wall-clock budget',
+      turnSettledAbnormally: false,
+      workMessageCount: null,
+    }),
+    'timeout',
+  );
   assert.equal(
     classifyScheduledRunOutcome({
       submitted: false,
@@ -96,12 +106,19 @@ test('classify: unknown work evidence (null) can never prove empty → completed
   );
 });
 
-test('watchdog discriminator: exact template prefix only', () => {
-  assert.equal(isWallClockBudgetError('Practice run exceeded its 20-minute wall-clock budget'), true);
+test('watchdog discriminator: anchored template only, with or without the category infix', () => {
+  assert.equal(isWallClockBudgetError('Practice run exceeded its 20-minute wall-clock budget'), true, 'bare form (no-proposal throw site)');
+  assert.equal(isWallClockBudgetError('Practice run (read_only) exceeded its 20-minute wall-clock budget'), true, 'tiered watchdog names the category');
+  assert.equal(isWallClockBudgetError('Practice run (chain_write) exceeded its 45-minute wall-clock budget'), true);
   assert.equal(isWallClockBudgetError('practice run exceeded its 20-minute wall-clock budget'), false, 'case-sensitive prefix');
   assert.equal(isWallClockBudgetError('the Practice run exceeded its budget eventually'), false, 'prefix anchored');
+  assert.equal(isWallClockBudgetError('Practice run (read_only) did not exceed its wall-clock budget'), false, 'not the kill template');
+  assert.equal(isWallClockBudgetError('Practice run exceeded its wall-clock budget'), false, 'requires the minute figure');
   assert.equal(isWallClockBudgetError(null), false);
-  assert.equal(WALL_CLOCK_BUDGET_EXCEEDED_MARKER, 'Practice run exceeded its');
+  assert.equal(
+    WALL_CLOCK_BUDGET_EXCEEDED_MARKER.source,
+    '^Practice run(?: \\([^)]+\\))? exceeded its \\d+-minute wall-clock budget',
+  );
 });
 
 test('work counting: assistant/tool_use at-or-after runStartMs; older and other types never count', () => {

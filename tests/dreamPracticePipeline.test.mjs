@@ -703,7 +703,9 @@ test('scheduler starts a practice run with the practice marker and writes back c
     'run completion writes back onto the proposal with the run id',
   );
   assert.equal(recording.failedProposals.length, 0);
-  assert.equal(recording.completedRuns[0].status, 'success');
+  // Run receipt tiering (PR #172): normal completion records `completed`
+  // (executor exited normally with work), not the legacy `success` label.
+  assert.equal(recording.completedRuns[0].status, 'completed');
 });
 
 test('scheduler writes back failure (with the error) and never touches ordinary tasks', async () => {
@@ -732,7 +734,9 @@ test('scheduler wall-clock watchdog stops an overrunning practice run and marks 
   await scheduler.executeTask(task, 'manual');
   assert.equal(recording.stopCalls.length, 1, 'the watchdog stopped the session');
   assert.match(recording.stopCalls[0].options.reason, /wall-clock budget/);
-  assert.equal(recording.completedRuns[0].status, 'error');
+  // Run receipt tiering (PR #172) + the tiered watchdog naming the category:
+  // a wall-clock kill records the `timeout` tier (not the legacy `error`).
+  assert.equal(recording.completedRuns[0].status, 'timeout');
   assert.match(recording.completedRuns[0].error, /wall-clock budget/);
   assert.equal(recording.failedProposals.length, 1);
   assert.equal(recording.failedProposals[0].id, 43);
