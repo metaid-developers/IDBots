@@ -1,8 +1,9 @@
 /**
  * VoiceButton + VoiceErrorBanner + hold gesture host (voice P1).
  *
- * Interaction: HOLD TO TALK. Pointerdown starts a hold session, pointerup
- * sends the transcript as a new message, swiping up arms cancel. The bottom
+ * Interaction: HOLD TO TALK. Pointerdown arms a hold, and only a sustained
+ * press starts the microphone; a short tap never requests mic permission.
+ * Pointerup sends the transcript as a new message, swiping up arms cancel. The bottom
  * overlay (VoiceOverlay) rises over the composer while the finger is down.
  * In the icon variant a short press switches composer modes; in the wide
  * "hold to talk" variant it is only an accidental press. Keyboard and
@@ -37,6 +38,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, MutableRefObject, PointerEvent as ReactPointerEvent } from 'react';
 import { t } from '../../i18n';
 import {
+  HOLD_START_DELAY_MS,
   holdCancelArmed,
   resolveHoldRelease,
   type HoldCancelReason,
@@ -79,6 +81,7 @@ interface HoldState {
   startedAt: number;
   armed: boolean;
   active: boolean;
+  sessionStarted: boolean;
 }
 
 /** Non-passive guards live only for the duration of one hold. */
@@ -134,8 +137,13 @@ export function VoiceButton({
   // The synthesized click may never arrive (pointercancel, AT quirk); let the
   // suppression flag heal so keyboard activation is never swallowed for good.
   const pointerResetRef = useRef(null as ReturnType<typeof setTimeout> | null);
+  const holdActivationRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const releaseGesture = useCallback(() => {
+    if (holdActivationRef.current !== null) {
+      clearTimeout(holdActivationRef.current);
+      holdActivationRef.current = null;
+    }
     holdRef.current = null;
     setCancelArmed(false);
     setPageGestureLock(false);
@@ -146,6 +154,7 @@ export function VoiceButton({
     () => () => {
       setPageGestureLock(false);
       if (pointerResetRef.current !== null) clearTimeout(pointerResetRef.current);
+      if (holdActivationRef.current !== null) clearTimeout(holdActivationRef.current);
     },
     [],
   );
@@ -167,10 +176,17 @@ export function VoiceButton({
       startedAt: typeof performance !== 'undefined' ? performance.now() : Date.now(),
       armed: false,
       active: true,
+      sessionStarted: false,
     };
     setCancelArmed(false);
     setPageGestureLock(true);
-    onStartHold();
+    const pointerId = event.pointerId;
+    holdActivationRef.current = setTimeout(() => {
+      const hold = holdRef.current;
+      if (!hold?.active || hold.pointerId !== pointerId) return;
+      hold.sessionStarted = true;
+      onStartHold();
+    }, HOLD_START_DELAY_MS);
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>): void => {
@@ -187,6 +203,7 @@ export function VoiceButton({
     const hold = holdRef.current;
     if (!hold?.active || hold.pointerId !== event.pointerId) return;
     hold.active = false;
+    const sessionStarted = hold.sessionStarted;
     const heldMs =
       (typeof performance !== 'undefined' ? performance.now() : Date.now()) - hold.startedAt;
     const decision = resolveHoldRelease({
@@ -210,7 +227,7 @@ export function VoiceButton({
     }
     onCancelHold();
     onHoldCancelled?.(decision.reason);
-    if (decision.reason === 'too_short' && variant === 'icon') onToggleMode?.();
+    if (decision.reason === 'too_short' && !sessionStarted && variant === 'icon') onToggleMode?.();
   };
 
   const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>): void => {

@@ -195,12 +195,21 @@ test('reduced motion turns off the pulse/dot animation', () => {
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
+test('a short tap only switches modes; the microphone starts only after the hold delay', () => {
+  const source = readSource('../src/mobile/app/voice/VoiceButton.tsx');
+  assert.match(source, /holdActivationRef\.current = setTimeout/);
+  assert.match(source, /hold\.sessionStarted = true;\s*onStartHold\(\);/);
+  assert.match(source, /\}, HOLD_START_DELAY_MS\)/);
+  assert.match(source, /sessionStarted: false/);
+  assert.match(source, /decision\.reason === 'too_short' && !sessionStarted && variant === 'icon'/);
+});
+
 test('icon activation switches modes; wide-button keyboard activation retains the recording fallback', () => {
   const source = readSource('../src/mobile/app/voice/VoiceButton.tsx');
   assert.match(source, /const handleClick = \(\): void =>/, 'click/Enter/Space path exists');
   assert.match(source, /if \(variant === 'icon'\) \{\s*onToggleMode\?\.\(\);/, 'icon click switches composer modes');
   assert.match(source, /if \(state\.phase === 'recording'\) onStop\(\);/, 'wide-button second activation stops');
-  assert.match(source, /decision\.reason === 'too_short' && variant === 'icon'/, 'only the icon short-press toggles modes');
+  assert.match(source, /decision\.reason === 'too_short' && !sessionStarted && variant === 'icon'/, 'only an unstarted icon short-press toggles modes');
   assert.match(source, /pointerHandledRef/, 'pointer gestures do not double-fire the click path');
 });
 

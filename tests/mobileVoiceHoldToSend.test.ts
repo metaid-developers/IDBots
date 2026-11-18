@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 
 import { rmsToLevel, VoiceCapture, type VoiceCaptureEvents } from '../src/mobile/app/voice/capture.ts';
 import {
+  HOLD_START_DELAY_MS,
   holdCancelArmed,
   sendVoiceMessage,
   resolveHoldRelease,
@@ -332,6 +333,11 @@ test('swipe-up cancel discards the session: abort frame, no final text, no send'
   let sendCalls = 0;
   sendVoiceMessage({ send: () => { sendCalls += 1; } }, harness.session.recognizedText);
   assert.equal(sendCalls, 0);
+});
+
+test('the hold activation gate is shorter than the send threshold', () => {
+  assert.equal(HOLD_START_DELAY_MS, 180);
+  assert.ok(HOLD_START_DELAY_MS < 400);
 });
 
 test('a press shorter than 400 ms resolves to cancel and never sends', () => {

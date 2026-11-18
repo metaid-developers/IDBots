@@ -12,6 +12,8 @@
  *    the state does not flicker while the finger hovers near the line.
  */
 
+/** Sustained-press gate: a quick tap must never start the microphone. */
+export const HOLD_START_DELAY_MS = 180;
 export const HOLD_MIN_MS = 400;
 export const HOLD_CANCEL_DISTANCE_PX = 80;
 /** Re-arm band: travel must fall back below this before cancel disarms. */

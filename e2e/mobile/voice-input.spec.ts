@@ -50,18 +50,24 @@ test.describe('voice input @voice', () => {
     const textarea = page.getByTestId('chat-composer-input');
     await textarea.fill('帮我记录：');
 
+    await page.evaluate(() => {
+      (window as unknown as { __voiceMockMicCalls?: number }).__voiceMockMicCalls = 0;
+    });
     await page.getByTestId('voice-btn-idle').click();
     const holdButton = page.getByTestId('voice-hold-button');
     await expect(holdButton).toHaveText('Hold to talk');
     await expect(page.getByTestId('voice-keyboard-button')).toBeVisible();
     await expect(textarea).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as { __voiceMockMicCalls?: number }).__voiceMockMicCalls)).toBe(0);
     await attachScreen(testInfo, page, 'voice-wide-hold-mode');
     await page.screenshot({ path: shot('voice-wide-hold-mode.png'), fullPage: false });
 
     await holdButton.click();
     await expect(holdButton).toBeVisible();
     await expect(page.getByTestId('voice-hint')).toContainText('Pressed too briefly');
+    expect(await page.evaluate(() => (window as unknown as { __voiceMockMicCalls?: number }).__voiceMockMicCalls)).toBe(0);
     await holdAndRelease(page, 'voice-hold-button');
+    expect(await page.evaluate(() => (window as unknown as { __voiceMockMicCalls?: number }).__voiceMockMicCalls)).toBe(1);
     await expect(page.getByTestId('chat-user-message').last()).toHaveText('今天天气怎么样？', { timeout: 15_000 });
 
     await page.getByTestId('voice-keyboard-button').click();
