@@ -13,6 +13,8 @@ test('orb families keep one dark-glass material with calm-only autonomous breath
     'received', 'reasoning', 'speaking', 'local-recall', 'web2-research',
     'metaweb-research', 'making', 'delegation', 'waiting', 'worker-report',
     'verification', 'browser-action', 'owner-needed', 'problem', 'report-ready', 'complete',
+    'local-run', 'local-read', 'desktop-control', 'projecting', 'web-read',
+    'chain-write', 'chain-transfer', 'private-chat', 'group-task',
   ];
   for (const family of families) assert.equal(window.liquidOrbStyleForFamily(family), 9, family);
   const source = read('liquid-orb.js');

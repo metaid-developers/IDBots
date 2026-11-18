@@ -69,5 +69,10 @@
       "tool": "bot_browser_screenshot"
     }
   ],
+  "place": "mind",
+  "peerSend": null,
+  "groupPost": null,
+  "pendingChainToolIds": [],
+  "companionFocus": null,
   "reportUri": null
 }

@@ -60,11 +60,14 @@ Each `LiveStageFamily` has an explicit bounded scene:
 - optional `note` — documentation only; optional `fallback` — remixes may point
   a family at another family's scene instead of restating it.
 
-All sixteen families (`received`, `reasoning`, `speaking`, `local-recall`,
-`web2-research`, `metaweb-research`, `making`, `delegation`, `waiting`,
+All twenty-six families (`received`, `reasoning`, `speaking`, `local-run`,
+`local-read`, `local-recall`, `desktop-control`, `projecting`, `web2-research`,
+`web-read`, `metaweb-research`, `chain-write`, `chain-transfer`,
+`private-chat`, `group-task`, `making`, `delegation`, `waiting`,
 `worker-report`, `verification`, `browser-action`, `owner-needed`, `problem`,
 `report-ready`, `complete`) carry explicit scenes; no fallback is used by the
-official package.
+official package. The full id list is exported once from the host model as
+`LIVE_STAGE_FAMILIES`.
 
 The configuration never defines factual Worker identities, dependencies,
 acceptance, or completion. Text and language selection stay host-controlled.

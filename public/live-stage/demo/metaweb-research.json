@@ -57,5 +57,10 @@
       "family": "metaweb-research",
       "tool": "omni_reader"
     }
-  ]
+  ],
+  "place": "chain",
+  "peerSend": null,
+  "groupPost": null,
+  "pendingChainToolIds": [],
+  "companionFocus": null
 }

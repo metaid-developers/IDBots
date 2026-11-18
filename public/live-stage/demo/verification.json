@@ -98,5 +98,12 @@
       "family": "verification",
       "tool": "bot_browser_screenshot"
     }
-  ]
+  ],
+  "place": "machine",
+  "peerSend": null,
+  "groupPost": null,
+  "pendingChainToolIds": [],
+  "companionFocus": {
+    "type": "workers"
+  }
 }

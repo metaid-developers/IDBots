@@ -81,5 +81,12 @@
       "family": "delegation",
       "tool": "local_worker_delegate"
     }
-  ]
+  ],
+  "place": "machine",
+  "peerSend": null,
+  "groupPost": null,
+  "pendingChainToolIds": [],
+  "companionFocus": {
+    "type": "workers"
+  }
 }

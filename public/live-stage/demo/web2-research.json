@@ -53,5 +53,10 @@
       "family": "web2-research",
       "tool": "web_search"
     }
-  ]
+  ],
+  "place": "web",
+  "peerSend": null,
+  "groupPost": null,
+  "pendingChainToolIds": [],
+  "companionFocus": null
 }

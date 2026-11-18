@@ -53,7 +53,7 @@ test('official template resolves from the built-in package with a validated mani
   assert.equal(template.scenesPath, 'scenes.json');
   assert.equal(template.assetRoot, PACKAGE_ROOT);
   assert.deepEqual(template.capabilities, ['stage.applyPatch']);
-  assert.equal(Object.keys(template.scenes.families).length, 17);
+  assert.equal(Object.keys(template.scenes.families).length, 26);
   assert.equal(fs.existsSync(path.join(PACKAGE_ROOT, template.entry)), true);
   assert.equal(fs.existsSync(path.join(DEMO_ROOT, 'received.json')), true);
 });
@@ -88,6 +88,7 @@ test('invalid scenes documents fall back with a reason', (t) => {
   const cases = [
     { name: 'unknown family', mutate: (scenes) => { scenes.families['made-up'] = { orb: { style: 1, preset: 'x' } }; }, reason: /unknown scene family/ },
     { name: 'missing family', mutate: (scenes) => { delete scenes.families.waiting; }, reason: /missing scene family: waiting/ },
+    { name: 'missing new family', mutate: (scenes) => { delete scenes.families['private-chat']; }, reason: /missing scene family: private-chat/ },
     { name: 'unbounded scene fields', mutate: (scenes) => { scenes.families.received.workerName = 'Sneaky'; }, reason: /unknown scene fields/ },
     { name: 'motion out of bounds', mutate: (scenes) => { scenes.families.making.motion.energy = 1.5; }, reason: /energy out of range/ },
     { name: 'fallback cycle', mutate: (scenes) => {
@@ -129,7 +130,16 @@ test('scenes.json agrees with the host model for composition, topology, and moti
     received: fresh(),
     reasoning: model.reduceLiveStageMessage(fresh(), message('a', 'assistant', { isThinking: true })),
     speaking: model.reduceLiveStageMessage(fresh(), message('b', 'assistant', {}, 'Here is what I found. The details follow below.')),
-    'local-recall': model.reduceLiveStageMessage(fresh(), message('c', 'tool_use', { toolName: 'read', toolUseId: 'c' })),
+    'local-run': model.reduceLiveStageMessage(fresh(), message('c0', 'tool_use', { toolName: 'bash', toolUseId: 'c0' })),
+    'local-read': model.reduceLiveStageMessage(fresh(), message('c1', 'tool_use', { toolName: 'read', toolUseId: 'c1' })),
+    'local-recall': model.reduceLiveStageMessage(fresh(), message('c', 'tool_use', { toolName: 'conversation_search', toolUseId: 'c' })),
+    'desktop-control': model.reduceLiveStageMessage(fresh(), message('c2', 'tool_use', { toolName: 'cua_click', toolUseId: 'c2' })),
+    projecting: model.reduceLiveStageMessage(fresh(), message('c3', 'tool_use', { toolName: 'projection_begin', toolUseId: 'c3' })),
+    'web-read': model.reduceLiveStageMessage(fresh(), message('c4', 'tool_use', { toolName: 'web_fetch', toolUseId: 'c4' })),
+    'chain-write': model.reduceLiveStageMessage(fresh(), message('c5', 'tool_use', { toolName: 'post_buzz', toolUseId: 'c5' })),
+    'chain-transfer': model.reduceLiveStageMessage(fresh(), message('c6', 'tool_use', { toolName: 'wallet_transfer', toolUseId: 'c6' })),
+    'private-chat': model.reduceLiveStageMessage(fresh(), message('c7', 'tool_use', { toolName: 'send_private_chat', toolUseId: 'c7', toolInput: { to: 'peer-1' } })),
+    'group-task': model.reduceLiveStageMessage(fresh(), message('c8', 'tool_use', { toolName: 'group_chat', toolUseId: 'c8', toolInput: { action: 'send_group_message', groupId: 'g1' } })),
     'web2-research': model.reduceLiveStageMessage(fresh(), message('d', 'tool_use', { toolName: 'web_search', toolUseId: 'd' })),
     'metaweb-research': model.reduceLiveStageMessage(fresh(), message('e', 'tool_use', { toolName: 'omni_reader', toolUseId: 'e' })),
     making: model.reduceLiveStageMessage(fresh(), message('f', 'tool_use', { toolName: 'write', toolUseId: 'f' })),

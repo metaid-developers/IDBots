@@ -4,10 +4,75 @@ import type { LongTermTaskSummary } from '../../renderer/types/longTermTask';
 export const LIVE_STAGE_PROTOCOL = 'idbots.live-stage.v1' as const;
 
 export type LiveStageFamily =
-  | 'idle' | 'received' | 'reasoning' | 'speaking' | 'local-recall' | 'web2-research'
-  | 'metaweb-research' | 'making' | 'delegation' | 'waiting' | 'worker-report'
-  | 'verification' | 'browser-action' | 'owner-needed' | 'problem'
-  | 'report-ready' | 'complete';
+  | 'idle' | 'received' | 'reasoning' | 'speaking'
+  | 'local-run' | 'local-read' | 'local-recall'
+  | 'desktop-control' | 'projecting' | 'making' | 'browser-action'
+  | 'web2-research' | 'web-read'
+  | 'metaweb-research' | 'chain-write' | 'chain-transfer'
+  | 'private-chat' | 'group-task'
+  | 'delegation' | 'waiting' | 'worker-report' | 'verification'
+  | 'owner-needed' | 'problem' | 'report-ready' | 'complete';
+
+/** Every family id — the template registry imports this list, never its own. */
+export const LIVE_STAGE_FAMILIES: readonly LiveStageFamily[] = [
+  'idle', 'received', 'reasoning', 'speaking',
+  'local-run', 'local-read', 'local-recall',
+  'desktop-control', 'projecting', 'making', 'browser-action',
+  'web2-research', 'web-read',
+  'metaweb-research', 'chain-write', 'chain-transfer',
+  'private-chat', 'group-task',
+  'delegation', 'waiting', 'worker-report', 'verification',
+  'owner-needed', 'problem', 'report-ready', 'complete',
+];
+
+/** Background "place" layer a family draws in front of; 'inherit' keeps the previous place. */
+export type LiveStagePlace = 'mind' | 'machine' | 'web' | 'chain';
+
+export type LiveStageTransientKind = 'steer' | 'retry' | 'model-switch' | 'chain-confirmed' | 'tool-error';
+
+/** Short-lived stage event (a few seconds); never replaces the family scene. */
+export type LiveStageTransient = { kind: LiveStageTransientKind; id: string; label: string; at: number };
+
+/** A live private (A2A) chat thread shown on the companion rail. */
+export type LiveStagePeerThread = {
+  /** Peer's globalMetaId. */
+  id: string;
+  name: string;
+  avatar?: string;
+  avatarRef?: string;
+  status: 'sending' | 'delivered' | 'awaiting' | 'incoming' | 'open';
+  /** Plain-text message preview, ≤40 chars. */
+  preview?: string;
+  updatedAt: number;
+};
+
+export type LiveStageGroupMember = {
+  /** globalMetaId, else `bot:<metabotId>` for local bots. */
+  id: string;
+  name: string;
+  avatar?: string;
+  avatarRef?: string;
+  role?: 'chair' | 'worker';
+  /** Remote OpenTeam guest (no local metabots row). */
+  openteam?: boolean;
+  self?: boolean;
+};
+
+/** A live group task thread shown on the companion rail / hero ring. */
+export type LiveStageGroupThread = {
+  /** On-chain groupId. */
+  id: string;
+  /** ≤60 chars. */
+  title: string;
+  status: 'posting' | 'incoming' | 'active';
+  members: LiveStageGroupMember[];
+  memberCount: number;
+  openteam: boolean;
+  senderId?: string;
+  updatedAt: number;
+};
+
+export type LiveStageCompanionFocus = { type: 'workers' | 'peers' | 'groups'; id?: string };
 
 export type LiveStageInteractionQuestion = {
   question: string;
@@ -273,6 +338,22 @@ export type LiveStageState = {
   eventWindow: Array<{ family: LiveStageFamily; tool?: string; outcome?: string }>;
   /** Concurrent Worker Bots collaborating with the Twin, with directional flow state. */
   activeWorkers?: LiveStageCollaboratingWorker[];
+  /** Live private-chat threads on the companion rail (≤4). */
+  activePeers?: LiveStagePeerThread[];
+  /** Live group-task threads on the companion rail (≤2). */
+  activeGroups?: LiveStageGroupThread[];
+  /** Which companion family the hero connector currently points at. */
+  companionFocus?: LiveStageCompanionFocus | null;
+  /** Resolved place layer for this state ('inherit' families keep the previous place). */
+  place?: LiveStagePlace;
+  /** Short-lived event overlay (steer / retry / model switch / chain confirm / tool error). */
+  transient?: LiveStageTransient | null;
+  /** In-flight private-chat send tied to its tool_use id. */
+  peerSend?: { toolUseId: string; peerId: string; status: 'sending' | 'delivered' | 'failed'; at: number } | null;
+  /** In-flight group post tied to its tool_use id. */
+  groupPost?: { toolUseId: string; groupId: string; status: 'posting' | 'posted' | 'failed'; at: number } | null;
+  /** Tool-use ids awaiting their on-chain confirmation beat (≤16). */
+  pendingChainToolIds?: string[];
   /** Live graphical HUD of Managed Task Tree progress and queued owner decisions. */
   taskHud?: LiveStageTaskHud | null;
   /** True when `complete` preserves the final `speaking` headline so font metrics stay steady. */
@@ -302,15 +383,80 @@ const text = (language: 'zh' | 'en', zh: string, en: string): string => language
 
 const TEAMMATE_FALLBACK: Record<'zh' | 'en', string> = { zh: '协作 Bot', en: 'a teammate' };
 
+/**
+ * Family → place layer. 'inherit' families never move the place on their own:
+ * they keep whatever place the run was already showing.
+ */
+export const LIVE_STAGE_FAMILY_PLACE: Record<LiveStageFamily, LiveStagePlace | 'inherit'> = {
+  idle: 'mind',
+  received: 'mind',
+  reasoning: 'mind',
+  speaking: 'inherit',
+  'local-run': 'machine',
+  'local-read': 'machine',
+  'local-recall': 'mind',
+  'desktop-control': 'machine',
+  projecting: 'machine',
+  making: 'machine',
+  'browser-action': 'machine',
+  'web2-research': 'web',
+  'web-read': 'web',
+  'metaweb-research': 'chain',
+  'chain-write': 'chain',
+  'chain-transfer': 'chain',
+  'private-chat': 'chain',
+  'group-task': 'chain',
+  delegation: 'machine',
+  waiting: 'inherit',
+  'worker-report': 'machine',
+  verification: 'inherit',
+  'owner-needed': 'inherit',
+  problem: 'inherit',
+  'report-ready': 'mind',
+  complete: 'mind',
+};
+
+/**
+ * Resolve the place a state draws on. Mapped families return their place;
+ * 'waiting' picks machine while workers are live, chain while peers/groups
+ * are live, else keeps the previous place; the other inherit families always
+ * keep the previous place (default 'mind').
+ */
+export function resolveLiveStagePlace(next: LiveStageState, previous?: LiveStagePlace): LiveStagePlace {
+  const mapped = LIVE_STAGE_FAMILY_PLACE[next.family];
+  if (mapped !== 'inherit') return mapped;
+  if (next.family === 'waiting') {
+    if (next.activeWorkers?.length) return 'machine';
+    if (next.activePeers?.length || next.activeGroups?.length) return 'chain';
+    return previous ?? 'mind';
+  }
+  return previous ?? 'mind';
+}
+
+/** Stamp `place` on every state the model emits so renderer fixtures and service commits agree. */
+const withResolvedPlace = (next: LiveStageState, previous?: LiveStagePlace): LiveStageState => ({
+  ...next,
+  place: resolveLiveStagePlace(next, previous),
+});
+
 /** Localized kicker label per family; 'speaking' uses the bot name instead. */
 const FAMILY_KICKER: Record<LiveStageFamily, { zh: string; en: string }> = {
   idle: { zh: '', en: '' },
   received: { zh: '收到', en: 'Received' },
   reasoning: { zh: '思考中', en: 'Thinking' },
   speaking: { zh: '', en: '' },
-  'local-recall': { zh: '查阅资料', en: 'Looking things up' },
+  'local-run': { zh: '本机执行', en: 'On this computer' },
+  'local-read': { zh: '读取文件', en: 'Reading files' },
+  'local-recall': { zh: '回忆中', en: 'Recalling' },
+  'desktop-control': { zh: '操作电脑', en: 'Desktop' },
+  projecting: { zh: '投屏', en: 'Projecting' },
   'web2-research': { zh: '上网查找', en: 'Searching the web' },
+  'web-read': { zh: '阅读网页', en: 'Reading a page' },
   'metaweb-research': { zh: '查 AI 互联网', en: 'Searching MetaWeb' },
+  'chain-write': { zh: '写入 AI 互联网', en: 'Writing to MetaWeb' },
+  'chain-transfer': { zh: '链上交易', en: 'On-chain exchange' },
+  'private-chat': { zh: '链上私聊', en: 'Private chat' },
+  'group-task': { zh: '群任务', en: 'Group task' },
   making: { zh: '动手制作', en: 'Making' },
   delegation: { zh: '安排协作', en: 'Delegating' },
   waiting: { zh: '等待协作', en: 'Waiting on a teammate' },
@@ -328,15 +474,33 @@ function sceneFor(
   language: 'zh' | 'en',
   botName: string,
   workerName?: string,
+  context?: { peerName?: string; groupTitle?: string },
 ): Pick<LiveStageState, 'headline' | 'caption' | 'kicker' | 'composition' | 'motif' | 'participants' | 'topology'> {
   const worker = workerName?.trim().slice(0, 80) || TEAMMATE_FALLBACK[language];
+  const peer = context?.peerName?.trim().slice(0, 80) || text(language, '对方 Bot', 'a Bot');
+  const groupTitle = context?.groupTitle?.trim().slice(0, 60) || '';
   const scenes: Record<LiveStageFamily, { headline: string; caption: string; participants: string[] }> = {
     idle: { headline: text(language, '我在，随时可以开始', "I'm here whenever you're ready"), caption: '', participants: [botName] },
     received: { headline: text(language, '收到，我来处理', 'Got it — on it'), caption: text(language, '我来处理这件事。', 'On it.'), participants: [botName] },
     reasoning: { headline: text(language, '正在想怎么做', 'Thinking it through'), caption: '', participants: [botName] },
     speaking: { headline: text(language, '正在回复', 'Replying'), caption: '', participants: [botName] },
-    'local-recall': { headline: text(language, '正在查阅相关资料', 'Looking through the material'), caption: '', participants: [botName] },
+    'local-run': { headline: text(language, '正在电脑上处理', 'Working on the computer'), caption: '', participants: [botName] },
+    'local-read': { headline: text(language, '正在查看本地文件', 'Reading local files'), caption: '', participants: [botName] },
+    'local-recall': { headline: text(language, '正在回想相关的记忆', 'Recalling what I know'), caption: '', participants: [botName] },
+    'desktop-control': { headline: text(language, '正在电脑桌面上操作', 'Working on the desktop'), caption: text(language, '桌面操作需要你的授权。', 'Desktop control runs only with your approval.'), participants: [botName] },
+    projecting: { headline: text(language, '正在把汇报投到大屏', 'Projecting the report'), caption: '', participants: [botName] },
     'web2-research': { headline: text(language, '正在网上查找资料', 'Searching the web'), caption: '', participants: [botName] },
+    'web-read': { headline: text(language, '正在打开网页', 'Opening a web page'), caption: '', participants: [botName] },
+    'chain-write': { headline: text(language, '正在写入 AI 互联网', 'Writing to MetaWeb'), caption: text(language, '上链后所有 Bot 都能看到。', 'Once on-chain, every Bot can see it.'), participants: [botName] },
+    'chain-transfer': { headline: text(language, '正在处理一笔链上交易', 'Handling an on-chain transaction'), caption: text(language, '以你在对话里确认的为准。', 'Exactly as you confirmed in the chat.'), participants: [botName] },
+    'private-chat': { headline: text(language, `正在给 ${peer} 发私信`, `Messaging ${peer} privately`), caption: text(language, '端到端加密，经链上投递。', 'End-to-end encrypted, delivered on-chain.'), participants: [botName, peer] },
+    'group-task': {
+      headline: groupTitle
+        ? text(language, `正在「${groupTitle}」里发言`, `Posting in “${groupTitle}”`)
+        : text(language, '正在群任务里同步进展', 'Posting an update to the group task'),
+      caption: '',
+      participants: groupTitle ? [botName, groupTitle] : [botName],
+    },
     'metaweb-research': { headline: text(language, '正在查 AI 互联网上的资料', 'Searching MetaWeb'), caption: '', participants: [botName] },
     making: { headline: text(language, '正在动手制作', 'Making it'), caption: '', participants: [botName] },
     delegation: { headline: text(language, `正在把任务交给 ${worker}`, `Handing the task to ${worker}`), caption: text(language, '它交回来后我会核对，再向你汇报。', "I'll check its work and report back."), participants: [botName, worker] },
@@ -395,7 +559,7 @@ function sceneFor(
     // twin's own entry): a verification names the worker when one exists.
     participants: family === 'verification' && hasWorker ? [botName, worker] : scene.participants,
     kicker: family === 'speaking' || family === 'idle' ? botName : FAMILY_KICKER[family][language],
-    composition: family === 'verification' ? 'converge' : structured ? 'topology' : family === 'local-recall' || family === 'web2-research' || family === 'metaweb-research' ? 'gather' : family === 'report-ready' || family === 'complete' ? 'ready' : 'presence',
+    composition: family === 'verification' ? 'converge' : structured ? 'topology' : family === 'local-recall' || family === 'web2-research' || family === 'metaweb-research' || family === 'web-read' ? 'gather' : family === 'report-ready' || family === 'complete' ? 'ready' : 'presence',
     motif: family,
     topology: {
       mode: structured ? 'structured' : 'presence',
@@ -415,7 +579,8 @@ export function createLiveStageState(context: LiveStageSessionContext): LiveStag
   const family = context.family ?? 'received';
   const scene = sceneFor(family, context.language, context.botName);
   const nowMs = context.nowMs ?? Date.now();
-  return {
+  const placeMap = LIVE_STAGE_FAMILY_PLACE[family];
+  const state: LiveStageState = {
     protocol: LIVE_STAGE_PROTOCOL,
     sessionId: context.sessionId,
     ...(context.botKey ? { botKey: context.botKey } : {}),
@@ -436,21 +601,118 @@ export function createLiveStageState(context: LiveStageSessionContext): LiveStag
     interaction: null,
     pendingProjectionIds: [],
     eventWindow: [{ family }],
+    place: placeMap === 'inherit' ? 'mind' : placeMap,
   };
+  return state;
 }
 
-function familyForTool(toolName: string): LiveStageFamily | null {
-  const name = toolName.toLowerCase();
+/** Tools that move value or tokens on-chain — the chain-transfer scene. */
+const CHAIN_TRANSFER_TOOLS = new Set([
+  'wallet_transfer', 'wallet_token_transfer', 'wallet_token_buy', 'wallet_token_sell',
+  'wallet_token_take', 'wallet_token_cancel_sell', 'wallet_nft_transfer', 'wallet_nft_buy',
+  'wallet_nft_sell', 'wallet_nft_cancel_sell', 'wallet_btc_build_multisig_psbt',
+  'wallet_btc_sign_psbt', 'wallet_btc_combine_psbts', 'wallet_btc_finalize_psbt',
+  'wallet_btc_broadcast', 'mrc721_buy', 'mrc721_sell', 'mrc721_sell_intent',
+  'mrc721_sell_intent_cancel', 'mrc721_transfer', 'mrc721_offer', 'mrc721_offer_cancel',
+  'mrc721_take_offer', 'escrow_order_create', 'escrow_order_act', 'escrow_tick', 'me_charge',
+]);
+
+/** Tools that publish content/pins on-chain — the chain-write scene. */
+const CHAIN_WRITE_TOOLS = new Set([
+  'post_buzz', 'post_simplenote', 'post_simplelog', 'post_simplequestion', 'post_simpleanswer',
+  'comment_pin', 'like_pin', 'upload_file', 'post_metaprotocol', 'metatask_publish',
+  'metatask_publish_spec', 'metatask_submit', 'metatask_claim', 'metatask_amend',
+  'metatask_release', 'metatask_verify', 'twin_stamp_publish', 'omni_cast', 'mrc721_mint',
+  'mrc721_collection_create', 'mrc721_collection_update', 'bot_browser_publish_app',
+  'preference_vote_commit', 'preference_lesson_publish', 'preference_round_open',
+]);
+
+/** Explicit chain-read tool names (omni_* / metaweb / mrc721_* / metatask_* prefixes are handled separately). */
+const CHAIN_READ_TOOLS = new Set([
+  'search_metaapps', 'resolve_metaapp_url', 'chain_history_recall', 'read_metaweb_pin',
+  'search_qa', 'list_latest_questions', 'get_question_answers', 'search_social_posts',
+  'social_post_detail', 'social_post_comments', 'metaid_profile', 'search_metaids',
+  'list_online_bots', 'list_online_services', 'check_metafile_route', 'metaprotocol_registry',
+  'wallet_balance', 'wallet_nft_balance', 'wallet_token_balance', 'wallet_nft_sell_orders',
+  'wallet_token_sell_orders', 'wallet_btc_utxos', 'wallet_btc_pubkey', 'wallet_btc_multisig_address',
+  'escrow_order_info', 'escrow_order_list', 'check_peer_relationship', 'list_social_connections',
+  'preference_lessons_search', 'preference_round_status', 'preference_rounds_list',
+  'search_preference_comparisons',
+]);
+
+/** metaweb_* enqueue/start utilities that kick off background work — they keep the current family. */
+const METAWEB_BACKGROUND_TOOLS = new Set([
+  'metaweb_surf_start', 'metaweb_study_enqueue', 'metaweb_qa_surf_enqueue',
+]);
+
+const LOCAL_RUN_TOOLS = new Set(['bash', 'shell', 'pwsh', 'powershell']);
+const LOCAL_READ_TOOLS = new Set([
+  'read', 'read_image', 'glob', 'grep', 'media_info', 'grab_video_frame',
+  'describe_image', 'describe_video', 'describe_audio', 'project_query',
+]);
+const MAKING_TOOLS = new Set(['write', 'edit', 'apply_patch', 'str_replace_editor', 'convert_media']);
+const LOCAL_RECALL_TOOLS = new Set([
+  'conversation_search', 'conversation_recall', 'recent_chats', 'intuition',
+  'experience_recall', 'procedure_recall',
+]);
+
+/**
+ * Tool → family classification, evaluated in a fixed priority order so a name
+ * always lands in exactly one bucket. Returns null when the tool should not
+ * move the scene.
+ */
+export function familyForTool(toolName: string, toolInput?: unknown): LiveStageFamily | null {
+  const name = (toolName || '').toLowerCase();
+  if (!name) return null;
+  // 1. Turn lifecycle / owner interaction / collaboration bookkeeping.
   if (name === 'twin_todo' || name === 'todo_write' || name === 'todowrite') return null;
   if (name === 'ask_user_question') return 'owner-needed';
   if (name === 'local_worker_delegate' || name === 'idbots_session_insert_user_message' || name === 'twin_task_reassign') return 'delegation';
   if (name === 'longterm_subtask_wait' || name === 'twin_task_status') return 'waiting';
-  if (name === 'bot_browser_screenshot' || name === 'bot_browser_read_page' || name === 'twin_task_accept' || name === 'mrc721_item_info') return 'verification';
-  if (name.startsWith('bot_browser_')) return 'browser-action';
-  if (name === 'write' || name === 'edit') return 'making';
-  if (name.includes('web_search') || name.includes('websearch') || name === 'web_fetch' || name === 'fetch_url') return 'web2-research';
-  if (name.startsWith('omni_') || name.includes('metaweb') || name.includes('metaapp') || name.startsWith('mrc721_') || name.startsWith('metatask_') || name === 'chain_history_recall' || name === 'read_metaweb_pin') return 'metaweb-research';
-  if (name === 'read' || name === 'read_image' || name === 'glob' || name === 'grep' || name === 'bash' || name === 'shell' || name === 'conversation_search' || name === 'conversation_recall' || name.startsWith('idbots_session_read') || name.startsWith('longterm_') || name.startsWith('memory_') || name.startsWith('knowledge_')) return 'local-recall';
+  // 2. Verification beats.
+  if (name === 'bot_browser_screenshot' || name === 'bot_browser_read_page' || name === 'twin_task_accept') return 'verification';
+  // 3. Projection.
+  if (name === 'projection_begin') return 'projecting';
+  if (name === 'bot_browser_preview_local') {
+    const input = toolInput && typeof toolInput === 'object' && !Array.isArray(toolInput)
+      ? toolInput as Record<string, unknown>
+      : {};
+    return input.projection === true ? 'projecting' : 'browser-action';
+  }
+  // 4. On-chain messaging.
+  if (name === 'send_private_chat') return 'private-chat';
+  if (name === 'group_chat') return 'group-task';
+  // 5. On-chain value transfer.
+  if (CHAIN_TRANSFER_TOOLS.has(name)) return 'chain-transfer';
+  // 6. On-chain write (plus the Agentpedia authoring namespace).
+  if (CHAIN_WRITE_TOOLS.has(name) || name.startsWith('agentpedia_')) return 'chain-write';
+  // 7. Big-screen action.
+  if (name.startsWith('bot_browser_') || name === 'open_metaapp' || name === 'browser_open') return 'browser-action';
+  // 8. Web2.
+  if (name.includes('web_search') || name.includes('websearch')) return 'web2-research';
+  if (name === 'web_fetch' || name === 'fetch_url') return 'web-read';
+  // 9. Chain reads (AI Internet).
+  if (name.startsWith('omni_')) return 'metaweb-research';
+  if (name.includes('metaweb')) return METAWEB_BACKGROUND_TOOLS.has(name) ? null : 'metaweb-research';
+  if (name.includes('metaapp')) return 'metaweb-research';
+  if (name.startsWith('mrc721_') || name.startsWith('metatask_')) return 'metaweb-research';
+  if (CHAIN_READ_TOOLS.has(name)) return 'metaweb-research';
+  // 10. Desktop control (CUA + DSH Playwright browser-use tools; browser_open is step 7).
+  if (name.startsWith('cua_') || name.startsWith('computer_') || name.includes('cua_driver') || name === 'screenshot' || name.startsWith('browser_')) return 'desktop-control';
+  // 11. Local execution.
+  if (LOCAL_RUN_TOOLS.has(name) || name.startsWith('terminal_')) return 'local-run';
+  // 12. Local file/media reads.
+  if (LOCAL_READ_TOOLS.has(name)) return 'local-read';
+  // 13. Local writes.
+  if (MAKING_TOOLS.has(name)) return 'making';
+  // 14. Memory / knowledge / past-chat recall.
+  if (LOCAL_RECALL_TOOLS.has(name)
+    || name.startsWith('idbots_session_read')
+    || name.startsWith('longterm_')
+    || name.startsWith('memory_')
+    || name.startsWith('knowledge_')
+    || name.startsWith('task_')) return 'local-recall';
+  // 15. Unmapped tools keep the current family.
   return null;
 }
 
@@ -616,6 +878,7 @@ export function describeLiveStageActivity(
   toolInput: unknown,
   language: 'zh' | 'en',
   workerName?: string,
+  context?: { peerName?: string; groupTitle?: string },
 ): { headline: string; caption?: string } | null {
   const name = (toolName || '').toLowerCase();
   if (!name) return null;
@@ -623,6 +886,8 @@ export function describeLiveStageActivity(
     ? toolInput as Record<string, unknown>
     : {};
   const worker = workerName?.trim().slice(0, 80) || TEAMMATE_FALLBACK[language];
+  const peer = context?.peerName?.trim().slice(0, 80) || text(language, '对方 Bot', 'a Bot');
+  const groupTitle = context?.groupTitle?.trim().slice(0, 60) || '';
   const str = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
   if (name === 'bash' || name === 'shell') {
@@ -686,7 +951,111 @@ export function describeLiveStageActivity(
   if (name === 'upload_file') {
     return { headline: text(language, '正在把文件传到链上', 'Uploading a file to the chain') };
   }
-  if (name.startsWith('omni_') || name.includes('metaweb') || name.includes('metaapp')) {
+  if (name.startsWith('terminal_')) {
+    return { headline: text(language, '正在终端里操作', 'Working in the terminal') };
+  }
+  if (name === 'glob' || name === 'grep') {
+    return { headline: text(language, '正在电脑里查找文件', 'Searching files on this computer') };
+  }
+  if (name === 'media_info' || name === 'grab_video_frame') {
+    return { headline: text(language, '正在查看媒体文件', 'Inspecting a media file') };
+  }
+  if (name === 'describe_image' || name === 'describe_video' || name === 'describe_audio') {
+    return { headline: text(language, '正在看这份媒体内容', 'Looking at the media') };
+  }
+  if (name === 'convert_media') {
+    return { headline: text(language, '正在转换媒体文件', 'Converting a media file') };
+  }
+  if (name === 'projection_begin') {
+    return { headline: text(language, '正在准备投屏', 'Preparing the projection') };
+  }
+  if (name === 'send_private_chat') {
+    return {
+      headline: text(language, `正在给 ${peer} 发私信`, `Messaging ${peer} privately`),
+      caption: text(language, '端到端加密，经链上投递。', 'End-to-end encrypted, delivered on-chain.'),
+    };
+  }
+  if (name === 'group_chat') {
+    const action = str(input.action);
+    if (action === 'join_group') {
+      return { headline: text(language, '正在加入群聊', 'Joining a group chat') };
+    }
+    if (action === 'orchestrate') {
+      return { headline: text(language, '正在设置群聊任务', 'Setting up a group chat task') };
+    }
+    return {
+      headline: groupTitle
+        ? text(language, `正在「${groupTitle}」里发言`, `Posting in “${groupTitle}”`)
+        : text(language, '正在群任务里同步进展', 'Posting an update to the group task'),
+    };
+  }
+  if (name.startsWith('cua_') || name.startsWith('computer_') || name.includes('cua_driver')) {
+    return { headline: text(language, '正在电脑桌面上操作', 'Working on the desktop') };
+  }
+  if (name === 'screenshot') {
+    return { headline: text(language, '正在截取屏幕', 'Taking a screenshot') };
+  }
+  if (name.startsWith('browser_')) {
+    return { headline: text(language, '正在用浏览器操作', 'Working in a browser') };
+  }
+  if (name === 'list_latest_questions' || name === 'search_qa' || name === 'get_question_answers') {
+    return { headline: text(language, '正在看链上问答', 'Reading on-chain Q&A') };
+  }
+  if (name.includes('balance')) {
+    return { headline: text(language, '正在查看链上钱包', 'Checking my on-chain wallet') };
+  }
+  if (name === 'mrc721_item_info' || name === 'mrc721_item_desc_batch') {
+    return { headline: text(language, '正在读取 NFT 的链上信息', 'Reading NFT details on-chain') };
+  }
+  if (name === 'metaid_profile' || name === 'search_metaids') {
+    return { headline: text(language, '正在查看链上身份', 'Looking up on-chain identities') };
+  }
+  if (name === 'list_online_bots' || name === 'list_online_services') {
+    return { headline: text(language, '正在看谁在线', "Checking who's online") };
+  }
+  if (name === 'search_social_posts' || name.startsWith('social_post_')) {
+    return { headline: text(language, '正在看链上动态', 'Reading on-chain posts') };
+  }
+  if (name === 'check_metafile_route') {
+    return { headline: text(language, '正在核对链上文件', 'Checking an on-chain file') };
+  }
+  if (name === 'post_buzz') {
+    return { headline: text(language, '正在发布一条动态', 'Posting to MetaWeb') };
+  }
+  if (name === 'post_simpleanswer') {
+    return { headline: text(language, '正在把回答写到链上', 'Publishing an answer on-chain') };
+  }
+  if (name === 'post_simplequestion') {
+    return { headline: text(language, '正在链上提问', 'Asking on-chain') };
+  }
+  if (name === 'like_pin') {
+    return { headline: text(language, '正在链上点赞', 'Liking on-chain') };
+  }
+  if (name === 'comment_pin') {
+    return { headline: text(language, '正在链上评论', 'Commenting on-chain') };
+  }
+  if (name === 'post_simplenote') {
+    return { headline: text(language, '正在发布一篇链上文章', 'Publishing an on-chain note') };
+  }
+  if (name === 'mrc721_mint') {
+    return { headline: text(language, '正在铸造 NFT', 'Minting an NFT') };
+  }
+  if (CHAIN_TRANSFER_TOOLS.has(name)) {
+    if (name.startsWith('escrow_')) {
+      return { headline: text(language, '正在处理链上托管订单', 'Handling an escrow order') };
+    }
+    if (name.endsWith('_transfer')) {
+      return { headline: text(language, '正在发起一笔链上转账', 'Sending an on-chain transfer') };
+    }
+    if (/buy|sell|offer|take/.test(name)) {
+      return { headline: text(language, '正在链上交易', 'Trading on-chain') };
+    }
+    return { headline: text(language, '正在处理一笔链上交易', 'Handling an on-chain transaction') };
+  }
+  if (CHAIN_WRITE_TOOLS.has(name) || name.startsWith('agentpedia_')) {
+    return { headline: text(language, '正在写入 AI 互联网', 'Writing to MetaWeb') };
+  }
+  if (name.startsWith('omni_') || name.includes('metaweb') || name.includes('metaapp') || name.startsWith('mrc721_') || name.startsWith('metatask_')) {
     return { headline: text(language, '正在查 AI 互联网', 'Searching MetaWeb') };
   }
   return null;
@@ -702,7 +1071,7 @@ export function applyLiveStageSpeech(state: LiveStageState, content: string, now
   if (!speech) return state;
   const familyChanged = state.family !== 'speaking';
   const scene = sceneFor('speaking', state.language, state.botName);
-  return {
+  return withResolvedPlace({
     ...state,
     ...scene,
     headline: speech.headline,
@@ -713,13 +1082,13 @@ export function applyLiveStageSpeech(state: LiveStageState, content: string, now
     phaseStartedAt: familyChanged ? nowMs : state.phaseStartedAt,
     revision: state.revision + 1,
     eventWindow: [...state.eventWindow, { family: 'speaking' as const }].slice(-8),
-  };
+  }, state.place);
 }
 
 export function reduceLiveStageMessage(
   state: LiveStageState,
   message: CoworkMessage,
-  options: { workerName?: string; workerAvatar?: string; nowMs?: number } = {},
+  options: { workerName?: string; workerAvatar?: string; peerName?: string; groupTitle?: string; nowMs?: number } = {},
 ): LiveStageState {
   const nowMs = options.nowMs ?? Date.now();
   const metadata = message.metadata as Record<string, unknown> | undefined;
@@ -731,14 +1100,37 @@ export function reduceLiveStageMessage(
   let caption: string | undefined;
   let captionSource: 'default' | 'specific' = 'default';
   let pendingProjectionIds = state.pendingProjectionIds;
+  let peerSend = state.peerSend ?? null;
+  let groupPost = state.groupPost ?? null;
+  // Hoist the fallback so the unchanged-check below compares references
+  // against the same array (a fresh `[]` per side would never be `===`).
+  const stateChainToolIds = state.pendingChainToolIds ?? [];
+  let pendingChainToolIds = stateChainToolIds;
+  /** undefined = unchanged; a transient produced by this message. */
+  let transient: LiveStageTransient | undefined;
+  const toolUseIdOf = (): string =>
+    typeof metadata?.toolUseId === 'string' && metadata.toolUseId ? metadata.toolUseId : message.id;
   if (message.type === 'user') {
-    family = isLiveStageWorkerReport(message) ? 'worker-report' : 'received';
-    if (family === 'received') {
+    if (metadata?.interactionKind === 'steer') {
+      // A mid-turn steer is a transient banner: the scene and its copy stay.
+      const note = markdownToPlainText(String(message.content ?? '')) || String(message.content ?? '').trim();
+      transient = {
+        kind: 'steer',
+        id: message.id,
+        at: nowMs,
+        label: state.language === 'zh'
+          ? `收到补充：「${clip(note, 24)}」`
+          : `Got your note: “${clip(note, 40)}”`,
+      };
+    } else {
+      family = isLiveStageWorkerReport(message) ? 'worker-report' : 'received';
+      if (family === 'received') {
       const request = String(message.content ?? '').replace(/\s+/g, ' ').trim();
       if (request) {
         caption = clip(state.language === 'zh' ? `「${request}」` : `“${request}”`, 80);
         captionSource = 'specific';
       }
+    }
     }
   } else if (message.type === 'assistant') {
     if (message.metadata?.isThinking) {
@@ -755,8 +1147,22 @@ export function reduceLiveStageMessage(
       // scene stays where the previous event left it until content arrives.
     }
   } else if (message.type === 'system') {
+    if (metadata?.dshRouteFallback === true) {
+      transient = {
+        kind: 'model-switch',
+        id: message.id,
+        at: nowMs,
+        label: text(state.language, '已切换到备用模型', 'Switched to the backup model'),
+      };
+    }
     if (message.metadata?.sdkRuntimeStatus === 'api_retry') {
       family = 'reasoning';
+      transient = {
+        kind: 'retry',
+        id: message.id,
+        at: nowMs,
+        label: text(state.language, '连接不太稳，正在重试', 'Connection is shaky — retrying'),
+      };
       const attempt = typeof metadata?.retryAttempt === 'number' && Number.isFinite(metadata.retryAttempt)
         ? Math.max(1, Math.trunc(metadata.retryAttempt))
         : null;
@@ -772,14 +1178,24 @@ export function reduceLiveStageMessage(
       ? message.metadata.toolInput as Record<string, unknown>
       : {};
     // owner_update narration reaches the stage through the assistant bubble
-    // that follows it, and projection_begin is host plumbing — neither moves
-    // the scene on its own.
-    if (toolName !== 'owner_update' && toolName !== 'projection_begin') {
-      family = familyForTool(toolName) ?? state.family;
+    // that follows it — the bubble moves the scene, not this bookkeeping call.
+    if (toolName !== 'owner_update') {
+      const lowered = toolName.toLowerCase();
+      family = familyForTool(toolName, toolInput) ?? state.family;
+      if (lowered === 'send_private_chat') {
+        peerSend = { toolUseId: toolUseIdOf(), peerId: String(toolInput.to ?? ''), status: 'sending', at: nowMs };
+      } else if (lowered === 'group_chat') {
+        const groupId = String(toolInput.groupId ?? toolInput.group_id ?? '').trim();
+        if (groupId) groupPost = { toolUseId: toolUseIdOf(), groupId, status: 'posting', at: nowMs };
+      }
+      if (family === 'chain-write' || family === 'chain-transfer' || family === 'private-chat' || family === 'group-task') {
+        const chainId = toolUseIdOf();
+        if (!pendingChainToolIds.includes(chainId)) pendingChainToolIds = [...pendingChainToolIds, chainId].slice(-16);
+      }
       const workerName = options.workerName ?? (state.topology.mode === 'structured'
         ? state.topology.nodes.find((node) => node.kind === 'worker')?.label
         : undefined);
-      const activity = describeLiveStageActivity(toolName, toolInput, state.language, workerName);
+      const activity = describeLiveStageActivity(toolName, toolInput, state.language, workerName, { peerName: options.peerName, groupTitle: options.groupTitle });
       if (activity) {
         headline = activity.headline;
         if (activity.caption) {
@@ -794,6 +1210,31 @@ export function reduceLiveStageMessage(
     }
   } else if (message.type === 'tool_result') {
     const id = typeof message.metadata?.toolUseId === 'string' ? message.metadata.toolUseId : '';
+    const wasPendingProjection = state.pendingProjectionIds.includes(id);
+    if (id && peerSend?.toolUseId === id) {
+      peerSend = { ...peerSend, status: message.metadata.isError ? 'failed' : 'delivered', at: nowMs };
+    }
+    if (id && groupPost?.toolUseId === id) {
+      groupPost = { ...groupPost, status: message.metadata.isError ? 'failed' : 'posted', at: nowMs };
+    }
+    if (pendingChainToolIds.includes(id)) {
+      pendingChainToolIds = pendingChainToolIds.filter((chainId) => chainId !== id);
+      const resultText = String(message.content ?? '');
+      if (!message.metadata.isError && /\b(?:pin ?id|pinid|txids?)\b/i.test(resultText)) {
+        transient = {
+          kind: 'chain-confirmed',
+          id: message.id,
+          at: nowMs,
+          label: text(state.language, '已上链', 'Confirmed on-chain'),
+        };
+      }
+    }
+    if (message.metadata.isError && !wasPendingProjection) {
+      const errorText = `${String(message.content ?? '')} ${typeof metadata?.error === 'string' ? metadata.error : ''}`;
+      transient = /timed out|timeout/i.test(errorText)
+        ? { kind: 'retry', id: message.id, at: nowMs, label: text(state.language, '这一步超时了，正在重试', 'That step timed out — retrying') }
+        : { kind: 'tool-error', id: message.id, at: nowMs, label: text(state.language, '这一步没成功，换个办法', 'That step failed — trying another way') };
+    }
     if (pendingProjectionIds.includes(id)) {
       // Only a successful projection switches the stage to 'report-ready'. A
       // guard-rejected mid-turn projection (e.g. Worker still running) is
@@ -821,7 +1262,7 @@ export function reduceLiveStageMessage(
   const workerLabel = incomingName || previousWorker?.label;
   const sameWorker = !incomingName || !previousWorker?.label || incomingName === previousWorker.label;
   const workerAvatar = options.workerAvatar || (sameWorker ? previousWorker?.avatar : undefined);
-  const scene = sceneFor(family, state.language, state.botName, workerLabel);
+  const scene = sceneFor(family, state.language, state.botName, workerLabel, { peerName: options.peerName, groupTitle: options.groupTitle });
   if (workerLabel && scene.topology.mode === 'structured') {
     scene.topology.nodes = scene.topology.nodes.map((node) => node.kind === 'worker'
       ? { ...node, label: workerLabel, ...(workerAvatar ? { avatar: workerAvatar } : {}) }
@@ -837,21 +1278,54 @@ export function reduceLiveStageMessage(
     : family === 'delegation'
       ? { direction: 'dispatch' as const, eventId: typeof metadata?.toolUseId === 'string' ? metadata.toolUseId : message.id }
       : null;
+  // Which companion family the hero connector points at after this message.
+  const previousFocus = state.companionFocus ?? null;
+  let companionFocus: LiveStageCompanionFocus | null;
+  switch (family) {
+    case 'delegation':
+    case 'worker-report':
+    case 'waiting':
+      companionFocus = { type: 'workers' };
+      break;
+    case 'verification':
+      companionFocus = scene.topology.nodes.some((node) => node.kind === 'worker')
+        ? { type: 'workers' }
+        : previousFocus;
+      break;
+    case 'private-chat':
+      companionFocus = { type: 'peers', id: peerSend?.peerId ?? (previousFocus?.type === 'peers' ? previousFocus.id : undefined) };
+      break;
+    case 'group-task':
+      companionFocus = { type: 'groups', id: groupPost?.groupId ?? (previousFocus?.type === 'groups' ? previousFocus.id : undefined) };
+      break;
+    case 'speaking':
+    case 'owner-needed':
+    case 'problem':
+      companionFocus = previousFocus;
+      break;
+    default:
+      companionFocus = null;
+  }
+  const focusChanged = (companionFocus?.type ?? null) !== (previousFocus?.type ?? null)
+    || (companionFocus?.id ?? null) !== (previousFocus?.id ?? null);
   const familyChanged = family !== state.family;
   const handoffChanged = (handoff?.direction ?? null) !== (state.handoff?.direction ?? null)
     || (handoff?.eventId ?? null) !== (state.handoff?.eventId ?? null);
-  // A message that produced no new family and no new copy (empty assistant
-  // bubbles, bookkeeping tool results, owner_update/projection_begin) leaves
-  // the stage exactly where it was — including any speech already on screen.
+  // A message that produced no new family, copy, transient or companion
+  // bookkeeping (empty assistant bubbles, bookkeeping tool results,
+  // owner_update) leaves the stage exactly where it was — including any
+  // speech already on screen.
   if (!familyChanged && headline == null && caption == null
-    && pendingProjectionIds === state.pendingProjectionIds && !handoffChanged && !workerAvatarChanged) {
+    && pendingProjectionIds === state.pendingProjectionIds && !handoffChanged && !workerAvatarChanged
+    && transient === undefined && peerSend === (state.peerSend ?? null) && groupPost === (state.groupPost ?? null)
+    && pendingChainToolIds === stateChainToolIds && !focusChanged) {
     return state;
   }
   // Same-family updates without fresh copy keep the visible headline/caption
   // (and whether the Director may restyle them) instead of reverting to the
   // family defaults.
   const keepCopy = !familyChanged && headline == null && caption == null;
-  return {
+  return withResolvedPlace({
     ...state,
     ...scene,
     headline: headline ?? (keepCopy ? state.headline : scene.headline),
@@ -863,8 +1337,13 @@ export function reduceLiveStageMessage(
     handoff,
     motion: { preset: family, seed: seedFor(state.sessionId, state.turnId, state.revision + 1), durationMs: 720, easing: 'emphasized-decelerate', energy: family === 'report-ready' || family === 'complete' ? .18 : family === 'verification' ? .55 : .4, density: scene.topology.mode === 'structured' ? .55 : .28 },
     pendingProjectionIds,
+    peerSend,
+    groupPost,
+    pendingChainToolIds,
+    companionFocus,
+    ...(transient !== undefined ? { transient } : {}),
     eventWindow: [...state.eventWindow, eventSummary(message, family)].slice(-8),
-  };
+  }, state.place);
 }
 
 export function completeLiveStage(state: LiveStageState, nowMs = Date.now()): LiveStageState {
@@ -873,7 +1352,7 @@ export function completeLiveStage(state: LiveStageState, nowMs = Date.now()): Li
   // The bot's last words stay on screen when the turn ends mid-speech; the orb
   // rests but the headline/caption are not replaced by generic copy.
   const keepSpeech = state.family === 'speaking';
-  return {
+  return withResolvedPlace({
     ...state,
     ...scene,
     headline: keepSpeech ? state.headline : scene.headline,
@@ -883,20 +1362,21 @@ export function completeLiveStage(state: LiveStageState, nowMs = Date.now()): Li
     reportUri: state.reportUri,
     family: 'complete',
     handoff: null,
+    companionFocus: null,
     phaseStartedAt: nowMs,
     revision: state.revision + 1,
     motion: { ...state.motion, preset: 'complete', energy: .12, durationMs: 600 },
-  };
+  }, state.place);
 }
 
 export function reportReadyLiveStage(state: LiveStageState, reportUri: string | null, nowMs = Date.now()): LiveStageState {
   const scene = sceneFor('report-ready', state.language, state.botName);
-  return { ...state, ...scene, family: 'report-ready', reportUri, handoff: null, phaseStartedAt: nowMs, revision: state.revision + 1, pendingProjectionIds: [], motion: { ...state.motion, preset: 'report-ready', energy: .18, durationMs: 650 } };
+  return withResolvedPlace({ ...state, ...scene, family: 'report-ready', reportUri, handoff: null, companionFocus: null, phaseStartedAt: nowMs, revision: state.revision + 1, pendingProjectionIds: [], motion: { ...state.motion, preset: 'report-ready', energy: .18, durationMs: 650 } }, state.place);
 }
 
 export function liveStageError(state: LiveStageState, copy?: { headline: string; caption: string }, nowMs = Date.now()): LiveStageState {
   const scene = sceneFor('problem', state.language, state.botName);
-  return {
+  return withResolvedPlace({
     ...state,
     ...scene,
     headline: copy?.headline ?? scene.headline,
@@ -907,7 +1387,7 @@ export function liveStageError(state: LiveStageState, copy?: { headline: string;
     phaseStartedAt: nowMs,
     revision: state.revision + 1,
     motion: { ...state.motion, preset: 'problem', energy: .25 },
-  };
+  }, state.place);
 }
 
 export type LiveStageDelegationWait = {
@@ -962,7 +1442,7 @@ export function waitingLiveStage(state: LiveStageState, wait: LiveStageDelegatio
         ? `${clip(title, 60)}。交回来后我会核对，再向你汇报。`
         : `${clip(title, 60)}. When it's back I'll check it and report to you.`)
       : scene.caption;
-  return {
+  return withResolvedPlace({
     ...state,
     ...scene,
     kicker,
@@ -972,11 +1452,12 @@ export function waitingLiveStage(state: LiveStageState, wait: LiveStageDelegatio
     speechRest: undefined,
     family: 'waiting',
     handoff: null,
+    companionFocus: { type: 'workers' },
     phaseStartedAt: wait.startedAt ?? nowMs,
     revision: state.revision + 1,
     motion: { ...state.motion, preset: 'waiting', energy: .36, durationMs: 720 },
     eventWindow: [...state.eventWindow, { family: 'waiting' as const }].slice(-8),
-  };
+  }, state.place);
 }
 
 const MAX_INTERACTION_QUESTIONS = 6;
@@ -1075,7 +1556,7 @@ export function buildLiveStageInteraction(candidate: LiveStageInteractionCandida
 
 export function presentLiveStageInteraction(state: LiveStageState, interaction: LiveStageInteraction, nowMs = Date.now()): LiveStageState {
   const scene = sceneFor('owner-needed', state.language, state.botName);
-  return {
+  return withResolvedPlace({
     ...state,
     ...scene,
     family: 'owner-needed',
@@ -1084,7 +1565,7 @@ export function presentLiveStageInteraction(state: LiveStageState, interaction: 
     revision: state.revision + 1,
     handoff: null,
     motion: { ...state.motion, preset: 'owner-needed', energy: .12 },
-  };
+  }, state.place);
 }
 
 export function dismissLiveStageInteraction(state: LiveStageState, requestId: string): LiveStageState {

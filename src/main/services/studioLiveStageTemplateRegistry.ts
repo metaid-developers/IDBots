@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { LIVE_STAGE_PROTOCOL, type LiveStageFamily } from './studioLiveStageModel';
+import { LIVE_STAGE_FAMILIES, LIVE_STAGE_PROTOCOL, type LiveStageFamily } from './studioLiveStageModel';
 
 /**
  * Template registry for the Studio Live Stage renderer (Phase 1 of
@@ -92,12 +92,7 @@ const TEMPLATE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const TEMPLATE_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
 const RELATIVE_PATH_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*(?:\/[a-zA-Z0-9][a-zA-Z0-9._-]*)*$/;
 
-const LIVE_STAGE_FAMILIES: readonly LiveStageFamily[] = [
-  'idle', 'received', 'reasoning', 'speaking', 'local-recall', 'web2-research',
-  'metaweb-research', 'making', 'delegation', 'waiting', 'worker-report',
-  'verification', 'browser-action', 'owner-needed', 'problem',
-  'report-ready', 'complete',
-];
+// LIVE_STAGE_FAMILIES is imported from the model — the single source of truth.
 
 const LIVE_STAGE_COMPOSITIONS = new Set(['presence', 'gather', 'topology', 'converge', 'ready']);
 const LIVE_STAGE_TOPOLOGY_MODES = new Set(['presence', 'structured']);

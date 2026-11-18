@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { CoworkMessage, CoworkSession } from '../coworkStore';
 import type { BotBrowserProjectionInput, BotBrowserProjectionOutcome } from './botBrowserProjectionService';
 import type { StudioLiveStageSettings } from './studioLiveStageSettings';
-import { applyLiveStageSpeech, completeLiveStage, createLiveStageState, buildLiveStageInteraction, dismissLiveStageInteraction, isLiveStageInternalTrigger, isLiveStageWorkerReport, liveStageError, presentLiveStageInteraction, reduceLiveStageMessage, reportReadyLiveStage, waitingLiveStage, type LiveStageCollaboratingWorker, type LiveStageInteraction, type LiveStageState, type LiveStageTaskHud } from './studioLiveStageModel';
+import { applyLiveStageSpeech, completeLiveStage, createLiveStageState, buildLiveStageInteraction, dismissLiveStageInteraction, isLiveStageInternalTrigger, isLiveStageWorkerReport, liveStageError, presentLiveStageInteraction, reduceLiveStageMessage, reportReadyLiveStage, resolveLiveStagePlace, waitingLiveStage, type LiveStageCollaboratingWorker, type LiveStageGroupThread, type LiveStageInteraction, type LiveStagePeerThread, type LiveStageState, type LiveStageTaskHud } from './studioLiveStageModel';
 import { describeStudioTurnError } from '../shared/studioTurnErrorCopy';
 import type { StudioOpenDelegation } from './studioOpenDelegations';
 import { isLiveStagePageUri, materializeLiveStageEntry, stageAssetFor, type LiveStageEntry } from './studioLiveStageEntry';
@@ -35,7 +35,11 @@ const SELF_HEAL_PATCH_REASONS = new Set(['session-mismatch', 'protocol']);
 const DIRECTOR_FAMILIES = new Set([
   'local-recall', 'web2-research', 'metaweb-research', 'making',
   'delegation', 'verification', 'browser-action',
+  'local-run', 'local-read', 'desktop-control', 'web-read',
+  'chain-write', 'chain-transfer',
 ]);
+
+const stageText = (language: 'zh' | 'en', zh: string, en: string): string => language === 'zh' ? zh : en;
 
 type MetabotLiveStageIdentity = {
   name?: string | null;
@@ -101,6 +105,15 @@ type LiveStageRun = {
   lastWorker: WorkerIdentity | null;
   /** Async avatar refs already requested for this run. */
   pendingAvatarRefs: Set<string>;
+  /** 10s companion-list refresh while peers/groups are present; null otherwise. */
+  companionsTimer: NodeJS.Timeout | null;
+  /** Stable JSON of the last committed companion block; refresh patches only on change. */
+  companionsSignature: string;
+  /** Per-run cache of the peer/group lister results (refreshed ≤ every 2.5s or on HUD refresh). */
+  companionsCache: {
+    peers?: { at: number; rows: LiveStagePeerThread[] };
+    groups?: { at: number; rows: LiveStageGroupThread[] };
+  } | null;
   /**
    * The next stage-role projection may adopt the renderer's prewarmed draft
    * tab unconditionally — set for a brand-new conversation's first run
@@ -134,6 +147,14 @@ export type StudioLiveStageServiceDeps = {
   listOpenDelegations?(sessionId: string): StudioOpenDelegation[];
   /** Multi-worker directional collaboration snapshot (dispatch / working / return). */
   listCollaboratingWorkers?(sessionId: string): LiveStageCollaboratingWorker[];
+  /** Live private (A2A) chat threads for the companion rail (≤4). */
+  listActivePrivateChats?(sessionId: string): LiveStagePeerThread[];
+  /** Live group-task threads for the companion rail (≤2). */
+  listActiveGroupThreads?(sessionId: string): LiveStageGroupThread[];
+  /** Peer identity (name/avatar) for a globalMetaId — fills a send-target row the lister missed. */
+  resolvePeerIdentity?(globalMetaId: string): { name: string; avatar?: string; avatarRef?: string } | null;
+  /** Group thread snapshot for a groupId — fills a post-target row the lister missed. */
+  resolveGroupThread?(groupId: string, sessionId: string): LiveStageGroupThread | null;
   /** Live Managed Task Tree progress + Decision Queue count for the stage HUD. */
   getLiveTaskHud?(sessionId: string): LiveStageTaskHud | null;
   /** Pulls queued stage-card clicks over the patch frame channel. */
@@ -428,29 +449,119 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     return browserUriMatchesPrefix(candidate, entryUri);
   }
 
+  /** Stable JSON of the companion/HUD block — the refresh diff key. */
+  function companionsSignatureFor(state: LiveStageState): string {
+    return JSON.stringify({
+      workers: state.activeWorkers ?? null,
+      peers: state.activePeers ?? null,
+      groups: state.activeGroups ?? null,
+      taskHud: state.taskHud ?? null,
+      place: state.place ?? null,
+    });
+  }
+
+  /**
+   * While a run's state carries peers or groups, refresh the companion rail
+   * every 10s (chat activity arrives out-of-band); clear once both lists are
+   * empty or the run is torn down.
+   */
+  function syncCompanionsTimer(run: LiveStageRun): void {
+    const hasCompanions = (run.state.activePeers?.length ?? 0) > 0 || (run.state.activeGroups?.length ?? 0) > 0;
+    if (hasCompanions && !run.companionsTimer) {
+      run.companionsTimer = setInterval(() => {
+        try {
+          refreshChiefOfStaffHud(run.state.sessionId);
+        } catch (error) {
+          console.warn(`[StudioLiveStage] companions refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }, 10_000);
+    } else if (!hasCompanions && run.companionsTimer) {
+      clearInterval(run.companionsTimer);
+      run.companionsTimer = null;
+    }
+  }
+
   // Commit a produced state: phaseStartedAt resets whenever the family
   // changes, except a 'waiting' reached while a delegation is in flight —
   // that clock measures from when the delegation started, not from now.
+  /**
+   * Run one avatar-bearing entry (worker, peer, group member) through the
+   * stage avatar pipeline: renderable/data URI → stage asset; unresolved
+   * `nft://`/`metafile://` refs kick the async resolver. `avatarRef` never
+   * reaches the stage state.
+   */
+  function enrichAvatarEntry<T extends { avatar?: string; avatarRef?: string }>(
+    run: LiveStageRun,
+    entry: T,
+    nameHint?: string,
+  ): Omit<T, 'avatarRef'> & { avatar?: string } {
+    const ref = unresolvedAvatarRef(entry.avatarRef ?? entry.avatar);
+    if (ref && !resolvedAsyncAvatars.has(ref)) {
+      resolveWorkerAvatarAsync(run, ref, nameHint);
+    }
+    const resolvedChain = ref ? resolvedAsyncAvatars.get(ref) : undefined;
+    const safe = safeAvatar(resolvedChain ?? entry.avatar);
+    const asset = safe ? stageAvatarFor(run, safe) : undefined;
+    const { avatarRef: _omitRef, ...rest } = entry;
+    return {
+      ...rest,
+      ...(asset ? { avatar: asset } : {}),
+    };
+  }
+
+  const PEER_SEND_SYNTHESIZE_WINDOW_MS = 60_000;
+  const PEER_DELIVERED_WINDOW_MS = 15_000;
+  const GROUP_POSTING_WINDOW_MS = 6_000;
+  const COMPANIONS_CACHE_MS = 2_500;
+  const MAX_PEERS = 4;
+  const MAX_GROUPS = 2;
+  const MAX_GROUP_MEMBERS = 8;
+
+  /**
+   * Peer/group lister results are cached per run for 2.5s — the enrich runs
+   * on every commit (including streaming speech) while the underlying store
+   * reads stay bounded. refreshChiefOfStaffHud clears the cache first, so
+   * the 10s timer and chat-persistence hooks always see fresh rows.
+   */
+  function listPeersCached(run: LiveStageRun): LiveStagePeerThread[] {
+    if (!deps.listActivePrivateChats) return [];
+    const nowMs = now();
+    const cached = run.companionsCache?.peers;
+    if (cached && nowMs - cached.at <= COMPANIONS_CACHE_MS) return cached.rows;
+    let rows: LiveStagePeerThread[] = [];
+    try {
+      rows = deps.listActivePrivateChats(run.state.sessionId) ?? [];
+    } catch {
+      // Degrade gracefully when the peer lookup throws.
+    }
+    run.companionsCache = { ...run.companionsCache, peers: { at: nowMs, rows } };
+    return rows;
+  }
+
+  function listGroupsCached(run: LiveStageRun): LiveStageGroupThread[] {
+    if (!deps.listActiveGroupThreads) return [];
+    const nowMs = now();
+    const cached = run.companionsCache?.groups;
+    if (cached && nowMs - cached.at <= COMPANIONS_CACHE_MS) return cached.rows;
+    let rows: LiveStageGroupThread[] = [];
+    try {
+      rows = deps.listActiveGroupThreads(run.state.sessionId) ?? [];
+    } catch {
+      // Degrade gracefully when the group lookup throws.
+    }
+    run.companionsCache = { ...run.companionsCache, groups: { at: nowMs, rows } };
+    return rows;
+  }
+
   function enrichChiefOfStaffState(run: LiveStageRun, candidate: LiveStageState): LiveStageState {
     let activeWorkers = candidate.activeWorkers;
     let taskHud = candidate.taskHud;
+    let activePeers = candidate.activePeers;
+    let activeGroups = candidate.activeGroups;
     if (deps.listCollaboratingWorkers) {
       try {
         const rawWorkers = deps.listCollaboratingWorkers(run.state.sessionId) ?? [];
-        activeWorkers = rawWorkers.map((worker) => {
-          const ref = unresolvedAvatarRef(worker.avatarRef ?? worker.avatar);
-          if (ref && !resolvedAsyncAvatars.has(ref)) {
-            resolveWorkerAvatarAsync(run, ref, worker.name);
-          }
-          const resolvedChain = ref ? resolvedAsyncAvatars.get(ref) : undefined;
-          const safe = safeAvatar(resolvedChain ?? worker.avatar);
-          const asset = safe ? stageAvatarFor(run, safe) : undefined;
-          const { avatarRef: _omitRef, ...rest } = worker;
-          return {
-            ...rest,
-            ...(asset ? { avatar: asset } : {}),
-          };
-        });
+        activeWorkers = rawWorkers.map((worker) => enrichAvatarEntry(run, worker, worker.name));
       } catch {
         // Degrade gracefully when worker lookup throws.
       }
@@ -462,14 +573,81 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
         // Degrade gracefully when task HUD lookup throws.
       }
     }
-    if (activeWorkers === undefined && taskHud === undefined) {
-      return candidate;
+    const nowMs = now();
+    const language = run.state.language ?? 'zh';
+    if (deps.listActivePrivateChats || candidate.peerSend) {
+      let rawPeers = listPeersCached(run);
+      const send = candidate.peerSend ?? null;
+      const sendAge = send ? nowMs - send.at : Infinity;
+      // Synthesize a rail row only while the send is in flight or inside its
+      // delivered window — a failed send must not invent a peer.
+      const synthesizeSend = send?.peerId
+        && sendAge <= PEER_SEND_SYNTHESIZE_WINDOW_MS
+        && (send.status === 'sending' || (send.status === 'delivered' && sendAge <= PEER_DELIVERED_WINDOW_MS));
+      if (synthesizeSend && !rawPeers.some((peer) => peer.id === send.peerId)) {
+        let identity: { name: string; avatar?: string; avatarRef?: string } | null = null;
+        try {
+          identity = deps.resolvePeerIdentity?.(send.peerId) ?? null;
+        } catch {
+          identity = null;
+        }
+        rawPeers = [{
+          id: send.peerId,
+          name: identity?.name?.trim().slice(0, 80) || stageText(language, '对方 Bot', 'a Bot'),
+          ...(identity?.avatar ? { avatar: identity.avatar } : {}),
+          ...(identity?.avatarRef ? { avatarRef: identity.avatarRef } : {}),
+          status: 'open',
+          updatedAt: send.at,
+        }, ...rawPeers];
+      }
+      activePeers = rawPeers
+        .slice(0, MAX_PEERS)
+        .map((peer) => {
+          const status = send?.peerId === peer.id
+            ? (send.status === 'sending'
+              ? 'sending'
+              : send.status === 'delivered' && sendAge <= PEER_DELIVERED_WINDOW_MS ? 'delivered' : peer.status)
+            : peer.status;
+          const { status: _omit, ...rest } = peer;
+          return { ...enrichAvatarEntry(run, rest, peer.name), status };
+        });
     }
-    return {
+    if (deps.listActiveGroupThreads || candidate.groupPost) {
+      let rawGroups: LiveStageGroupThread[] = listGroupsCached(run);
+      const post = candidate.groupPost ?? null;
+      const postAge = post ? nowMs - post.at : Infinity;
+      if (post?.groupId && !rawGroups.some((group) => group.id === post.groupId) && post.status !== 'failed') {
+        let resolved: LiveStageGroupThread | null = null;
+        try {
+          resolved = deps.resolveGroupThread?.(post.groupId, run.state.sessionId) ?? null;
+        } catch {
+          resolved = null;
+        }
+        if (resolved) rawGroups = [resolved, ...rawGroups];
+      }
+      activeGroups = rawGroups
+        .slice(0, MAX_GROUPS)
+        .map((group) => {
+          const members = group.members.slice(0, MAX_GROUP_MEMBERS).map((member) => enrichAvatarEntry(run, member, member.name));
+          const posting = post?.groupId === group.id
+            && (post.status === 'posting' || (post.status === 'posted' && postAge <= GROUP_POSTING_WINDOW_MS));
+          const senderId = posting ? (members.find((member) => member.self)?.id ?? group.senderId) : group.senderId;
+          return {
+            ...group,
+            members,
+            status: posting ? 'posting' as const : group.status,
+            ...(senderId ? { senderId } : {}),
+          };
+        });
+    }
+    const merged: LiveStageState = {
       ...candidate,
       ...(activeWorkers !== undefined ? { activeWorkers } : {}),
+      ...(activePeers !== undefined ? { activePeers } : {}),
+      ...(activeGroups !== undefined ? { activeGroups } : {}),
       ...(taskHud !== undefined ? { taskHud } : {}),
     };
+    return { ...merged, place: resolveLiveStagePlace(merged, run.state.place) };
   }
 
   function commitRunState(run: LiveStageRun, nextState: LiveStageState): LiveStageState {
@@ -485,6 +663,8 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       run.delegationStartedAt = state.phaseStartedAt;
     }
     run.state = state;
+    run.companionsSignature = companionsSignatureFor(state);
+    syncCompanionsTimer(run);
     if (
       STEADY_PERSISTED_FAMILIES.has(state.family)
       || (state.family === 'speaking' && state.captionSource === 'specific')
@@ -1030,6 +1210,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       template,
       lastWorker: null,
       pendingAvatarRefs: new Set(),
+      companionsTimer: null,
+      companionsSignature: '',
+      companionsCache: null,
       draftClaimPending,
     };
     run.state = enrichChiefOfStaffState(run, run.state);
@@ -1209,6 +1392,10 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   function teardownRun(run: LiveStageRun): void {
     run.directorGeneration += 1;
     if (run.directorTimer) clearTimeout(run.directorTimer);
+    if (run.companionsTimer) {
+      clearInterval(run.companionsTimer);
+      run.companionsTimer = null;
+    }
     clearPatchRetry(run);
     clearDelegationTimer(run);
     // A pending card belongs to this turn; the permission itself stays
@@ -1401,7 +1588,29 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
         }
       }
     }
-    const nextState = reduceLiveStageMessage(run.state, message, { workerName: effectiveWorker.name, workerAvatar: effectiveWorker.avatar, nowMs: now() });
+    // Name the send target in the scene copy before reducing: the peer /
+    // group resolvers look the id up in local stores (best effort).
+    let peerName: string | undefined;
+    let groupTitle: string | undefined;
+    if (toolName === 'send_private_chat' || toolName === 'group_chat') {
+      const toolInput = message.metadata?.toolInput && typeof message.metadata.toolInput === 'object' && !Array.isArray(message.metadata.toolInput)
+        ? message.metadata.toolInput as Record<string, unknown>
+        : {};
+      try {
+        if (toolName === 'send_private_chat') {
+          const peerId = typeof toolInput.to === 'string' ? toolInput.to.trim() : '';
+          peerName = peerId ? deps.resolvePeerIdentity?.(peerId)?.name?.trim().slice(0, 80) : undefined;
+        } else {
+          const groupId = typeof toolInput.groupId === 'string' ? toolInput.groupId.trim()
+            : typeof toolInput.group_id === 'string' ? toolInput.group_id.trim() : '';
+          groupTitle = groupId ? deps.resolveGroupThread?.(groupId, sessionId)?.title?.trim().slice(0, 60) : undefined;
+        }
+      } catch {
+        peerName = undefined;
+        groupTitle = undefined;
+      }
+    }
+    const nextState = reduceLiveStageMessage(run.state, message, { workerName: effectiveWorker.name, workerAvatar: effectiveWorker.avatar, peerName, groupTitle, nowMs: now() });
     if (nextState === run.state) return;
     commitRunState(run, nextState);
     schedulePatch(run);
@@ -1764,11 +1973,20 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       : [...runs.values()];
     for (const run of targets) {
       if (!run.state.enabled) continue;
-      const refreshed = enrichChiefOfStaffState(run, {
-        ...run.state,
-        revision: run.state.revision + 1,
-      });
-      run.state = refreshed;
+      // Explicit refreshes (10s timer, chat persistence) bypass the 2.5s
+      // lister cache and refill it with fresh rows.
+      run.companionsCache = null;
+      const refreshed = enrichChiefOfStaffState(run, run.state);
+      const signature = companionsSignatureFor(refreshed);
+      // Patch only when the companion/HUD block actually changed — chat
+      // polling must not churn stage revisions for a static rail.
+      if (signature === run.companionsSignature) {
+        syncCompanionsTimer(run);
+        continue;
+      }
+      run.companionsSignature = signature;
+      run.state = { ...refreshed, revision: run.state.revision + 1 };
+      syncCompanionsTimer(run);
       schedulePatch(run);
     }
   }
