@@ -155,16 +155,18 @@ test('StudioLiveStageService streams multi-Worker directional flows and live tas
   }
 });
 
-test('Live Stage template carries worker constellation and task HUD elements with zero innerHTML', () => {
+test('Live Stage template carries the companion rail and task HUD elements with zero innerHTML', () => {
   const html = fs.readFileSync(path.resolve('public/live-stage/stage.html'), 'utf8');
   const js = fs.readFileSync(path.resolve('public/live-stage/stage.js'), 'utf8');
+  const scenes = fs.readFileSync(path.resolve('public/live-stage/stage-scenes.js'), 'utf8');
   const css = fs.readFileSync(path.resolve('public/live-stage/stage.css'), 'utf8');
 
-  assert.match(html, /data-worker-constellation/);
+  assert.match(html, /data-companion-rail/);
   assert.match(html, /data-task-hud/);
-  assert.match(js, /function updateWorkerConstellation\(\)/);
+  assert.match(scenes, /function buildRail\(\)/);
   assert.match(js, /function updateTaskHud\(\)/);
   assert.doesNotMatch(js, /innerHTML|insertAdjacentHTML|document\.write/);
-  assert.match(css, /\.worker-constellation\{/);
+  assert.doesNotMatch(scenes, /innerHTML|insertAdjacentHTML|document\.write/);
+  assert.match(css, /\.companion-rail\{/);
   assert.match(css, /\.task-hud\{/);
 });

@@ -36,7 +36,7 @@ function disposeTempStore(sqliteStore, dir) {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
-test('Issues 1, 2 & 3: Studio browser sessions get a 400-row view window, panel wires auto-load on top scroll + 280px scroll-to-bottom button, and stage.js suppresses duplicate handoff dashed arc when constellation is visible', async () => {
+test('Issues 1, 2 & 3: Studio browser sessions get a 400-row view window, panel wires auto-load on top scroll + 280px scroll-to-bottom button, and the scene engine draws worker connectors in place of the retired handoff arc', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-scroll-page-'));
   const sqliteStore = await SqliteStore.create(dir);
   try {
@@ -63,14 +63,15 @@ test('Issues 1, 2 & 3: Studio browser sessions get a 400-row view window, panel 
     assert.match(panelSrc, /data-slot="panel-scroll-to-bottom"/, 'renders floating scroll-to-bottom button');
 
     const stageJs = fs.readFileSync(path.resolve('public/live-stage/stage.js'), 'utf8');
+    // The scene engine replaced the handoff arc + worker constellation: workers
+    // render once, as companion-rail items with canvas connectors — there is
+    // no second dashed-arc path to suppress anymore.
+    assert.doesNotMatch(stageJs, /constellationEl|layoutHandoff|handoff-flow/, 'no duplicate handoff arc path remains');
+    const scenesJs = fs.readFileSync(path.resolve('public/live-stage/stage-scenes.js'), 'utf8');
+    assert.match(scenesJs, /function drawWorker\(g, item, status, hero, fx, t\)/, 'worker connectors render via the scene engine');
     assert.match(
       stageJs,
-      /if \(constellationEl && !constellationEl\.hidden && constellationEl\.querySelector\('\.constellation-item'\)\) \{\s*return false;\s*\}/,
-      'suppresses duplicate SVG dashed handoff arc when constellation card curve is visible',
-    );
-    assert.match(
-      stageJs,
-      /const currentTasks = tasks\.filter\(\(t\) => t\?\.isCurrent === true\)\.slice\(0, 4\)/,
+      /const currentTasks = tasks\.filter\(\(t\) => t\?\.isCurrent === true\)\.slice\(0, 7\)/,
       'renders all parallel active tasks of the Studio session directly in the HUD',
     );
   } finally {

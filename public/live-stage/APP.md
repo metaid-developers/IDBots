@@ -25,8 +25,14 @@ template.json        host compatibility manifest (validated before enabling)
                      by the runtime)
 scenes.json          declarative scene surface (bounded, presentation-only)
 stage.html           host render template with __PLACEHOLDER__ slots
-stage.css            stage appearance (state motion, text reveals, equalizer)
-stage.js             continuous stage runtime (applyPatch, text pacing, handoff)
+stage.css            stage appearance (state motion, text reveals, equalizer,
+                     companion rail, group members, transient chip)
+stage-scenes.js      scene engine (window.IDBotsLiveStageScenes): four places
+                     (Mind, Machine PCB, Web-A link mesh, Chain-A block
+                     ribbon), companion rail + hero connectors, group ring,
+                     transients, verification overlay; owns the single rAF
+stage.js             continuous stage runtime (applyPatch, text pacing,
+                     orb mounting, interaction card, task HUD)
 liquid-orb.js        WebGPU orb renderer (family styles, fluidity, breathing)
 liquid-orb-effect.js WGSL orb effect source
 liquid-orb-LICENSE.txt
@@ -47,6 +53,48 @@ size limits, and asset references before enabling a template. Unknown or
 incompatible versions fall back to the built-in renderer instead of producing a
 blank projector.
 
+## Scene layers (stage-scenes.js)
+
+`stage.html` orders the visual stack: `.core-aurora` → place canvas
+(`.core-canvas`) → `data-companion-back` canvas → `.core-entity` orb →
+`data-companion-front` canvas + `data-group-members` DOM → copy →
+`data-companion-rail` (top-right, 14%–60% of stage height, never over the
+task HUD) → `data-transient-chip` → interaction card.
+
+- **Place** comes from `state.place` (`mind | machine | web | chain`); a place
+  holds ≥1.2 s (newer targets queue) and transitions with a radial reveal
+  from the orb plus a ~900 ms crossfade. Family modifiers: speaking dims the
+  current place to .4 with periodic events paused, owner-needed freezes at
+  .35 with an amber halo, problem slates at .5 and 0.2× speed, waiting dims
+  to .55. The engine never reads `state.motif`.
+- **Companions** come from `activeWorkers` / `activePeers` / `activeGroups`;
+  `companionFocus` picks the hero (fallbacks: a dispatch/return/verifying
+  worker, a sending/incoming peer, the first group). The rail orders hero →
+  active-now → working → waiting, caps at 5 items with a `+N` row, and a
+  section heading renders only when it has a visible item. While the rail is
+  visible `.core-participants` hides. Hero connectors (worker PCB route,
+  peer capsule + drop line, group Saturn ring with chair dot and member
+  arc) draw into the companion canvases.
+- **Transients** (`state.transient`) play once per `id` and only within 6 s
+  of `at`; chip + canvas effects for steer / retry / model-switch /
+  chain-confirmed / tool-error.
+- Geometry is measured from the real stage (`clientWidth/Height`, DPR ≤ 2)
+  and the rendered orb rect (`r = width/2 × 0.72`) on layout changes —
+  never a fixed design space. `body[data-hero]` slides `.core-entity` from
+  0.67 W to 0.56 W in 600 ms; canvas geometry follows the measured centre.
+- Chain-A is slot-quantized: `pos(k,p) = headS − (k+p)·46`, slot 0 is the
+  dashed pending head, writes shift every block exactly one pitch over
+  600 ms, tail blocks are dropped, and there is no ambient scroll. Transfer
+  uses cyan/violet exchange packets + interlocking rings — never gold,
+  never a coin.
+- Reduced motion, a hidden document, or `enabled === false` produce one
+  composed static frame and no `requestAnimationFrame`.
+
+Remix points: `templateVersion` bumps, `scenes.json` (orb presets, motion),
+`stage.css` palette tokens, `stage-scenes.js` `__test` helpers
+(`chainSlotLayout`, `resolveSceneModifiers`, `pickHero`, `railOrder`,
+`shouldPlayTransient`, `placeGlow`) for extension testing.
+
 ## Scene families (`scenes.json`)
 
 Each `LiveStageFamily` has an explicit bounded scene:
@@ -60,11 +108,14 @@ Each `LiveStageFamily` has an explicit bounded scene:
 - optional `note` — documentation only; optional `fallback` — remixes may point
   a family at another family's scene instead of restating it.
 
-All sixteen families (`received`, `reasoning`, `speaking`, `local-recall`,
-`web2-research`, `metaweb-research`, `making`, `delegation`, `waiting`,
+All twenty-six families (`received`, `reasoning`, `speaking`, `local-run`,
+`local-read`, `local-recall`, `desktop-control`, `projecting`, `web2-research`,
+`web-read`, `metaweb-research`, `chain-write`, `chain-transfer`,
+`private-chat`, `group-task`, `making`, `delegation`, `waiting`,
 `worker-report`, `verification`, `browser-action`, `owner-needed`, `problem`,
 `report-ready`, `complete`) carry explicit scenes; no fallback is used by the
-official package.
+official package. The full id list is exported once from the host model as
+`LIVE_STAGE_FAMILIES`.
 
 The configuration never defines factual Worker identities, dependencies,
 acceptance, or completion. Text and language selection stay host-controlled.

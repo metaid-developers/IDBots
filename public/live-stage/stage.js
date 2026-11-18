@@ -27,7 +27,6 @@
     topology: { mode: 'presence', nodes: [], edges: [] },
     motion: { preset: 'idle', seed: 1, durationMs: 720, easing: 'emphasized-decelerate', energy: .3, density: .2 },
     metrics: { directorEnabled: false, directorCalls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, rejectedPatches: 0, fallbackCount: 0, directorLatencyMs: 0 },
-    handoff: null,
     interaction: null,
     pendingProjectionIds: [],
     eventWindow: [],
@@ -54,17 +53,16 @@
       uri
     }, '*');
   });
-  const canvas = $('.core-canvas');
-  const ctx = canvas.getContext('2d');
   const reducedMedia = window.matchMedia('(prefers-reduced-motion: reduce)');
   const orbLayers = new Set();
   let orb = null, orbStarting = false, orbFailed = false, orbPreferWebGL = false;
-  let handoffKey = '', handoffTimer = 0;
+  // The scene engine's glow tint: setState(family) resets glowColor to the
+  // family preset, so every setState must re-apply the last scene tint.
+  let lastOrbTint = null;
   let interactionKey = '', interactionTimer = 0;
   let hudOthersExpanded = false;
   const interactionQueue = [];
   const interactionSelections = new Map();
-  let width = 0, height = 0, raf = 0;
 
   document.querySelectorAll('[data-avatar]').forEach((image) => {
     image.addEventListener('error', () => {
@@ -177,198 +175,15 @@
       edgeGlow: quiet ? textMotion.energy * .07 : 0,
       exposure: quiet ? textMotion.energy * .08 : 0,
     };
+    const delta = scenesApi?.modulationDelta?.(now);
+    if (delta) {
+      modulation.radius += delta.radius;
+      modulation.edgeGlow += delta.edgeGlow;
+      modulation.exposure += delta.exposure;
+    }
     orbLayers.forEach((layer) => layer.controller?.setModulation(modulation));
   }
 
-  function resizeParticles() {
-    const ratio = Math.min(window.devicePixelRatio || 1, 2);
-    width = canvas.clientWidth; height = canvas.clientHeight;
-    canvas.width = Math.max(1, Math.round(width * ratio));
-    canvas.height = Math.max(1, Math.round(height * ratio));
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  }
-
-  const particles = Array.from({ length: 42 }, (_, index) => {
-    const random = (salt) => {
-      const value = Math.sin(index * 91.731 + salt * 17.17) * 43758.5453;
-      return value - Math.floor(value);
-    };
-    return { angle: random(1) * Math.PI * 2, radius: 110 + random(2) * 250, speed: .12 + random(3) * .35, size: .7 + random(4) * 1.8, drift: random(5), phase: 0 };
-  });
-
-  // Particles integrate their own phase (phase += dt × speed × energy ×
-  // activity) so family/energy changes retune the drift without teleporting
-  // the field. The activity multiplier follows the orb's activity bucket —
-  // working speeds up, speaking and resting slow down — and eases toward its
-  // target with a ~0.8 s time constant.
-  const particleClock = { last: 0, activity: 1 };
-  const PARTICLE_ACTIVITY = { working: 1.75, speaking: .6, resting: .5 };
-
-  function drawParticles(time = 0) {
-    if (!state || !width || !height) return;
-    const now = time || performance.now();
-    updateTextMotion(now);
-    ctx.clearRect(0, 0, width, height);
-    const reduced = effectiveReduced();
-    if (reduced !== (body.dataset.motion === 'reduced')) {
-      applyState();
-      return;
-    }
-    const t = reduced ? state.motion.seed * .01 : now / 1000;
-    const dt = particleClock.last === 0 ? 0 : Math.min(.1, Math.max(0, (now - particleClock.last) / 1000));
-    particleClock.last = now;
-    const rawBucket = window.liquidOrbActivityForFamily(state.family);
-    const activityTarget = rawBucket === 'waiting' ? .95 : (PARTICLE_ACTIVITY[rawBucket] ?? 1);
-    particleClock.activity += (activityTarget - particleClock.activity) * (1 - Math.exp(-dt / .8));
-    if (!reduced && dt > 0) {
-      // Integrated phase must never see a non-finite energy: one NaN step
-      // would poison the accumulator for the rest of the session.
-      const energy = Number.isFinite(state.motion?.energy) ? state.motion.energy : 0;
-      const rate = energy * particleClock.activity;
-      for (const particle of particles) particle.phase += dt * particle.speed * rate;
-    }
-    const structured = state.topology.mode === 'structured';
-    const cx = width * (structured ? .56 : .67), cy = height * .45;
-    if (structured) {
-      const nodes = Object.fromEntries(state.topology.nodes.map((node) => [node.id, node]));
-      const points = {
-        twin: { x: cx, y: cy },
-        source: { x: width * .72, y: height * .2 },
-        worker: { x: width * .87, y: height * .43 },
-        evidence: { x: width * .84, y: height * .7 }
-      };
-      const curveFor = (from, to) => ({
-        x: (from.x + to.x) / 2,
-        y: (from.y + to.y) / 2 - Math.min(64, Math.hypot(to.x - from.x, to.y - from.y) * .18)
-      });
-      const pointOnCurve = (from, control, to, progress) => {
-        const inverse = 1 - progress;
-        return {
-          x: inverse * inverse * from.x + 2 * inverse * progress * control.x + progress * progress * to.x,
-          y: inverse * inverse * from.y + 2 * inverse * progress * control.y + progress * progress * to.y
-        };
-      };
-      const constellationVisible = Boolean($('[data-worker-constellation]') && !$('[data-worker-constellation]').hidden);
-      state.topology.edges.forEach(([fromId, toId], index) => {
-        if (constellationVisible && (fromId === 'worker' || toId === 'worker')) return;
-        if (!nodes[fromId] || !nodes[toId]) return;
-        const from = points[fromId], to = points[toId];
-        if (!from || !to) return;
-        const control = curveFor(from, to);
-        ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.quadraticCurveTo(control.x, control.y, to.x, to.y);
-        ctx.strokeStyle = 'rgba(155,244,255,.26)'; ctx.lineWidth = 1; ctx.stroke();
-        const progress = reduced ? .6 : (t * .2 + index * .27) % 1;
-        const point = pointOnCurve(from, control, to, progress);
-        ctx.beginPath(); ctx.arc(point.x, point.y, 3, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(197,169,255,.85)'; ctx.fill();
-      });
-    }
-    const constellationEl = $('[data-worker-constellation]');
-    if (constellationEl && !constellationEl.hidden) {
-      const stageRect = $('.live-stage').getBoundingClientRect();
-      const orbRect = $('.membrane').getBoundingClientRect();
-      if (stageRect.width > 0 && orbRect.width > 0) {
-        const orbCenter = {
-          x: orbRect.left + orbRect.width / 2 - stageRect.left,
-          y: orbRect.top + orbRect.height / 2 - stageRect.top,
-        };
-        const orbRadius = Math.max(44, orbRect.width * .48);
-        const cards = constellationEl.querySelectorAll('.constellation-item');
-        cards.forEach((cardEl, index) => {
-          const cardRect = cardEl.getBoundingClientRect();
-          if (cardRect.width < 4 || cardRect.height < 4) return;
-          const cardAnchor = {
-            x: cardRect.left - stageRect.left - 4,
-            y: cardRect.top + cardRect.height / 2 - stageRect.top,
-          };
-          const dx = cardAnchor.x - orbCenter.x;
-          const dy = cardAnchor.y - orbCenter.y;
-          const dist = Math.hypot(dx, dy) || 1;
-          const orbAnchor = {
-            x: orbCenter.x + (dx / dist) * orbRadius,
-            y: orbCenter.y + (dy / dist) * orbRadius,
-          };
-          const dir = cardEl.dataset.direction || 'working';
-          const returning = dir === 'return' || dir === 'verifying';
-          const lowFreqWait = state.family === 'waiting' || dir === 'waiting' || dir === 'verifying';
-          const fromPt = returning ? cardAnchor : orbAnchor;
-          const toPt = returning ? orbAnchor : cardAnchor;
-          const midY = (fromPt.y + toPt.y) / 2;
-          const bend = Math.min(34, Math.max(12, Math.abs(dx) * .12));
-          const ctrl = {
-            x: (fromPt.x + toPt.x) / 2,
-            y: midY - bend,
-          };
-          ctx.save();
-          if (lowFreqWait) {
-            ctx.setLineDash([5, 7]);
-          }
-          ctx.beginPath();
-          ctx.moveTo(fromPt.x, fromPt.y);
-          ctx.quadraticCurveTo(ctrl.x, ctrl.y, toPt.x, toPt.y);
-          ctx.strokeStyle = returning ? 'rgba(255,220,81,.44)' : 'rgba(155,244,255,.38)';
-          ctx.lineWidth = lowFreqWait ? 1.35 : 1.45;
-          ctx.stroke();
-          ctx.restore();
-
-          // Directional chevron arrowhead at destination endpoint (`toPt`):
-          const tanX = toPt.x - ctrl.x;
-          const tanY = toPt.y - ctrl.y;
-          const angle = Math.atan2(tanY, tanX);
-          const headLen = 7;
-          ctx.beginPath();
-          ctx.moveTo(toPt.x, toPt.y);
-          ctx.lineTo(toPt.x - headLen * Math.cos(angle - .46), toPt.y - headLen * Math.sin(angle - .46));
-          ctx.moveTo(toPt.x, toPt.y);
-          ctx.lineTo(toPt.x - headLen * Math.cos(angle + .46), toPt.y - headLen * Math.sin(angle + .46));
-          ctx.strokeStyle = returning ? 'rgba(255,220,81,.88)' : 'rgba(155,244,255,.85)';
-          ctx.lineWidth = 1.6;
-          ctx.stroke();
-
-          // Low-frequency calm heartbeat pulse when waiting; brisk pulse when dispatching:
-          const speed = lowFreqWait ? .11 : .32;
-          const pulseCount = lowFreqWait ? 2 : 1;
-          for (let pIdx = 0; pIdx < pulseCount; pIdx += 1) {
-            const prog = reduced ? (.35 + pIdx * .35) : (t * speed + index * .23 + pIdx * .5) % 1;
-            const inv = 1 - prog;
-            const px = inv * inv * fromPt.x + 2 * inv * prog * ctrl.x + prog * prog * toPt.x;
-            const py = inv * inv * fromPt.y + 2 * inv * prog * ctrl.y + prog * prog * toPt.y;
-            ctx.beginPath();
-            ctx.arc(px, py, lowFreqWait ? 2.8 : 3.5, 0, Math.PI * 2);
-            ctx.fillStyle = returning ? 'rgba(255,220,81,.92)' : 'rgba(155,244,255,.9)';
-            ctx.fill();
-          }
-        });
-      }
-    }
-    particles.forEach((particle, index) => {
-      const angle = particle.angle + particle.phase + state.motion.seed * .0001;
-      let x = cx + Math.cos(angle) * particle.radius * 1.1;
-      let y = cy + Math.sin(angle) * particle.radius * .62;
-      if (state.family === 'local-recall' || state.family === 'web2-research' || state.family === 'metaweb-research') {
-        const pull = .68 + Math.sin(t * .8 + particle.drift * 6) * .18;
-        x = cx + Math.cos(angle) * particle.radius * pull * 1.2;
-        y = cy + Math.sin(angle) * particle.radius * pull * .65;
-      } else if (structured) {
-        x = cx + Math.cos(angle) * particle.radius * .65;
-        y = cy + Math.sin(angle) * particle.radius * .45;
-      } else if (state.family === 'report-ready' || state.family === 'complete') {
-        const arc = -Math.PI * .85 + (index / particles.length) * Math.PI * 1.7;
-        x = cx + Math.cos(arc) * 190; y = cy + Math.sin(arc) * 125;
-      }
-      const alpha = state.family === 'report-ready' || state.family === 'complete' ? .18 : .18 + particle.drift * .35;
-      ctx.beginPath(); ctx.fillStyle = index % 7 === 0 ? `rgba(155,244,255,${alpha + .12})` : `rgba(197,169,255,${alpha})`;
-      ctx.arc(x, y, particle.size, 0, Math.PI * 2); ctx.fill();
-    });
-    if (!reduced) raf = requestAnimationFrame(drawParticles);
-  }
-
-  function restartParticles() {
-    cancelAnimationFrame(raf);
-    resizeParticles();
-    drawParticles(performance.now());
-    if (!$('[data-handoff-flow]').hasAttribute('hidden')) layoutHandoff();
-  }
 
   function updateParticipants() {
     const container = $('[data-core-participants]');
@@ -386,79 +201,6 @@
       value.textContent = participant;
       item.append(label, value);
       container.append(item);
-    });
-  }
-
-  function updateWorkerConstellation() {
-    const container = $('[data-worker-constellation]');
-    if (!container) return;
-    container.replaceChildren();
-    const rawList = Array.isArray(state.activeWorkers) ? state.activeWorkers.slice(0, 5) : [];
-    // When the turn has settled (idle / complete / report-ready), only show
-    // workers that are still actively dispatched/working — never leave stale
-    // 'return' nodes or lines hanging over a finished screen.
-    const restingScene = state.family === 'idle' || state.family === 'complete' || state.family === 'report-ready';
-    const list = restingScene
-      ? rawList.filter((entry) =>
-          entry?.direction === 'dispatch'
-          || entry?.direction === 'working'
-          || entry?.direction === 'waiting'
-          || entry?.direction === 'verifying',
-        )
-      : rawList;
-    container.hidden = list.length === 0;
-    if (list.length === 0) return;
-    list.forEach((entry) => {
-      const row = document.createElement('div');
-      row.className = 'constellation-item';
-      const validDirs = new Set(['dispatch', 'working', 'waiting', 'return', 'verifying']);
-      const rawDir = validDirs.has(entry?.direction) ? entry.direction : 'working';
-      const dir = state.family === 'waiting' && rawDir === 'working' ? 'waiting' : rawDir;
-      row.dataset.direction = dir;
-
-      const avatarSlot = document.createElement('div');
-      avatarSlot.className = 'constellation-avatar';
-      const validAvatar = typeof entry?.avatar === 'string' && /^(?:data:image\/|https?:\/\/|avatars\/)/i.test(entry.avatar) ? entry.avatar : '';
-      if (validAvatar) {
-        const img = document.createElement('img');
-        img.className = 'constellation-avatar';
-        img.src = validAvatar;
-        img.alt = '';
-        avatarSlot.replaceWith(img);
-        row.append(img);
-      } else {
-        avatarSlot.textContent = String(entry?.name || 'W').trim().slice(0, 1).toUpperCase() || 'W';
-        row.append(avatarSlot);
-      }
-
-      const meta = document.createElement('div');
-      meta.className = 'constellation-meta';
-      const head = document.createElement('div');
-      head.className = 'constellation-head';
-      const nameSpan = document.createElement('span');
-      nameSpan.className = 'constellation-name';
-      nameSpan.textContent = String(entry?.name || tr('协作 Bot', 'Worker'));
-      const flowBadge = document.createElement('span');
-      flowBadge.className = 'constellation-flow';
-      flowBadge.textContent = dir === 'verifying'
-        ? tr('← 后台核验中', '← Verifying')
-        : dir === 'return'
-          ? tr('← 回传核验', '← Returning')
-          : dir === 'waiting'
-            ? tr('⏳ 等待交回', '⏳ Waiting')
-            : dir === 'dispatch'
-              ? tr('→ 派发指令', '→ Dispatch')
-              : tr('⟳ 执行中', '⟳ Working');
-      head.append(nameSpan, flowBadge);
-      meta.append(head);
-      if (entry?.title) {
-        const sub = document.createElement('div');
-        sub.className = 'constellation-sub';
-        sub.textContent = String(entry.title);
-        meta.append(sub);
-      }
-      row.append(meta);
-      container.append(row);
     });
   }
 
@@ -705,6 +447,7 @@
       layer.controller = controller;
       orbStarting = false;
       controller.setState(layer.family, effectiveReduced());
+      if (lastOrbTint) controller.setParams({ glowColor: lastOrbTint });
       if (window.liquidOrbStyleForFamily(layer.family) !== layer.style) syncOrb(layer.family);
     }).catch((error) => failOrbLayer(layer, previous, error));
   }
@@ -720,139 +463,9 @@
     orb.speed = window.liquidOrbParamsForFamily(family).speed;
     if (orbStarting) return;
     if (!effectiveReduced() && orb.controller && orb.controller.getStyle() !== window.liquidOrbStyleForFamily(family)) mountOrb(family);
-    else orb.controller?.setState(family, effectiveReduced());
-  }
-
-  function layoutHandoff() {
-    const stage = $('.live-stage').getBoundingClientRect();
-    if (stage.width < 1 || stage.height < 1) return false;
-    const constellationEl = $('[data-worker-constellation]');
-    // When the worker constellation is visible, `drawParticles` already draws
-    // the clean canvas curve + chevron + pulse to every constellation card;
-    // suppress the legacy SVG `[data-handoff-flow]` dashed arc so delegation
-    // never renders a second overlapping curved dashed line.
-    if (constellationEl && !constellationEl.hidden && constellationEl.querySelector('.constellation-item')) {
-      return false;
-    }
-    const hybridWorkerEl = $('.hybrid-worker');
-    const targetEl = hybridWorkerEl && !hybridWorkerEl.hidden ? hybridWorkerEl : null;
-    if (!targetEl) return false;
-    const worker = targetEl.getBoundingClientRect();
-    const orb = $('.membrane').getBoundingClientRect();
-    if (worker.width < 4 || worker.height < 4 || orb.width < 4 || orb.height < 4) return false;
-    const from = { x: worker.left + worker.width / 2 - stage.left, y: worker.top + worker.height / 2 - stage.top };
-    const to = { x: orb.left + orb.width / 2 - stage.left, y: orb.top + orb.height / 2 - stage.top };
-    const control = {
-      x: (from.x + to.x) / 2,
-      y: Math.max(24, Math.min(from.y, to.y) - Math.min(72, stage.height * .1))
-    };
-    const path = `M${from.x} ${from.y} Q${control.x} ${control.y} ${to.x} ${to.y}`;
-    $('[data-handoff-flow]').setAttribute('viewBox', `0 0 ${stage.width} ${stage.height}`);
-    $('[data-handoff-track]').setAttribute('d', path);
-    $('[data-handoff-motion]').setAttribute('path', path);
-    return true;
-  }
-
-  function stopHandoff() {
-    clearTimeout(handoffTimer);
-    const motion = $('[data-handoff-motion]');
-    try { motion.endElement(); } catch { /* the motion may not have started */ }
-    const flow = $('[data-handoff-flow]');
-    const label = $('[data-handoff-label]');
-    flow.classList.add('is-leaving');
-    label.classList.add('is-leaving');
-    handoffTimer = setTimeout(() => {
-      flow.setAttribute('hidden', '');
-      label.hidden = true;
-      flow.classList.remove('is-leaving');
-      label.classList.remove('is-leaving');
-    }, 260);
-  }
-
-  function updateWorkerVisual(worker) {
-    const image = $('[data-worker-avatar]');
-    const fallback = $('[data-worker-fallback]');
-    const handoffImage = $('[data-handoff-avatar]');
-    const avatar = typeof worker?.avatar === 'string' && /^(?:data:image\/|https?:\/\/|avatars\/)/i.test(worker.avatar) ? worker.avatar : '';
-    const initial = typeof worker?.label === 'string' ? worker.label.trim().slice(0, 1).toUpperCase() : '';
-    fallback.textContent = initial || 'W';
-    image.onerror = () => {
-      image.dataset.workerAvatarFailed = 'true';
-      image.hidden = true;
-      fallback.hidden = false;
-      handoffImage.hidden = true;
-    };
-    handoffImage.onerror = () => {
-      handoffImage.dataset.workerAvatarFailed = 'true';
-      handoffImage.hidden = true;
-      image.hidden = true;
-      fallback.hidden = false;
-    };
-    if (avatar) {
-      if (image.dataset.workerAvatarSrc !== avatar) {
-        image.dataset.workerAvatarSrc = avatar;
-        image.dataset.workerAvatarFailed = 'false';
-        image.src = avatar;
-      }
-      if (handoffImage.dataset.workerAvatarSrc !== avatar) {
-        handoffImage.dataset.workerAvatarSrc = avatar;
-        handoffImage.dataset.workerAvatarFailed = 'false';
-        handoffImage.src = avatar;
-      }
-      const failed = image.dataset.workerAvatarFailed === 'true' || handoffImage.dataset.workerAvatarFailed === 'true';
-      image.hidden = failed;
-      handoffImage.hidden = failed;
-      fallback.hidden = !failed;
-    } else {
-      delete image.dataset.workerAvatarSrc;
-      delete handoffImage.dataset.workerAvatarSrc;
-      delete image.dataset.workerAvatarFailed;
-      delete handoffImage.dataset.workerAvatarFailed;
-      image.removeAttribute('src');
-      handoffImage.removeAttribute('src');
-      image.hidden = true;
-      handoffImage.hidden = true;
-      fallback.hidden = false;
-    }
-  }
-
-  function syncHandoff() {
-    const handoff = state.handoff;
-    body.dataset.handoff = handoff?.direction || 'none';
-    if (effectiveReduced()) {
-      stopHandoff();
-      return;
-    }
-    const key = handoff ? `${handoff.direction}:${handoff.eventId}` : '';
-    if (key === handoffKey) return;
-    handoffKey = key;
-    if (!handoff) {
-      stopHandoff();
-      return;
-    }
-    clearTimeout(handoffTimer);
-    const flow = $('[data-handoff-flow]');
-    const label = $('[data-handoff-label]');
-    const motion = $('[data-handoff-motion]');
-    const worker = state.topology.nodes.find((node) => node.kind === 'worker')?.label || tr('协作 Bot', 'Worker');
-    $('[data-handoff-worker]').textContent = worker;
-    $('[data-handoff-copy]').textContent = handoff.direction === 'return'
-      ? (state.language === 'zh' ? `正在交回结果 · 等待 ${state.botName} 核验` : `Returning work · ${state.botName} review required`)
-      : (state.language === 'zh' ? '正在接收获派任务' : 'Receiving the delegated step');
-    motion.setAttribute('keyPoints', handoff.direction === 'return' ? '0;1' : '1;0');
-    flow.classList.remove('is-leaving');
-    label.classList.remove('is-leaving');
-    if (!layoutHandoff()) {
-      stopHandoff();
-      return;
-    }
-    flow.removeAttribute('hidden');
-    label.hidden = false;
-    try {
-      motion.beginElement();
-      handoffTimer = setTimeout(stopHandoff, 5000);
-    } catch {
-      stopHandoff();
+    else {
+      orb.controller?.setState(family, effectiveReduced());
+      if (lastOrbTint) orb.controller?.setParams({ glowColor: lastOrbTint });
     }
   }
 
@@ -1128,9 +741,18 @@
   const FAMILY_LABELS = {
     received: ['收到', 'Received'],
     reasoning: ['思考中', 'Thinking'],
-    'local-recall': ['查阅资料', 'Looking things up'],
+    'local-recall': ['回忆中', 'Recalling'],
+    'local-run': ['本机执行', 'On this computer'],
+    'local-read': ['读取文件', 'Reading files'],
+    'desktop-control': ['操作电脑', 'Desktop'],
+    projecting: ['投屏', 'Projecting'],
     'web2-research': ['上网查找', 'Searching the web'],
+    'web-read': ['阅读网页', 'Reading a page'],
     'metaweb-research': ['查 AI 互联网', 'Searching MetaWeb'],
+    'chain-write': ['写入 AI 互联网', 'Writing to MetaWeb'],
+    'chain-transfer': ['链上交易', 'On-chain exchange'],
+    'private-chat': ['链上私聊', 'Private chat'],
+    'group-task': ['群任务', 'Group task'],
     making: ['动手制作', 'Making'],
     delegation: ['安排协作', 'Delegating'],
     waiting: ['等待协作', 'Waiting on a teammate'],
@@ -1172,7 +794,6 @@
     body.dataset.family = state.family;
     body.dataset.speechRest = state.speechRest === true ? 'true' : 'false';
     body.dataset.activity = window.liquidOrbActivityForFamily(state.family);
-    body.dataset.topology = state.topology.mode;
     body.dataset.motion = effectiveReduced() ? 'reduced' : 'full';
     document.documentElement.lang = state.language === 'zh' ? 'zh' : 'en';
     document.title = state.botName ? `${state.botName} · Live Stage` : 'Live Stage';
@@ -1227,31 +848,6 @@
       titleEl.dataset.length = headlineLength <= 16 ? 'short' : headlineLength <= 40 ? 'medium' : 'long';
     }
     updateElapsed();
-    updateWorkerConstellation();
-    const constellationActive = Boolean($('[data-worker-constellation]') && !$('[data-worker-constellation]').hidden);
-    const nodes = Object.fromEntries(state.topology.nodes.map((node) => [node.id, node]));
-    // Only satellite nodes that exist in the topology are shown — and when the
-    // Worker constellation is active, the single `.hybrid-worker` bubble hides
-    // so multi-worker runs never paint a duplicate summary circle underneath.
-    const nodeSlots = { source: $('.hybrid-source'), worker: $('.hybrid-worker'), evidence: $('.hybrid-evidence') };
-    for (const [id, element] of Object.entries(nodeSlots)) {
-      if (!element) continue;
-      if (id === 'worker' && constellationActive) {
-        element.hidden = true;
-      } else {
-        element.hidden = state.topology.mode !== 'structured' || !nodes[id];
-      }
-    }
-    $('[data-node-source]').textContent = nodes.source?.label || tr('来源', 'Source');
-    $('[data-node-worker]').textContent = nodes.worker?.label || tr('协作 Bot', 'Worker');
-    $('[data-node-evidence]').textContent = nodes.evidence?.label || tr('证据', 'Evidence');
-    const tagSource = $('[data-tag-source]');
-    if (tagSource) tagSource.textContent = tr('来源', 'source');
-    const tagWorker = $('[data-tag-worker]');
-    if (tagWorker) tagWorker.textContent = tr('协作', 'worker');
-    const tagEvidence = $('[data-tag-evidence]');
-    if (tagEvidence) tagEvidence.textContent = tr('证据', 'evidence');
-    updateWorkerVisual(nodes.worker);
     // Director metrics stay in state for diagnostics; they are never owner copy.
     const metricsEl = $('[data-director-metrics]');
     if (metricsEl) {
@@ -1261,9 +857,8 @@
     updateParticipants();
     updateTaskHud();
     syncOrb(state.family);
-    syncHandoff();
     renderInteraction();
-    restartParticles();
+    scenesApi?.update(state);
   }
 
   // While the bot is speaking, working-family updates are held until the
@@ -1410,7 +1005,7 @@
     orbFamily: orb?.family || state.family,
     orbStyle: orb?.style ?? window.liquidOrbStyleForFamily(state.family),
     text: textChannels.map((channel) => ({ value: channel.value, typed: channel.typed, length: channel.chars.length, typing: channel.typing })),
-    particles: { activity: particleClock.activity, energy: state.motion.energy, phase: particles[0]?.phase ?? 0 },
+    scene: scenesApi?.debug?.() ?? null,
   });
   window.__liveStageBackend = 'loading';
   const elapsedTimer = setInterval(updateElapsed, 1000);
@@ -1418,13 +1013,26 @@
   document.addEventListener('visibilitychange', applyState);
   window.addEventListener('pagehide', () => {
     disposeAllOrbLayers();
-    stopHandoff();
     stopInteractionCountdown();
     stopHeldRelease();
     clearInterval(elapsedTimer);
-    cancelAnimationFrame(raf);
+    scenesApi?.dispose?.();
   });
-  new ResizeObserver(restartParticles).observe(canvas);
+  const scenesApi = window.IDBotsLiveStageScenes;
+  scenesApi?.init({
+    onFrame: updateTextMotion,
+    reduced: effectiveReduced,
+    voice: () => textMotion.energy,
+    activity: () => window.liquidOrbActivityForFamily(state.family),
+    orbSpeed: () => orb?.speed || .5,
+    reportEl: reportOpen,
+    orbTint: (glowColor) => {
+      lastOrbTint = glowColor;
+      orbLayers.forEach((layer) => layer.controller?.setParams({ glowColor }));
+    },
+  });
+  const stageEl = $('.live-stage');
+  if (stageEl) new ResizeObserver(() => scenesApi?.relayout()).observe(stageEl);
   applyState();
   window.__ready = true;
 })();

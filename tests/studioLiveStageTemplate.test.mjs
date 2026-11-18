@@ -21,14 +21,14 @@ const { listStudioOpenDelegations } = require('../dist-electron/main/services/st
 const PACKAGE_ROOT = path.resolve('public/live-stage');
 const DEMO_ROOT = path.join(PACKAGE_ROOT, 'demo');
 // Playback order also declared by the demo player in index.html.
-const DEMO_SEQUENCE = ['received', 'web2-research', 'metaweb-research', 'delegation', 'worker-report', 'verification', 'report-ready'];
+const DEMO_SEQUENCE = ['received', 'local-run', 'web2-research', 'metaweb-research', 'chain-write', 'delegation', 'worker-report', 'verification', 'private-chat', 'group-task', 'report-ready'];
 
 const read = (relative) => fs.readFileSync(path.join(PACKAGE_ROOT, relative), 'utf8');
 
 const message = (id, type, metadata = {}, content = '') => ({ id, type, content, timestamp: 1, metadata });
 
 /** Minimal fake package: real render assets + injected manifest/scenes text. */
-function fakePackage(t, { manifest, scenes, includeAssets = ['stage.css', 'liquid-orb-effect.js', 'liquid-orb.js', 'liquid-orb-LICENSE.txt'], renderOverride } = {}) {
+function fakePackage(t, { manifest, scenes, includeAssets = ['stage.css', 'liquid-orb-effect.js', 'liquid-orb.js', 'stage-scenes.js', 'stage.js', 'liquid-orb-LICENSE.txt'], renderOverride } = {}) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'live-stage-template-'));
   fs.copyFileSync(path.join(PACKAGE_ROOT, 'stage.html'), path.join(cwd, 'stage.html'));
   if (renderOverride !== undefined) fs.writeFileSync(path.join(cwd, 'stage.html'), renderOverride, 'utf8');
@@ -45,7 +45,7 @@ test('official template resolves from the built-in package with a validated mani
   assert.equal(resolution.status, 'ok');
   const template = resolution.template;
   assert.equal(template.templateId, 'studio-live-stage-official');
-  assert.equal(template.templateVersion, '1.0.0');
+  assert.equal(template.templateVersion, '1.1.0');
   assert.equal(template.stageProtocol, 'idbots.live-stage.v1');
   assert.equal(template.sourceKind, 'builtin');
   assert.equal(template.entry, 'index.html');
@@ -53,7 +53,7 @@ test('official template resolves from the built-in package with a validated mani
   assert.equal(template.scenesPath, 'scenes.json');
   assert.equal(template.assetRoot, PACKAGE_ROOT);
   assert.deepEqual(template.capabilities, ['stage.applyPatch']);
-  assert.equal(Object.keys(template.scenes.families).length, 17);
+  assert.equal(Object.keys(template.scenes.families).length, 26);
   assert.equal(fs.existsSync(path.join(PACKAGE_ROOT, template.entry)), true);
   assert.equal(fs.existsSync(path.join(DEMO_ROOT, 'received.json')), true);
 });
@@ -88,6 +88,7 @@ test('invalid scenes documents fall back with a reason', (t) => {
   const cases = [
     { name: 'unknown family', mutate: (scenes) => { scenes.families['made-up'] = { orb: { style: 1, preset: 'x' } }; }, reason: /unknown scene family/ },
     { name: 'missing family', mutate: (scenes) => { delete scenes.families.waiting; }, reason: /missing scene family: waiting/ },
+    { name: 'missing new family', mutate: (scenes) => { delete scenes.families['private-chat']; }, reason: /missing scene family: private-chat/ },
     { name: 'unbounded scene fields', mutate: (scenes) => { scenes.families.received.workerName = 'Sneaky'; }, reason: /unknown scene fields/ },
     { name: 'motion out of bounds', mutate: (scenes) => { scenes.families.making.motion.energy = 1.5; }, reason: /energy out of range/ },
     { name: 'fallback cycle', mutate: (scenes) => {
@@ -129,7 +130,16 @@ test('scenes.json agrees with the host model for composition, topology, and moti
     received: fresh(),
     reasoning: model.reduceLiveStageMessage(fresh(), message('a', 'assistant', { isThinking: true })),
     speaking: model.reduceLiveStageMessage(fresh(), message('b', 'assistant', {}, 'Here is what I found. The details follow below.')),
-    'local-recall': model.reduceLiveStageMessage(fresh(), message('c', 'tool_use', { toolName: 'read', toolUseId: 'c' })),
+    'local-run': model.reduceLiveStageMessage(fresh(), message('c0', 'tool_use', { toolName: 'bash', toolUseId: 'c0' })),
+    'local-read': model.reduceLiveStageMessage(fresh(), message('c1', 'tool_use', { toolName: 'read', toolUseId: 'c1' })),
+    'local-recall': model.reduceLiveStageMessage(fresh(), message('c', 'tool_use', { toolName: 'conversation_search', toolUseId: 'c' })),
+    'desktop-control': model.reduceLiveStageMessage(fresh(), message('c2', 'tool_use', { toolName: 'cua_click', toolUseId: 'c2' })),
+    projecting: model.reduceLiveStageMessage(fresh(), message('c3', 'tool_use', { toolName: 'projection_begin', toolUseId: 'c3' })),
+    'web-read': model.reduceLiveStageMessage(fresh(), message('c4', 'tool_use', { toolName: 'web_fetch', toolUseId: 'c4' })),
+    'chain-write': model.reduceLiveStageMessage(fresh(), message('c5', 'tool_use', { toolName: 'post_buzz', toolUseId: 'c5' })),
+    'chain-transfer': model.reduceLiveStageMessage(fresh(), message('c6', 'tool_use', { toolName: 'wallet_transfer', toolUseId: 'c6' })),
+    'private-chat': model.reduceLiveStageMessage(fresh(), message('c7', 'tool_use', { toolName: 'send_private_chat', toolUseId: 'c7', toolInput: { to: 'peer-1' } })),
+    'group-task': model.reduceLiveStageMessage(fresh(), message('c8', 'tool_use', { toolName: 'group_chat', toolUseId: 'c8', toolInput: { action: 'send_group_message', groupId: 'g1' } })),
     'web2-research': model.reduceLiveStageMessage(fresh(), message('d', 'tool_use', { toolName: 'web_search', toolUseId: 'd' })),
     'metaweb-research': model.reduceLiveStageMessage(fresh(), message('e', 'tool_use', { toolName: 'omni_reader', toolUseId: 'e' })),
     making: model.reduceLiveStageMessage(fresh(), message('f', 'tool_use', { toolName: 'write', toolUseId: 'f' })),
@@ -163,10 +173,14 @@ test('demo fixtures are valid states, strictly increasing, and provably model-de
   const context = { sessionId: 'demo-live-stage', turnId: 'demo-turn-1', botName: 'Nova', language: 'en', directorEnabled: false, nowMs: NOW };
   let state = model.createLiveStageState(context);
   const expected = { received: state };
+  state = model.reduceLiveStageMessage(state, message('demo-tooluse-run-1', 'tool_use', { toolName: 'bash', toolUseId: 'demo-run-1' }), { nowMs: NOW });
+  expected['local-run'] = state;
   state = model.reduceLiveStageMessage(state, message('demo-tooluse-web-1', 'tool_use', { toolName: 'web_search', toolUseId: 'demo-web-1' }), { nowMs: NOW });
   expected['web2-research'] = state;
   state = model.reduceLiveStageMessage(state, message('demo-tooluse-omni-1', 'tool_use', { toolName: 'omni_reader', toolUseId: 'demo-omni-1' }), { nowMs: NOW });
   expected['metaweb-research'] = state;
+  state = model.reduceLiveStageMessage(state, message('demo-tooluse-chain-1', 'tool_use', { toolName: 'post_simpleanswer', toolUseId: 'demo-chain-1' }), { nowMs: NOW });
+  expected['chain-write'] = state;
   state = model.reduceLiveStageMessage(
     state,
     message('demo-tooluse-delegate-1', 'tool_use', { toolName: 'local_worker_delegate', toolUseId: 'demo-delegate-1', toolInput: { workerMetabotId: 7 } }),
@@ -181,6 +195,31 @@ test('demo fixtures are valid states, strictly increasing, and provably model-de
   expected['worker-report'] = state;
   state = model.reduceLiveStageMessage(state, message('demo-tooluse-shot-1', 'tool_use', { toolName: 'bot_browser_screenshot', toolUseId: 'demo-shot-1' }), { nowMs: NOW });
   expected.verification = state;
+  state = model.reduceLiveStageMessage(
+    state,
+    message('demo-tooluse-peer-1', 'tool_use', { toolName: 'send_private_chat', toolUseId: 'demo-peer-1', toolInput: { to: 'meta:peer-mira' } }),
+    { nowMs: NOW },
+  );
+  expected['private-chat'] = {
+    ...state,
+    activePeers: [{ id: 'meta:peer-mira', name: 'Mira', avatar: '', status: 'sending', preview: '查一下 APEC 的出席名单', updatedAt: NOW }],
+  };
+  state = model.reduceLiveStageMessage(
+    state,
+    message('demo-tooluse-group-1', 'tool_use', { toolName: 'group_chat', toolUseId: 'demo-group-1', toolInput: { action: 'send_group_message', groupId: 'g-demo' } }),
+    { nowMs: NOW },
+  );
+  expected['group-task'] = {
+    ...state,
+    activeGroups: [{
+      id: 'g-demo', title: 'APEC brief', status: 'posting', memberCount: 4, openteam: true, updatedAt: NOW,
+      members: [
+        { id: 'meta:peer-ren', name: 'Ren', role: 'chair', avatar: '' },
+        { id: 'meta:nova', name: 'Nova', self: true, avatar: '' },
+        { id: 'meta:guest-ot', name: 'Rin', openteam: true, avatar: '' },
+      ],
+    }],
+  };
   state = model.reportReadyLiveStage(state, null, NOW);
   expected['report-ready'] = state;
 
@@ -355,7 +394,7 @@ test('the built-in render path and the loader consume the same package source', 
     assets: { assetRoot: PACKAGE_ROOT, fallbackAvatarDataUri: 'data:image/png;base64,AA==' },
   });
   assert.match(html, /"family":"worker-report"/);
-  assert.match(html, /"revision":4/);
+  assert.match(html, /"revision":6/);
   assert.match(html, /liquidOrbStyleForFamily/);
   assert.doesNotMatch(html, /__STAGE_CSS__|__INITIAL_STATE__|__ORB_EFFECT__|__ORB_RENDERER__|__STAGE_JS__|__AVATAR_DATA_URI__/);
   // The official package and its render output describe the same scene for the same fixture.

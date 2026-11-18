@@ -39,7 +39,7 @@ test('event reducer preserves presence until real structured work arrives', () =
 test('projection readiness requires a successful matching tool result', () => {
   let state = initial();
   state = reduceLiveStageMessage(state, message('call', 'tool_use', { toolName: 'bot_browser_preview_local', toolInput: { projection: true }, toolUseId: 'project-1' }));
-  assert.equal(state.family, 'browser-action');
+  assert.equal(state.family, 'projecting');
   assert.deepEqual(state.pendingProjectionIds, ['project-1']);
   state = reduceLiveStageMessage(state, message('result', 'tool_result', { toolUseId: 'project-1', isError: false }));
   assert.equal(state.family, 'report-ready');

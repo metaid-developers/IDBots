@@ -1257,6 +1257,32 @@ export class GroupTaskStore {
     return rows.map(rowToGroupTask);
   }
 
+  /**
+   * Open group tasks (planning/executing/review, not archived, carrying a
+   * group id) where the MetaBot is chair or a non-removed member — one SQL
+   * query so the Live Stage rail does not scan every task in the store.
+   */
+  listOpenTasksForMetabot(metabotId: number): GroupTask[] {
+    const id = Math.trunc(metabotId);
+    if (!Number.isFinite(id) || id <= 0) return [];
+    const rows = this.getAll<GroupTaskRow>(
+      `SELECT t.* FROM group_tasks t
+       WHERE t.status IN ('planning', 'executing', 'review')
+         AND t.archived_at IS NULL
+         AND t.group_id IS NOT NULL AND TRIM(t.group_id) != ''
+         AND (
+           t.chair_metabot_id = ?
+           OR EXISTS (
+             SELECT 1 FROM group_task_members m
+             WHERE m.task_id = t.id AND m.metabot_id = ? AND m.removed_at IS NULL
+           )
+         )
+       ORDER BY t.pinned DESC, t.id DESC`,
+      [id, id],
+    );
+    return rows.map(rowToGroupTask);
+  }
+
   /** Set the local pinned flag (pinned tasks sort first in the UI list). */
   setTaskPinned(id: number, pinned: boolean): void {
     this.db.run('UPDATE group_tasks SET pinned = ?, updated_at = datetime(\'now\') WHERE id = ?', [

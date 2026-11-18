@@ -37,7 +37,7 @@ test('Live Stage settings are wired through IPC, preload, types, allowlist, Sett
 });
 
 test('Live Stage assets ship through the existing dist bundle and retain the orb license', () => {
-  for (const file of ['stage.html', 'stage.css', 'stage.js', 'liquid-orb.js', 'liquid-orb-effect.js', 'liquid-orb-LICENSE.txt']) {
+  for (const file of ['stage.html', 'stage.css', 'stage-scenes.js', 'stage.js', 'liquid-orb.js', 'liquid-orb-effect.js', 'liquid-orb-LICENSE.txt']) {
     assert.ok(fs.existsSync(path.resolve('public/live-stage', file)), file);
   }
   assert.match(read('electron-builder.json'), /"dist\/\*\*\/\*"/);
