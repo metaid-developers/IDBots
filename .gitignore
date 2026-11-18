@@ -1092,3 +1092,6 @@ blob-report/
 !tests/firstClassTaskPhase4.test.mjs
 !tests/studioTaskSessionDecouple.test.mjs
 !tests/taskHierarchyAndStageSync.test.mjs
+!tests/studioFallbackEffortFloor.test.ts
+!tests/studioQuotaBypassRouting.test.ts
+!tests/studioBrowserTabsTool.test.ts

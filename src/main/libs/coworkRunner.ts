@@ -51,7 +51,7 @@ import { mapDshReasoningEffort } from './dshReasoningEffort';
 import { shouldIncludeMetawebDeepSections, nextMetawebPromptTier, type MetawebPromptMode, type MetawebPromptTier } from './metawebPromptTier';
 import { dshModelReasoningDeclaration, dshRouteReasoningEffort, isGlmFamilyModelId, undeclaredReasoningRouteWarning } from './dshModelReasoning';
 import { resolveOpenCodeGoApiFormat, openCodeGoWireRouteKey } from './opencodeGoProtocol';
-import { toLlmEffortLevel, type LlmEffortLevel } from './llmEffort';
+import { maxLlmEffortLevel, toLlmEffortLevel, type LlmEffortLevel } from './llmEffort';
 import {
   CoworkDshSteerWindowClosedError,
   CoworkSteerChannel,
@@ -2413,7 +2413,8 @@ export interface CoworkRunnerOptions {
    * non-browser sessions and degrade gracefully (never throw) when the browser
    * surface is unavailable.
    */
-  getBrowserContextPrompt?: (sessionId: string) => Promise<string | null>;
+  getBrowserGuidePrompt?: (sessionId: string) => Promise<string | null>;
+  getBrowserTabsPrompt?: (sessionId: string) => Promise<string | null>;
   /**
    * True while another stage (the first-run Genesis Stage) owns a projector
    * session's projector: the bot must not project pages of its own then.
@@ -2970,7 +2971,8 @@ export class CoworkRunner extends EventEmitter {
   private getMetaAppAliases?: (appId: string) => string[] | null;
   private requestIMSessionReset?: (sessionId: string) => boolean;
   private isIMSessionCallback?: (sessionId: string) => boolean;
-  private getBrowserContextPrompt?: (sessionId: string) => Promise<string | null>;
+  private getBrowserGuidePrompt?: (sessionId: string) => Promise<string | null>;
+  private getBrowserTabsPrompt?: (sessionId: string) => Promise<string | null>;
   private isProjectorHeldByStage?: (sessionId: string) => boolean;
   private controlBotBrowser?: BotBrowserControl;
   private experienceStore?: CoworkExperienceStore;
@@ -3195,7 +3197,8 @@ export class CoworkRunner extends EventEmitter {
     this.getMetaAppAliases = options?.getMetaAppAliases;
     this.requestIMSessionReset = options?.requestIMSessionReset;
     this.isIMSessionCallback = options?.isIMSession;
-    this.getBrowserContextPrompt = options?.getBrowserContextPrompt;
+    this.getBrowserGuidePrompt = options?.getBrowserGuidePrompt;
+    this.getBrowserTabsPrompt = options?.getBrowserTabsPrompt;
     this.isProjectorHeldByStage = options?.isProjectorHeldByStage;
     this.controlBotBrowser = options?.controlBotBrowser;
     this.experienceStore = options?.experienceStore;
@@ -7936,11 +7939,17 @@ export class CoworkRunner extends EventEmitter {
       }
     }
     const isProactiveStudioBriefingTurn = prompt.includes('<studio_proactive_briefing>');
-    if (this.getBrowserContextPrompt && !trustSuppressed && !isProactiveStudioBriefingTurn) {
-      // Browser tab state is live; fetch async and degrade silently on failure.
+    if (this.getBrowserGuidePrompt && !trustSuppressed && !isProactiveStudioBriefingTurn && shouldInjectVolatile('browser')) {
+      // 2026-11-18 Studio post-mortem: this section used to carry the LIVE
+      // tab list (<active_tab>/<open_tabs>) and was re-injected on every turn
+      // — tab snapshots alone accounted for ~63% of one day's context growth
+      // in the incident session. The section is now the byte-stable browser
+      // guide only (dedupable — it enters history once per generation), and
+      // the live state lives behind the browser_tabs tool (see
+      // buildDshHostTools).
       sections.push({
         key: 'browser',
-        text: await this.getBrowserContextPrompt(sessionId).catch(() => ''),
+        text: await this.getBrowserGuidePrompt(sessionId).catch(() => ''),
       });
     }
     // Active session goal (/goal command): rides the per-turn tail like the
@@ -10832,6 +10841,76 @@ export class CoworkRunner extends EventEmitter {
     return fallbackRoute
   }
 
+  // ── Provider quota-exhaustion memory (2026-11-18 Studio post-mortem) ──
+  //
+  // A 429 quota death (e.g. the free relay's insufficient_me) ends ONE turn,
+  // but the next turn re-resolved the same dead route and paid the whole
+  // doomed-attempt tax again — the incident session hit the relay 16 times
+  // over nine hours (a failed attempt + an auto-continue + a switch notice
+  // per turn) while the balance could not have paid for a single request.
+  // Quota does not heal mid-window, so the runner remembers the exhausted
+  // provider (account-wide — the ME balance is shared by every session) and
+  // the quota pre-gate routes subsequent turns straight to a payable
+  // alternative. Re-probe cadence: after PROVIDER_QUOTA_REPROBE_AFTER_MS one
+  // real attempt re-tests the provider (a recharge must recover service
+  // without an app restart); a 429 on that probe re-marks the provider for
+  // another window. Any successful turn on the provider clears the memory
+  // immediately.
+
+  private static readonly PROVIDER_QUOTA_REPROBE_AFTER_MS = 10 * 60 * 1000;
+
+  private readonly providerQuotaExhausted = new Map<string, { sinceMs: number; lastProbeAt: number }>();
+  /** Sessions already notified about a given exhaustion period — one bypass notice per period per session. */
+  private readonly quotaBypassNoticeBySession = new Map<string, { provider: string; sinceMs: number }>();
+
+  /** The exhaustion entry when the provider should still be bypassed, else null (absent, or the re-probe window is due). */
+  private quotaExhaustedBypassEntry(provider: string): { sinceMs: number; lastProbeAt: number } | null {
+    const entry = this.providerQuotaExhausted.get(provider);
+    if (!entry) return null;
+    return Date.now() - entry.lastProbeAt < CoworkRunner.PROVIDER_QUOTA_REPROBE_AFTER_MS ? entry : null;
+  }
+
+  private markProviderQuotaExhausted(provider: string): void {
+    const now = Date.now();
+    const entry = this.providerQuotaExhausted.get(provider);
+    if (entry) {
+      entry.lastProbeAt = now;
+    } else {
+      this.providerQuotaExhausted.set(provider, { sinceMs: now, lastProbeAt: now });
+    }
+  }
+
+  private clearProviderQuotaExhausted(provider: string): void {
+    this.providerQuotaExhausted.delete(provider);
+    for (const [sessionId, noticed] of this.quotaBypassNoticeBySession) {
+      if (noticed.provider === provider) this.quotaBypassNoticeBySession.delete(sessionId);
+    }
+  }
+
+  /**
+   * Payable alternative for a quota-exhausted route, mirroring the GT-02
+   * fallback order (bot fallback brain → current default → system rescue).
+   * Both resolvers already decline the failed route's upstream, so a null
+   * return genuinely means "no alternative" and the turn keeps its normal
+   * ladder (the settlement copy then explains the quota death).
+   */
+  private resolveQuotaBypassDshRoute(
+    sessionId: string,
+    deadRoute: DshProviderRouteInfo,
+  ): { route: DshProviderRouteInfo; targetZh: string; targetEn: string } | null {
+    const brainFallback = this.resolveSessionFallbackDshRoute(sessionId, deadRoute);
+    if (brainFallback) {
+      return { route: brainFallback, targetZh: '该 Bot 的备用模型', targetEn: "the bot's fallback model" };
+    }
+    const rescue = this.resolveCurrentDefaultDshRoute(sessionId, deadRoute);
+    if (rescue.route) {
+      return rescue.source === 'system-rescue'
+        ? { route: rescue.route, targetZh: '系统兜底模型', targetEn: 'the system rescue model' }
+        : { route: rescue.route, targetZh: '当前默认模型', targetEn: 'the current default model' };
+    }
+    return null;
+  }
+
   /**
    * Last-resort runtime rescue route (2026-10-08 stale-binding post-mortem):
    * when the turn's bound route (session model pick, or a bot brain pinned to
@@ -12266,24 +12345,28 @@ export class CoworkRunner extends EventEmitter {
       const pinnedAutoEffortRung = autoEffortRung != null
         ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode, glmFamily: isGlmFamilyModelId(route.model) })
         : null;
+      // The pre-mapping effort level the PRIMARY attempt of this turn runs
+      // with. Hoisted so a later GT-02 fallback attempt (runGuardedTurn's
+      // routeOverride) can hold it as an in-turn floor — see the clamp there.
+      const primaryEffortLevel: LlmEffortLevel | null = sessionEffortPicked
+        ? toLlmEffortLevel(effectiveEffortRung)
+        : unattendedTurn
+          ? resolveUnattendedAutoEffort({
+            brainEffort: automationBrain?.effort,
+            hasBrain: automationBrain != null,
+            globalEffort: getPersistedCoworkEffortLevel(),
+          })
+          : pinnedAutoEffortRung ?? resolveAutoEffortFallback({
+            sentinelDefault: effortSentinelDefault,
+            assistantMode,
+            glmFamily: isGlmFamilyModelId(route.model),
+            brainEffort: automationBrain?.effort,
+            hasBrain: automationBrain != null,
+            globalEffort: getPersistedCoworkEffortLevel(),
+            modelDefault: modelOptions?.reasoningEffort,
+          });
       const dshReasoningEffort = mapDshReasoningEffort(
-        sessionEffortPicked
-          ? toLlmEffortLevel(effectiveEffortRung)
-          : unattendedTurn
-            ? resolveUnattendedAutoEffort({
-              brainEffort: automationBrain?.effort,
-              hasBrain: automationBrain != null,
-              globalEffort: getPersistedCoworkEffortLevel(),
-            })
-            : pinnedAutoEffortRung ?? resolveAutoEffortFallback({
-              sentinelDefault: effortSentinelDefault,
-              assistantMode,
-              glmFamily: isGlmFamilyModelId(route.model),
-              brainEffort: automationBrain?.effort,
-              hasBrain: automationBrain != null,
-              globalEffort: getPersistedCoworkEffortLevel(),
-              modelDefault: modelOptions?.reasoningEffort,
-            }),
+        primaryEffortLevel,
         sessionEffortPicked || pinnedAutoEffortRung != null || !assistantMode
           ? activeSession.thinkingOverride ?? modelOptions?.thinking
           : undefined,
@@ -12516,33 +12599,46 @@ export class CoworkRunner extends EventEmitter {
           // Same effort chain as the primary route above, except the bot-brain
           // rung reads the FALLBACK brain's effort (that brain's model is the
           // one now running the turn). The session override still wins in
-          // assistant mode; without one, assistant mode pins 'off' here too —
-          // a fallback resume must not re-introduce a reasoning pass ahead of
-          // the first visible token.
+          // assistant mode. Without one, assistant mode keeps its conservative
+          // default here too — but never BELOW the in-turn floor: the primary
+          // attempt already started this turn at primaryEffortLevel (e.g. a
+          // cerebellum 'off' verdict pinned UP to 'low' because the primary
+          // route was GLM-family), and a fallback onto a model that CAN
+          // express 'off' must not silently un-pin it back down. Swapping the
+          // model AND dropping the reasoning tier is a double downgrade the
+          // owner never asked for (2026-11-18 Studio session post-mortem:
+          // glm-5.3-flash 'low' → deepseek-flash 'off' on 16 consecutive
+          // quota-fallback turns). Bot-automation turns keep the fallback
+          // brain's own configured effort — that is deliberate bot config,
+          // not an owner-chat experience decision.
           const fallbackModelOptions = resolveModelOptions(routeOverride.model);
           // Same GLM-family floor as the primary route above, read against
           // the fallback brain's model (the one now running the turn).
           const pinnedFallbackAutoEffortRung = autoEffortRung != null
             ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode, glmFamily: isGlmFamilyModelId(routeOverride.model) })
             : null;
+          const fallbackEffortLevel: LlmEffortLevel | null = sessionEffortPicked
+            ? toLlmEffortLevel(effectiveEffortRung)
+            : unattendedTurn
+              ? resolveUnattendedAutoEffort({
+                brainEffort: automationBrain?.fallbackEffort,
+                hasBrain: automationBrain != null,
+                globalEffort: getPersistedCoworkEffortLevel(),
+              })
+              : pinnedFallbackAutoEffortRung ?? resolveAutoEffortFallback({
+                sentinelDefault: effortSentinelDefault,
+                assistantMode,
+                glmFamily: isGlmFamilyModelId(routeOverride.model),
+                brainEffort: automationBrain?.fallbackEffort,
+                hasBrain: automationBrain != null,
+                globalEffort: getPersistedCoworkEffortLevel(),
+                modelDefault: fallbackModelOptions?.reasoningEffort,
+              });
+          const flooredFallbackEffortLevel = assistantMode && !unattendedTurn && !sessionEffortPicked
+            ? maxLlmEffortLevel(fallbackEffortLevel, primaryEffortLevel)
+            : fallbackEffortLevel;
           turnReasoningEffort = mapDshReasoningEffort(
-            sessionEffortPicked
-              ? toLlmEffortLevel(effectiveEffortRung)
-              : unattendedTurn
-                ? resolveUnattendedAutoEffort({
-                  brainEffort: automationBrain?.fallbackEffort,
-                  hasBrain: automationBrain != null,
-                  globalEffort: getPersistedCoworkEffortLevel(),
-                })
-                : pinnedFallbackAutoEffortRung ?? resolveAutoEffortFallback({
-                  sentinelDefault: effortSentinelDefault,
-                  assistantMode,
-                  glmFamily: isGlmFamilyModelId(routeOverride.model),
-                  brainEffort: automationBrain?.fallbackEffort,
-                  hasBrain: automationBrain != null,
-                  globalEffort: getPersistedCoworkEffortLevel(),
-                  modelDefault: fallbackModelOptions?.reasoningEffort,
-                }),
+            flooredFallbackEffortLevel,
             sessionEffortPicked || pinnedFallbackAutoEffortRung != null || !assistantMode
               ? activeSession.thinkingOverride ?? fallbackModelOptions?.thinking
               : undefined,
@@ -12999,7 +13095,64 @@ export class CoworkRunner extends EventEmitter {
       }
       };
 
-      let outcome = await runGuardedTurn(effectiveDshPrompt, promptImages);
+      // Quota-exhaustion pre-gate (2026-11-18 Studio post-mortem): a provider
+      // whose quota died earlier in this window is skipped BEFORE the turn
+      // runs — in the incident session every turn re-attempted the dead
+      // relay, burned a failed attempt + auto-continue, and printed another
+      // switch notice, 16 times over one evening. The bypass route mirrors
+      // the GT-02 order (bot fallback brain → current default → system
+      // rescue); when nothing payable resolves, the turn keeps its normal
+      // ladder and the settlement copy explains the death. One bypass notice
+      // per exhaustion period per session (自动+明示, owner ruling
+      // 2026-11-19); the periodic re-probe and any successful turn on the
+      // provider restore the primary route automatically.
+      let quotaBypassRoute: DshProviderRouteInfo | null = null;
+      const quotaBypassEntry = this.quotaExhaustedBypassEntry(route.provider);
+      if (quotaBypassEntry) {
+        const bypass = this.resolveQuotaBypassDshRoute(sessionId, route);
+        if (bypass) {
+          quotaBypassRoute = bypass.route;
+          const deadProviderLabel = isFreeQuotaProvider(route.provider) ? FREE_PROVIDER_DISPLAY_NAME : route.provider;
+          const altProviderLabel = isFreeQuotaProvider(bypass.route.provider) ? FREE_PROVIDER_DISPLAY_NAME : bypass.route.provider;
+          const noticed = this.quotaBypassNoticeBySession.get(sessionId);
+          if (!noticed || noticed.provider !== route.provider || noticed.sinceMs !== quotaBypassEntry.sinceMs) {
+            this.quotaBypassNoticeBySession.set(sessionId, { provider: route.provider, sinceMs: quotaBypassEntry.sinceMs });
+            if (this.quotaBypassNoticeBySession.size > 256) {
+              for (const [key, entry] of [...this.quotaBypassNoticeBySession]) {
+                if (!this.quotaExhaustedBypassEntry(entry.provider)) this.quotaBypassNoticeBySession.delete(key);
+              }
+            }
+            this.addSystemMessage(
+              sessionId,
+              tApp(
+                isFreeQuotaProvider(route.provider)
+                  ? `${deadProviderLabel} 免费中转积分不足（请求按输入量计费，长会话每轮成本会随上下文增长）。本轮起已自动改用${bypass.targetZh} ${bypass.route.model}（${altProviderLabel}）继续；充值积分或在 设置 > 模型 配置自有 Provider 后会自动切回。`
+                  : `模型供应商 ${deadProviderLabel} 的 ${route.model} 额度不足。本轮起已自动改用${bypass.targetZh} ${bypass.route.model}（${altProviderLabel}）继续；充值后会自动切回。`,
+                isFreeQuotaProvider(route.provider)
+                  ? `${deadProviderLabel} free relay is out of ME credits (requests are billed by input size, so the per-turn cost grows as the conversation grows). Turns now continue automatically on ${bypass.targetEn} ${bypass.route.model} (${altProviderLabel}); top up credits or configure your own provider under Settings > Models to switch back.`
+                  : `Provider ${deadProviderLabel} model ${route.model} is out of credits. Turns now continue automatically on ${bypass.targetEn} ${bypass.route.model} (${altProviderLabel}); top up to switch back.`,
+              ),
+              {
+                dshRouteFallback: true,
+                quotaBypass: true,
+                fromProvider: route.provider,
+                fromModel: route.model,
+                toProvider: bypass.route.provider,
+                toModel: bypass.route.model,
+              },
+            );
+          }
+          coworkLog('INFO', 'runDshSessionLocal', 'Quota-exhausted provider bypassed for this turn', {
+            sessionId,
+            deadRoute: { provider: route.provider, model: route.model },
+            bypassRoute: { provider: bypass.route.provider, model: bypass.route.model },
+            sinceMs: quotaBypassEntry.sinceMs,
+          });
+        }
+      }
+      const quotaBypassOverride = quotaBypassRoute ?? undefined;
+
+      let outcome = await runGuardedTurn(effectiveDshPrompt, promptImages, quotaBypassOverride);
 
       // Empty terminal turn auto-continue (parity with the Claude path's
       // bf15f63d fix): DeepSeek occasionally ends a turn after emitting only a
@@ -13018,7 +13171,7 @@ export class CoworkRunner extends EventEmitter {
         outcome = await runGuardedTurn(
           EMPTY_TERMINAL_TURN_CONTINUE_PROMPT,
           undefined,
-          undefined,
+          quotaBypassOverride,
           { reasoningEffort: CONTINUE_TURN_REASONING_EFFORT },
         );
       }
@@ -13037,7 +13190,7 @@ export class CoworkRunner extends EventEmitter {
           outcome = await runGuardedTurn(
             FINALIZATION_TURN_CONTINUE_PROMPT,
             undefined,
-            undefined,
+            quotaBypassOverride,
             { reasoningEffort: CONTINUE_TURN_REASONING_EFFORT, finalizing: true },
           );
         } finally {
@@ -13065,7 +13218,7 @@ export class CoworkRunner extends EventEmitter {
         outcome = await runGuardedTurn(
           TRUNCATED_TURN_CONTINUE_PROMPT,
           undefined,
-          undefined,
+          quotaBypassOverride,
           { reasoningEffort: CONTINUE_TURN_REASONING_EFFORT },
         );
       }
@@ -13091,7 +13244,7 @@ export class CoworkRunner extends EventEmitter {
           'Turn died on malformed streamed tool-call JSON — auto-continuing once',
           { sessionId, code: outcome.error?.code, message: outcome.error?.message }
         );
-        outcome = await runGuardedTurn(MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT);
+        outcome = await runGuardedTurn(MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, undefined, quotaBypassOverride);
       }
 
       // Transient environmental failure (TRANSPORT/TIMEOUT/RATE_LIMIT/SERVER/
@@ -13105,8 +13258,9 @@ export class CoworkRunner extends EventEmitter {
       // error settlement below; non-transient codes never enter this path.
       // Route behind the most recent turn attempt — the quota notice below
       // must name the route that actually ran out of credit, which can be the
-      // fallback brain route after a provider-outage switch, not `route`.
-      let lastAttemptRoute = route;
+      // fallback brain route after a provider-outage switch, or the quota
+      // bypass route from the pre-gate above, not `route`.
+      let lastAttemptRoute = quotaBypassRoute ?? route;
       for (let resumeAttempt = 1; resumeAttempt <= DSH_TRANSIENT_TURN_MAX_RESUMES; resumeAttempt += 1) {
         if (outcome.kind !== 'error' || activeSession.abortController.signal.aborted || !isTransientDshTurnError(outcome)) break;
         coworkLog(
@@ -13115,7 +13269,7 @@ export class CoworkRunner extends EventEmitter {
           'Transient DSH turn failure — auto-resuming turn after provider/network blip',
           { sessionId, code: outcome.error?.code, message: outcome.error?.message, resumeAttempt, maxResumes: DSH_TRANSIENT_TURN_MAX_RESUMES }
         );
-        outcome = await runGuardedTurn(TRANSIENT_TURN_RESUME_PROMPT);
+        outcome = await runGuardedTurn(TRANSIENT_TURN_RESUME_PROMPT, undefined, quotaBypassOverride);
       }
 
       // GT-02 provider-outage fallback: the primary route burned its whole
@@ -13334,6 +13488,20 @@ export class CoworkRunner extends EventEmitter {
           lastAttemptRoute = switchRescueRoute;
           outcome = await runGuardedTurn(effectiveDshPrompt, promptImages, switchRescueRoute);
         }
+      }
+
+      // Quota-exhaustion memory upkeep (2026-11-18 Studio post-mortem): a
+      // quota death is remembered per provider so the NEXT turn skips the
+      // dead route at the pre-gate above (the re-probe happens at most once
+      // per PROVIDER_QUOTA_REPROBE_AFTER_MS window); a completed turn clears
+      // the memory for whichever route actually served it, so a recharge or
+      // a top-up recovers the primary route without an app restart.
+      if (outcome.kind === 'error') {
+        if (isQuotaDshTurnError(outcome)) {
+          this.markProviderQuotaExhausted(lastAttemptRoute.provider);
+        }
+      } else {
+        this.clearProviderQuotaExhausted(lastAttemptRoute.provider);
       }
 
       if (activeSession.abortController.signal.aborted) {
@@ -13766,6 +13934,30 @@ export class CoworkRunner extends EventEmitter {
             ? `Fast mode engaged (reasoning effort: ${result.effort}). Write the projection page now.`
             : 'Fast mode unavailable right now — write the projection page as usual.'
           return { content: [{ type: 'text', text }] } as any
+        },
+      ))
+    }
+    // Live Bot Browser tab state as a PULL tool (2026-11-18 Studio
+    // post-mortem): the tab list used to ride every turn's volatile tail and
+    // accumulated as ~63% of one day's context growth — snapshots of the same
+    // tabs, re-sent and never reclaimed. Studio (browser-type) sessions get
+    // the tool; the byte-stable browser guide stays in the tail (deduped).
+    if (this.getBrowserTabsPrompt && this.store.getSessionWithoutMessages(sessionId)?.sessionType === 'browser') {
+      tools.push(passthrough(
+        'browser_tabs',
+        'List the Bot Browser\'s LIVE tab state for this session: the active tab (title, uri, renderer type, source_dir for MetaApp/HTML pages) and every open tab. Live tab state is NOT auto-injected into the conversation — call this FIRST whenever the owner refers to "the page / 当前页面 / this tab", asks what is open, or before reading or controlling a specific tab; then act with the bot_browser_* tools. Returns a <browser_tabs> block; "not open" means the Bot Browser has no tabs right now, not an error.',
+        {},
+        async () => {
+          const text = await this.getBrowserTabsPrompt!(sessionId).catch(() => null)
+          return {
+            content: [
+              {
+                type: 'text',
+                text: text
+                  ?? 'Bot Browser is not open or did not respond right now. If the user asks you to control the browser, ask them to switch to Bot Browser mode first.',
+              },
+            ],
+          } as any
         },
       ))
     }
