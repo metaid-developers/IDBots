@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const { createNativeSqliteDatabase } = await import('../dist-electron/main/nativeSqliteDatabase.js');
 const { MetawebSurfStore } = await import('../dist-electron/main/metawebSurfStore.js');
@@ -869,3 +872,84 @@ test('digest-only harness (no session injected) never reports a skip', async () 
   assert.equal(run.status, 'done');
   assert.equal(run.stats.sessionSkipped, 0, 'nothing to skip when no session is configured');
 });
+
+// ---------------------------------------------------------------------------
+// Report disk copy (2026-11-18): the run row and the file are one report.
+// ---------------------------------------------------------------------------
+
+const tmpReportDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-surf-report-'));
+
+test('a finished run writes <date>-<runId>.md whose markdown equals the stored row', async () => {
+  const db = createNativeSqliteDatabase(':memory:');
+  const store = new MetawebSurfStore(db, () => {});
+  const dir = tmpReportDir();
+  try {
+    const reportMarkdown = '# Surf report\n\n- learned: one thing\n- engaged: one like';
+    const service = sessionService(store, [alphaDescriptor([makeItem('pin-a', NOW_SEC - 100)])], {
+      reportDir: dir,
+      runSurfSession: async () => ({ stats: { deepRead: 1 }, reportMarkdown, reportJson: '{"summary":"ok"}' }),
+    });
+    const run = await service.runSurfAndWait(7, 'manual-ui');
+    assert.equal(run.status, 'done');
+    assert.equal(run.reportMarkdown, reportMarkdown, 'the store row keeps the report verbatim');
+
+    // Local date of the fixed clock (Asia/Shanghai test host → 2026-09-13).
+    const dateKey = new Date(NOW_MS);
+    const pad = (value) => String(value).padStart(2, '0');
+    const expectedName = `${dateKey.getFullYear()}-${pad(dateKey.getMonth() + 1)}-${pad(dateKey.getDate())}-${run.id}.md`;
+    const filePath = path.join(dir, expectedName);
+    assert.ok(fs.existsSync(filePath), `report file missing: ${expectedName}`);
+    assert.deepEqual(fs.readdirSync(dir), [expectedName], 'one file per run, nothing extra');
+    assert.equal(fs.readFileSync(filePath, 'utf8'), run.reportMarkdown, 'file body must equal the stored markdown');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a store-truncated report keeps the full text on disk with a truncation header', async () => {
+  const db = createNativeSqliteDatabase(':memory:');
+  const store = new MetawebSurfStore(db, () => {});
+  const dir = tmpReportDir();
+  try {
+    // Over the store's 20k report cap, so finishRun clamps the row.
+    const reportMarkdown = `# Big report\n\n${'tail '.repeat(6000)}`;
+    assert.ok(reportMarkdown.length > 20_000);
+    const service = sessionService(store, [alphaDescriptor([])], {
+      reportDir: dir,
+      runSurfSession: async () => ({ stats: { deepRead: 1 }, reportMarkdown }),
+    });
+    const run = await service.runSurfAndWait(7, 'manual-ui');
+    assert.equal(run.status, 'done');
+    // The row itself is unchanged by this feature: still the capped copy.
+    assert.ok(run.reportMarkdown.length <= 20_000, 'store cap still applies to the row');
+    assert.match(run.reportMarkdown, /\[report truncated at 20000 chars to fit storage — the tail was NOT stored\]/);
+
+    const filePath = fs.readdirSync(dir).map((name) => path.join(dir, name));
+    assert.equal(filePath.length, 1);
+    const text = fs.readFileSync(filePath[0], 'utf8');
+    assert.match(text, /^> \[!NOTE\] store copy truncated/);
+    assert.match(text, /the stored row is unchanged/);
+    assert.ok(text.includes(reportMarkdown), 'the file carries the FULL report');
+    assert.ok(text.length > reportMarkdown.length, 'header rides on top, body stays whole');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('no reportDir (or a failing write) never fails the run', async () => {
+  const db = createNativeSqliteDatabase(':memory:');
+  const store = new MetawebSurfStore(db, () => {});
+  const { runSurfSession } = sessionRecorder();
+  // A path under a file (not a directory) makes mkdir/write fail deterministically.
+  const blockedDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-surf-bad-')), 'not-a-dir');
+  fs.writeFileSync(blockedDir, 'x');
+  try {
+    const service = sessionService(store, [alphaDescriptor([])], { reportDir: blockedDir, runSurfSession });
+    const run = await service.runSurfAndWait(7, 'manual-ui');
+    assert.equal(run.status, 'done', 'a disk failure is best effort — the run still succeeds');
+    assert.equal(run.reportMarkdown, '# Report');
+  } finally {
+    fs.rmSync(path.dirname(blockedDir), { recursive: true, force: true });
+  }
+});
+

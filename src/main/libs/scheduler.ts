@@ -14,7 +14,7 @@ import type { CoworkRunner } from './coworkRunner';
 import { resolveSessionWorkingDirectory } from './botWorkspace';
 import { resolveCoworkExecutionMode } from './coworkExecutionMode';
 import { buildScheduledRunReportMessage, tailDispatchReportExcerpt } from './coworkCrossSessionReport';
-import { createPracticeSessionState, PRACTICE_RUN_WATCHDOG_MS } from './practiceInteractionGuard';
+import { createPracticeSessionState, resolvePracticeRunWatchdogMs } from './practiceInteractionGuard';
 import type { IMGatewayManager } from '../im/imGatewayManager';
 import type { CoworkSubmitInput, CoworkSubmitInputResult } from '../services/coworkTurnSubmission';
 
@@ -56,8 +56,19 @@ interface SchedulerDeps {
   getSkillsPrompt?: () => Promise<string | null>;
   isRecoverableSqliteError?: (error: unknown) => boolean;
   recoverSqlite?: (error: unknown, operationName: string) => void | Promise<void>;
-  /** Wall-clock budget for a practice run; tests shrink it. Defaults to PRACTICE_RUN_WATCHDOG_MS. */
+  /**
+   * Explicit wall-clock budget for a practice run (deps wiring / tests). When
+   * absent the budget is resolved per practice task category (shipped tier →
+   * store/config override), so the shipped default stays 20 minutes.
+   */
   practiceRunWatchdogMs?: number;
+  /**
+   * Store/config read for the per-category watchdog budgets
+   * (practiceInteractionGuard's PRACTICE_RUN_WATCHDOG_SETTING_KEY): returns the
+   * raw store value (number or {defaultMs?, categories?}) or null. Read on every
+   * practice fire, so an override applies without restarting the scheduler.
+   */
+  getPracticeRunWatchdogConfig?: () => unknown;
   /**
    * Injects a prompt into an existing cowork session (the same seam the
    * renderer's submit-input IPC uses). Enables scheduled tasks bound to a
@@ -313,7 +324,8 @@ export class Scheduler {
   private submitToSession: ((input: CoworkSubmitInput) => Promise<SubmitToSessionResult>) | null;
   private emitSessionMessage: ((sessionId: string, message: CoworkMessage) => void) | null;
   private getAppLanguage: (() => string) | null;
-  private readonly practiceRunWatchdogMs: number;
+  private readonly practiceRunWatchdogMs: number | null;
+  private readonly getPracticeRunWatchdogConfig: (() => unknown) | null;
   private readonly seriesSessionBusyWaitMs: number;
   private readonly seriesSessionBusyPollMs: number;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -366,7 +378,10 @@ export class Scheduler {
     this.submitToSession = deps.submitToSession ?? null;
     this.emitSessionMessage = deps.emitSessionMessage ?? null;
     this.getAppLanguage = deps.getAppLanguage ?? null;
-    this.practiceRunWatchdogMs = deps.practiceRunWatchdogMs ?? PRACTICE_RUN_WATCHDOG_MS;
+    // An injected budget is an explicit override; absent, the per-category
+    // resolution runs at fire time (shipped tier → store/config value).
+    this.practiceRunWatchdogMs = deps.practiceRunWatchdogMs ?? null;
+    this.getPracticeRunWatchdogConfig = deps.getPracticeRunWatchdogConfig ?? null;
     this.seriesSessionBusyWaitMs = Math.max(0, deps.seriesSessionBusyWaitMs ?? Scheduler.SERIES_SESSION_BUSY_WAIT_MS);
     this.seriesSessionBusyPollMs = Math.max(1, deps.seriesSessionBusyPollMs ?? Scheduler.SERIES_SESSION_BUSY_POLL_MS);
   }
@@ -1090,19 +1105,38 @@ export class Scheduler {
     const practiceProposal = this.resolvePracticeProposal(task);
     let practiceWatchdog: ReturnType<typeof setTimeout> | null = null;
     let practiceWatchdogFired = false;
+    let practiceWatchdogMs = 0;
     if (practiceProposal) {
-      const watchdogMs = this.practiceRunWatchdogMs;
+      // 2026-11-18 — the 20-minute budget was a hardcoded constant, so two
+      // Practice runs died at the wall clock mid-evidence-gathering and no
+      // operator lever existed. The budget is now resolved per practice task
+      // category (riskClass): an injected budget wins, then the store/config
+      // value for this category, then its shipped tier — which still ships at
+      // the historical 20 minutes, so untouched installs behave exactly as
+      // before. Clamped to [1 min, 6 h] inside the resolver.
+      let watchdogConfig: unknown = null;
+      try {
+        watchdogConfig = this.getPracticeRunWatchdogConfig?.() ?? null;
+      } catch {
+        // An unreadable store keeps the shipped tier — never kill the run.
+        watchdogConfig = null;
+      }
+      practiceWatchdogMs = resolvePracticeRunWatchdogMs({
+        category: practiceProposal.riskClass,
+        overrides: watchdogConfig,
+        explicitMs: this.practiceRunWatchdogMs,
+      });
       practiceWatchdog = setTimeout(() => {
         practiceWatchdogFired = true;
         try {
           this.getCoworkRunner().stopSession(sessionId, {
             finalStatus: 'error',
-            reason: `Practice run exceeded its ${Math.round(watchdogMs / 60000)}-minute wall-clock budget`,
+            reason: `Practice run (${practiceProposal.riskClass}) exceeded its ${Math.round(practiceWatchdogMs / 60000)}-minute wall-clock budget`,
           });
         } catch {
           // The session already settled between the watchdog and the stop.
         }
-      }, watchdogMs);
+      }, practiceWatchdogMs);
     }
     try {
       // Memory-surface selection (2026-10-25): the practice policy below keeps
@@ -1123,7 +1157,7 @@ export class Scheduler {
       });
       if (practiceWatchdogFired) {
         throw new Error(
-          `Practice run exceeded its ${Math.round(this.practiceRunWatchdogMs / 60000)}-minute wall-clock budget`,
+          `Practice run${practiceProposal ? ` (${practiceProposal.riskClass})` : ''} exceeded its ${Math.round(practiceWatchdogMs / 60000)}-minute wall-clock budget`,
         );
       }
     } finally {
