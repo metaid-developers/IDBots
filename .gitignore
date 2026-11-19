@@ -1108,3 +1108,4 @@ blob-report/
 !tests/studioChapterDream.test.mjs
 !tests/studioChapterDividerUi.test.ts
 !tests/studioExperimentalAutomationDemote.test.ts
+!tests/dshSessionRetention.test.ts

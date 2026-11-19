@@ -114,6 +114,7 @@ import { ensureSandboxReady, getSandboxStatus, onSandboxProgress } from './libs/
 import { startCoworkOpenAICompatProxy, stopCoworkOpenAICompatProxy, setScheduledTaskDeps, setFreeQuotaExhaustedListener } from './libs/coworkOpenAICompatProxy';
 import { startDshWebToolsProxy, stopDshWebToolsProxy, resolveDeepSeekWebToolsUpstream, relayWebToolsBase } from './services/dshWebToolsProxy';
 import { dshSessionRootFor, isOfficialDeepSeekRoute } from './libs/coworkDshTurn';
+import { archiveIdleDshSessions, dshSessionColdRootFor, DSH_SESSION_RETENTION_IDLE_DAYS } from './libs/dshSessionRetention';
 import { formatSessionLogAuditLine, guardActiveSessionLogsAtQuit, scanSessionLogsForHeaderInvariant } from './libs/dshSessionLogGuard';
 import { buildImageSkillEnvOverrides } from './libs/skillImageProviderEnv';
 import { isWorkspaceMetabotId, resolveBotWorkspaceCwd, resolveSessionWorkingDirectory, shouldUseBotWorkspaceCwd } from './libs/botWorkspace';
@@ -5631,8 +5632,37 @@ const runStartupGroupTaskCommStatsBackfill = (): void => {
  * then the services themselves — so no single step can block the main thread
  * the way the old synchronous startup block did.
  */
+/**
+ * DSH session-log retention (Phase 2 slice 6, owner-approved Proposal A):
+ * sessions whose kernel log was last written longer than the retention window
+ * ago are MOVED (rename, same volume) to <userData>/dsh-sessions/cold — the
+ * months-long Studio conversation writes ~17MB/day and nothing ever reclaimed
+ * it. Active sessions are untouched; an archived session restores
+ * transparently on its next turn (see the hub's restore hook in
+ * coworkDshTurn.runTurnExclusive), so old conversations keep their full
+ * kernel history. Best-effort: any failure only skips the sweep until the
+ * next startup.
+ */
+const runDshSessionRetentionSweep = async (): Promise<void> => {
+  try {
+    const liveRoot = dshSessionRootFor(app.getPath('userData'));
+    const result = archiveIdleDshSessions({
+      liveRoot,
+      coldRoot: dshSessionColdRootFor(liveRoot),
+      idleDays: DSH_SESSION_RETENTION_IDLE_DAYS,
+    });
+    startupLog(`dsh session retention sweep done (scanned=${result.scanned}, archived=${result.archived}, idleDays=${DSH_SESSION_RETENTION_IDLE_DAYS})`);
+    if (result.archived > 0) {
+      console.info(`[Main] Archived ${result.archived} idle DSH session log(s) (>${DSH_SESSION_RETENTION_IDLE_DAYS}d idle) to dsh-sessions/cold`);
+    }
+  } catch (error) {
+    console.warn('[Main] DSH session retention sweep failed; continuing:', error);
+  }
+};
+
 const startStartupIdleTier = (): void => {
   runIdleStartupSteps([
+    { label: 'dsh session retention sweep', run: runDshSessionRetentionSweep },
     { label: 'metaid experience backfill', run: runStartupMetaIDExperienceBackfill },
     { label: 'group task deliverable backfill', run: runStartupGroupTaskDeliverableBackfill },
     { label: 'group task comm stats backfill', run: runStartupGroupTaskCommStatsBackfill },

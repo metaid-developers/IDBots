@@ -28,6 +28,7 @@ import {
   METAID_RPC_AUTHFILE_ENV,
 } from '../services/metaidRpcEndpoint'
 import { DshKernel, isSessionEncodingMismatchError } from './dshKernel/dshKernel'
+import { dshSessionColdRootFor, restoreDshSessionDir } from './dshSessionRetention'
 import { DshShutdownError } from './dshShutdownError'
 
 /**
@@ -870,6 +871,20 @@ export class DshTurnHub {
       await this.disposeSessionOnSlot(prevKey, input.dshSessionId)
     }
     this.runtimeKeyByDsh.set(input.dshSessionId, nextKey)
+    // Retention restore (Phase 2 slice 6, Proposal A): an archived session is
+    // transparently moved back to the live root before the kernel reads it —
+    // opening a months-old conversation keeps its full kernel history even
+    // after the idle sweep moved it to the cold directory. Best-effort and
+    // synchronous-cheap (one existsSync scan when nothing is archived).
+    try {
+      restoreDshSessionDir({
+        liveRoot: this.opts.sessionRoot,
+        coldRoot: dshSessionColdRootFor(this.opts.sessionRoot),
+        dshSessionId: input.dshSessionId,
+      })
+    } catch {
+      // never block a turn on bookkeeping
+    }
     // Captured BEFORE the turn's own route registration overwrites it: the
     // provider the kernel session was last routed on (in-memory or the
     // restart-surviving route hint). A different key means this turn
