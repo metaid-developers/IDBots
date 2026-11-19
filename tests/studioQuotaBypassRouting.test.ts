@@ -45,6 +45,36 @@ test('the quota pre-gate runs before the turn and bypasses the dead route on eve
   );
 });
 
+test('alternative resolvers decline providers the memory already wrote off (shared-balance dead fallback)', () => {
+  // 2026-11-19 review P2: when the fallback brain draws the SAME exhausted
+  // balance as the primary, both the pre-gate bypass and the GT-02 ladder
+  // kept re-picking it — one doomed 429 + one switch notice per turn until
+  // the 10-min re-probe. The candidates must be checked against the memory.
+  assert.ok(
+    source.includes('private isQuotaDeadAlternative(route: DshProviderRouteInfo | null | undefined): boolean {'),
+    'coworkRunner: a quota-dead alternative check must exist',
+  );
+  // Pre-gate bypass: both alternative resolvers run through the check.
+  assert.ok(
+    source.includes('if (brainFallback && !this.isQuotaDeadAlternative(brainFallback)) {'),
+    'coworkRunner: the bypass brain fallback must be declined when quota-dead',
+  );
+  assert.ok(
+    source.includes('if (rescue.route && !this.isQuotaDeadAlternative(rescue.route)) {'),
+    'coworkRunner: the bypass rescue/default route must be declined when quota-dead',
+  );
+  // GT-02 ladder: the avoidance applies on QUOTA deaths only — a config-hard
+  // or boot death must keep the plain fallback behavior.
+  assert.ok(
+    source.includes('if (fallbackRoute && gateQuota && this.isQuotaDeadAlternative(fallbackRoute)) {'),
+    'coworkRunner: the GT-02 brain fallback must be declined when quota-dead on a quota gate',
+  );
+  assert.ok(
+    source.includes('fallbackRoute = rescue.route && gateQuota && this.isQuotaDeadAlternative(rescue.route)'),
+    'coworkRunner: the GT-02 rescue route must be declined when quota-dead on a quota gate',
+  );
+});
+
 test('the bypass notice fires once per exhaustion period per session and carries the recharge hint', () => {
   assert.ok(
     source.includes('noticed.sinceMs !== quotaBypassEntry.sinceMs'),
