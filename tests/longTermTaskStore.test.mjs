@@ -702,3 +702,48 @@ test('findBySessionId: a rotated-away session stays linked to its task; current 
   assert.equal(store.findBySessionId('old-wor'), null, 'a substring of a recorded id is not membership');
   assert.equal(store.findBySessionId('unrelated'), null);
 });
+
+test('listTasksResolvedSince: terminal tasks after the watermark, newest first; active tasks and pre-watermark closures excluded', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-longterm-resolved-'));
+  const sqliteStore = await SqliteStore.create(dir);
+  const store = new LongTermTaskStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
+  const db = sqliteStore.getDatabase();
+
+  const openTask = (spec) => {
+    const created = store.createTask(spec, 'owner');
+    assert.ok(created.ok, JSON.stringify(created));
+    const activated = store.activateTask(created.value.id, 'owner');
+    assert.ok(activated.ok, JSON.stringify(activated));
+    return created.value.id;
+  };
+  const oldDoneId = openTask({ ...SPEC, title: 'old done task' });
+  const recentDoneId = openTask({ ...SPEC, title: 'recent done task' });
+  const recentCancelledId = openTask({ ...SPEC, title: 'recent cancelled task' });
+  const activeId = openTask({ ...SPEC, title: 'still active task' });
+
+  assert.ok(store.cancelTask(recentCancelledId, 'owner').ok, 'cancelled task closed');
+  const completions = [oldDoneId, recentDoneId].map((id) => store.completeTask(id, 'owner'));
+  assert.ok(completions.every((r) => r.ok), JSON.stringify(completions));
+
+  // Backdate the closures so the watermark comparison is deterministic
+  // (done_at is the authoritative resolution timestamp).
+  db.run('UPDATE long_term_tasks SET done_at = ?, updated_at = ? WHERE id = ?', ['2026-11-18T10:00:00.000Z', '2026-11-18T10:00:00.000Z', oldDoneId]);
+  db.run('UPDATE long_term_tasks SET done_at = ?, updated_at = ? WHERE id = ?', ['2026-11-19T03:00:00.000Z', '2026-11-19T03:00:00.000Z', recentDoneId]);
+  db.run('UPDATE long_term_tasks SET done_at = ?, updated_at = ? WHERE id = ?', ['2026-11-19T02:00:00.000Z', '2026-11-19T02:00:00.000Z', recentCancelledId]);
+
+  const resolved = store.listTasksResolvedSince(Date.parse('2026-11-19T00:00:00.000Z'), 8);
+  assert.deepEqual(
+    resolved.map((r) => r.id),
+    [recentDoneId, recentCancelledId],
+    'newest first, terminal stages only after the watermark',
+  );
+  assert.equal(resolved[0].stage, 'done');
+  assert.equal(resolved[1].stage, 'cancelled');
+  assert.equal(resolved[0].resolvedAtIso, '2026-11-19T03:00:00.000Z', 'done_at wins over updated_at');
+  assert.equal(resolved[1].resolvedAtIso, '2026-11-19T02:00:00.000Z');
+  assert.ok(!resolved.some((r) => r.id === oldDoneId), 'pre-watermark closure excluded');
+  assert.ok(!resolved.some((r) => r.id === activeId), 'active task excluded');
+
+  // Empty window → empty list (the injection layer emits no block).
+  assert.deepEqual(store.listTasksResolvedSince(Date.parse('2030-01-01T00:00:00.000Z'), 8), []);
+});

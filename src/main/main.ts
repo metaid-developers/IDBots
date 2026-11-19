@@ -10990,6 +10990,7 @@ const getStudioChiefOfStaffService = () => {
       getAppLanguage: () => getPersistedAppLanguage(),
       getPreferredStudioSessionId: () => preferredStudioOpenSessionId,
       getStudioContinuity: (twinMetabotId) => getDreamStore().getStudioContinuity(twinMetabotId),
+      listTasksResolvedSince: (sinceMs) => getLongTermTaskStore().listTasksResolvedSince(sinceMs, 8),
       listPendingTwinTodos: (twinMetabotId) =>
         getTwinTodoStore().list({ metabotId: twinMetabotId, includeDone: false, limit: 15 }),
       hasDefiningDraftForSession: (sid) => {

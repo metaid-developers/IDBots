@@ -606,3 +606,86 @@ test('Long-Studio anti-degradation static & unit checks: compaction clears volat
   });
   assert.ok(replayPrompt.system.includes('首席幕僚上帝模式'));
 });
+
+test('Dream brief reconciliation: tasks resolved after the dream snapshot ride an authoritative block right after the brief; nothing resolved injects nothing', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  try {
+    const coworkStore = createCoworkStore(db);
+    const queueStore = new StudioDecisionQueueStore(db, () => {});
+
+    const studio = coworkStore.createSession('常驻 Studio 主会话', '/tmp/st3', '', 'local', [], 1, 'browser');
+    db.run('UPDATE cowork_sessions SET assistant_mode = 1 WHERE id = ?', [studio.id]);
+
+    // The 2026-11-19 incident shape: the brief still asks the owner to
+    // green-light the fix while the task store already closed it hours ago.
+    const continuity = {
+      metabotId: 1,
+      dreamDate: '2026-11-18',
+      activeWorkstreams: ['丢图修复：根因已查清，等主人回「修」即派 Builder阿码执行四步修复'],
+      standingRulings: [],
+      collaborationPlaybook: [],
+      summaryMarkdown: '',
+      llmId: null,
+      updatedAt: Date.now(),
+    };
+
+    const resolvedSinceCalls = [];
+    const chiefService = new StudioChiefOfStaffService({
+      decisionQueueStore: () => queueStore,
+      coworkStore: () => coworkStore,
+      coworkRunner: () => ({ isSessionActive: () => false, startSession: async () => {} }),
+      resolveTwinMetabotId: () => 1,
+      resolveTwinWorkspace: () => '/tmp/st3',
+      getStudioContinuity: () => continuity,
+      listTasksResolvedSince: (sinceMs) => {
+        resolvedSinceCalls.push(sinceMs);
+        return [
+          { id: 'ltt_a414d6a1', title: '实施兑换引擎图片保留修复（根因报告 §4.2 四步）：①金库行映射器接回 imgUrl', stage: 'done', resolvedAtIso: '2026-11-18T18:47:11.310Z' },
+          { id: 'ltt_dc585303', title: '把「图片转换」做成兑换流水线的正式环节', stage: 'done', resolvedAtIso: '2026-11-18T18:47:29.980Z' },
+        ];
+      },
+    });
+
+    const context = chiefService.buildVolatileTurnContext(studio.id);
+    assert.ok(context.includes('<studio_continuity_brief dreamDate="2026-11-18">'));
+    const briefIdx = context.indexOf('<studio_continuity_brief');
+    const reconIdx = context.indexOf('<dream_brief_task_reconciliation dreamDate="2026-11-18">');
+    assert.ok(briefIdx >= 0 && reconIdx > briefIdx, 'the reconciliation block rides right after the brief');
+    assert.ok(context.includes('[done] "实施兑换引擎图片保留修复'), 'resolved tasks carry a stage badge');
+    assert.ok(context.includes('taskId=ltt_a414d6a1'));
+    assert.ok(context.includes('resolvedAt=2026-11-18T18:47:11.310Z'));
+    assert.ok(context.includes('task_search'), 'the verify-before-presenting rule is carried');
+    // The watermark is the dreamDate LABEL at local midnight (not the row's
+    // updatedAt — a later dream touch must not shrink the reconciliation).
+    assert.equal(resolvedSinceCalls[0], new Date('2026-11-18T00:00:00').getTime());
+
+    // Nothing resolved since the dream → no reconciliation block, no tokens.
+    const quietService = new StudioChiefOfStaffService({
+      decisionQueueStore: () => queueStore,
+      coworkStore: () => coworkStore,
+      coworkRunner: () => ({ isSessionActive: () => false, startSession: async () => {} }),
+      resolveTwinMetabotId: () => 1,
+      resolveTwinWorkspace: () => '/tmp/st3',
+      getStudioContinuity: () => continuity,
+      listTasksResolvedSince: () => [],
+    });
+    const quietContext = quietService.buildVolatileTurnContext(studio.id);
+    assert.ok(quietContext.includes('<studio_continuity_brief dreamDate="2026-11-18">'));
+    assert.ok(!quietContext.includes('<dream_brief_task_reconciliation'), 'no block when nothing resolved since the dream');
+
+    // Static wiring pins: main feeds the block from the live task store, and
+    // the store query targets terminal stages after the watermark.
+    const mainSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/main/main.ts'), 'utf8');
+    assert.ok(
+      mainSrc.includes('listTasksResolvedSince: (sinceMs) => getLongTermTaskStore().listTasksResolvedSince(sinceMs, 8)'),
+      'main wires the reconciliation feed from the live task store',
+    );
+    const storeSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/main/longTermTaskStore.ts'), 'utf8');
+    assert.ok(
+      storeSrc.includes("WHERE stage IN ('done', 'cancelled') AND COALESCE(done_at, updated_at) > ?"),
+      'the store resolves tasks by terminal stage after the watermark',
+    );
+  } finally {
+    cleanup();
+  }
+});
