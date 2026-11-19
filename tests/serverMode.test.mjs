@@ -567,3 +567,10 @@ test('mobile Playwright is intent-gated before runtime prewarm', () => {
   assert.match(mainTs, /browserAutomationForMetabot:[\s\S]*?if \(isServerMode\(\)\) return undefined;/);
   assert.match(runnerTs, /isMobileToolVisible\(String\(item\?\.name \?\? ''\), mobileExpansions\)/);
 });
+
+test('mobile minimal tools are enforced again at the DSH request boundary', () => {
+  const runnerTs = fs.readFileSync(path.join(srcMainDir, 'libs', 'coworkRunner.ts'), 'utf8');
+  assert.match(runnerTs, /const hostToolsForTurn = this\.isMobileOwnerChatSession\(sessionId\)/);
+  assert.match(runnerTs, /hostToolsBuilt\.filter\(\(tool\) => isMobileToolVisible\(tool\.name, this\.mobileToolExpansions\.get\(sessionId\) \?\? \[\]\)\)/);
+  assert.match(runnerTs, /guardHostToolSchemas\(hostToolsForTurn\)/);
+});
