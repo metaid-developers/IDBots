@@ -206,6 +206,29 @@ test('dismissed errors stay hidden after storage restoration without deleting ot
   assert.deepEqual(parseDismissedErrorIds(values.get('idbots.mobile.chat.dismissedErrors.v1') ?? null), ['d1', 'd2']);
 });
 
+test('dismissed-error ids stay capped: the localStorage entry cannot grow forever', (t) => {
+  t.after(() => restoreDismissedErrorsFromStorage(null));
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+  };
+  // A polluted stored list keeps only the most recent 200 on restore.
+  restoreDismissedErrorsFromStorage({
+    getItem: () => JSON.stringify(Array.from({ length: 500 }, (_, i) => `stored-${i}`)),
+    setItem: () => {},
+  });
+  assert.equal(filterDismissedErrorMessages([{ id: 'stored-0', role: 'error' }]).length, 1, 'evicted oldest id resurfaces');
+  assert.equal(filterDismissedErrorMessages([{ id: 'stored-499', role: 'error' }]).length, 0, 'recent id stays hidden');
+
+  restoreDismissedErrorsFromStorage(storage);
+  for (let i = 0; i < 260; i += 1) dismissErrorMessage(`e-${i}`, storage);
+  const stored = parseDismissedErrorIds(values.get('idbots.mobile.chat.dismissedErrors.v1') ?? null);
+  assert.equal(stored.length, 200, 'the persisted list stays at the cap');
+  assert.equal(stored[0], 'e-60', 'the oldest ids were evicted');
+  assert.equal(stored[stored.length - 1], 'e-259', 'the newest id survives');
+});
+
 
 test('composer has no send button and keeps Enter-to-send with IME/newline guards', () => {
   restoreDismissedErrorsFromStorage(null);

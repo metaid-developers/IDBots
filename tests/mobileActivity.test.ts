@@ -103,3 +103,35 @@ test('long-term event sequence drops duplicates and advances across heartbeats',
   assert.deepEqual(reduceLongTermUpdate(1, { seq: 2, reason: 'heartbeat' }), { seq: 2, reload: false });
   assert.deepEqual(reduceLongTermUpdate(2, { seq: 3, reason: 'updated' }), { seq: 3, reload: true });
 });
+
+test('tiered run receipts map onto the activity tri-state like the desktop contract', async (t) => {
+  // 840d45ff6 shipped the mapping with zero test coverage; the desktop's
+  // receipt tiers (completed / completed_empty / crashed / timeout) and the
+  // legacy labels must land in the phone's coarse success/error/pass-through
+  // buckets exactly (2026-11-19 review P2).
+  const bridge = createMobileMockBridge({ scheduledRunDelayMs: 60_000 });
+  t.after(() => bridge.destroy());
+  const bots = (await bridge.electron.metabot.list()).list as MockMetabot[];
+  const tasks = (await bridge.electron.scheduledTasks.list()).tasks;
+  tasks[0].id = 'task-1';
+  const statuses = [
+    ['completed', 'success'],
+    ['completed_empty', 'success'],
+    ['crashed', 'error'],
+    ['timeout', 'error'],
+    ['success', 'success'],
+    ['error', 'error'],
+    ['running', 'running'],
+    ['skipped', 'skipped'],
+  ] as const;
+  const runs = statuses.map(([status], index) => ({
+    ...run(`run-${index}`, `2026-10-27T0${index}:00:00.000Z`),
+    status,
+  }));
+  const activities = buildWorkActivity({ tasks, runs, board: null, bots });
+  const byRunId = new Map(activities.map((activity) => [activity.runId, activity.status]));
+  for (const [status, expected] of statuses) {
+    const index = statuses.findIndex(([candidate]) => candidate === status);
+    assert.equal(byRunId.get(`run-${index}`), expected, `status ${status} must read as ${expected}`);
+  }
+});
