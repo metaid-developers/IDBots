@@ -26,6 +26,7 @@ import { noteOwnerAskCancelled } from '../services/pendingOwnerAskBridge';
 import {
   filterServerModeAgentTools,
   isMobileOwnerChatSession as isMobileOwnerChatSessionProfile,
+  isMobileToolVisible,
   resolveDshRuntimeIdleTtlMs,
   resolveMobileToolExpansions,
   resolveMobileToolMountPolicy,
@@ -6928,6 +6929,23 @@ export class CoworkRunner extends EventEmitter {
     });
   }
 
+  private updateMobileToolExpansions(sessionId: string, currentUserText: string): MobileToolExpansion[] {
+    if (!this.isMobileOwnerChatSession(sessionId)) return [];
+    const expansions = resolveMobileToolExpansions(this.mobileToolExpansions.get(sessionId), currentUserText);
+    this.mobileToolExpansions.delete(sessionId);
+    this.mobileToolExpansions.set(sessionId, expansions);
+    if (this.mobileToolExpansions.size > 128) {
+      const oldest = this.mobileToolExpansions.keys().next().value as string | undefined;
+      if (oldest && oldest !== sessionId) this.mobileToolExpansions.delete(oldest);
+    }
+    return expansions;
+  }
+
+  mobileBrowserAutomationAllowed(sessionId: string): boolean {
+    if (!this.isMobileOwnerChatSession(sessionId)) return true;
+    return this.mobileToolExpansions.get(sessionId)?.includes('automation') ?? false;
+  }
+
   /**
    * Bot Internet projector sessions: browser-type sessions carrying the
    * per-session assistantMode marker stamped by the Bot Internet co-work
@@ -12306,6 +12324,7 @@ export class CoworkRunner extends EventEmitter {
       }
     }
     const dshSessionId = dshSessionIdOf(activeSession.claudeSessionId) ?? `cw-${sessionId}`;
+    this.updateMobileToolExpansions(sessionId, prompt);
     const hub = this.ensureDshTurnHub();
     // Kick the runtime-slot ensure NOW, fire-and-forget: a cold slot's boot
     // (process spawn + plugin load, ~11s measured on automation slots) then
@@ -14991,17 +15010,7 @@ export class CoworkRunner extends EventEmitter {
     // follow-up "continue" keeps its tool set.
     const isStudioOwnerChat = this.isAssistantModeOwnerChatSession(sessionId);
     const isMobileOwnerChat = this.isMobileOwnerChatSession(sessionId);
-    const mobileExpansions = isMobileOwnerChat
-      ? resolveMobileToolExpansions(this.mobileToolExpansions.get(sessionId), currentUserText)
-      : [];
-    if (isMobileOwnerChat) {
-      this.mobileToolExpansions.delete(sessionId);
-      this.mobileToolExpansions.set(sessionId, mobileExpansions);
-      if (this.mobileToolExpansions.size > 128) {
-        const oldest = this.mobileToolExpansions.keys().next().value as string | undefined;
-        if (oldest && oldest !== sessionId) this.mobileToolExpansions.delete(oldest);
-      }
-    }
+    const mobileExpansions = this.updateMobileToolExpansions(sessionId, currentUserText);
     const {
       workerEconomy: mountWorkerEconomyTools,
       financial: mountFinancialTools,
@@ -16588,7 +16597,10 @@ export class CoworkRunner extends EventEmitter {
     }
     // REQ-A-5: server mode never offers tools that depend on desktop-only
     // features (Bot Browser, OS screenshots, local MetaApps/Projects).
-    return filterServerModeAgentTools(memoryTools);
+    const visibleMemoryTools = isMobileOwnerChat
+      ? memoryTools.filter((item) => isMobileToolVisible(String(item?.name ?? ''), mobileExpansions))
+      : memoryTools;
+    return filterServerModeAgentTools(visibleMemoryTools);
   }
 
   /**

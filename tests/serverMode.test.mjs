@@ -486,12 +486,12 @@ test('mobile tool families start slim, expand on explicit intent, and stay expan
   const financialSticky = resolve(financial, '继续');
   assert.deepEqual(financialSticky, ['financial']);
   const worker = resolve(financialSticky, '再发布一个 MetaTask 竞赛任务');
-  assert.deepEqual(worker, ['workerEconomy', 'financial']);
+  assert.deepEqual(worker, ['workerEconomy', 'financial', 'orchestration']);
   const social = resolve(worker, '然后到群聊里发一条 buzz');
-  assert.deepEqual(social, ['workerEconomy', 'financial', 'social']);
+  assert.deepEqual(social, ['workerEconomy', 'financial', 'social', 'orchestration']);
   assert.deepEqual(resolve(social, '按刚才的方案继续'), social);
   assert.deepEqual(resolve([], 'What time is it?'), []);
-  assert.deepEqual(resolve([], 'open a group task'), ['workerEconomy']);
+  assert.deepEqual(resolve([], 'open a group task'), ['workerEconomy', 'orchestration']);
   assert.deepEqual(resolve([], 'send this in the group chat'), ['social']);
 });
 
@@ -502,19 +502,19 @@ test('mobile tool and effort gates are wired separately from Studio and desktop'
   assert.match(runnerTs, /\|\| !fastOwnerChatMode/);
   assert.deepEqual(
     serverMode.resolveMobileToolMountPolicy({ isStudioOwnerChat: false, isMobileOwnerChat: false, expansions: [] }),
-    { workerEconomy: true, financial: true, social: true },
+    { workerEconomy: true, financial: true, social: true, metaweb: true, orchestration: true, memoryAdvanced: true, automation: true },
   );
   assert.deepEqual(
     serverMode.resolveMobileToolMountPolicy({ isStudioOwnerChat: true, isMobileOwnerChat: false, expansions: [] }),
-    { workerEconomy: false, financial: true, social: false },
+    { workerEconomy: false, financial: true, social: false, metaweb: true, orchestration: true, memoryAdvanced: true, automation: true },
   );
   assert.deepEqual(
     serverMode.resolveMobileToolMountPolicy({ isStudioOwnerChat: false, isMobileOwnerChat: true, expansions: [] }),
-    { workerEconomy: false, financial: false, social: false },
+    { workerEconomy: false, financial: false, social: false, metaweb: false, orchestration: false, memoryAdvanced: false, automation: false },
   );
   assert.deepEqual(
-    serverMode.resolveMobileToolMountPolicy({ isStudioOwnerChat: false, isMobileOwnerChat: true, expansions: ['workerEconomy', 'financial', 'social'] }),
-    { workerEconomy: true, financial: true, social: true },
+    serverMode.resolveMobileToolMountPolicy({ isStudioOwnerChat: false, isMobileOwnerChat: true, expansions: ['workerEconomy', 'financial', 'social', 'metaweb', 'orchestration', 'memoryAdvanced', 'automation'] }),
+    { workerEconomy: true, financial: true, social: true, metaweb: true, orchestration: true, memoryAdvanced: true, automation: true },
   );
   assert.match(runnerTs, /resolveMobileToolMountPolicy\(\{ isStudioOwnerChat, isMobileOwnerChat, expansions: mobileExpansions \}\)/);
   assert.match(runnerTs, /this\.buildDshHostTools\(sessionId, prompt\)/);
@@ -526,4 +526,44 @@ test('server mode hard-disables the desktop CUA provider before legacy opt-ins',
     mainTs,
     /computer: \(metabotId: number \| null\) => \{\s*\/\/ Cloud tenants[\s\S]*?if \(isServerMode\(\)\) return false;[\s\S]*?isCoworkComputerUseEnabled/,
   );
+});
+
+
+test('mobile minimal core stays available while optional families expand independently', () => {
+  const visible = serverMode.isMobileToolVisible;
+  for (const name of ['bash', 'conversation_recall', 'skill_tool', 'task_list_active', 'memory_user_edits']) {
+    assert.equal(visible(name, []), true, `${name} belongs to the always-on core`);
+  }
+  for (const name of [
+    'omni_read', 'mcp__playwright-mcp__browser_click', 'longterm_task_create',
+    'chain_history_recall', 'wallet_balance', 'post_buzz', 'metatask_publish',
+  ]) {
+    assert.equal(visible(name, []), false, `${name} must not ride a plain greeting`);
+  }
+  const expanded = ['metaweb', 'orchestration', 'memoryAdvanced', 'automation', 'financial', 'social', 'workerEconomy'];
+  for (const name of [
+    'omni_read', 'mcp__playwright-mcp__browser_click', 'longterm_task_create',
+    'chain_history_recall', 'wallet_balance', 'post_buzz', 'metatask_publish',
+  ]) {
+    assert.equal(visible(name, expanded), true, `${name} returns after explicit intent`);
+  }
+  assert.equal(visible('future_unclassified_tool', []), true, 'unknown future tools fail open');
+});
+
+test('mobile intent patterns cover automation, MetaWeb, orchestration, and advanced memory', () => {
+  const resolve = serverMode.resolveMobileToolExpansions;
+  assert.deepEqual(resolve([], '打开浏览器并截图'), ['automation']);
+  assert.deepEqual(resolve([], '搜索 MetaWeb 上的一个协议'), ['metaweb']);
+  assert.deepEqual(resolve([], '创建一个长期任务'), ['orchestration']);
+  assert.deepEqual(resolve([], '查看历史记忆'), ['memoryAdvanced']);
+  assert.deepEqual(resolve([], '继续'), []);
+});
+
+test('mobile Playwright is intent-gated before runtime prewarm', () => {
+  const runnerTs = fs.readFileSync(path.join(srcMainDir, 'libs', 'coworkRunner.ts'), 'utf8');
+  assert.match(runnerTs, /this\.updateMobileToolExpansions\(sessionId, prompt\);\s*const hub = this\.ensureDshTurnHub\(\)/);
+  assert.match(runnerTs, /mobileBrowserAutomationAllowed\(sessionId: string\): boolean/);
+  assert.match(mainTs, /if \(!getCoworkRunner\(\)\.mobileBrowserAutomationAllowed\(coworkSessionId\)\) return undefined;/);
+  assert.match(mainTs, /browserAutomationForMetabot:[\s\S]*?if \(isServerMode\(\)\) return undefined;/);
+  assert.match(runnerTs, /isMobileToolVisible\(String\(item\?\.name \?\? ''\), mobileExpansions\)/);
 });

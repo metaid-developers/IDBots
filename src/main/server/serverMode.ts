@@ -207,13 +207,25 @@ export function isMobileOwnerChatSession(input: {
     && input.sourceChannel === 'cowork_ui';
 }
 
-export const MOBILE_TOOL_EXPANSIONS = ['workerEconomy', 'financial', 'social'] as const;
+export const MOBILE_TOOL_EXPANSIONS = [
+  'workerEconomy',
+  'financial',
+  'social',
+  'metaweb',
+  'orchestration',
+  'memoryAdvanced',
+  'automation',
+] as const;
 export type MobileToolExpansion = typeof MOBILE_TOOL_EXPANSIONS[number];
 
 const MOBILE_TOOL_PATTERNS: Record<MobileToolExpansion, RegExp> = {
   workerEconomy: /\b(?:metatask|agentpedia|escrow|prediction_record|metaprotocol|group[_ -]?task)\b|群任务|托管订单|预测账本|元协议|竞赛任务/i,
   financial: /\b(?:wallet|btc|mrc20|mrc721|nft|token|tokens|payment|multisig)\b|钱包|转账|余额|比特币|代币|支付|付款|收款|充值|积分|手续费|矿工费/i,
   social: /\b(?:buzz|simpleqa|simplenote|simplelog|omni_cast|group[_ -]?chat|private[_ -]?chat)\b|动态|私聊|群聊|问答|笔记|日志|点赞|评论|发帖|发文章|发短文|发长文|好友|关注|转发/i,
+  metaweb: /\b(?:metaweb|metaid|metaapp|chain|pin|protocol)\b|链上|协议|动态|问答|帖子| agent internet|agent 互联网/i,
+  orchestration: /\b(?:task|tasks|subagent|delegate|orchestrat\w*|longterm|schedule|todo|worker)\b|任务|督办|长期|定时|编排|委派|员工|团队|分身|子代理|子任务|待办/i,
+  memoryAdvanced: /\b(?:memory|remember|recall|history|previous|experience|knowledge|procedure|preference)\b|记忆|记得|历史|之前|上次|经验|知识|偏好|流程|梦|回顾|总结/i,
+  automation: /\b(?:browser|playwright|automation|screenshot|click)\b|浏览器|网页|网站|链接|自动化|截图|点击|播放/i,
 };
 
 /** Expand only on explicit intent and keep the expansion for follow-up turns. */
@@ -237,5 +249,40 @@ export function resolveMobileToolMountPolicy(input: {
     workerEconomy: !input.isStudioOwnerChat && (!input.isMobileOwnerChat || input.expansions.includes('workerEconomy')),
     financial: !input.isMobileOwnerChat || input.expansions.includes('financial'),
     social: !input.isStudioOwnerChat && (!input.isMobileOwnerChat || input.expansions.includes('social')),
+    metaweb: !input.isMobileOwnerChat || input.expansions.includes('metaweb'),
+    orchestration: !input.isMobileOwnerChat || input.expansions.includes('orchestration'),
+    memoryAdvanced: !input.isMobileOwnerChat || input.expansions.includes('memoryAdvanced'),
+    automation: !input.isMobileOwnerChat || input.expansions.includes('automation'),
   };
+}
+
+const MOBILE_CORE_TOOLS: ReadonlySet<string> = new Set([
+  'bash', 'read', 'write', 'edit', 'glob', 'grep', 'read_image',
+  'web_search', 'web_fetch', 'skill_tool',
+  'conversation_recall', 'conversation_search', 'recent_chats', 'memory_user_edits',
+  'upload_file', 'describe_image', 'describe_video', 'describe_audio',
+  'media_info', 'convert_media', 'grab_video_frame', 'check_metafile_route',
+  'ask_user_question', 'get_host_location', 'metabot_getinfo',
+  'task_list_active', 'task_context_read', 'task_get', 'task_subtask_progress',
+  'longterm_task_list', 'longterm_task_get', 'longterm_subtask_wait',
+  'list_agents', 'interrupt_agent',
+]);
+
+const MOBILE_EXPANSION_TOOL_PATTERNS: Record<Exclude<MobileToolExpansion, 'automation'>, RegExp> = {
+  workerEconomy: /^(?:metatask_|agentpedia_|prediction_record$|post_metaprotocol$|escrow_)/,
+  financial: /^(?:wallet_|mrc721_|me_charge$|payment_card_emit$)/,
+  social: /^(?:post_buzz$|post_simplenote$|post_simpleqa$|post_simplelog$|omni_cast$|like_pin$|comment_pin$|group_chat$|private_chat$|im_send_message$)/,
+  metaweb: /^(?:omni_read$|search_metaapps$|search_qa$|list_latest_questions$|get_question_answers$|search_metaweb$|read_metaweb_pins_batch$|read_metaweb_pin$|metaweb_surf_start$|metaweb_surf_status$|metaweb_study_enqueue$|metaweb_study_status$|metaweb_qa_surf_enqueue$|metaweb_qa_surf_disable$|search_social_posts$|search_metaids$|list_social_connections$|list_online_bots$|list_online_services$|social_post_detail$|social_post_comments$|metaid_profile$|check_peer_relationship$|metaweb_pin_versions$|metaprotocol_registry$)/,
+  orchestration: /^(?:task_|longterm_|preference_|subagent$|send_message$|list_subagent_models$|local_workers_list$|local_worker_delegate$|twin_task_|worker_session_stop$|idbots_session_)/,
+  memoryAdvanced: /^(?:chain_history_recall$|standing_pages$|experience_recall$|knowledge_recall$|knowledge_upsert$|knowledge_base_|procedure_)/,
+};
+
+/** Core chat stays small; optional families appear only after explicit intent. */
+export function isMobileToolVisible(toolName: string, expansions: readonly MobileToolExpansion[]): boolean {
+  if (MOBILE_CORE_TOOLS.has(toolName)) return true;
+  if (toolName.startsWith('mcp__playwright-mcp__')) return expansions.includes('automation');
+  for (const [expansion, pattern] of Object.entries(MOBILE_EXPANSION_TOOL_PATTERNS) as Array<[Exclude<MobileToolExpansion, 'automation'>, RegExp]>) {
+    if (pattern.test(toolName)) return expansions.includes(expansion);
+  }
+  return true;
 }
