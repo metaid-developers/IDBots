@@ -309,6 +309,18 @@ test('REQ-A-31 the hub TTL is a named constant (no magic 30-minute literal)', ()
   // The runner wires the server-mode override into the hub options.
   const runnerTs = fs.readFileSync(path.join(srcMainDir, 'libs', 'coworkRunner.ts'), 'utf8');
   assert.match(runnerTs, /runtimeIdleTtlMs: resolveDshRuntimeIdleTtlMs\(DSH_RUNTIME_IDLE_TTL_MS\)/);
+  assert.match(runnerTs, /runtimeIdleMemoryPressureAware: !isServerMode\(\)/);
+  const serverTtl = serverMode.resolveDshRuntimeIdleTtlMs(dshTurn.DSH_RUNTIME_IDLE_TTL_MS, SERVER_ENV);
+  assert.equal(
+    dshTurn.resolveDshRuntimeIdleTtlMsForMemory(serverTtl, 128, false),
+    10 * 60_000,
+    'host pressure must not collapse the server TTL to the desktop 45-second emergency window',
+  );
+  assert.equal(
+    dshTurn.resolveDshRuntimeIdleTtlMsForMemory(dshTurn.DSH_RUNTIME_IDLE_TTL_MS, 128, true),
+    45_000,
+    'desktop keeps its existing critical-pressure protection',
+  );
 });
 
 // ---------------------------------------------------------------------------
