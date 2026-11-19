@@ -158,9 +158,20 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $cached = Get-ChildItem "$env:LOCALAPPDATA\electron-builder\Cache\nsis" -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending | Select-Object -First 1
-          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue) -and -not ($cached -and (Test-Path (Join-Path $cached.FullName 'makensis.exe')))) {
+          # Mirror findMakensis in scripts/verify-nsis-harness.mjs: iterate
+          # EVERY cache dir for makensis.exe. The electron-builder cache root
+          # mixes the NSIS core (nsis-<ver>) with the nsis-resources package,
+          # and "nsis-resources-*" sorts above "nsis-<ver>" in descending name
+          # order — picking only the newest-NAMED dir false-negatives the
+          # cache on win-sign (only the 2017 nsis-3.0.4.1 core that
+          # electron-builder 24 pins is present) and died on the choco
+          # fallback this self-hosted runner does not have (2026-11-19).
+          $cacheMakensis = Get-ChildItem "$env:LOCALAPPDATA\electron-builder\Cache\nsis" -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName 'makensis.exe' } |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
+          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue) -and -not $cacheMakensis) {
             choco install nsis -y --no-progress
           }
           node scripts/verify-nsis-harness.mjs --require-makensis

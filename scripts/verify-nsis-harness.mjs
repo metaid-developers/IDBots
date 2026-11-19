@@ -68,10 +68,26 @@ function findMakensis() {
 
 function compile(makensis, { uninstaller }) {
   const outFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-nsis-harness-')), uninstaller ? 'harness-uninst.exe' : 'harness.exe');
-  const args = ['-WX', '-DIDBOTS_NSIS_SYNTAX_HARNESS', `-DIDBOTS_NSIS_SCRIPT=${installerNsh}`, `-DIDBOTS_NSIS_OUTPUT=${outFile}`];
+  // -INPUTCHARSET UTF8 matches electron-builder's real NSIS compile
+  // (NsisTarget pushes exactly this flag): makensis otherwise reads the
+  // script as the system ANSI codepage, and on a non-UTF-8 ACP machine
+  // (GBK zh-CN win-sign) BOM-less UTF-8 comment punctuation (em-dash) is
+  // rejected as "Bad text encoding" even though the real build compiles it.
+  const args = ['-WX', '-INPUTCHARSET', 'UTF8', '-DIDBOTS_NSIS_SYNTAX_HARNESS', `-DIDBOTS_NSIS_SCRIPT=${installerNsh}`, `-DIDBOTS_NSIS_OUTPUT=${outFile}`];
   if (uninstaller) args.unshift('-DBUILD_UNINSTALLER');
   args.push(harnessNsi);
-  const result = spawnSync(makensis, args, { encoding: 'utf8' });
+  // POSIX makensis ignores -INPUTCHARSET and derives the input charset from
+  // the process locale instead, so a C/POSIX-locale caller (CI shells,
+  // agent harnesses) rejects valid UTF-8 punctuation with the same "Bad
+  // text encoding" error. Pin a UTF-8 locale on non-Windows so the gate is
+  // deterministic regardless of the caller's environment; Windows decides
+  // purely via the flag above.
+  const result = spawnSync(makensis, args, {
+    encoding: 'utf8',
+    env: process.platform === 'win32'
+      ? process.env
+      : { ...process.env, LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' },
+  });
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim();
   return { result, output, label: uninstaller ? 'uninstaller' : 'installer' };
 }
