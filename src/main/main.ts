@@ -132,7 +132,7 @@ import {
 } from './libs/dataGuard';
 import { getSkillServiceManager } from './skillServices';
 import { createTray, destroyTray, updateTrayMenu } from './trayManager';
-import { isAutoLaunched, getAutoLaunchEnabled, setAutoLaunchEnabled } from './autoLaunchManager';
+import { isAutoLaunched, getAutoLaunchEnabled, setAutoLaunchEnabled, shouldRetargetAutoLaunch } from './autoLaunchManager';
 import { ScheduledTaskStore, DEFAULT_AGENT_MAX_FIRES, SCHEDULED_TASK_SESSION_MODES } from './scheduledTaskStore';
 import { dshPluginsDirFor, resolveDshPluginEntries } from './libs/dshPluginManager';
 import { GroupTaskStore, setGroupTaskStoreStatusBroadcaster, type GroupTaskStatus } from './groupTaskStore';
@@ -23508,6 +23508,29 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     if (!isServerMode() && !getStore().get('auto_launch_initialized')) {
       getStore().set('auto_launch_initialized', true);
       setAutoLaunchEnabled(true);
+    }
+
+    // An upgrade that moved the install directory leaves the OS login-item
+    // entry pointing at the old exe (the NSIS uninstaller never touches the
+    // Windows Run key): auto-launch would silently fail — or boot the stale
+    // old version out of the leftover directory. Re-register when auto-launch
+    // is ON and the exe path moved since the last registration; the current
+    // path is recorded on every boot so the NEXT move is detected. A user who
+    // opted out is never forced back on.
+    if (!isServerMode()) {
+      const exePathNow = app.getPath('exe');
+      const lastRegisteredExePath = getStore().get<string | undefined>('auto_launch_last_exe');
+      if (shouldRetargetAutoLaunch({
+        lastRegisteredExePath,
+        currentExePath: exePathNow,
+        autoLaunchEnabled: getAutoLaunchEnabled(),
+      })) {
+        setAutoLaunchEnabled(true);
+        console.log(`[Main] Re-registered auto-launch for the moved install: ${exePathNow}`);
+      }
+      if (lastRegisteredExePath !== exePathNow) {
+        getStore().set('auto_launch_last_exe', exePathNow);
+      }
     }
 
     let lastLanguage = getStore().get<{ language?: string }>('app_config')?.language;
