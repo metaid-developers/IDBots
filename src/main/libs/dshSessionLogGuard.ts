@@ -453,10 +453,37 @@ export async function scanSessionLogsForHeaderInvariant(input: {
 }): Promise<{ scanned: number; ok: number; problems: SessionLogGuardAuditLine[]; truncated: boolean }> {
   const maxArtifacts = input.maxArtifacts ?? 400;
   const maxReported = input.maxReported ?? 50;
+  /** Prefix read window for the startup scan (see readArtifactBuffer below). */
+  const SCAN_PREFIX_BYTES = 256 * 1024;
   const problems: SessionLogGuardAuditLine[] = [];
   let scanned = 0;
   let ok = 0;
   let truncated = false;
+
+  /** Read a bounded PREFIX first: frame-1 decoding needs only the first few
+   *  KB, and a session root can hold hundreds of multi-MB zstd artifacts —
+   *  reading each whole file through the heap right after boot was the
+   *  worst part of this scan. When the prefix cannot answer (the file is
+   *  larger than the prefix AND the prefix yields no verdict), fall back to
+   *  one full read so the verdict is never a truncation artifact. */
+  const readArtifactBuffer = async (artifactPath: string, fileSize: number): Promise<Buffer> => {
+    if (fileSize <= SCAN_PREFIX_BYTES) return fsp.readFile(artifactPath);
+    const handle = await fsp.open(artifactPath, 'r');
+    try {
+      const prefix = Buffer.alloc(SCAN_PREFIX_BYTES);
+      const { bytesRead } = await handle.read(prefix, 0, SCAN_PREFIX_BYTES, 0);
+      const truncatedPrefix = prefix.subarray(0, bytesRead);
+      const probe = await readFirstSessionLogLine(artifactPath, truncatedPrefix);
+      if (probe.verdict !== 'missing_header' || probe.firstLine != null || bytesRead >= fileSize) {
+        return truncatedPrefix;
+      }
+      // Prefix cut mid-frame (or a genuinely header-less huge file): pay for
+      // the full read once rather than misreport a healthy artifact.
+      return fsp.readFile(artifactPath);
+    } finally {
+      await handle.close();
+    }
+  };
 
   const projectDirs = input.projectDirs
     ?? (await listDirectoriesByRecency(input.sessionRoot)).map((dir) => dir.name);
@@ -478,7 +505,7 @@ export async function scanSessionLogsForHeaderInvariant(input: {
         scanned += 1;
         let buffer: Buffer;
         try {
-          buffer = await fsp.readFile(artifactPath);
+          buffer = await readArtifactBuffer(artifactPath, stat.size);
         } catch (error) {
           if (problems.length < maxReported) {
             problems.push({
