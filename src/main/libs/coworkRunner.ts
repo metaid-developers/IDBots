@@ -23,7 +23,14 @@ import { DshTurnHub, dshSessionRootFor, isNativeDeepSeekChatRoute, DSH_RUNTIME_I
 import { getDshWebToolsProxyDescriptor } from '../services/dshWebToolsProxy';
 import { getMeBalance } from '../services/mePointsService';
 import { noteOwnerAskCancelled } from '../services/pendingOwnerAskBridge';
-import { filterServerModeAgentTools, resolveDshRuntimeIdleTtlMs } from '../server/serverMode';
+import {
+  filterServerModeAgentTools,
+  isMobileOwnerChatSession as isMobileOwnerChatSessionProfile,
+  resolveDshRuntimeIdleTtlMs,
+  resolveMobileToolExpansions,
+  resolveMobileToolMountPolicy,
+  type MobileToolExpansion,
+} from '../server/serverMode';
 import { isDshShutdownError } from './dshShutdownError';
 import { DSH_RUNTIME_BOOT_ERROR_CODE, isDshRuntimeBootError } from './dshRuntimeBootError';
 import { truncateUtf16Units } from './llmSafeText';
@@ -3142,6 +3149,7 @@ export class CoworkRunner extends EventEmitter {
   dshRuntimeExtraEntries?: Array<Record<string, unknown>>;
   /** cowork session id → (tool name → { parameters, execute }) for that session's current DSH turn. */
   private dshHostToolRegistry: Map<string, Map<string, { name: string; description: string; parameters: Record<string, unknown>; execute: (args: any) => Promise<unknown> }>> = new Map();
+  private mobileToolExpansions: Map<string, MobileToolExpansion[]> = new Map();
   private sandboxPermissions: Map<string, SandboxPendingPermission> = new Map();
   private stoppedSessions: Set<string> = new Set();
   private turnMemoryQueue: QueuedTurnMemoryUpdate[] = [];
@@ -6910,6 +6918,14 @@ export class CoworkRunner extends EventEmitter {
     if (!session) return false;
     if (session.assistantMode && !session.autoOrigin) return true;
     return false;
+  }
+
+  private isMobileOwnerChatSession(sessionId: string): boolean {
+    return isMobileOwnerChatSessionProfile({
+      serverMode: isServerMode(),
+      session: this.store.getSession(sessionId),
+      sourceChannel: this.store.getConversationSourceContextBySession(sessionId).sourceChannel,
+    });
   }
 
   /**
@@ -12528,7 +12544,7 @@ export class CoworkRunner extends EventEmitter {
       const promptImagesPromise = this.collectDshPromptImages(prompt, cwd, modelLimits?.supportsVision === true);
       promptImagesPromise.catch(() => undefined);
       await this.syncDshSkillSessionEnv(dshSessionId, sessionId, cwd);
-      const hostToolsBuilt = this.buildDshHostTools(sessionId)
+      const hostToolsBuilt = this.buildDshHostTools(sessionId, prompt)
       // Hand-off boundary #1 (registry + pre-warm): a single tool whose
       // parameters are not a top-level object schema rejects the WHOLE
       // provider request ("tools.77.function.parameters must be a JSON Schema
@@ -12694,6 +12710,10 @@ export class CoworkRunner extends EventEmitter {
       // Group tasks, A2A/IM, long-term and scheduled automation sessions —
       // and every BotWorks owner chat — keep the professional chain.
       const assistantMode = this.isAssistantModeOwnerChatSession(sessionId);
+      // Cloud mobile owner chats share the low default only: prompt/ack
+      // semantics stay professional and explicit picks still win.
+      const mobileOwnerChatMode = this.isMobileOwnerChatSession(sessionId);
+      const fastOwnerChatMode = assistantMode || mobileOwnerChatMode;
       const sessionEffortPicked = effectiveEffortRung != null;
       // "Auto" rung verdict: null (no selector, unconfigured cerebellum,
       // timeout, malformed verdict) keeps the existing default chain below
@@ -12716,7 +12736,7 @@ export class CoworkRunner extends EventEmitter {
         if (distribution) {
           const stickyBefore = this.autoEffortStickyBySession.get(sessionId) ?? null;
           const resolved = resolveStickyAutoEffortRung(distribution, {
-            assistantMode,
+            assistantMode: fastOwnerChatMode,
             sticky: stickyBefore,
           });
           autoEffortRung = resolved.rung;
@@ -12752,7 +12772,7 @@ export class CoworkRunner extends EventEmitter {
       // cerebellum 'off' verdict on a route that cannot express 'off' pins
       // to 'low' instead of degrading into server-default thinking.
       const pinnedAutoEffortRung = autoEffortRung != null
-        ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode, glmFamily: isGlmFamilyModelId(route.model) })
+        ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode: fastOwnerChatMode, glmFamily: isGlmFamilyModelId(route.model) })
         : null;
       // The pre-mapping effort level the PRIMARY attempt of this turn runs
       // with. Hoisted so a later GT-02 fallback attempt (runGuardedTurn's
@@ -12767,7 +12787,7 @@ export class CoworkRunner extends EventEmitter {
           })
           : pinnedAutoEffortRung ?? resolveAutoEffortFallback({
             sentinelDefault: effortSentinelDefault,
-            assistantMode,
+            assistantMode: fastOwnerChatMode,
             glmFamily: isGlmFamilyModelId(route.model),
             brainEffort: automationBrain?.effort,
             hasBrain: automationBrain != null,
@@ -12776,7 +12796,7 @@ export class CoworkRunner extends EventEmitter {
           });
       const dshReasoningEffort = mapDshReasoningEffort(
         primaryEffortLevel,
-        sessionEffortPicked || pinnedAutoEffortRung != null || !assistantMode
+        sessionEffortPicked || pinnedAutoEffortRung != null || !fastOwnerChatMode
           ? activeSession.thinkingOverride ?? modelOptions?.thinking
           : undefined,
         dshEffortDialect,
@@ -12789,6 +12809,7 @@ export class CoworkRunner extends EventEmitter {
         autoEffort: autoEffortRung,
         brainEffort: automationBrain?.effort ?? null,
         assistantMode,
+        mobileMode: mobileOwnerChatMode,
         modelDefault: modelOptions?.reasoningEffort ?? null,
         mapped: dshReasoningEffort ?? null,
       });
@@ -13008,7 +13029,7 @@ export class CoworkRunner extends EventEmitter {
           // Same effort chain as the primary route above, except the bot-brain
           // rung reads the FALLBACK brain's effort (that brain's model is the
           // one now running the turn). The session override still wins in
-          // assistant mode. Without one, assistant mode keeps its conservative
+          // assistant/mobile mode. Without one, those modes keep their conservative
           // default here too — but never BELOW the in-turn floor: the primary
           // attempt already started this turn at primaryEffortLevel (e.g. a
           // cerebellum 'off' verdict pinned UP to 'low' because the primary
@@ -13024,7 +13045,7 @@ export class CoworkRunner extends EventEmitter {
           // Same GLM-family floor as the primary route above, read against
           // the fallback brain's model (the one now running the turn).
           const pinnedFallbackAutoEffortRung = autoEffortRung != null
-            ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode, glmFamily: isGlmFamilyModelId(routeOverride.model) })
+            ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode: fastOwnerChatMode, glmFamily: isGlmFamilyModelId(routeOverride.model) })
             : null;
           const fallbackEffortLevel: LlmEffortLevel | null = sessionEffortPicked
             ? toLlmEffortLevel(effectiveEffortRung)
@@ -13036,19 +13057,19 @@ export class CoworkRunner extends EventEmitter {
               })
               : pinnedFallbackAutoEffortRung ?? resolveAutoEffortFallback({
                 sentinelDefault: effortSentinelDefault,
-                assistantMode,
+                assistantMode: fastOwnerChatMode,
                 glmFamily: isGlmFamilyModelId(routeOverride.model),
                 brainEffort: automationBrain?.fallbackEffort,
                 hasBrain: automationBrain != null,
                 globalEffort: getPersistedCoworkEffortLevel(),
                 modelDefault: fallbackModelOptions?.reasoningEffort,
               });
-          const flooredFallbackEffortLevel = assistantMode && !unattendedTurn && !sessionEffortPicked
+          const flooredFallbackEffortLevel = fastOwnerChatMode && !unattendedTurn && !sessionEffortPicked
             ? maxLlmEffortLevel(fallbackEffortLevel, primaryEffortLevel)
             : fallbackEffortLevel;
           turnReasoningEffort = mapDshReasoningEffort(
             flooredFallbackEffortLevel,
-            sessionEffortPicked || pinnedFallbackAutoEffortRung != null || !assistantMode
+            sessionEffortPicked || pinnedFallbackAutoEffortRung != null || !fastOwnerChatMode
               ? activeSession.thinkingOverride ?? fallbackModelOptions?.thinking
               : undefined,
             turnOfficialDeepSeekNative ? 'deepseek-native' : 'generic',
@@ -14295,7 +14316,7 @@ export class CoworkRunner extends EventEmitter {
    * passthrough factory — schemas travel to the runtime, execution
    * round-trips back to the host bridge.
    */
-  private buildDshHostTools(sessionId: string): Array<{ name: string; description: string; parameters: Record<string, unknown>; execute: (args: any) => Promise<unknown> }> {
+  private buildDshHostTools(sessionId: string, currentUserText = ''): Array<{ name: string; description: string; parameters: Record<string, unknown>; execute: (args: any) => Promise<unknown> }> {
     // Schema conversion lives in hostToolSchemaGuard so both the passthrough
     // and the hand-off guard are pure and unit-tested (see the 400
     // "tools.77.function.parameters must be a JSON Schema of type object"
@@ -14319,7 +14340,7 @@ export class CoworkRunner extends EventEmitter {
     if (activeSession?.imTrust && !imTrustAllowsTools(activeSession.imTrust)) {
       return []
     }
-    const tools = this.buildSessionInlineTools(sessionId, passthrough, undefined)
+    const tools = this.buildSessionInlineTools(sessionId, passthrough, undefined, currentUserText)
     if (!activeSession || !this.isAssistantModeOwnerChatSession(sessionId)) {
       return tools
     }
@@ -14957,21 +14978,35 @@ export class CoworkRunner extends EventEmitter {
    * resolution (e.g. the Read-image guard) decide at call time, not at
    * registration time.
    */
-  private buildSessionInlineTools(sessionId: string, tool: any, activeSession?: ActiveSession): any[] {
+  private buildSessionInlineTools(sessionId: string, tool: any, activeSession?: ActiveSession, currentUserText = ''): any[] {
     // Read/write split (audit P1): a memoryReadOnly session (paid order
     // execution) mounts the recall tools but none of the mutating ones;
     // disableMemoryUpdates mounts neither (legacy orchestrator blackout).
     const sessionMemoryReadEnabled = this.isSessionMemoryReadEnabled(sessionId, activeSession);
     const sessionMemoryWriteEnabled = this.isSessionMemoryWriteEnabled(sessionId, activeSession);
     // Studio owner-chat tool slimming (Phase 2 slice 1, 2026-11-19 census):
-    // the assistant-mode owner chat never called the worker-economy protocol
-    // families below (0 calls across 30 recent sessions, every surface), and
-    // their schemas alone cost ~36KB ≈ 9K tokens of EVERY Studio request.
-    // The Twin's job here is conversation + delegation — a Worker session
-    // that actually trades metatasks/escrow/gig groups mounts its own set.
-    // Family mounts below take `&& !isStudioOwnerChat`; flipping the gate
-    // restores the family for Studio.
+    // worker-economy families stay off that surface. Cloud mobile owner chats
+    // additionally start with financial/social families unmounted and expand
+    // only on explicit intent. Expansions are sticky for the session so a
+    // follow-up "continue" keeps its tool set.
     const isStudioOwnerChat = this.isAssistantModeOwnerChatSession(sessionId);
+    const isMobileOwnerChat = this.isMobileOwnerChatSession(sessionId);
+    const mobileExpansions = isMobileOwnerChat
+      ? resolveMobileToolExpansions(this.mobileToolExpansions.get(sessionId), currentUserText)
+      : [];
+    if (isMobileOwnerChat) {
+      this.mobileToolExpansions.delete(sessionId);
+      this.mobileToolExpansions.set(sessionId, mobileExpansions);
+      if (this.mobileToolExpansions.size > 128) {
+        const oldest = this.mobileToolExpansions.keys().next().value as string | undefined;
+        if (oldest && oldest !== sessionId) this.mobileToolExpansions.delete(oldest);
+      }
+    }
+    const {
+      workerEconomy: mountWorkerEconomyTools,
+      financial: mountFinancialTools,
+      social: mountSocialTools,
+    } = resolveMobileToolMountPolicy({ isStudioOwnerChat, isMobileOwnerChat, expansions: mobileExpansions });
     const memoryTools: any[] = [
       tool(
         'conversation_search',
@@ -15668,31 +15703,33 @@ export class CoworkRunner extends EventEmitter {
         : this.metabotChainWrite.createPin;
       if (this.metaFileUpload) {
         const gatedUpload = wrapUploadWithGate(this.metaFileUpload.upload.bind(this.metaFileUpload), uploadGate);
-        memoryTools.push(
-          ...buildPostBuzzAgentTools({
-            tool,
-            createPin: createPinForSession,
-            uploadFile: gatedUpload,
-            sessionId,
-            resolveMetabotId,
-          })
-        );
-        memoryTools.push(
-          ...buildPostSimpleNoteAgentTools({
-            tool,
-            createPin: createPinForSession,
-            uploadFile: gatedUpload,
-            sessionId,
-            resolveMetabotId,
-          })
-        );
+        if (mountSocialTools) {
+          memoryTools.push(
+            ...buildPostBuzzAgentTools({
+              tool,
+              createPin: createPinForSession,
+              uploadFile: gatedUpload,
+              sessionId,
+              resolveMetabotId,
+            })
+          );
+          memoryTools.push(
+            ...buildPostSimpleNoteAgentTools({
+              tool,
+              createPin: createPinForSession,
+              uploadFile: gatedUpload,
+              sessionId,
+              resolveMetabotId,
+            })
+          );
+        }
         // Agentpedia protocol writers (/protocols/agentpedia/*): rev,
         // challenge, ruling, review, editor registry chain, genesis
         // constitution, param proposals. Payloads are schema-gated
         // pre-write (composite draft-07 schemas, see agentpediaSchemas).
         // Studio owner chat skips the family (census: 0 calls there; the
         // encyclopedia workflow belongs to worker/automation surfaces).
-        if (!isStudioOwnerChat) {
+        if (mountWorkerEconomyTools) {
           memoryTools.push(
             ...buildAgentpediaAgentTools({
               tool,
@@ -15708,7 +15745,7 @@ export class CoworkRunner extends EventEmitter {
         // updates pass the registrant identity cascade before any chain
         // write. The read twin (metaprotocol_registry) registers with the
         // read tools below; only the writer belongs to the chain-write gate.
-        if (this.metaProtocolRegistry && !isStudioOwnerChat) {
+        if (this.metaProtocolRegistry && mountWorkerEconomyTools) {
           const metaProtocolTools = buildMetaProtocolAgentTools({
             tool,
             metaProtocol: this.metaProtocolRegistry,
@@ -15725,73 +15762,79 @@ export class CoworkRunner extends EventEmitter {
         // The repeat notice prefers the Q&A index (cross-machine complete,
         // via /api/qa/questions/:pinId/answers?publisher=<acting bot>) and
         // falls back to the local posting ledger when the index is down.
-        memoryTools.push(
-          ...buildPostSimpleQaAgentTools({
-            tool,
-            createPin: createPinForSession,
-            uploadFile: gatedUpload,
-            sessionId,
-            resolveMetabotId,
-            ...(this.qaRecall
-              ? {
-                  fetchPriorAnswersRemote: async ({ questionPinId, publisher }) => {
-                    const page = await this.qaRecall!.questionAnswers({ pinId: questionPinId, publisher });
-                    return page.items;
-                  },
-                  resolveActingGlobalMetaId: (sid: string) => {
-                    const metabotId = this.getMemoryBackend().resolveMetabotIdForMemory(sid);
-                    if (metabotId == null) return undefined;
-                    return this.getMetabotById?.(metabotId)?.globalmetaid?.trim() || undefined;
-                  },
-                }
-              : {}),
-          })
-        );
+        if (mountSocialTools) {
+          memoryTools.push(
+            ...buildPostSimpleQaAgentTools({
+              tool,
+              createPin: createPinForSession,
+              uploadFile: gatedUpload,
+              sessionId,
+              resolveMetabotId,
+              ...(this.qaRecall
+                ? {
+                    fetchPriorAnswersRemote: async ({ questionPinId, publisher }) => {
+                      const page = await this.qaRecall!.questionAnswers({ pinId: questionPinId, publisher });
+                      return page.items;
+                    },
+                    resolveActingGlobalMetaId: (sid: string) => {
+                      const metabotId = this.getMemoryBackend().resolveMetabotIdForMemory(sid);
+                      if (metabotId == null) return undefined;
+                      return this.getMetabotById?.(metabotId)?.globalmetaid?.trim() || undefined;
+                    },
+                  }
+                : {}),
+            })
+          );
+        }
       }
       // SimpleLog (/protocols/simplelog): the PROCESS record layer of
       // collaboration — one entry per complete progress, deliverables as bare
       // chain URIs the ledger reads directly. Distinct from post_simplenote
       // (knowledge for the whole internet): 过程进 log，知识进 note.
-      memoryTools.push(
-        ...buildPostSimpleLogAgentTools({
-          tool,
-          createPin: createPinForSession,
-          sessionId,
-          resolveMetabotId,
-        })
-      );
-      memoryTools.push(
-        ...buildOmniCasterAgentTools({
-          tool,
-          createPin: createPinForSession,
-          encryptGroupMessage: this.metabotChainWrite.encryptGroupMessage,
-          getMetabotDisplayName: this.metabotChainWrite.getMetabotDisplayName,
-          sessionId,
-          resolveMetabotId,
-          gateLocalFile,
-        })
-      );
+      if (mountSocialTools) {
+        memoryTools.push(
+          ...buildPostSimpleLogAgentTools({
+            tool,
+            createPin: createPinForSession,
+            sessionId,
+            resolveMetabotId,
+          })
+        );
+        memoryTools.push(
+          ...buildOmniCasterAgentTools({
+            tool,
+            createPin: createPinForSession,
+            encryptGroupMessage: this.metabotChainWrite.encryptGroupMessage,
+            getMetabotDisplayName: this.metabotChainWrite.getMetabotDisplayName,
+            sessionId,
+            resolveMetabotId,
+            gateLocalFile,
+          })
+        );
+      }
       // Reactions on any pin (PayLike): Q&A answers and questions today, buzz
       // and notes alike. No upload dependency, so it registers whenever the
       // chain-write control exists. comment_pin (PayComment) is the equally
       // narrow thread-reply companion — and the ONLY comment surface
       // allowlisted for unattended surf sessions (raw omni_cast is not).
-      memoryTools.push(
-        ...buildLikePinAgentTools({
-          tool,
-          createPin: createPinForSession,
-          sessionId,
-          resolveMetabotId,
-        })
-      );
-      memoryTools.push(
-        ...buildCommentPinAgentTools({
-          tool,
-          createPin: createPinForSession,
-          sessionId,
-          resolveMetabotId,
-        })
-      );
+      if (mountSocialTools) {
+        memoryTools.push(
+          ...buildLikePinAgentTools({
+            tool,
+            createPin: createPinForSession,
+            sessionId,
+            resolveMetabotId,
+          })
+        );
+        memoryTools.push(
+          ...buildCommentPinAgentTools({
+            tool,
+            createPin: createPinForSession,
+            sessionId,
+            resolveMetabotId,
+          })
+        );
+      }
     }
     // create_scheduled_task — the surf→work handoff (Step 1 of broadcast
     // collaboration). Registered ONLY for surf sessions: interactive sessions
@@ -15843,7 +15886,7 @@ export class CoworkRunner extends EventEmitter {
         })
       );
     }
-    if (this.metataskTools && this.metabotChainWrite && !isStudioOwnerChat) {
+    if (this.metataskTools && this.metabotChainWrite && mountWorkerEconomyTools) {
       memoryTools.push(
         ...buildMetataskAgentTools({
           tool,
@@ -15868,7 +15911,7 @@ export class CoworkRunner extends EventEmitter {
     // including the surf allowlist (a surf that posts/engages predicts its
     // reception first). The tool writes a local ledger row — no chain spend —
     // and the nightly dream reconciles it.
-    if (this.predictionTools && !isStudioOwnerChat) {
+    if (this.predictionTools && mountWorkerEconomyTools) {
       memoryTools.push(
         ...buildPredictionAgentTools({
           tool,
@@ -15883,7 +15926,7 @@ export class CoworkRunner extends EventEmitter {
     // cowork surface. Transfers spend the session bot's OWN wallet;
     // channel-B (external) transfers render the owner approval dialog via
     // confirmExternalTransfer unless the settings gate is disabled.
-    if (this.walletTools) {
+    if (this.walletTools && mountFinancialTools) {
       memoryTools.push(
         ...buildWalletAgentTools({
           tool,
@@ -15896,7 +15939,7 @@ export class CoworkRunner extends EventEmitter {
     }
     // Multisig tools are separate from wallet_transfer: they sign only P2WSH
     // multisig inputs, and both signing and broadcast time out closed.
-    if (this.btcMultisigTools) {
+    if (this.btcMultisigTools && mountFinancialTools) {
       memoryTools.push(
         ...buildBtcMultisigAgentTools({
           tool,
@@ -15912,7 +15955,7 @@ export class CoworkRunner extends EventEmitter {
     // session bot's OWN wallet plus index reads. Separate lineage from the
     // MetaContract wallet_nft_* tools above — the mrc721_ prefix is the
     // protocol naming boundary.
-    if (this.mrc721Tools) {
+    if (this.mrc721Tools && mountFinancialTools) {
       memoryTools.push(
         ...buildMrc721AgentTools({
           tool,
@@ -15978,7 +16021,7 @@ export class CoworkRunner extends EventEmitter {
     // funds flow — no wallet/transfer call lives in these tools; the goods
     // custody legs are the party bots' own mrc721_transfer txids recorded as
     // machine proof. Mounted next to the mrc721 tools (same session-scope).
-    if (this.escrowTools && !isStudioOwnerChat) {
+    if (this.escrowTools && mountWorkerEconomyTools) {
       memoryTools.push(
         ...buildEscrowAgentTools({
           tool,
@@ -15992,7 +16035,7 @@ export class CoworkRunner extends EventEmitter {
     // me_charge (G3): the buyer-side ME spend leg, shared by the NFT purchase
     // flow and (S8) paid chat / skill fees. Mounted BEFORE the payment-card
     // block so a purchase session sees the payment tool next to mrc721_*.
-    if (this.meChargeTools) {
+    if (this.meChargeTools && mountFinancialTools) {
       const meChargeTools = this.meChargeTools;
       memoryTools.push(
         ...buildMeChargeAgentTools({
@@ -16017,7 +16060,7 @@ export class CoworkRunner extends EventEmitter {
     // flow — the control only reads + decrypts locally. Every emit still goes
     // through the per-emit owner gate: the card discloses the owner's payee
     // identity + receiving code to every participant of the conversation.
-    if (this.paymentCards) {
+    if (this.paymentCards && mountFinancialTools) {
       memoryTools.push(
         ...buildPaymentCardAgentTools({
           tool,
@@ -16026,7 +16069,7 @@ export class CoworkRunner extends EventEmitter {
         })
       );
     }
-    if (this.privateChat) {
+    if (this.privateChat && mountSocialTools) {
       memoryTools.push(
         ...buildPrivateChatAgentTools({
           tool,
@@ -16074,7 +16117,7 @@ export class CoworkRunner extends EventEmitter {
         })
       );
     }
-    if (this.groupChat && !isStudioOwnerChat) {
+    if (this.groupChat && mountSocialTools) {
       memoryTools.push(
         ...buildGroupChatAgentTools({
           tool,

@@ -188,3 +188,54 @@ export function filterServerModeAgentTools<T extends { name?: unknown }>(tools: 
   if (!isServerMode()) return tools;
   return tools.filter((tool) => !SERVER_MODE_DISABLED_AGENT_TOOLS.has(String(tool?.name ?? '')));
 }
+
+export interface MobileOwnerChatSessionShape {
+  autoOrigin?: string | null;
+  sessionType?: string | null;
+}
+
+/** Interactive cloud-PWA chat, not an unattended or desktop/Studio surface. */
+export function isMobileOwnerChatSession(input: {
+  serverMode: boolean;
+  session: MobileOwnerChatSessionShape | null | undefined;
+  sourceChannel: string;
+}): boolean {
+  return input.serverMode
+    && input.session != null
+    && !input.session.autoOrigin
+    && (input.session.sessionType ?? 'standard') === 'standard'
+    && input.sourceChannel === 'cowork_ui';
+}
+
+export const MOBILE_TOOL_EXPANSIONS = ['workerEconomy', 'financial', 'social'] as const;
+export type MobileToolExpansion = typeof MOBILE_TOOL_EXPANSIONS[number];
+
+const MOBILE_TOOL_PATTERNS: Record<MobileToolExpansion, RegExp> = {
+  workerEconomy: /\b(?:metatask|agentpedia|escrow|prediction_record|metaprotocol|group[_ -]?task)\b|群任务|托管订单|预测账本|元协议|竞赛任务/i,
+  financial: /\b(?:wallet|btc|mrc20|mrc721|nft|token|tokens|payment|multisig)\b|钱包|转账|余额|比特币|代币|支付|付款|收款|充值|积分|手续费|矿工费/i,
+  social: /\b(?:buzz|simpleqa|simplenote|simplelog|omni_cast|group[_ -]?chat|private[_ -]?chat)\b|动态|私聊|群聊|问答|笔记|日志|点赞|评论|发帖|发文章|发短文|发长文|好友|关注|转发/i,
+};
+
+/** Expand only on explicit intent and keep the expansion for follow-up turns. */
+export function resolveMobileToolExpansions(
+  previous: readonly MobileToolExpansion[] | undefined,
+  prompt: string,
+): MobileToolExpansion[] {
+  const next = new Set(previous ?? []);
+  for (const expansion of MOBILE_TOOL_EXPANSIONS) {
+    if (MOBILE_TOOL_PATTERNS[expansion].test(prompt)) next.add(expansion);
+  }
+  return MOBILE_TOOL_EXPANSIONS.filter((expansion) => next.has(expansion));
+}
+
+export function resolveMobileToolMountPolicy(input: {
+  isStudioOwnerChat: boolean;
+  isMobileOwnerChat: boolean;
+  expansions: readonly MobileToolExpansion[];
+}): Record<MobileToolExpansion, boolean> {
+  return {
+    workerEconomy: !input.isStudioOwnerChat && (!input.isMobileOwnerChat || input.expansions.includes('workerEconomy')),
+    financial: !input.isMobileOwnerChat || input.expansions.includes('financial'),
+    social: !input.isStudioOwnerChat && (!input.isMobileOwnerChat || input.expansions.includes('social')),
+  };
+}

@@ -7172,6 +7172,10 @@ const getCoworkRunner = () => {
         return { mode: 'launch' as const, headless: true, ...detectSystemChromium() };
       },
       computer: (metabotId: number | null) => {
+        // Cloud tenants have no user desktop to control. Keep browser
+        // automation available, but never mount the native CUA provider or
+        // its dozens of desktop-only schemas on this surface.
+        if (isServerMode()) return false;
         if (!isExperimentalAutomationAllowed(getStoreOrNull())) return false;
         return isCoworkComputerUseEnabled(getMetabotStore(), metabotId);
       },
