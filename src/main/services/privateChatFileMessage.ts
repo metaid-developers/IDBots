@@ -276,6 +276,50 @@ export function isPeerAttachmentReadablePath(resolvedPath: string, baseDir: stri
   return foldCase(candidate).startsWith(foldCase(rootWithSep));
 }
 
+/**
+ * Read the response body WITH a running byte cap: the peer's message names an
+ * arbitrary pin, so the body size is attacker-chosen (and a legit oversized
+ * share is possible too) — buffering via arrayBuffer() held two full copies
+ * in the main process (per concurrent conversation, up to 4) before the cap
+ * check ever ran. Streams chunk-by-chunk, refuses as soon as the cap is
+ * crossed, and only then concatenates. When the runtime gives no streamable
+ * body, fall back to arrayBuffer (the Content-Length pre-check above already
+ * vetted the declared size).
+ */
+const readBodyWithCap = async (
+  response: Response,
+  pinId: string,
+  emitLog: (message: string) => void,
+): Promise<Buffer | null> => {
+  const declaredLength = Number(response.headers?.get?.('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_ATTACHMENT_BYTES) {
+    emitLog(
+      `[PrivateChat] File message attachment ${pinId.slice(0, 12)}… declares ${declaredLength} bytes, above the ${MAX_ATTACHMENT_BYTES}-byte chat limit; not materialized.`
+    );
+    return null;
+  }
+  const body = response.body;
+  if (!body) {
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return bytes.length > MAX_ATTACHMENT_BYTES ? null : bytes;
+  }
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
+    const piece = Buffer.from(chunk);
+    total += piece.length;
+    if (total > MAX_ATTACHMENT_BYTES) {
+      emitLog(
+        `[PrivateChat] File message attachment ${pinId.slice(0, 12)}… exceeds the ${MAX_ATTACHMENT_BYTES}-byte chat limit mid-stream (≥${total} bytes); not materialized.`
+      );
+      return null;
+    }
+    chunks.push(piece);
+  }
+  if (!total) return null;
+  return Buffer.concat(chunks, total);
+};
+
 const fetchMetafileBytes = async (
   pinId: string,
   emitLog: (message: string) => void,
@@ -287,14 +331,8 @@ const fetchMetafileBytes = async (
     try {
       const response = await fetch(`${base}${encoded}`, { signal: controller.signal });
       if (!response.ok) continue;
-      const bytes = Buffer.from(await response.arrayBuffer());
-      if (!bytes.length) continue;
-      if (bytes.length > MAX_ATTACHMENT_BYTES) {
-        emitLog(
-          `[PrivateChat] File message attachment ${pinId.slice(0, 12)}… is ${bytes.length} bytes, above the ${MAX_ATTACHMENT_BYTES}-byte chat limit; not materialized.`
-        );
-        return null;
-      }
+      const bytes = await readBodyWithCap(response, pinId, emitLog);
+      if (!bytes || !bytes.length) continue;
       return bytes;
     } catch (error) {
       emitLog(
