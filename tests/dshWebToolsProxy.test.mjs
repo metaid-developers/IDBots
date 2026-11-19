@@ -438,3 +438,45 @@ test('proxy: client abort cancels the in-flight upstream fetch and skips relay f
   assert.equal(relay.seen.length, 0, 'relay fallback skipped after client aborted')
 })
 
+test('proxy: the shared ladder budget bounds the whole attempt chain below the client budget', async (t) => {
+  // Worst case without the budget: primary cap + relay cap exceed the DSH
+  // client's 60s tool budget, so the client aborts and cancels the relay
+  // attempt the ladder exists to protect. With a shared budget, the primary
+  // is clamped to its slice and the relay still gets real time to answer.
+  const relay = await startUpstream()
+  t.after(async () => { await relay.close() })
+  relay.script.push({ status: 200, body: OK_RESULTS })
+
+  // A primary that hangs forever (never answers).
+  const hangServer = http.createServer(() => { /* intentionally never responds */ })
+  await new Promise((resolve) => hangServer.listen(0, '127.0.0.1', resolve))
+  const hangPort = hangServer.address().port
+  t.after(async () => new Promise((resolve) => hangServer.close(resolve)))
+
+  const proxy = await createDshWebToolsProxy({
+    resolveDeepSeekUpstream: () => ({
+      label: 'deepseek',
+      baseURL: `http://127.0.0.1:${hangPort}`,
+      apiKey: 'sk-hang',
+    }),
+    resolveRelayUpstream: async () => ({
+      label: 'idbots-free',
+      baseURL: relay.toolsBase.replace(/\/v1\/tools$/, ''),
+      apiKey: 'mrk_relay',
+    }),
+    requestTimeoutMs: 600,
+    fallbackPrimaryTimeoutMs: 200,
+    ladderBudgetMs: 500,
+    log: () => undefined,
+  })
+  t.after(() => proxy.stop())
+
+  const started = Date.now()
+  const response = await callProxy(proxy, 'search', { query: 'budgeted' })
+  const elapsed = Date.now() - started
+  assert.equal(response.status, 200, 'the relay fallback must still succeed')
+  assert.deepEqual(response.json, OK_RESULTS)
+  assert.ok(elapsed < 2000, `the ladder must finish inside the shared budget, took ${elapsed}ms`)
+  assert.equal(relay.seen.length, 1, 'the relay answered the fallback')
+})
+
