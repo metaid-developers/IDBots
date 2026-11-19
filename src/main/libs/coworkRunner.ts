@@ -11925,9 +11925,11 @@ export class CoworkRunner extends EventEmitter {
             : false
         ),
         log: (level, message, detail) => coworkLog(level.toUpperCase() as 'INFO' | 'WARN' | 'ERROR', 'dshTurnHub', message, detail as Record<string, unknown> | undefined),
-        // REQ-A-31: desktop keeps a 30-min healthy idle reap; server mode uses
-        // 10 minutes. Either slot drops to 2 minutes under host memory pressure.
+        // REQ-A-31: desktop keeps adaptive memory-pressure reaping. Server
+        // mode keeps its fixed 10-minute bound instead of cold-booting after
+        // every short conversational pause on a memory-constrained host.
         runtimeIdleTtlMs: resolveDshRuntimeIdleTtlMs(DSH_RUNTIME_IDLE_TTL_MS),
+        runtimeIdleMemoryPressureAware: !isServerMode(),
       });
     }
     return this.dshTurnHub;

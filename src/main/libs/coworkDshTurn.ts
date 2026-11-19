@@ -380,6 +380,9 @@ export interface DshHubOptions {
    *  cold-starts and resumes sessions from disk. Also sweeps drained
    *  (superseded) kernels whose turns have all settled. */
   runtimeIdleTtlMs?: number
+  /** Desktop shortens idle runtimes under host memory pressure. Server mode
+   *  keeps its explicit bounded TTL so routine pauses do not force cold boots. */
+  runtimeIdleMemoryPressureAware?: boolean
   /**
    * Grace window for kernel-side activity (any runtime notification —
    * host-turn or kernel-initiated, e.g. continuable-subagent turns with no
@@ -443,9 +446,10 @@ export const DSH_KERNEL_ACTIVITY_GRACE_MS = 10 * 60_000
  * Default idle-runtime TTL (REQ-A-31 desktop value): a slot whose runtime
  * has seen no in-flight turns for this long is reaped — kernel, subprocesses
  * and the playwright MCP it pre-starts all exit, and the next turn on the
- * slot cold-starts from disk. Server mode overrides this to 10 minutes via
- * resolveDshRuntimeIdleTtlMs (src/main/server/serverMode.ts). Under host
- * memory pressure the effective TTL drops to two minutes for idle slots.
+ * slot cold-starts from disk. Server mode overrides this to a fixed 10-minute
+ * bound via resolveDshRuntimeIdleTtlMs (src/main/server/serverMode.ts).
+ * Desktop slots drop to two minutes under memory pressure, or 45 seconds when
+ * free memory is critical.
  */
 export const DSH_RUNTIME_IDLE_TTL_MS = 30 * 60_000
 export const DSH_RUNTIME_PRESSURE_IDLE_TTL_MS = 2 * 60_000
@@ -456,8 +460,9 @@ export const DSH_RUNTIME_CRITICAL_FREE_MEMORY_MB = 256
 export function resolveDshRuntimeIdleTtlMsForMemory(
   baseTtlMs: number,
   freeMemoryMb = os.freemem() / 1024 / 1024,
+  memoryPressureAware = true,
 ): number {
-  if (baseTtlMs <= 0) return baseTtlMs
+  if (baseTtlMs <= 0 || !memoryPressureAware) return baseTtlMs
   if (freeMemoryMb < DSH_RUNTIME_CRITICAL_FREE_MEMORY_MB) {
     return Math.min(baseTtlMs, DSH_RUNTIME_CRITICAL_PRESSURE_IDLE_TTL_MS)
   }
@@ -1582,7 +1587,11 @@ export class DshTurnHub {
   private scheduleReap(): void {
     const baseTtl = this.opts.runtimeIdleTtlMs ?? DSH_RUNTIME_IDLE_TTL_MS
     if (baseTtl <= 0 || this.reapTimer) return
-    const effectiveTtl = resolveDshRuntimeIdleTtlMsForMemory(baseTtl)
+    const effectiveTtl = resolveDshRuntimeIdleTtlMsForMemory(
+      baseTtl,
+      undefined,
+      this.opts.runtimeIdleMemoryPressureAware !== false,
+    )
     const delay = Math.max(50, Math.min(effectiveTtl, 60_000))
     this.reapTimer = setTimeout(() => {
       this.reapTimer = null
@@ -1595,7 +1604,11 @@ export class DshTurnHub {
     const baseTtl = this.opts.runtimeIdleTtlMs ?? DSH_RUNTIME_IDLE_TTL_MS
     if (baseTtl <= 0) return
     const freeMemoryMb = os.freemem() / 1024 / 1024
-    const ttl = resolveDshRuntimeIdleTtlMsForMemory(baseTtl, freeMemoryMb)
+    const ttl = resolveDshRuntimeIdleTtlMsForMemory(
+      baseTtl,
+      freeMemoryMb,
+      this.opts.runtimeIdleMemoryPressureAware !== false,
+    )
     const now = Date.now()
     for (const [key, slot] of [...this.slots]) {
       // Retire drained kernels whose turns have all settled, even when the
