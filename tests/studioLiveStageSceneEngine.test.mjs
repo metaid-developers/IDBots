@@ -130,6 +130,21 @@ test('shouldPlayTransient dedupes by id and rejects stale events older than 6s',
   assert.equal(T.shouldPlayTransient(seen, null, 30000), false);
 });
 
+test('shouldPlayTransient caps the seen Set — the persistent stage page cannot leak forever', () => {
+  const seen = new Set();
+  // 200 fresh beats: every one plays, the Set never grows past the cap.
+  for (let i = 0; i < 400; i += 1) {
+    const played = T.shouldPlayTransient(seen, { kind: 'steer', id: `beat-${i}`, label: 'x', at: 1_000_000 + i }, 1_000_000 + i);
+    assert.equal(played, true, `beat-${i} must play`);
+    assert.ok(seen.size <= 200, `Set must stay capped, saw ${seen.size}`);
+  }
+  // The oldest id was evicted: a re-add of it is gated only by freshness —
+  // a STALE evicted beat still refuses through the 6s gate (no replay).
+  assert.equal(seen.has('beat-0'), false);
+  assert.equal(T.shouldPlayTransient(seen, { kind: 'steer', id: 'beat-0', label: 'x', at: 1_000_000 }, 1_006_401), false,
+    'an evicted stale beat still refuses through the freshness gate');
+});
+
 test('placeGlow returns the per-place tint', () => {
   assert.equal(T.placeGlow('mind'), '#956CFF');
   assert.equal(T.placeGlow('machine'), '#956CFF', 'mind/machine return to the original violet glow');
