@@ -591,6 +591,14 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [archivedBotSelectOpen]);
+  // The popover renders fixed at viewport coords captured at open time, but
+  // the settings pane behind it scrolls — scrolling left it floating detached
+  // from its anchor (2026-11-19 review P2). A native select closed on scroll;
+  // this custom popover does the same.
+  const closeArchivedBotSelect = () => {
+    setArchivedBotSelectOpen(false);
+    if (archivedBotSelectRef.current) archivedBotSelectRef.current.dataset.selectOpen = 'false';
+  };
   const [archivedChatsPage, setArchivedChatsPage] = useState<number>(0);
   const [archivedChatsTotal, setArchivedChatsTotal] = useState<number>(0);
   const [archivedChatsNotice, setArchivedChatsNotice] = useState<string | null>(null);
@@ -2848,6 +2856,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                         return next;
                       });
                     }}
+                    data-testid="archived-bot-filter-trigger"
                     className="flex h-[36px] w-full items-center justify-between gap-1.5 rounded-[var(--shape-radius-sm)] border px-3 text-sm dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60"
                   >
                     <span className="truncate">
@@ -4024,6 +4033,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             {/* Tab content */}
             <div
               ref={contentRef}
+              onScroll={() => {
+                // The archived-chats bot filter popover is fixed-positioned
+                // from coords captured at open time; scrolling the pane
+                // would leave it floating detached from its anchor. A native
+                // select closed on scroll — so does this custom one.
+                if (archivedBotSelectOpen) closeArchivedBotSelect();
+              }}
               className="px-6 pt-4 pb-4 flex-1 overflow-y-auto"
             >
               <Suspense

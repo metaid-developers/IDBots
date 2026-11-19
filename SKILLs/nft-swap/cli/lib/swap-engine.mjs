@@ -427,6 +427,37 @@ export async function mintAndSend({
   itemInfoTimeoutMs = 360_000,
 }) {
   if (!row) fail('LEDGER_ROW_MISSING', 'no ledger row to drive');
+  if (!ledger?.lockExclusive || !ledger?.unlockExclusive) {
+    return mintAndSendLocked({ ledger, album, row, deps, recipientAddress, cover, broadcast, feeCeilingSats, itemInfoTimeoutMs });
+  }
+  // Cross-process gate (2026-11-19 review P2): two concurrent `--broadcast`
+  // runs previously BOTH passed the otherMinted check before either recorded
+  // the mint — a duplicated broadcast (doubled fee, MULTIPLE_OFFICIAL_MINTS
+  // cleanup). The whole command now runs under the ledger's exclusive lock:
+  // the second run waits on busy_timeout, then either proceeds against the
+  // committed state or fails SQLITE_BUSY. The lock is released on EVERY exit
+  // path; intermediate writes commit at unlock, and the crash window
+  // between broadcast and the ledger write stays covered by the itemPath
+  // probe invariant below.
+  ledger.lockExclusive();
+  try {
+    return await mintAndSendLocked({ ledger, album, row, deps, recipientAddress, cover, broadcast, feeCeilingSats, itemInfoTimeoutMs });
+  } finally {
+    ledger.unlockExclusive();
+  }
+}
+
+async function mintAndSendLocked({
+  ledger,
+  album,
+  row,
+  deps,
+  recipientAddress = null,
+  cover = null,
+  broadcast = false,
+  feeCeilingSats = album.perSwapFeeCeilingSats ?? 5000,
+  itemInfoTimeoutMs = 360_000,
+}) {
   const steps = [];
   /** item_desc display, decided once (partName comes from the live vault row) and persisted in the ledger. */
   let display = null;

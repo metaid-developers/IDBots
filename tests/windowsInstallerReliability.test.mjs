@@ -196,6 +196,14 @@ test('NSIS customCheckAppRunning closes IDBots and INSTDIR child processes safel
   assert.match(source, /IDBOTS_OLD_MACHINE_DIR/);
   assert.match(source, /taskkill\.exe" \/F \/IM "\$\{APP_EXECUTABLE_FILENAME\}" \/FI "PID ne \$R8"/);
   assert.match(source, /ExecShellWait "runas" "\$SYSDIR\\taskkill\.exe"/);
+  // Session-scoped kill (2026-11-19 review P2): the fast taskkill must carry
+  // the installer session's filter — a bare /IM is machine-wide and force-
+  // killed ANOTHER session's instance under fast user switching, losing that
+  // session's in-flight bot work. Session resolution fails closed (unknown
+  // session kills nothing); the UAC-elevated retry keeps its machine-wide
+  // form on purpose (it exists to reach the other ELEVATION of our own app).
+  assert.match(source, /ProcessIdToSessionId\(i \$R8, \*i \.R9\) i \.R7/);
+  assert.match(source, /\/FI "SESSION eq \$R9"/);
   assert.match(source, /\$\{If\} \$\{UAC_IsInnerInstance\}[\s\S]*?!insertmacro customCheckAppRunning/);
   assert.match(source, /IfFileExists "\$APPDATA\\IDBots\\idbots\.sqlite" _idbots_data_check_done 0/);
   assert.match(source, /!macro customInstall/);
@@ -217,6 +225,19 @@ test('NSIS customCheckAppRunning closes IDBots and INSTDIR child processes safel
   assert.match(source, /UAC_AsUser_Call Function _IdbotsLaunchFromUserProcess/);
   assert.match(source, /\$\{StdUtils\.ExecShellAsUser\} \$0 "\$appExe" "open" "\$1"/);
   assert.doesNotMatch(source, /"\$launchLink"/);
+  // Finish-page verification is 5x250ms plus one DE-ELEVATED retry; the old
+  // direct elevated Exec fallback spawned an admin-elevated IDBots.exe on a
+  // slow shell (single-instance absorbed the duplicate but the survivor kept
+  // an admin token) — deliberately gone (2026-11-19 review P2).
+  assert.match(source, /\$R2 < 5/, 'the finish-page verify loop waits ~1.25s across 5 rounds');
+  assert.equal((source.match(/Exec '"\$appExe" \$1'/g) || []).length, 1,
+    'elevated direct Exec is gone: only the NON-elevated branch may spawn $appExe directly (the helper launches via $INSTDIR paths)');
+  // The grammar gate must be wired into CI (regex pins cannot see NSIS
+  // grammar — the first real compile is where this class of bug surfaces).
+  const workflow = read('.github/workflows/build.yml');
+  assert.match(workflow, /Compile the NSIS syntax harness \(makensis -WX\)/);
+  assert.match(workflow, /node scripts\/verify-nsis-harness\.mjs --require-makensis/);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'scripts', 'verify-nsis-harness.mjs')), true);
   // PowerShell variables inside NSIS strings must be escaped as $$ to avoid makensis -WX warnings.
   assert.doesNotMatch(source, /(?<!\$)\$(?:ErrorActionPreference|env:|PID\b)/);
 

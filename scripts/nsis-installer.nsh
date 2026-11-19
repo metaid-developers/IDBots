@@ -48,7 +48,24 @@
 !macro _IDBOTS_STOP_RUNNING_PROCESSES
   ; Do not pass /T to taskkill /IM IDBots.exe: the updater launches this
   ; installer directly, and killing the process tree would kill the installer.
-  nsExec::Exec `"$SYSDIR\taskkill.exe" /F /IM "${APP_EXECUTABLE_FILENAME}" /FI "PID ne $R8"`
+  ;
+  ; Session-scoped kill (2026-11-19 review P2): a bare /IM is machine-wide —
+  ; under fast user switching (same account in a second session) or an
+  ; elevated all-users run it force-killed ANOTHER session's instance,
+  ; losing that session's in-flight bot work. ProcessIdToSessionId + the
+  ; SESSION filter keep the fast native path while touching only this
+  ; installer's own session. A foreign-session instance on a machine-scope
+  ; install is left running: the loop below then degrades to the
+  ; "$(appCannotBeClosed)" prompt instead of silently destroying another
+  ; session's work. Failure to resolve our session id kills NOTHING here
+  ; (fail closed); the UAC-elevated retry below keeps its machine-wide
+  ; form because it exists precisely to reach the other ELEVATION of our
+  ; own user's app.
+  System::Call 'kernel32::ProcessIdToSessionId(i $R8, *i .R9) i .R7'
+  ${If} $R7 == 0
+    StrCpy $R9 "-1"
+  ${EndIf}
+  nsExec::Exec `"$SYSDIR\taskkill.exe" /F /IM "${APP_EXECUTABLE_FILENAME}" /FI "PID ne $R8" /FI "SESSION eq $R9"`
   Pop $0
   !insertmacro _IDBOTS_FIND_BUNDLED_CANDIDATES $0
   ${If} $0 == 0
@@ -238,7 +255,16 @@ _idbots_data_check_done:
   IfFileExists "$newDesktopLink" _idbots_desktop_shortcut_exists 0
   CreateShortCut "$newDesktopLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
   ClearErrors
+  ; WinShell is an NSIS PLUGIN, not a macro: `Name::Call` syntax always
+  ; resolves as a plugin invocation (a same-named !define or !macro is never
+  ; reached). The syntax harness's brew/CI NSIS distributions do not carry the
+  ; WinShell.dll that electron-builder's NSIS bundle ships, so the harness
+  ; build compiles with IDBOTS_NSIS_SYNTAX_HARNESS defined and skips exactly
+  ; these three fixed-string plugin one-liners. The real install defines no
+  ; such flag and keeps them all.
+  !ifndef IDBOTS_NSIS_SYNTAX_HARNESS
   WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
+  !endif
 
 _idbots_desktop_shortcut_exists:
   StrCpy $R9 "0"
@@ -263,10 +289,14 @@ _idbots_desktop_shortcut_exists:
   ${EndIf}
   ClearErrors
   IfFileExists "$newStartMenuLink" 0 +2
+  !ifndef IDBOTS_NSIS_SYNTAX_HARNESS
   WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
+  !endif
   ClearErrors
   IfFileExists "$newDesktopLink" 0 _idbots_desktop_shortcut_done
+  !ifndef IDBOTS_NSIS_SYNTAX_HARNESS
   WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
+  !endif
   System::Call 'Shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
 
 _idbots_desktop_shortcut_done:
@@ -325,27 +355,43 @@ _idbots_desktop_shortcut_done:
 
       ; 3. Directly elevated admin installer (e.g. Run as administrator or UAC
       ;    disabled on older Windows): de-elevate via Explorer on $appExe, then
-      ;    verify IDBots.exe actually entered the process table and fall back
-      ;    to direct CreateProcess if Explorer COM silently ignored the call.
+      ;    verify IDBots.exe actually entered the process table across ~5x250ms
+      ;    before retrying the DE-ELEVATED shell launch once. The old direct
+      ;    elevated Exec fallback is deliberately gone (2026-11-19 review P2):
+      ;    on a slow shell it spawned a second, admin-elevated IDBots.exe; the
+      ;    single-instance lock absorbed the duplicate but the surviving
+      ;    process kept an admin token. A missed auto-launch (the user clicks
+      ;    the icon) beats an accidental admin process.
       System::Call 'kernel32::GetCurrentProcessId() i .R8'
       ${StdUtils.ExecShellAsUser} $0 "$appExe" "open" "$1"
+      ; ${__LINE__} expands to the CURRENT line, so the label and its Goto
+      ; must share ONE define (mirroring _IDBOTS_CHK_ID above) or they never
+      ; resolve to the same name. (Caught by the makensis harness on its very
+      ; first compile — the exact class of bug the harness exists for.)
+      !define _IDBOTS_FV_ID ${__LINE__}
       ${If} $0 == "ok"
-        Sleep 250
-        !insertmacro _IDBOTS_FIND_MAIN_EXE $R0
-        ${If} $R0 == 0
-          Return
-        ${EndIf}
-        Sleep 350
+        StrCpy $R2 "0"
+        _idbots_finish_verify_${_IDBOTS_FV_ID}:
+          Sleep 250
+          !insertmacro _IDBOTS_FIND_MAIN_EXE $R0
+          ${If} $R0 == 0
+            Return
+          ${EndIf}
+          IntOp $R2 $R2 + 1
+          ${If} $R2 < 5
+            Goto _idbots_finish_verify_${_IDBOTS_FV_ID}
+          ${EndIf}
+        ; Explorer COM occasionally swallows the first ShellDispatch call on a
+        ; cold session — retry the de-elevated launch once, wait, re-check.
+        ${StdUtils.ExecShellAsUser} $0 "$appExe" "open" "$1"
+        Sleep 400
         !insertmacro _IDBOTS_FIND_MAIN_EXE $R0
         ${If} $R0 == 0
           Return
         ${EndIf}
       ${EndIf}
-      ClearErrors
-      Exec '"$appExe" $1'
-      ${If} ${Errors}
-        ExecShell "" "$appExe" "$1" SW_SHOWNORMAL
-      ${EndIf}
+      ; Still not running: leave the launch to the user. No elevated spawn.
+      !undef _IDBOTS_FV_ID
     FunctionEnd
 
     !define MUI_FINISHPAGE_RUN

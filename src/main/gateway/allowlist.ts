@@ -444,7 +444,7 @@ export const INVOKE_ALLOWLIST: Record<string, AllowlistEntry> = {
 // ---------------------------------------------------------------------------
 
 export const INVOKE_ALLOWLIST_PREFIXES: Array<{ prefix: string; entry: AllowlistEntry }> = [
-  { prefix: 'longtermTask:', entry: { tier: 'P1', note: '`02`: all 15 longtermTask:* channels are P1.' } },
+  { prefix: 'longtermTask:', entry: { tier: 'P1', note: '`02` + studioStatus (2026-11-18): all 16 longtermTask:* channels are P1.' } },
   { prefix: 'groupTask:', entry: { tier: 'P2', note: '`02`: all 16 groupTask:* channels are P2.' } },
   {
     prefix: 'gigSquare:',
