@@ -91,8 +91,8 @@ test('parseProviderModelListPayload reads the OpenAI-style list and keeps gatewa
     ],
   });
   assert.deepEqual(commandCode, [
-    { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', contextWindow: 1000000 },
-    { id: 'deepseek/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 1000000 },
+    { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', contextWindow: 1000000, maxOutputTokens: undefined },
+    { id: 'deepseek/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 1000000, maxOutputTokens: undefined },
   ]);
 
   // deepseek/opencode shape: bare ids, no name/context.
@@ -104,8 +104,8 @@ test('parseProviderModelListPayload reads the OpenAI-style list and keeps gatewa
     ],
   });
   assert.deepEqual(deepseek, [
-    { id: 'deepseek-flash', name: undefined, contextWindow: undefined },
-    { id: 'deepseek-v4-pro', name: undefined, contextWindow: undefined },
+    { id: 'deepseek-flash', name: undefined, contextWindow: undefined, maxOutputTokens: undefined },
+    { id: 'deepseek-v4-pro', name: undefined, contextWindow: undefined, maxOutputTokens: undefined },
   ]);
 
   // Blank ids and duplicates drop out; unknown payload shapes yield [].
@@ -139,9 +139,88 @@ test('parseProviderModelListPayload reads the Zhipu Responses catalog shape', ()
     ],
   });
   assert.deepEqual(zhipu, [
-    { id: 'glm-5.3', name: 'glm-5.3', supportsImage: false, contextWindow: 1048576 },
-    { id: 'glm-5.3-flash', name: 'glm-5.3-flash', supportsImage: true, contextWindow: 1048576 },
-    { id: 'glm-5-turbo', name: 'glm-5-turbo', contextWindow: 204800 },
+    { id: 'glm-5.3', name: 'glm-5.3', supportsImage: false, contextWindow: 1048576, maxOutputTokens: undefined },
+    { id: 'glm-5.3-flash', name: 'glm-5.3-flash', supportsImage: true, contextWindow: 1048576, maxOutputTokens: undefined },
+    { id: 'glm-5-turbo', name: 'glm-5-turbo', contextWindow: 204800, maxOutputTokens: undefined },
+  ]);
+});
+
+test('parseProviderModelListPayload reads the opencode limit/modalities metadata', () => {
+  // Live shape of GET https://opencode.ai/zen/go/v1/models (2026-11-19,
+  // session cw-636ddce2): each entry carries a nested limit record
+  // {context, output} and modalities either as an {input, output} record
+  // (deepseek SKUs) or a flat MIME array (gemini SKUs). Before this parser
+  // learned the shape, gemini-4-argon (1M real) synced with NO window and
+  // resolved to the 128K fallback, overflowed mid-turn and died silently.
+  const opencode = parseProviderModelListPayload({
+    object: 'list',
+    data: [
+      {
+        id: 'gemini-4-argon',
+        object: 'model',
+        name: 'Gemini 4 Argon',
+        family: 'gemini',
+        limit: { context: 1048576, output: 65536 },
+        modalities: ['text', 'image/png', 'image/jpeg', 'video/mp4'],
+      },
+      {
+        id: 'deepseek-v4.1-flash',
+        object: 'model',
+        limit: { context: 1000000, output: 384000 },
+        modalities: { input: ['text', 'image/png'], output: ['text'] },
+      },
+      {
+        id: 'muse-spark-7',
+        object: 'model',
+        // No limit record: window/output stay undefined so resolution falls
+        // through to the catalog / family / fallback layers.
+        modalities: { input: ['text'], output: ['text'] },
+      },
+    ],
+  });
+  assert.deepEqual(opencode, [
+    {
+      id: 'gemini-4-argon',
+      name: 'Gemini 4 Argon',
+      supportsImage: true,
+      contextWindow: 1048576,
+      maxOutputTokens: 65536,
+    },
+    {
+      id: 'deepseek-v4.1-flash',
+      name: undefined,
+      supportsImage: true,
+      contextWindow: 1000000,
+      maxOutputTokens: 384000,
+    },
+    {
+      id: 'muse-spark-7',
+      name: undefined,
+      supportsImage: false,
+      contextWindow: undefined,
+      maxOutputTokens: undefined,
+    },
+  ]);
+});
+
+test('mergeSyncedProviderModels stores endpoint-reported maxOutputTokens (opencode limits)', () => {
+  // opencode reports limit.output; the synced row must carry it so the
+  // route's maxTokens matches the SKU's real output ceiling instead of the
+  // generic 128K default (or the small-window 8192 clamp it used to get).
+  const merged = mergeSyncedProviderModels(
+    'opencode',
+    [{ id: 'gemini-4-argon', contextWindow: 1048576, maxOutputTokens: 65536, supportsImage: true }],
+    [{ id: 'gemini-4-argon', name: 'Gemini 4 Argon (manual)' }],
+  );
+  assert.deepEqual(merged, [
+    {
+      id: 'gemini-4-argon',
+      name: 'Gemini 4 Argon (manual)',
+      supportsImage: true,
+      contextWindow: 1048576,
+      maxOutputTokens: 65536,
+      options: undefined,
+    },
   ]);
 });
 

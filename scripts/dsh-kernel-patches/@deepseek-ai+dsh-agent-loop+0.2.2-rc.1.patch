@@ -1,0 +1,65 @@
+--- a/dsh-runtime/node_modules/@deepseek-ai/dsh-agent-loop/lib/index.js
++++ b/dsh-runtime/node_modules/@deepseek-ai/dsh-agent-loop/lib/index.js
+@@ -11,6 +11,24 @@
+ import { joinContextSections, renderContextSections, renderPrompt } from "@deepseek-ai/dsh-system-prompt";
+ import { ToolActivationError, ToolBatchExecutionError } from "@deepseek-ai/dsh-tools";
+ import { z as z$1 } from "zod";
++/**
++* IDBots patch (empty-length-stop overflow recovery): output-token ceiling
++* under which a content-less `length` stop can only mean the INPUT hit the
++* model's context window, not the output budget. A genuine output-ceiling
++* stop burns the output budget (the host clamps maxTokens to at least 8192)
++* and always carries content blocks.
++*/
++const EMPTY_LENGTH_STOP_OUTPUT_TOKEN_CEILING = 64;
++/**
++* IDBots patch (empty-length-stop overflow recovery): whether a `length` stop
++* is the context-window boundary masquerading as an output truncation — zero
++* content blocks plus a near-zero output-token count (cw-636ddce2,
++* 2026-11-19: 129,004 reported tokens against a 128,000 window, 16 output
++* tokens, empty content).
++*/
++function isOverflowMasquerade(usage, message) {
++	return message.content.length === 0 && typeof usage?.outputTokens === "number" && Number.isFinite(usage.outputTokens) && usage.outputTokens <= EMPTY_LENGTH_STOP_OUTPUT_TOKEN_CEILING;
++}
+ //#region lib/types/inbox.js
+ /**
+ * Driver-owned durable agent inbox projection and command facade.
+@@ -946,6 +964,37 @@
+ 						...live.replayState !== void 0 ? { replayState: live.replayState } : {}
+ 					}
+ 				});
++				if (finish.kind === "max-tokens" && isOverflowMasquerade(live.usage, message)) {
++					// IDBots patch (empty-length-stop overflow recovery): a `length`
++					// stop with zero content blocks and a near-zero output count is
++					// not an output-ceiling truncation — the input filled the model's
++					// context window and the provider stopped at the window boundary.
++					// The stock path returns {kind:"max-tokens"}, the host burns its
++					// single auto-continuation on a request that overflows again, and
++					// the turn dies in silence. Divert to the standard request-error
++					// recovery instead: compaction-basic compacts the surface and
++					// retries the step, and when no listener can recover the turn
++					// fails with a real CONTEXT_WINDOW_EXCEEDED error every surface
++					// can show. Dispatch runs BEFORE the durable append on purpose:
++					// the empty assistant message must not land, or compaction-basic's
++					// session/event listener resets its overflow-retry budget on
++					// every pass and the recovery never terminates.
++					const failure = {
++						code: "CONTEXT_WINDOW_EXCEEDED",
++						message: `Request filled the model context window (provider reported ${live.usage?.totalTokens ?? "unknown"} total tokens) and returned a length stop with no content`
++					};
++					const action = await this.dispatch.waterfall("agent/request-error", {
++						turn,
++						step,
++						provider: request.provider,
++						failure,
++						retryPolicy: preparedCall?.retryPolicy,
++						signal
++					}, () => Promise.resolve(void 0));
++					signal.throwIfAborted();
++					if (action?.kind !== "retry") throw new LlmError(failure.message, failure.code, failure);
++					continue;
++				}
+ 				live.settle("assistant/message", () => this.session.append("assistant/message", {
+ 					turn,
+ 					step,

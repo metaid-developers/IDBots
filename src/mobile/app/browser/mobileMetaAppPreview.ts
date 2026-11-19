@@ -5,11 +5,14 @@ import {
   type MetaAppPreviewSessionFactory,
 } from '@openagentinternet/agent-browser-core';
 import { publishMobilePreviewFile } from './mobilePreviewPublisher';
+import { injectLegacyWebViewUrlCompatibilityHtml } from '@/features/botBrowser/legacyWebViewUrl';
 
 const METAFILE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
 const METAFILE_ACCELERATE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content';
 const MAX_PACKAGE_BYTES = 30 * 1024 * 1024;
 const MAX_PACKAGE_FILES = 512;
+const MAX_DATA_URL_BYTES = 512 * 1024;
+const DATA_URL_EXTENSIONS = new Set(['css', 'js', 'json', 'markdown', 'md', 'mjs', 'txt', 'xml']);
 
 const MIME_BY_EXTENSION: Record<string, string> = {
   css: 'text/css',
@@ -19,6 +22,9 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   jpg: 'image/jpeg',
   js: 'text/javascript',
   json: 'application/json',
+  markdown: 'text/markdown',
+  md: 'text/markdown',
+  mjs: 'text/javascript',
   m4a: 'audio/mp4',
   mp3: 'audio/mpeg',
   mp4: 'video/mp4',
@@ -27,7 +33,9 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   ts: 'text/plain',
   txt: 'text/plain',
   wasm: 'application/wasm',
+  wav: 'audio/wav',
   webm: 'video/webm',
+  webmanifest: 'application/manifest+json',
   webp: 'image/webp',
   woff: 'font/woff',
   woff2: 'font/woff2',
@@ -75,6 +83,10 @@ function rewriteSrcset(srcset: string, fromPath: string, objectUrls: ReadonlyMap
   }).join(', ');
 }
 
+function mobileMetaAppLogicalUrl(path: string): string {
+  return `https://metaapp.local/${path.split('/').map((part) => encodeURIComponent(part)).join('/')}`;
+}
+
 export function rewriteMobileMetaAppHtml(
   html: string,
   fromPath: string,
@@ -94,43 +106,117 @@ export function rewriteMobileMetaAppHtml(
   });
 }
 
+export function rewriteMobileMetaAppMarkdown(
+  markdown: string,
+  fromPath: string,
+  objectUrls: ReadonlyMap<string, string>,
+): string {
+  return rewriteMobileMetaAppHtml(markdown, fromPath, objectUrls).replace(
+    /(!\[[^\]]*\]\(\s*)([^)\s]+)([^)]*\))/gu,
+    (match, prefix: string, reference: string, suffix: string) => {
+      const resolved = resolvePackageReference(reference, fromPath);
+      const replacement = resolved ? objectUrls.get(resolved) : '';
+      return replacement ? `${prefix}${replacement}${suffix}` : match;
+    },
+  );
+}
+
 export function rewriteMobileMetaAppJavaScript(
   source: string,
   fromPath: string,
   objectUrls: ReadonlyMap<string, string>,
+  documentPath = 'index.html',
 ): string {
-  const replaceReference = (match: string, prefix: string, reference: string, suffix: string): string => {
+  const replaceModuleReference = (match: string, prefix: string, reference: string, suffix: string): string => {
     const resolved = resolvePackageReference(reference, fromPath);
-    const replacement = resolved ? objectUrls.get(resolved) : '';
-    return replacement ? `${prefix}${replacement}${suffix}` : match;
+    return resolved && objectUrls.has(resolved)
+      ? `${prefix}${mobileMetaAppLogicalUrl(resolved)}${suffix}`
+      : match;
   };
-  const replaceTemplateReference = (match: string, prefix: string, reference: string, suffix: string): string => {
-    const directory = `${reference.replace(/^\.\//, '').split('/')[0]}/`;
-    for (const [path, url] of objectUrls) {
-      if (path.startsWith(directory)) {
-        const fileName = path.split('/').pop() ?? '';
-        const urlFileName = url.split('/').pop() ?? '';
-        const filePrefix = fileName && urlFileName.endsWith(fileName)
-          ? urlFileName.slice(0, urlFileName.length - fileName.length)
-          : '';
-        const base = url.slice(0, url.lastIndexOf('/') + 1) + filePrefix;
-        return `${prefix}${base}${reference.slice(directory.length)}${suffix}`;
-      }
+  let resolverName = '__idbotsMobileMetaAppResolveUrl';
+  while (source.includes(resolverName)) resolverName += '_';
+  let usesResolver = false;
+  const replaceDynamicReference = (
+    basePath: string,
+    prefix: string,
+    expression: string,
+    suffix: string,
+    logical: boolean,
+  ): string => {
+    usesResolver = true;
+    return `${prefix}${resolverName}(${expression}, ${JSON.stringify(basePath)}, ${logical})${suffix}`;
+  };
+  const rewritten = source
+    .replace(/(\bfrom\s+['"])([^'"]+)(['"])/giu, replaceModuleReference)
+    .replace(/(\bimport\s*\(\s*['"])([^'"]+)(['"])/giu, replaceModuleReference)
+    .replace(/(\bimport\s+['"])([^'"]+)(['"])/giu, replaceModuleReference)
+    .replace(/(\bnew\s+URL\s*\(\s*)(['"])([^'"]+)\2(\s*,\s*import\.meta\.url\s*\))/giu, (_match, prefix: string, _quote: string, reference: string, suffix: string) => (
+      replaceDynamicReference(fromPath, prefix, JSON.stringify(reference), suffix, false)
+    ))
+    .replace(/(\bfetch\s*\(\s*)(['"])([^'"]+)\2/giu, (_match, prefix: string, _quote: string, reference: string) => (
+      replaceDynamicReference(documentPath, prefix, JSON.stringify(reference), '', false)
+    ))
+    .replace(/(\brequire\s*\(\s*)(['"])([^'"]+)\2(\s*\))/giu, (_match, prefix: string, _quote: string, reference: string, suffix: string) => (
+      replaceDynamicReference(fromPath, prefix, JSON.stringify(reference), suffix, false)
+    ))
+    .replace(/(\bfetch\s*\(\s*)(`(?:\\[\s\S]|[^`\\])*`)(\s*\))/giu, (_match, prefix: string, template: string, suffix: string) => (
+      replaceDynamicReference(documentPath, prefix, template, suffix, false)
+    ))
+    .replace(/(\bimport\s*\(\s*)(`(?:\\[\s\S]|[^`\\])*`)(\s*\))/giu, (_match, prefix: string, template: string, suffix: string) => (
+      replaceDynamicReference(fromPath, prefix, template, suffix, true)
+    ))
+    .replace(/(\brequire\s*\(\s*)(`(?:\\[\s\S]|[^`\\])*`)(\s*\))/giu, (_match, prefix: string, template: string, suffix: string) => (
+      replaceDynamicReference(fromPath, prefix, template, suffix, false)
+    ));
+  if (!usesResolver) return rewritten;
+  const resolver = `const ${resolverName} = (() => {
+  const resources = globalThis.__idbotsMobileMetaAppResourcesV1;
+  return (reference, fromPath, logical) => {
+    try {
+      const value = String(reference).trim();
+      if (!resources || !value || value.startsWith('#') || value.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(value)) return reference;
+      const url = new URL(value, 'https://metaapp.local/' + fromPath);
+      const path = decodeURIComponent(url.pathname).replace(/^\\/+/, '');
+      if (!path || path.split('/').some((part) => !part || part === '.' || part === '..') || !resources.has(path)) return reference;
+      return logical
+        ? 'https://metaapp.local/' + path.split('/').map(encodeURIComponent).join('/')
+        : resources.get(path);
+    } catch {
+      return reference;
     }
-    return match;
   };
-  return source
-    .replace(/(\bfrom\s+['"])([^'"]+)(['"])/giu, replaceReference)
-    .replace(/(\bimport\s*\(\s*['"])([^'"]+)(['"]\s*\))/giu, replaceReference)
-    .replace(/(\bimport\s+['"])([^'"]+)(['"])/giu, replaceReference)
-    .replace(/(\brequire\s*\(\s*['"])([^'"]+)(['"]\s*\))/giu, replaceReference)
-    .replace(/(\bfetch\s*\(\s*['"])([^'"]+)(['"]\s*\))/giu, replaceReference)
-    .replace(/(\bfetch\s*\(\s*`)([^`]+)(`\s*\))/giu, replaceTemplateReference);
+})();
+`;
+  return `${resolver}${rewritten}`;
 }
 
-function prepareHtml(html: string): string {
+function inlineJson(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/&/g, '\\u0026')
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+export function buildMobileMetaAppResourceScripts(objectUrls: ReadonlyMap<string, string>): string {
+  const imports: Record<string, string> = {};
+  for (const [path, url] of objectUrls) {
+    if (['js', 'mjs'].includes(extensionOf(path))) imports[mobileMetaAppLogicalUrl(path)] = url;
+  }
+  return `<script>globalThis.__idbotsMobileMetaAppResourcesV1 = new Map(${inlineJson([...objectUrls])});</script>`
+    + `<script type="importmap">${inlineJson({ imports })}</script>`;
+}
+
+function prepareHtml(html: string, resourceScripts = ''): string {
+  let body = injectLegacyWebViewUrlCompatibilityHtml(html);
+  if (resourceScripts) {
+    body = /<head(?:\s[^>]*)?>/iu.test(body)
+      ? body.replace(/<head(?:\s[^>]*)?>/iu, (head) => `${head}${resourceScripts}`)
+      : `${resourceScripts}${body}`;
+  }
   return String(preparePreviewHtml({
-    body: html as unknown as Buffer,
+    body: body as unknown as Buffer,
     contentType: 'text/html',
     metafileContentBaseUrl: METAFILE_CONTENT_BASE,
   }));
@@ -142,7 +228,9 @@ async function localizeExternalScripts(args: {
   fetchImpl: typeof fetch;
   publishEntry: (path: string, data: Uint8Array) => Promise<string>;
 }): Promise<string> {
-  const urls = [...new Set([...args.html.matchAll(/<script\b[^>]*\bsrc\s*=\s*["'](https?:\/\/[^"']+)["']/giu)].map((match) => match[1]))];
+  const urls = [...new Set([...args.html.matchAll(/<script\b[^>]*\bsrc\s*=\s*["'](https?:\/\/[^"']+)["']/giu)]
+    .map((match) => match[1])
+    .filter((url) => !url.startsWith('https://metaapp.local/')))];
   const replacements = await Promise.all(urls.map(async (url, index) => {
     try {
       const response = await args.fetchImpl(url, { credentials: 'omit', signal: AbortSignal.timeout(20_000) });
@@ -186,6 +274,20 @@ async function fetchPackage(url: string, fetchImpl: typeof fetch): Promise<{ byt
   };
 }
 
+async function forEachWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex++];
+      await worker(item);
+    }
+  }));
+}
+
 export function createMobileMetaAppPreviewSession(
   fetchImpl: typeof fetch = globalThis.fetch,
   publish: PublishPreview = publishMobilePreviewFile,
@@ -211,11 +313,19 @@ export function createMobileMetaAppPreviewSession(
     const isZip = input.contentType.includes('zip')
       || packageResult.contentType.includes('zip')
       || (new Uint8Array(bytes, 0, 4).join(',') === '80,75,3,4');
-    const publishEntry = (path: string, data: Uint8Array): Promise<string> => publish({
-      name: `metaapp-${input.pinId.slice(0, 12)}-${path.replace(/[^a-z0-9._-]/gi, '-')}`,
-      data,
-      mime: MIME_BY_EXTENSION[extensionOf(path)] ?? 'application/octet-stream',
-    });
+    const publishEntry = (path: string, data: Uint8Array): Promise<string> => {
+      const extension = extensionOf(path);
+      const mime = MIME_BY_EXTENSION[extension] ?? 'application/octet-stream';
+      if (DATA_URL_EXTENSIONS.has(extension) && data.byteLength <= MAX_DATA_URL_BYTES) {
+        const text = new TextDecoder().decode(data);
+        return Promise.resolve(`data:${mime};charset=utf-8,${encodeURIComponent(text)}`);
+      }
+      return publish({
+        name: `metaapp-${input.pinId.slice(0, 12)}-${path.replace(/[^a-z0-9._-]/gi, '-')}`,
+        data,
+        mime,
+      });
+    };
 
     if (!isZip) {
       const html = prepareHtml(await localizeExternalScripts({
@@ -237,42 +347,47 @@ export function createMobileMetaAppPreviewSession(
 
     const urlByPath = new Map<string, string>();
     let uncompressedBytes = 0;
-    for (const item of normalizedEntries) {
+    await forEachWithConcurrency(normalizedEntries, 4, async (item) => {
       const path = item.path;
       const extension = extensionOf(path);
-      if (extension === 'html' || extension === 'css' || extension === 'js') continue;
+      if (['html', 'css', 'js', 'mjs', 'md', 'markdown'].includes(extension)) return;
       const content = await item.entry.async('uint8array');
       uncompressedBytes += content.byteLength;
       if (uncompressedBytes > MAX_PACKAGE_BYTES * 2) throw new Error('MetaApp package expands beyond the mobile preview limit.');
       urlByPath.set(path, await publishEntry(path, content));
-    }
-    for (const item of normalizedEntries) {
+    });
+    await forEachWithConcurrency(normalizedEntries, 4, async (item) => {
       const path = item.path;
-      if (extensionOf(path) !== 'js') continue;
+      if (!['js', 'mjs'].includes(extensionOf(path))) return;
       const content = await item.entry.async('uint8array');
       uncompressedBytes += content.byteLength;
       if (uncompressedBytes > MAX_PACKAGE_BYTES * 2) throw new Error('MetaApp package expands beyond the mobile preview limit.');
-      urlByPath.set(path, await publishEntry(path, content));
-    }
-    for (const extension of ['js', 'css', 'html'] as const) {
-      for (const item of normalizedEntries) {
+      urlByPath.set(path, '');
+    });
+    for (const extension of ['js', 'mjs', 'css', 'md', 'markdown', 'html'] as const) {
+      await forEachWithConcurrency(normalizedEntries, 4, async (item) => {
         const path = item.path;
-        if (extensionOf(path) !== extension) continue;
+        if (extensionOf(path) !== extension) return;
         const text = await item.entry.async('string');
-        if (extension !== 'js') uncompressedBytes += new TextEncoder().encode(text).byteLength;
+        if (!['js', 'mjs'].includes(extension)) uncompressedBytes += new TextEncoder().encode(text).byteLength;
         if (uncompressedBytes > MAX_PACKAGE_BYTES * 2) throw new Error('MetaApp package expands beyond the mobile preview limit.');
-        const rewritten = extension === 'html'
-          ? prepareHtml(await localizeExternalScripts({
-              html: rewriteMobileMetaAppHtml(text, path, urlByPath),
-              pinId: input.pinId,
-              fetchImpl,
-              publishEntry,
-            }))
-          : extension === 'js'
-            ? rewriteMobileMetaAppJavaScript(text, path, urlByPath)
-            : rewriteCssResources(text, path, urlByPath);
+        let rewritten: string;
+        if (extension === 'html') {
+          rewritten = prepareHtml(await localizeExternalScripts({
+            html: rewriteMobileMetaAppHtml(text, path, urlByPath),
+            pinId: input.pinId,
+            fetchImpl,
+            publishEntry,
+          }), buildMobileMetaAppResourceScripts(urlByPath));
+        } else if (extension === 'js' || extension === 'mjs') {
+          rewritten = rewriteMobileMetaAppJavaScript(text, path, urlByPath, entryPath);
+        } else if (extension === 'css') {
+          rewritten = rewriteCssResources(text, path, urlByPath);
+        } else {
+          rewritten = rewriteMobileMetaAppMarkdown(text, entryPath, urlByPath);
+        }
         urlByPath.set(path, await publishEntry(path, new TextEncoder().encode(rewritten)));
-      }
+      });
     }
     const localPreviewUrl = urlByPath.get(entryPath);
     if (!localPreviewUrl) throw new Error('MetaApp preview entry could not be created.');

@@ -32,6 +32,7 @@ export function buildScheduledTaskCreateInput(
   };
 }
 
+type ScheduledRunWithName = ScheduledTaskRun & { taskName?: string };
 type TaskAction = 'save' | 'toggle' | 'run' | 'stop' | 'delete';
 type TaskResult = {
   success?: boolean;
@@ -58,11 +59,15 @@ export function useScheduledTasks({ twinMetabotId, onOpenSession, resyncCounter 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Record<string, TaskAction>>({});
   const [runsByTask, setRunsByTask] = useState<Record<string, ScheduledTaskRun[]>>({});
+  const [allRuns, setAllRuns] = useState<ScheduledRunWithName[]>([]);
+  const [allRunsLoading, setAllRunsLoading] = useState(true);
+  const [allRunsError, setAllRunsError] = useState<string | null>(null);
   const [historyErrors, setHistoryErrors] = useState<Record<string, string>>({});
   const [historyLoading, setHistoryLoading] = useState<Record<string, boolean>>({});
   const loadedRunsRef = useRef<Set<string>>(new Set());
   const requestRef = useRef(0);
   const historyRequestsRef = useRef(new Map<string, number>());
+  const allRunsRequestRef = useRef(0);
   const pendingRef = useRef<Record<string, TaskAction>>({});
 
   const reload = useCallback(async (): Promise<boolean> => {
@@ -119,6 +124,31 @@ export function useScheduledTasks({ twinMetabotId, onOpenSession, resyncCounter 
     }
   }, []);
 
+  const loadAllRuns = useCallback(async (): Promise<boolean> => {
+    const request = ++allRunsRequestRef.current;
+    setAllRunsLoading(true);
+    try {
+      const result = await getMobileElectron().scheduledTasks.listAllRuns(50, 0);
+      if (request !== allRunsRequestRef.current) return false;
+      if (!result?.success || !Array.isArray(result.runs)) {
+        setAllRunsError(result?.error ?? t('mobile.tasks.historyFailed'));
+        return false;
+      }
+      setAllRuns(result.runs);
+      setAllRunsError(null);
+      return true;
+    } catch (error) {
+      if (request === allRunsRequestRef.current) setAllRunsError(errorText(error, t('mobile.tasks.historyFailed')));
+      return false;
+    } finally {
+      if (request === allRunsRequestRef.current) setAllRunsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAllRuns();
+  }, [loadAllRuns, resyncCounter]);
+
   useEffect(() => {
     void reload();
     const api = getMobileElectron().scheduledTasks;
@@ -126,6 +156,11 @@ export function useScheduledTasks({ twinMetabotId, onOpenSession, resyncCounter 
       setTasks((previous) => previous.map((task) => (task.id === taskId ? { ...task, state: { ...state } } : task)));
     });
     const offRun = api.onRunUpdate(({ run }: { run: ScheduledTaskRun }) => {
+      setAllRuns((previous) => {
+        const index = previous.findIndex((entry) => entry.id === run.id);
+        if (index < 0) return [{ ...run }, ...previous].slice(0, 50);
+        return previous.map((entry) => entry.id === run.id ? { ...entry, ...run } : entry);
+      });
       setRunsByTask((previous) => {
         if (!loadedRunsRef.current.has(run.taskId)) return previous;
         const runs = previous[run.taskId] ?? [];
@@ -296,6 +331,10 @@ export function useScheduledTasks({ twinMetabotId, onOpenSession, resyncCounter 
     loadError,
     creating: pending.create === 'save',
     createError: errors.create ?? null,
+    allRuns,
+    allRunsLoading,
+    allRunsError,
+    loadAllRuns,
     errorFor: (id: string) => errors[id] ?? null,
     pendingFor: (id: string) => pending[id] ?? null,
     historyLoadingFor: (id: string) => historyLoading[id] === true,

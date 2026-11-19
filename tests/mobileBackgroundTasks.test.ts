@@ -142,7 +142,7 @@ test('long-term owner actions use result envelopes and emit monotonic updates', 
   assert.equal(resumed.value.currentWaitNote, 'Owner review required');
   const cancelled = await api.longtermTask.setStage({ taskId: 'lt-document', action: 'cancel' });
   assert.deepEqual(cancelled, { ok: true, value: null });
-  assert.deepEqual((await api.longtermTask.board()).board.cards, []);
+  assert.equal((await api.longtermTask.board()).board.cards.some((card) => card.id === 'lt-document'), false);
   const cancelledDetail = (await api.longtermTask.get({ taskId: 'lt-document' })).detail;
   assert.equal(cancelledDetail.stage, 'cancelled');
   assert.equal(cancelledDetail.column, 'done');

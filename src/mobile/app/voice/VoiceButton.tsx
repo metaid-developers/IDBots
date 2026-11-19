@@ -131,8 +131,8 @@ export function VoiceButton({
 }: VoiceButtonProps): JSX.Element {
   const [cancelArmed, setCancelArmed] = useState(false);
   const holdRef = useRef(null as HoldState | null);
-  // A pointer gesture synthesizes a click on release; that click must not
-  // re-enter the tap-toggle path.
+  // Started holds and cancelled gestures suppress their synthesized click;
+  // an unstarted icon tap uses that click to switch modes on the same target.
   const pointerHandledRef = useRef(false);
   // The synthesized click may never arrive (pointercancel, AT quirk); let the
   // suppression flag heal so keyboard activation is never swallowed for good.
@@ -225,9 +225,11 @@ export function VoiceButton({
       onEndHold();
       return;
     }
+    // Switching an icon on pointerup would replace it with the keyboard button
+    // before the browser dispatches click, handing that click to the new button.
+    pointerHandledRef.current = variant !== 'icon' || decision.reason !== 'too_short' || sessionStarted;
     onCancelHold();
     onHoldCancelled?.(decision.reason);
-    if (decision.reason === 'too_short' && !sessionStarted && variant === 'icon') onToggleMode?.();
   };
 
   const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>): void => {
@@ -247,9 +249,8 @@ export function VoiceButton({
   };
 
   const handleClick = (): void => {
-    // Pointer gestures own their own semantics and the synthesized click must
-    // not toggle a second time. A click without a handled pointerdown is a
-    // keyboard or screen-reader activation.
+    // Unstarted icon taps intentionally reach this path; keyboard and
+    // screen-reader activation use it too. Completed holds never toggle here.
     if (pointerHandledRef.current) {
       pointerHandledRef.current = false;
       return;

@@ -9,7 +9,7 @@ test.describe('gateway background work', () => {
   test('scheduled task edit, stop, toggle and delete use real C2 @gateway', async ({ page }, testInfo) => {
     await page.goto('/app/');
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
-    await expect(page.getByTestId('activity-longterm-lt-document')).toBeVisible();
+    await page.getByRole('tab', { name: 'Scheduled', exact: true }).click();
 
     await page.getByRole('button', { name: 'Edit · Gateway weekly job' }).click();
     await expect(page.getByRole('dialog', { name: 'Edit scheduled task' })).toBeVisible();
@@ -22,7 +22,7 @@ test.describe('gateway background work', () => {
     expect(seed.targetSessionId).toBe('gw-preserved-target');
     expect(seed.coworkSessionId).toBe('gw-preserved-cowork');
 
-    await page.getByRole('button', { name: 'New task', exact: true }).click();
+    await page.locator('.twin-unified-schedule-tools').getByRole('button', { name: 'New task', exact: true }).click();
     await expect(page.getByText('Runs as: Gateway Twin')).toBeVisible();
     await page.getByPlaceholder('Task name').fill('Gateway lifecycle task');
     await page.getByPlaceholder('Task prompt').fill('Exercise the lifecycle');
@@ -65,7 +65,8 @@ test.describe('gateway background work', () => {
     await expect(page.getByText('Gateway scheduled result.', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Gateway long-term result.', { exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
-    await page.getByRole('button', { name: 'New task', exact: true }).click();
+    await page.getByRole('tab', { name: 'Scheduled', exact: true }).click();
+    await page.locator('.twin-unified-schedule-tools').getByRole('button', { name: 'New task', exact: true }).click();
     await page.getByPlaceholder('Task name').fill('Gateway closed-phone job');
     await page.getByPlaceholder('Task prompt').fill('Report while the phone is closed');
     await page.getByPlaceholder('Interval in minutes').fill('30');
@@ -83,6 +84,7 @@ test.describe('gateway background work', () => {
     await reopened.goto('/app/');
     await expect(reopened.getByText('Gateway scheduled result.', { exact: true })).toHaveCount(0);
     await reopened.getByRole('button', { name: 'Tasks', exact: true }).click();
+    await reopened.getByRole('tab', { name: 'Scheduled', exact: true }).click();
     await reopened.getByRole('button', { name: 'History · Gateway closed-phone job' }).click();
     const history = reopened.getByTestId(`task-runs-${task.id}`);
     await expect(history).toContainText('Success', { timeout: 30_000 });
@@ -103,19 +105,22 @@ test.describe('gateway background work', () => {
     await attachScreen(testInfo, reopened, 'gateway-closed-phone-result');
   });
 
-  test('long-term owner actions and existing result navigation use real C2 @gateway', async ({ page }, testInfo) => {
+  test('unified task owner actions and existing result navigation use real C2 @gateway', async ({ page }, testInfo) => {
     await page.goto('/app/');
     await expect(page.getByText('Gateway long-term result.', { exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
-    const card = page.getByTestId('activity-longterm-lt-document');
-    await expect(card).toContainText('Participants: Gateway Twin');
-    await expect(card).toContainText('Waiting: Owner review required');
-    await expect(card).toContainText('1/3 accepted · 33%');
-    await page.getByRole('button', { name: 'Pause · Long-term document' }).click();
-    await expect(card).toContainText('Paused');
-    await page.getByRole('button', { name: 'Resume · Long-term document' }).click();
-    await expect(card).toContainText('Waiting');
-    await page.getByRole('button', { name: 'Open result · Long-term document · lt-document', exact: true }).click();
+    await page.getByRole('button', { name: /Needs you · 1 decision waiting/ }).click();
+    const card = page.getByTestId('unified-task-lt-document');
+    await expect(card).toContainText('Gateway Twin');
+    await expect(card).toContainText('Owner review required');
+    await expect(card).toContainText('1/3 · 33%');
+    await page.getByTestId('task-details-lt-document').click();
+    const detailView = page.getByTestId('task-detail-lt-document');
+    await page.getByRole('button', { name: 'Pause', exact: true }).click();
+    await expect(detailView).toContainText('Paused');
+    await page.getByRole('button', { name: 'Resume', exact: true }).click();
+    await expect(detailView).toContainText('Needs you');
+    await detailView.locator('.twin-unified-detail-footer').getByRole('button', { name: 'Open chat', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Gateway long-term result', exact: true })).toBeVisible();
     await expect(page.getByText('Gateway long-term result.', { exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'gateway-e2e-notes.md', exact: true })).toBeVisible();
@@ -124,9 +129,12 @@ test.describe('gateway background work', () => {
     await attachScreen(testInfo, page, 'gateway-longterm-result');
 
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
-    await page.getByRole('button', { name: 'Cancel task · Long-term document' }).click();
-    await page.getByRole('button', { name: 'Confirm cancellation' }).click();
-    await expect(page.getByTestId('activity-longterm-lt-document')).toHaveCount(0);
+    await page.getByRole('button', { name: /Needs you · 1 decision waiting/ }).click();
+    await page.getByTestId('task-details-lt-document').click();
+    await page.getByRole('button', { name: 'Cancel task', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Cancel this task?' }).getByRole('button', { name: 'Cancel task', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
+    await expect(page.getByTestId('unified-task-lt-document')).toHaveCount(0);
     const detail = await page.evaluate(async () => window.electron.longtermTask.get({ taskId: 'lt-document' }));
     expect(detail.detail.stage).toBe('cancelled');
     expect(detail.detail.currentSubtaskStatus).toBe('waiting_owner');

@@ -23,6 +23,69 @@ the script applies them with plain `git apply` from the repo root.
 
 ## Current patches
 
+### `@earendil-works+pi-ai+1.5.0.patch`
+
+Silent-overflow output slack (session cw-636ddce2, 2026-11-19). pi-ai's
+`isContextOverflow` already carries the designed detection for "the provider
+stopped at the context-window boundary and reported it as a length stop"
+(Case 3, the Xiaomi MiMo signature): length stop + zero output + input
+filling 99% of the window → classify as `CONTEXT_WINDOW_EXCEEDED`, which the
+agent-loop turns into a request error and compaction-basic recovers with a
+compact-and-retry. The strict `usage.output === 0` missed real gateways that
+spend a few reasoning tokens before the boundary: opencode zen reported
+output=16 with 128,988 input+cacheRead tokens against the route's 128,000
+window, so the finish mapped to plain `max-tokens` instead and the turn died
+silently (see the agent-loop patch below for what happened next).
+
+The patch widens Case 3 to `usage.output <= SILENT_OVERFLOW_OUTPUT_SLACK`
+(64): a genuine output-ceiling stop burns the whole maxTokens budget (≥8192
+under the host's clamp floor), so ≤64 output tokens with a full window can
+only be the boundary. With the classification restored, NO custom plumbing is
+needed on the pi-ai route — the finish becomes a request error, the existing
+`agent/request-error` waterfall compacts and retries, and exhausted retries
+settle as a real, visible overflow error.
+
+### `@deepseek-ai+dsh-agent-loop+0.2.2-rc.1.patch`
+
+Adapter-agnostic safety net for the same defect class (session cw-636ddce2,
+2026-11-19). The pi-ai patch above restores the classification on pi-ai
+routes; this patch catches what still slips through as a `max-tokens` finish
+on ANY adapter (the native DeepSeek Messages route maps `max_tokens` without
+any overflow detection, and future adapters will too).
+
+Empty-length-stop overflow recovery. A
+model whose request fills its context window does not always answer with a
+`CONTEXT_WINDOW_EXCEEDED` request error: the opencode zen gateway returned a
+normal `length` stop with ZERO content blocks and 16 output tokens against a
+129,004-token request on a 128,000 window. The stock agent-loop maps `length`
+to `{kind: "max-tokens"}` and returns, the host spends its single
+auto-continuation on a continuation prompt that overflows again, and the turn
+settles as a silent truncation — no error event, no compaction, Studio shows
+nothing.
+
+The patch intercepts the max-tokens finish at the step boundary: when the
+assistant message has zero content blocks and the provider reported ≤64
+output tokens (`EMPTY_LENGTH_STOP_OUTPUT_TOKEN_CEILING`; a genuine
+output-ceiling stop burns the host-clamped ≥8192 budget and carries content),
+the finish is reclassified as a `CONTEXT_WINDOW_EXCEEDED` request failure and
+dispatched through the SAME `agent/request-error` waterfall real overflow
+errors use — compaction-basic compacts the surface and returns
+`{kind: "retry"}`, so the turn heals in place. When no listener recovers
+(no compaction plugin, retries exhausted), the patch throws a real
+`LlmError("…", "CONTEXT_WINDOW_EXCEEDED")` so the host's overflow ladder and
+terminal notices take over instead of a silent death.
+
+Two ordering details matter. The dispatch runs BEFORE the durable
+`assistant/message` append: compaction-basic resets its per-agent
+overflow-retry budget on every appended `assistant/message` (its
+`session/event` listener), so landing the empty message first would reset the
+budget each pass and the recovery would never terminate. And the empty
+message is intentionally never appended on either ending — the retry path
+re-requests against the shrunken surface without the junk node, and the
+failure path ends the turn as an error. The `usage`-less edge (an adapter
+that reports no output tokens) stays on the stock max-tokens path, which the
+host's Studio-side truncation card covers.
+
 ### `@deepseek-ai+dsh-win32-process+0.2.2-rc.1.patch`
 
 On Windows the kernel's subprocess-local service launches every tool

@@ -2,11 +2,14 @@
  * Panel turn-failure card helpers.
  *
  * The transcript filter keeps ONLY turn-level failure system rows — the
- * final turn error (`metadata.error`) and the three localized turn-death
- * flags (`dshTurnStalled` / `dshTurnInterrupted` / `emptyTerminalTurn`) —
- * so a dead turn stays visible in the Studio panel instead of ending in
- * silence after the ack bubble (session 4b78a0fd: five hours of nothing
- * while the stored system message carried the real compaction error).
+ * final turn error (`metadata.error`), the three localized turn-death
+ * flags (`dshTurnStalled` / `dshTurnInterrupted` / `emptyTerminalTurn`),
+ * and the output-truncation note (`replyTruncatedTurn`) — so a dead turn
+ * stays visible in the Studio panel instead of ending in silence after
+ * the ack bubble (session 4b78a0fd: five hours of nothing while the stored
+ * system message carried the real compaction error; session 636ddce2:
+ * a context overflow that settled as a truncation note BotWorks showed
+ * but the Studio panel filtered out).
  *
  * The compaction checkpoint notice (`compaction: true`) is bookkeeping that
  * PRECEDES the real error and stays hidden with every other system row.
@@ -16,7 +19,7 @@ import { i18nService, type LanguageType } from '../../services/i18n';
 import { describeStudioTurnError } from '../../../main/shared/studioTurnErrorCopy';
 import type { CoworkMessage } from '../../types/cowork';
 
-export type PanelTurnFailureKind = 'error' | 'stalled' | 'interrupted' | 'emptyTerminal';
+export type PanelTurnFailureKind = 'error' | 'stalled' | 'interrupted' | 'emptyTerminal' | 'truncated';
 
 /**
  * The failure kind a system message represents, or null for every other
@@ -30,6 +33,7 @@ export function panelTurnFailureKind(message: CoworkMessage): PanelTurnFailureKi
   if (meta.dshTurnStalled === true) return 'stalled';
   if (meta.dshTurnInterrupted === true) return 'interrupted';
   if (meta.emptyTerminalTurn === true) return 'emptyTerminal';
+  if (meta.replyTruncatedTurn === true) return 'truncated';
   return null;
 }
 
@@ -41,6 +45,7 @@ const FLAG_REASON_KEYS: Record<Exclude<PanelTurnFailureKind, 'error'>, string> =
   stalled: 'coworkDshTurnStalled',
   interrupted: 'coworkDshTurnInterrupted',
   emptyTerminal: 'coworkEmptyTerminalTurn',
+  truncated: 'coworkReplyTruncatedTurn',
 };
 
 export interface PanelTurnFailureCopy {

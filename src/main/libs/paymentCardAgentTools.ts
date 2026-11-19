@@ -14,6 +14,14 @@
  * The payee block cannot be supplied by the caller: it is derived inside the
  * emitter from the owner's stored receiving info, so a caller cannot name a
  * different payee, inject a foreign QR code, or leak the saved image/PID.
+ *
+ * Per-emit owner gate (red line): a card discloses the owner's payee identity
+ * and receiving code to EVERY participant of the conversation it is emitted
+ * into, with a caller-chosen amount and order id. Every emit therefore asks
+ * the owner first (`confirm` must resolve true ONLY for an explicit owner
+ * approval — timeout, refusal, missing owner seat and any gate error all
+ * resolve false and nothing is emitted). Same fail-closed family as the
+ * me_charge per-charge gate and the btc multisig sign/broadcast gates.
  */
 
 import { z } from 'zod';
@@ -42,6 +50,14 @@ export type PaymentCardAgentToolsControl = {
   readReceivingInfo: () => PaymentCardReadResult;
 };
 
+/** One card emission awaiting the owner's confirmation (see the gate above). */
+export interface PaymentCardEmitConfirmationInfo {
+  orderId: string;
+  amountCents: number;
+  /** Raw saved display name; null when the owner saved no display name. */
+  payeeDisplayName: string | null;
+}
+
 function textResult(text: string, isError = false) {
   return {
     content: [{ type: 'text' as const, text }],
@@ -59,8 +75,11 @@ const refuse = (toolName: string, code: PaymentCardRefusalCode, message: string)
 export function buildPaymentCardAgentTools(deps: {
   tool: SdkToolFactory;
   control: PaymentCardAgentToolsControl;
+  /** Owner gate: MUST be wired by the host (coworkRunner.confirmPaymentCardEmit).
+   * Resolve true ONLY for an explicit owner approval; false refuses the emit. */
+  confirm: (info: PaymentCardEmitConfirmationInfo) => Promise<boolean>;
 }): unknown[] {
-  const { tool, control } = deps;
+  const { tool, control, confirm } = deps;
 
   const paymentCardEmit = tool(
     'payment_card_emit',
@@ -70,8 +89,9 @@ export function buildPaymentCardAgentTools(deps: {
       'Zero funds flow: nothing moves through IDBots, no wallet is touched, and nothing is written on-chain — the payer transfers point-to-point in Alipay.',
       'The payee block is derived ONLY from the owner\'s stored receiving info; you cannot pass a payee, a receiving code or an account id. order_id and amount_cents are required and must come from you: order_id is both the memo and the reconciliation anchor the buyer\'s「我已支付」record and the seller\'s「待核验」panel key on.',
       'Pass amount_yuan and/or memo to get a hard cross-check: amount_yuan must equal amount_cents to the cent and memo must equal order_id — any disagreement refuses the card (amount/face drift is how a payment silently goes wrong).',
-      'Refusals, each with a fix: NO_RECEIVING_INFO (owner never saved receiving info), DECRYPT_FAILED (local identity missing or blob unreadable — re-save in settings), NO_QR_CHANNEL (only a PID saved; this card pays by receiving code), INVALID_ORDER_ID, INVALID_AMOUNT, AMOUNT_MISMATCH, MEMO_MISMATCH, CARD_INVALID.',
+      'Refusals, each with a fix: NO_RECEIVING_INFO (owner never saved receiving info), DECRYPT_FAILED (local identity missing or blob unreadable — re-save in settings), NO_QR_CHANNEL (only a PID saved; this card pays by receiving code), OWNER_CONFIRMATION_DENIED (the owner did not approve this card — do not retry the same card without asking the owner directly), INVALID_ORDER_ID, INVALID_AMOUNT, AMOUNT_MISMATCH, MEMO_MISMATCH, CARD_INVALID.',
       'The owner\'s saved QR image, Alipay PID and the ciphertext are deliberately never part of the emitted card.',
+      'Every emit asks the owner for confirmation first: an unanswered or refused confirmation card means the card was NOT emitted — treat OWNER_CONFIRMATION_DENIED as final for that card.',
     ].join(' '),
     {
       order_id: z.string().min(1).describe('Order id / payment memo / reconciliation anchor (1-64 chars: letters, digits, dot, dash, underscore; must start with a letter or digit).'),
@@ -82,6 +102,26 @@ export function buildPaymentCardAgentTools(deps: {
     async (args: { order_id: string; amount_cents: number; amount_yuan?: string; memo?: string }) => {
       const read = control.readReceivingInfo();
       if (read.status === 'refused') return refuse('payment_card_emit', read.code, read.message);
+
+      // Per-emit owner gate BEFORE anything is emitted. Any throw inside the
+      // gate is a denial too — fail closed, never emit on a broken gate.
+      let approved = false;
+      try {
+        approved = (await confirm({
+          orderId: args.order_id,
+          amountCents: args.amount_cents,
+          payeeDisplayName: read.info.payeeDisplayName ?? null,
+        })) === true;
+      } catch {
+        approved = false;
+      }
+      if (!approved) {
+        return refuse(
+          'payment_card_emit',
+          'OWNER_CONFIRMATION_DENIED',
+          'the owner did not approve emitting this card (refused, unanswered, or no owner seat).',
+        );
+      }
 
       const emitted = emitPaymentCard(read.info, {
         orderId: args.order_id,
