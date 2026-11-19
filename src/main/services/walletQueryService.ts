@@ -16,6 +16,7 @@
 import type { MetabotStore } from '../metabotStore';
 import { getMetabotAccountSummary } from './metabotAccountService';
 import { freshGetUrlAndInit } from './freshFetch';
+import { BTC_MIN_SPENDABLE_SATS } from './btcSpendPolicy';
 
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
@@ -45,6 +46,13 @@ export interface WalletBalanceSnapshot {
   unconfirmed_sats: number;
   total_sats: number;
   utxo_count: number;
+  /**
+   * BTC only: sats locked in sub-1000-sat UTXOs (MRC20 / Pin inscription
+   * carriers per btcSpendPolicy). These are counted in total_sats but are
+   * NOT plain-spendable — the send-side carrier floor refuses them as
+   * inputs. Absent on MVC/DOGE snapshots.
+   */
+  carrier_locked_sats?: number;
 }
 
 export interface MetabotWalletBalanceEntry {
@@ -161,12 +169,18 @@ async function fetchBtcUtxoBalanceSum(
   const list = Array.isArray(raw) ? raw : raw?.list ?? [];
   let confirmed = 0;
   let unconfirmed = 0;
+  let carrierLocked = 0;
   let utxoCount = 0;
   for (const utxo of list) {
     const value = Number(utxo?.satoshis ?? utxo?.value ?? 0);
     if (!Number.isFinite(value) || value <= 0) continue;
     if (utxo?.confirmed !== false) confirmed += value;
     else unconfirmed += value;
+    // Carrier protection mirrors the send side (btcSpendPolicy): sub-1000-sat
+    // UTXOs may carry MRC20 / Pin inscriptions and are not plain-spendable.
+    // Reporting them separately keeps the agent's spendable math honest —
+    // the raw total alone overstates what a transfer can actually move.
+    if (value < BTC_MIN_SPENDABLE_SATS) carrierLocked += value;
     utxoCount++;
   }
   return {
@@ -174,6 +188,7 @@ async function fetchBtcUtxoBalanceSum(
     unconfirmed_sats: unconfirmed,
     total_sats: confirmed + unconfirmed,
     utxo_count: utxoCount,
+    carrier_locked_sats: carrierLocked,
   };
 }
 

@@ -234,6 +234,7 @@ import { broadcastBtcTx, fetchBtcUtxos } from './libs/btcApi';
 import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
 import { executeMvcTokenSellTrade, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
 import { listMvcFtAssets, mvcFtTokenBalanceFromAssets } from './services/mvcFtService';
+import { listMrc20Assets } from './services/mrc20Service';
 import {
   broadcastMvcTx,
   buyMrc721Listing,
@@ -8530,6 +8531,33 @@ const getCoworkRunner = () => {
             if (entry.error) return entry;
             try {
               return { ...entry, balance: mvcFtTokenBalanceFromAssets(entry.address, await listMvcFtAssets(entry.address)) };
+            } catch (error) {
+              return { ...entry, error: error instanceof Error ? error.message : String(error) };
+            }
+          }),
+        );
+      },
+      // wallet_mrc20_balance backend: read-only MRC20 holdings per local
+      // MetaBot BTC address (wallet UI's same metalet v3 balance-list).
+      listMrc20s: async (input) => {
+        const store = getMetabotStore();
+        const entries: Array<{ metabotId: number | null; address: string; error?: string }> = [];
+        for (const metabotId of input.metabotIds ?? []) {
+          const address = store.getMetabotById(metabotId)?.btc_address ?? '';
+          entries.push(
+            address
+              ? { metabotId, address }
+              : { metabotId, address: '', error: 'local MetaBot not found or has no btc address' },
+          );
+        }
+        if (input.address?.trim()) {
+          entries.push({ metabotId: null, address: input.address.trim() });
+        }
+        return await Promise.all(
+          entries.map(async (entry) => {
+            if (entry.error) return entry;
+            try {
+              return { ...entry, assets: await listMrc20Assets(entry.address) };
             } catch (error) {
               return { ...entry, error: error instanceof Error ? error.message : String(error) };
             }
