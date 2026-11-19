@@ -1105,3 +1105,4 @@ blob-report/
 !tests/studioToolSlimming.test.ts
 !tests/studioMemoryDedup.test.ts
 !tests/studioChapterDream.test.mjs
+!tests/studioChapterDividerUi.test.ts
