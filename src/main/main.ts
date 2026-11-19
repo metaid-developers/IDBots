@@ -227,6 +227,7 @@ import {
 } from './services/walletQueryService';
 import { executeWalletMvcTransfer } from './services/walletTransferService';
 import { executeWalletTokenSend } from './services/walletTokenSendService';
+import { getWalletTxStatus, verifyWalletTx } from './services/walletTxStatusService';
 import { openMetabotBtcWallet, signBtcPsbtPartial } from './services/btcPartialSign';
 import { broadcastBtcTx, fetchBtcUtxos } from './libs/btcApi';
 import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
@@ -8367,6 +8368,11 @@ const getCoworkRunner = () => {
         ),
         listTransfers: (limit, metabotId) =>
           getBotWalletTransferStore().list(limit, metabotId),
+        // wallet_tx_status / wallet_tx_verify backends: read-only chain
+        // lookups (metalet raw tx + receiver utxo derivation, mempool.space
+        // for BTC, blockchair for DOGE). No write budget applies.
+        getTxStatus: (input) => getWalletTxStatus({}, input),
+        verifyTx: (input) => verifyWalletTx({}, input),
         // wallet_nft_balance backend: structured MVC NFT holdings per local
         // MetaBot address or raw address (wallet-api count/summary/utxo).
         listMvcNfts: async (input) => {

@@ -60,7 +60,10 @@ function readVarInt(buf: Buffer, offset: number): { value: number; bytesRead: nu
   return { value: hi * 0x100000000 + lo, bytesRead: 9 };
 }
 
-function parseTxOutputs(rawHex: string): TxOutput[] {
+// Exported for walletTxStatusService (wallet_tx_status / wallet_tx_verify):
+// the raw-tx output parser and the pubkey-hash extractors are the shared
+// script-decode layer for tx status and payment verification.
+export function parseTxOutputs(rawHex: string): TxOutput[] {
   const buf = Buffer.from(rawHex, 'hex');
   let offset = 4;
 
@@ -94,7 +97,7 @@ function parseTxOutputs(rawHex: string): TxOutput[] {
   return outputs;
 }
 
-function extractPubkeyHashFromScript(scriptHex: string): string | null {
+export function extractPubkeyHashFromScript(scriptHex: string): string | null {
   if (scriptHex.length === 50 && scriptHex.startsWith('76a914') && scriptHex.endsWith('88ac')) {
     return scriptHex.slice(6, 46);
   }
@@ -148,7 +151,7 @@ function pubkeyHashFromBech32Address(address: string): string | null {
   return Buffer.from(bytes).toString('hex');
 }
 
-function pubkeyHashFromAddress(address: string): string | null {
+export function pubkeyHashFromAddress(address: string): string | null {
   if (!address) return null;
   if (address.startsWith('bc1') || address.startsWith('tb1')) {
     return pubkeyHashFromBech32Address(address);
