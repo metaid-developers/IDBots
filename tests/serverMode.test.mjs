@@ -461,3 +461,69 @@ test('REQ-A-5 server mode never offers desktop-only agent tools to the model', (
   assert.match(mainTs, /mcpServerProvider:[\s\S]*?if \(isServerMode\(\)\) return \[\];/);
   assert.match(mainTs, /mcpServersForMetabot:[\s\S]*?if \(isServerMode\(\)\) return \[\];/);
 });
+
+
+// ---------------------------------------------------------------------------
+// Cloud mobile owner-chat performance profile.
+// ---------------------------------------------------------------------------
+
+test('mobile owner-chat profile only matches interactive standard cowork UI sessions', () => {
+  const standard = { sessionType: 'standard', autoOrigin: null };
+  assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: standard, sourceChannel: 'cowork_ui' }), true);
+  assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: false, session: standard, sourceChannel: 'cowork_ui' }), false);
+  assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: { ...standard, autoOrigin: 'schedule' }, sourceChannel: 'cowork_ui' }), false);
+  assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: { ...standard, sessionType: 'browser' }, sourceChannel: 'cowork_ui' }), false);
+  assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: { ...standard, sessionType: 'a2a' }, sourceChannel: 'cowork_ui' }), false);
+  assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: standard, sourceChannel: 'im:telegram' }), false);
+  assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: null, sourceChannel: 'cowork_ui' }), false);
+});
+
+test('mobile tool families start slim, expand on explicit intent, and stay expanded for follow-ups', () => {
+  const resolve = serverMode.resolveMobileToolExpansions;
+  assert.deepEqual(resolve(undefined, '你好，简单回答即可'), []);
+  const financial = resolve([], '请查看钱包余额和 NFT 持仓');
+  assert.deepEqual(financial, ['financial']);
+  const financialSticky = resolve(financial, '继续');
+  assert.deepEqual(financialSticky, ['financial']);
+  const worker = resolve(financialSticky, '再发布一个 MetaTask 竞赛任务');
+  assert.deepEqual(worker, ['workerEconomy', 'financial']);
+  const social = resolve(worker, '然后到群聊里发一条 buzz');
+  assert.deepEqual(social, ['workerEconomy', 'financial', 'social']);
+  assert.deepEqual(resolve(social, '按刚才的方案继续'), social);
+  assert.deepEqual(resolve([], 'What time is it?'), []);
+  assert.deepEqual(resolve([], 'open a group task'), ['workerEconomy']);
+  assert.deepEqual(resolve([], 'send this in the group chat'), ['social']);
+});
+
+test('mobile tool and effort gates are wired separately from Studio and desktop', () => {
+  const runnerTs = fs.readFileSync(path.join(srcMainDir, 'libs', 'coworkRunner.ts'), 'utf8');
+  assert.match(runnerTs, /const fastOwnerChatMode = assistantMode \|\| mobileOwnerChatMode/);
+  assert.equal((runnerTs.match(/assistantMode: fastOwnerChatMode/g) || []).length, 5);
+  assert.match(runnerTs, /\|\| !fastOwnerChatMode/);
+  assert.deepEqual(
+    serverMode.resolveMobileToolMountPolicy({ isStudioOwnerChat: false, isMobileOwnerChat: false, expansions: [] }),
+    { workerEconomy: true, financial: true, social: true },
+  );
+  assert.deepEqual(
+    serverMode.resolveMobileToolMountPolicy({ isStudioOwnerChat: true, isMobileOwnerChat: false, expansions: [] }),
+    { workerEconomy: false, financial: true, social: false },
+  );
+  assert.deepEqual(
+    serverMode.resolveMobileToolMountPolicy({ isStudioOwnerChat: false, isMobileOwnerChat: true, expansions: [] }),
+    { workerEconomy: false, financial: false, social: false },
+  );
+  assert.deepEqual(
+    serverMode.resolveMobileToolMountPolicy({ isStudioOwnerChat: false, isMobileOwnerChat: true, expansions: ['workerEconomy', 'financial', 'social'] }),
+    { workerEconomy: true, financial: true, social: true },
+  );
+  assert.match(runnerTs, /resolveMobileToolMountPolicy\(\{ isStudioOwnerChat, isMobileOwnerChat, expansions: mobileExpansions \}\)/);
+  assert.match(runnerTs, /this\.buildDshHostTools\(sessionId, prompt\)/);
+  assert.match(runnerTs, /this\.buildSessionInlineTools\(sessionId, passthrough, undefined, currentUserText\)/);
+});
+
+test('server mode hard-disables the desktop CUA provider before legacy opt-ins', () => {
+  assert.match(
+    mainTs,
+    /computer: \(metabotId: number \| null\) => \{\s*\/\/ Cloud tenants[\s\S]*?if \(isServerMode\(\)\) return false;[\s\S]*?isCoworkComputerUseEnabled/,
+  );
+});
