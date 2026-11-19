@@ -634,9 +634,11 @@ export function buildDreamPrompt(input: {
   const hasStudioSessions = input.activity.sessions.some((session) => session.isStudioOwner === true);
   const studioDelegations: DreamStudioDelegationActivity[] = input.activity.studioDelegations ?? [];
   const studioDecisions: DreamStudioDecisionActivity[] = input.activity.studioDecisions ?? [];
+  const studioChapterCards = input.activity.studioChapterCards ?? [];
   const hasStudioActivity = hasStudioSessions
     || studioDelegations.length > 0
     || studioDecisions.length > 0
+    || studioChapterCards.length > 0
     || Boolean(input.previousStudioContinuity);
 
   const personaLines = [`你是 ${input.botName},一个生活在 MetaWeb 上的 MetaBot(类人智能体)。`];
@@ -768,7 +770,7 @@ export function buildDreamPrompt(input: {
   }
   if (humanSessions.length > 0) sections.push(`## 与人类用户的对话\n${humanSessions.join('\n\n')}`);
   if (autonomousSessions.length > 0) sections.push(`## 后台督办与自主任务会话\n${autonomousSessions.join('\n\n')}`);
-  if (sourceMode !== 'fragment' && (studioDelegations.length > 0 || studioDecisions.length > 0)) {
+  if (sourceMode !== 'fragment' && (studioDelegations.length > 0 || studioDecisions.length > 0 || studioChapterCards.length > 0)) {
     const ledgerLines: string[] = [];
     if (studioDelegations.length > 0) {
       ledgerLines.push('### 当日 Studio 后台 Worker 派工与核验');
@@ -786,6 +788,16 @@ export function buildDreamPrompt(input: {
         const resolution = dec.resolutionNote ? ` → 裁决/收口:${truncateText(dec.resolutionNote, 180)}` : '';
         ledgerLines.push(`- [${dec.kind}/${dec.status}] 「${truncateText(dec.title, 80)}」提问:${truncateText(dec.question, 100)}${resolution}`);
       }
+    }
+    if (studioChapterCards.length > 0) {
+      ledgerLines.push('### 当日收拢的 Studio 章节卡(章节收拢时生成的结构化记忆:决策/产物/未了事项 — 压缩后仍存活的浓缩事实)');
+      for (const card of studioChapterCards) {
+        const title = card.title || '(未命名)';
+        const reason = card.closeReason === 'task_boundary' ? '任务交付' : card.closeReason === 'budget' ? '上下文预算' : '手动';
+        const summary = truncateText(card.summary.replace(/\s+/g, ' ').trim(), 240);
+        ledgerLines.push(`- #${card.chapterIndex}「${truncateText(title, 80)}」(${reason}) 摘要:${summary}`);
+      }
+      ledgerLines.push('请把章节卡中的决策并入 standing_rulings 候选、未了事项(open loops)并入 active_workstreams——它们是章节收拢时显式提炼的,优先级高于对话原文的粗摘要。');
     }
     sections.push(`## Studio 幕僚派工与拍板台账(与主对话配套的真实执行闭环)\n${ledgerLines.join('\n')}`);
   }

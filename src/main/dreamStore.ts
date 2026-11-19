@@ -426,8 +426,20 @@ export interface DreamDayActivity {
   studioDelegations?: DreamStudioDelegationActivity[];
   /** Studio Owner Decision Queue items created/presented/resolved that day. */
   studioDecisions?: DreamStudioDecisionActivity[];
+  /** Studio chapters closed that day — the durable cards that survived compaction (Phase 2 slice 4). */
+  studioChapterCards?: DreamStudioChapterCardActivity[];
   /** Structural implicit signals, attached by the dream service post-query. */
   implicitSignals?: DreamImplicitSignal[];
+}
+
+/** One closed Studio chapter card (cowork_session_chapters row) for the dream prompt. */
+export interface DreamStudioChapterCardActivity {
+  sessionId: string;
+  chapterIndex: number;
+  title: string;
+  closeReason: string | null;
+  endedAtMs: number;
+  summary: string;
 }
 
 interface DreamRunRow {
@@ -2636,6 +2648,49 @@ export class DreamStore {
       }
     }
 
+    // Studio chapter cards closed that day (Phase 1 slice 1 table; Phase 2
+    // slice 4 feeds them into the dream so the continuity crystal distills
+    // decisions/open loops from the STRUCTURED cards instead of only raw
+    // transcript — the cards are the compaction-surviving distillation).
+    const studioChapterCards: DreamStudioChapterCardActivity[] = [];
+    if (this.hasTable('cowork_session_chapters')) {
+      try {
+        const hasAssistantModeCol = this.hasTableColumn('cowork_sessions', 'assistant_mode');
+        const assistantModeFilter = hasAssistantModeCol ? 'AND s.assistant_mode = 1' : '';
+        const chapterRows = this.getAll<{
+          session_id: string;
+          chapter_index: number | string;
+          title: string | null;
+          close_reason: string | null;
+          ended_at: number | string | null;
+          summary_markdown: string | null;
+        }>(`
+          SELECT c.session_id, c.chapter_index, c.title, c.close_reason, c.ended_at, c.summary_markdown
+          FROM cowork_session_chapters c
+          JOIN cowork_sessions s ON s.id = c.session_id
+          WHERE s.metabot_id = ?
+            AND s.session_type = 'browser'
+            ${assistantModeFilter}
+            AND c.ended_at IS NOT NULL
+            AND c.ended_at >= ? AND c.ended_at < ?
+          ORDER BY c.ended_at ASC
+          LIMIT 12
+        `, [metabotId, dayStartMs, dayEndMs]);
+        for (const row of chapterRows) {
+          studioChapterCards.push({
+            sessionId: String(row.session_id ?? ''),
+            chapterIndex: Number(row.chapter_index) || 0,
+            title: row.title?.trim() || '',
+            closeReason: row.close_reason?.trim() || null,
+            endedAtMs: Number(row.ended_at) || dayStartMs,
+            summary: row.summary_markdown?.trim() || '',
+          });
+        }
+      } catch (error) {
+        console.warn('[DreamStore] Studio chapter card query failed:', error);
+      }
+    }
+
     return {
       sessions,
       taskRuns,
@@ -2647,6 +2702,7 @@ export class DreamStore {
       serviceRatings,
       ...(studioDelegations.length > 0 ? { studioDelegations } : {}),
       ...(studioDecisions.length > 0 ? { studioDecisions } : {}),
+      ...(studioChapterCards.length > 0 ? { studioChapterCards } : {}),
     };
   }
 
