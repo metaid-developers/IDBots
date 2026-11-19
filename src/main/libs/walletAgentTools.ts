@@ -155,10 +155,19 @@ const SATOSHI_PER_UNIT = 100_000_000;
 
 function formatSnapshot(snapshot: WalletBalanceSnapshot): string {
   const total = (snapshot.total_sats / SATOSHI_PER_UNIT).toFixed(8);
-  return (
+  const lines = [
     `- ${snapshot.chain}: balance ${snapshot.total_sats} sats (${total} ${snapshot.unit}), ${snapshot.utxo_count} UTXOs ` +
-    `[spendable = confirmed ${snapshot.confirmed_sats} + unconfirmed ${snapshot.unconfirmed_sats}]`
-  );
+      `[spendable = confirmed ${snapshot.confirmed_sats} + unconfirmed ${snapshot.unconfirmed_sats}]`,
+  ];
+  if (snapshot.chain === 'btc' && (snapshot.carrier_locked_sats ?? 0) > 0) {
+    // Keep the agent's spendable math honest: sub-1000-sat UTXOs are
+    // inscription carriers (btcSpendPolicy) and the send side refuses them.
+    lines.push(
+      `- carrier-locked: ${snapshot.carrier_locked_sats} sats in sub-1000-sat UTXOs ` +
+        `(MRC20/inscription carriers — NOT plain-spendable; plain-spendable = ${snapshot.total_sats - (snapshot.carrier_locked_sats ?? 0)} sats)`,
+    );
+  }
+  return lines.join('\n');
 }
 
 function formatBalanceEntry(entry: MetabotWalletBalanceEntry): string {
