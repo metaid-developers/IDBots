@@ -142,6 +142,42 @@
 !macroend
 
 !macro customInit
+  ; Electron 41 (Chromium 142) cannot run on Windows 7/8/8.1, and our payload
+  ; is x64-only. On those machines the NSIS install itself completes fine and
+  ; the app then never opens (the x64 process cannot start), which users report
+  ; as "the installer is broken". Refuse the install with an explicit message
+  ; instead. The uninstaller build is exempt so an existing install can still
+  ; be removed from an unsupported machine.
+  !ifndef BUILD_UNINSTALLER
+    ; HKLM\...\CurrentVersion is a shared registry key (not redirected under
+    ; WOW64) and holds "6.1"/"6.2"/"6.3" on Win7/8/8.1, "10.0" on Win10/11.
+    ; Block the known-legacy list rather than allowlisting "10.0" so an
+    ; unreadable value (or a future Windows) fails OPEN, not closed.
+    ReadRegStr $R1 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion" CurrentVersion
+    ClearErrors
+    ${If} $R1 == "5.0"
+    ${OrIf} $R1 == "5.1"
+    ${OrIf} $R1 == "5.2"
+    ${OrIf} $R1 == "6.0"
+    ${OrIf} $R1 == "6.1"
+    ${OrIf} $R1 == "6.2"
+    ${OrIf} $R1 == "6.3"
+      MessageBox MB_OK|MB_ICONSTOP "IDBots requires Windows 10 (64-bit) or later. This computer is running an older version of Windows that IDBots cannot support. Please upgrade Windows and run this installer again." /SD IDOK
+      Quit
+    ${EndIf}
+    ; 32-bit Windows: a 32-bit installer process reports PROCESSOR_ARCHITECTURE
+    ; =x86 with NO PROCESSOR_ARCHITEW6432 override (on 64-bit Windows the
+    ; override is always set, so both conditions are required).
+    ReadEnvStr $R2 "PROCESSOR_ARCHITEW6432"
+    ${If} $R2 == ""
+      ReadEnvStr $R2 "PROCESSOR_ARCHITECTURE"
+      ${If} $R2 == "x86"
+        MessageBox MB_OK|MB_ICONSTOP "IDBots requires a 64-bit edition of Windows. This computer is running a 32-bit edition of Windows, which IDBots cannot support." /SD IDOK
+        Quit
+      ${EndIf}
+    ${EndIf}
+  !endif
+
   ; Snapshot previous install directories before registryAddInstallInfo updates
   ; them so customInstall only runs PowerShell shortcut retargeting when an
   ; install path actually changed.

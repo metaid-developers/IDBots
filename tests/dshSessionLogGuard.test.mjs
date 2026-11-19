@@ -243,6 +243,47 @@ test('flushSessionLogArtifact fsyncs a read-only handle and never creates a file
   assert.equal(fs.existsSync(missing), false, 'the guard never creates artifacts');
 });
 
+function withPlatform(platform, fn) {
+  return async () => {
+    const realPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: platform });
+    try {
+      await fn();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: realPlatform });
+    }
+  };
+}
+
+test('on Windows the flush opens a write-mode handle so FlushFileBuffers is allowed', withPlatform('win32', async () => {
+  const dir = tempRoot();
+  const artifact = path.join(dir, 'session.v4.jsonl.zstd');
+  await fsp.writeFile(artifact, await encodeArtifact(JSON.stringify(HEADER), ['{"type":"event"}']));
+  const realOpen = fsp.open;
+  const modes = [];
+  fsp.open = (p, mode, ...rest) => { modes.push(mode); return realOpen.call(fsp, p, mode, ...rest); };
+  try {
+    const result = await flushSessionLogArtifact(artifact);
+    // 'r' fsync is an EPERM machine on Windows (FlushFileBuffers requires a
+    // write-mode handle) — the fix pins the write-mode open, never a write.
+    assert.deepEqual(modes, ['r+']);
+    assert.equal(result.flushed, true);
+    assert.equal(result.error, null);
+  } finally {
+    fsp.open = realOpen;
+  }
+}));
+
+test('on Windows an unflushable artifact degrades to a skipped audit, not unreadable', withPlatform('win32', async () => {
+  const dir = tempRoot();
+  // A directory fails to open on every platform (EISDIR / EPERM), which makes
+  // the Windows fsync-refusal path deterministic on this host too.
+  const result = await flushSessionLogArtifact(dir);
+  assert.equal(result.error, null, 'a refused Windows fsync must NOT raise the quit verdict');
+  assert.equal(result.flushed, false);
+  assert.match(result.detail ?? '', /skipped on win32/);
+}));
+
 // ── c2. cleanup sequence ordering ─────────────────────────────────────────
 
 test('cleanup sequence guards session logs BEFORE the DSH runtime closes', async () => {
