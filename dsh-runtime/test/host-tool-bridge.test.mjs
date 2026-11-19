@@ -283,11 +283,47 @@ const main = async () => {
   record('image batch over the per-message cap rejects the prompt RPC',
     /image-count limit/i.test(batchError))
 
+  const refreshSessionId = `${sessionId}-refresh`
+  const refreshTools = (names) => names.map((name) => ({
+    name,
+    description: `${name} schema`,
+    parameters: { type: 'object', properties: {} },
+  }))
+  const ensureRefreshTools = (names) => client.request('session/ensure', {
+    sessionId: refreshSessionId,
+    provider: 'mockgw',
+    model: 'mock-1',
+    hostTools: refreshTools(names),
+  })
+  await ensureRefreshTools(['host_echo_tool', 'host_refresh_stale'])
+  await ensureRefreshTools(['host_echo_tool'])
+  await client.prompt(refreshSessionId, [{ type: 'text', text: 'verify slim live tool surface' }])
+  const slimRequest = await waitForRequest('verify slim live tool surface')
+  const slimNames = slimRequest?.body?.tools?.map((tool) => tool.function?.name) ?? []
+  record('live session re-ensure removes stale host tools',
+    slimNames.includes('host_echo_tool') && !slimNames.includes('host_refresh_stale'), slimNames.join(','))
+
+  await ensureRefreshTools(['host_echo_tool', 'host_refresh_added'])
+  await client.prompt(refreshSessionId, [{ type: 'text', text: 'verify expanded live tool surface' }])
+  const expandedRequest = await waitForRequest('verify expanded live tool surface')
+  const expandedNames = expandedRequest?.body?.tools?.map((tool) => tool.function?.name) ?? []
+  record('live session re-ensure mounts newly added host tools',
+    expandedNames.includes('host_echo_tool') && expandedNames.includes('host_refresh_added')
+      && !expandedNames.includes('host_refresh_stale'), expandedNames.join(','))
+
+  await client.request('session/ensure', { sessionId: refreshSessionId, provider: 'mockgw', model: 'mock-1' })
+  await client.prompt(refreshSessionId, [{ type: 'text', text: 'verify route-only ensure preserves tools' }])
+  const routeOnlyRequest = await waitForRequest('verify route-only ensure preserves tools')
+  const routeOnlyNames = routeOnlyRequest?.body?.tools?.map((tool) => tool.function?.name) ?? []
+  record('route-only re-ensure preserves the current host tools',
+    routeOnlyNames.includes('host_echo_tool') && routeOnlyNames.includes('host_refresh_added')
+      && !routeOnlyNames.includes('host_refresh_stale'), routeOnlyNames.join(','))
+
   subscription.close()
   await client.close()
   server.close()
-  fs.rmSync(sessionRoot, { recursive: true, force: true })
-  fs.rmSync(configPath, { force: true })
+  try { fs.rmSync(sessionRoot, { recursive: true, force: true }) } catch { /* OS-swept temp dir */ }
+  try { fs.rmSync(configPath, { force: true }) } catch { /* OS-swept temp file */ }
   record('clean close', true)
 
   const failed = results.filter((r) => !r.pass).length
