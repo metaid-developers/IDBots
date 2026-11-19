@@ -164,3 +164,33 @@ test('materializePrivateChatFileMessage refuses an attachment with no usable pin
   assert.equal(result, null);
   assert.equal(logs.length, 1);
 });
+
+test('isPeerAttachmentReadablePath scopes peer thumbnails to the private-chat inbound directory', async () => {
+  const { isPeerAttachmentReadablePath, PRIVATE_CHAT_INBOUND_DIR_NAME } = await import(
+    '../dist-electron/main/services/privateChatFileMessage.js'
+  );
+  const path = (await import('node:path')).default;
+  const os = (await import('node:os')).default;
+  const userData = path.join(os.tmpdir(), 'idbots-peer-scope-test');
+  const inbound = path.join(userData, PRIVATE_CHAT_INBOUND_DIR_NAME);
+
+  // A daemon-written marker (materializePrivateChatFileMessage writes only
+  // here): always readable. Prefix semantics — anything whose resolved form
+  // stays inside the root passes; only the file existing on disk could make
+  // it readable anyway, and the daemon never writes subdirectories.
+  assert.equal(isPeerAttachmentReadablePath(path.join(inbound, 'abc.png'), userData), true);
+  assert.equal(isPeerAttachmentReadablePath(path.join(inbound, 'sub', 'x.png'), userData), true);
+
+  // Attacker-crafted markers naming arbitrary local files refuse.
+  assert.equal(isPeerAttachmentReadablePath(path.join(userData, 'secret.png'), userData), false);
+  assert.equal(isPeerAttachmentReadablePath(path.join(userData, 'private-chat-inbound-evil', 'x.png'), userData), false,
+    'sibling directory whose name shares the prefix must not pass');
+  assert.equal(isPeerAttachmentReadablePath(path.join(inbound, '..', '..', 'etc', 'passwd'), userData), false,
+    '.. escape resolves outside the root and must not pass');
+  assert.equal(isPeerAttachmentReadablePath('', userData), false);
+  assert.equal(isPeerAttachmentReadablePath('/etc/passwd', userData), false);
+
+  // The tmpdir fallback is the headless shape: same rules, different base.
+  const tmpBase = '';
+  assert.equal(isPeerAttachmentReadablePath(path.join(os.tmpdir(), PRIVATE_CHAT_INBOUND_DIR_NAME, 'abc.png'), tmpBase), true);
+});

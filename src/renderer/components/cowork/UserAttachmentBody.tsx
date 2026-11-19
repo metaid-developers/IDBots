@@ -26,6 +26,7 @@ import {
   hasSupportedImageExtension,
   loadLocalImagePreview,
   stripHashAndQuery,
+  type LocalImagePreviewScope,
 } from '../../utils/localImage';
 import {
   getPathBaseName,
@@ -132,7 +133,7 @@ const readCachedPreviews = (imagePaths: string[]): Record<string, string> => {
   return cachedPreviews;
 };
 
-export const ImagePreviewStrip: React.FC<{ imagePaths: string[]; inline?: boolean }> = ({ imagePaths, inline = false }) => {
+export const ImagePreviewStrip: React.FC<{ imagePaths: string[]; inline?: boolean; scope?: LocalImagePreviewScope }> = ({ imagePaths, inline = false, scope }) => {
   const [previewData, setPreviewData] = useState<Record<string, string>>(() => readCachedPreviews(imagePaths));
 
   useEffect(() => {
@@ -148,7 +149,9 @@ export const ImagePreviewStrip: React.FC<{ imagePaths: string[]; inline?: boolea
     }
 
     pendingPaths.forEach((imagePath) => {
-      void loadLocalImagePreview(imagePath, LOCAL_IMAGE_PREVIEW_MAX_BYTES).then((entry) => {
+      // scope passes through: a peer-sourced strip may only read private-chat
+      // inbound files (main enforces), whatever the remote text claimed.
+      void loadLocalImagePreview(imagePath, LOCAL_IMAGE_PREVIEW_MAX_BYTES, scope).then((entry) => {
         if (cancelled || entry.status !== 'ready') return;
         setPreviewData((prev) => (
           prev[imagePath]
@@ -161,7 +164,7 @@ export const ImagePreviewStrip: React.FC<{ imagePaths: string[]; inline?: boolea
     return () => {
       cancelled = true;
     };
-  }, [imagePaths]);
+  }, [imagePaths, scope]);
 
   const visiblePaths = imagePaths.filter((imagePath) => typeof previewData[imagePath] === 'string');
 

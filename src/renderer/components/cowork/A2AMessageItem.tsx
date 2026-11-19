@@ -19,6 +19,7 @@ import NftAvatarFrame from '../metabots/NftAvatarFrame';
 import { parseNftAvatarReference } from '../metabots/nftAvatarPresentation.js';
 import MarkdownContent from '../MarkdownContent';
 import { ImagePreviewStrip, splitUserAttachmentLines } from './UserAttachmentBody';
+import type { LocalImagePreviewScope } from '../../utils/localImage';
 import FriendBadge from './FriendBadge';
 import { mapWechatBracketCodesForDisplay } from '../chat/wechatEmojiDisplay';
 import {
@@ -1389,6 +1390,16 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   // it to stage the file for the model — and render the pictures it names as
   // thumbnails instead of raw paths. Same single implementation the cowork
   // user bubble uses.
+  //
+  // Security scope (2026-11-19 release review): the marker text is
+  // attacker-controlled on a peer bubble — without scoping, any
+  // `attachment path: /Users/victim/…` line would make this app READ that
+  // local file and render it. Peer strips therefore read with the
+  // peer-attachment scope: main only serves files the private-chat daemon
+  // wrote (private-chat-inbound); an out-of-scope marker fails the read and
+  // renders nothing. Own messages (displayRight) keep the owner's freedom to
+  // attach from anywhere.
+  const peerAttachmentScope: LocalImagePreviewScope | undefined = displayRight ? undefined : 'peer-attachment';
   const { body: peerBodyToRender, imagePaths: peerImagePaths } = splitUserAttachmentLines(contentToRender);
   const markdownClassName = messengerMarkdownClassName(displayRight);
   const txidPreview = formatA2ATxidPreview(txid);
@@ -1417,7 +1428,7 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
               (copy, delivery parsing, chain data) is untouched. emojiImages:
               catalog emoji render as bundled Twemoji artwork (display-only). */}
           <MarkdownContent content={mapWechatBracketCodesForDisplay(peerBodyToRender)} className={markdownClassName} emojiImages />
-          {peerImagePaths.length > 0 && <ImagePreviewStrip imagePaths={peerImagePaths} inline />}
+          {peerImagePaths.length > 0 && <ImagePreviewStrip imagePaths={peerImagePaths} inline scope={peerAttachmentScope} />}
         </div>
         {metafileItems.length > 0 && (
           <MetafileGallery items={metafileItems} alignEnd={displayRight} />

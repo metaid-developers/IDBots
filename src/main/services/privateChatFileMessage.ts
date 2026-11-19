@@ -252,6 +252,30 @@ const resolveInboundDir = (): string => {
   return path.join(baseDir || os.tmpdir(), INBOUND_DIR_NAME);
 };
 
+/** The inbound directory name (under userData), shared with the read scope. */
+export const PRIVATE_CHAT_INBOUND_DIR_NAME = INBOUND_DIR_NAME;
+
+/**
+ * Whether a resolved absolute path may be read for a PEER-attachment image
+ * preview (`scope: 'peer-attachment'` on cowork:session:readLocalImage).
+ *
+ * A peer's message body is attacker-controlled text: without this scoping any
+ * `Attachment path: C:\Users\victim\secret.png` marker line in an inbound
+ * message would make the victim's app read that local file and render it in
+ * the chat. Daemon-written markers always name this directory
+ * (materializePrivateChatFileMessage writes only here), so the legit inbound
+ * thumbnail feature keeps working while every other path is refused.
+ * `baseDir` is the SAME base resolveInboundDir uses (userData; the tmpdir
+ * fallback is the headless/test shape).
+ */
+export function isPeerAttachmentReadablePath(resolvedPath: string, baseDir: string): boolean {
+  const root = path.resolve(baseDir || os.tmpdir(), INBOUND_DIR_NAME);
+  const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
+  const candidate = path.resolve(String(resolvedPath || ''));
+  const foldCase = (value: string) => (process.platform === 'win32' ? value.toLowerCase() : value);
+  return foldCase(candidate).startsWith(foldCase(rootWithSep));
+}
+
 const fetchMetafileBytes = async (
   pinId: string,
   emitLog: (message: string) => void,
