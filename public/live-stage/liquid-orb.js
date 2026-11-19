@@ -789,7 +789,12 @@ void main() {
       const strictGl = canvas.getContext('webgl2', { ...baseAttrs, failIfMajorPerformanceCaveat: true });
       if (strictGl) return strictGl;
     }
-    const gl = canvas.getContext('webgl2', baseAttrs);
+    // The lenient attempt keeps the orb alive when the strict one was refused
+    // (e.g. a blocklisted discrete GPU). Asking for high-performance here
+    // again would pin dual-GPU Windows laptops to dGPU power draw for a
+    // mostly-idle orb AND re-hit the same refused adapter — fall to the
+    // integrated one instead.
+    const gl = canvas.getContext('webgl2', { ...baseAttrs, powerPreference: 'low-power' });
     if (!gl) return null;
     if (!allowSoftware) {
       const dbg = gl.getExtension('WEBGL_debug_renderer_info');
@@ -904,7 +909,12 @@ void main() {
         console.warn('[LiquidOrb] WebGPU unavailable, falling back to WebGL2:', message);
         try {
           return initWebGL2Backend(canvas, options, startedAt, false);
-        } catch {
+        } catch (webgl2Error) {
+          // The WebGPU error alone reads as "No WebGPU adapter" even when the
+          // real story was the WebGL2 tier refusing too (software renderer,
+          // RDP). Log the second failure — the main process relays
+          // [LiquidOrb] messages into diagnostics — then rethrow the first.
+          console.warn('[LiquidOrb] WebGL2 fallback also failed:', webgl2Error instanceof Error ? webgl2Error.message : String(webgl2Error));
           throw webgpuError;
         }
       }
