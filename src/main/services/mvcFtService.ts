@@ -4,6 +4,7 @@ import type { MetabotStore } from '../metabotStore';
 import { buildMvcFtTransferRawTx } from './walletRawTxService';
 import { isRetryableMvcBroadcastError, resolveBroadcastTxResult } from '../libs/mvcSpend';
 import { freshGetUrlAndInit } from './freshFetch';
+import type { MvcFtTokenBalance } from './mvcTokenSellService';
 
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
@@ -19,6 +20,8 @@ export interface MvcFtAsset {
   genesis: string;
   codeHash: string;
   sensibleId?: string;
+  /** Token utxo count when the balance source provides it. */
+  utxoCount?: number;
   address: string;
   decimal: number;
   icon?: string;
@@ -37,6 +40,7 @@ interface RawMvcFtBalanceRow {
   icon?: string;
   decimal?: number | string;
   sensibleId?: string;
+  utxoCount?: number | string;
   confirmedString?: string;
   unconfirmedString?: string;
 }
@@ -51,6 +55,12 @@ function normalizeDecimal(value: unknown): number {
   const decimal = Number(value);
   if (!Number.isInteger(decimal) || decimal < 0) return 0;
   return decimal;
+}
+
+function toOptionalCount(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function formatFixedDisplayValue(raw: unknown, decimal: number): string {
@@ -210,6 +220,7 @@ export async function listMvcFtAssets(
       genesis: String(row.genesis || ''),
       codeHash: String(row.codeHash || ''),
       sensibleId: row.sensibleId,
+      utxoCount: toOptionalCount(row.utxoCount),
       address,
       decimal,
       icon,
@@ -220,6 +231,29 @@ export async function listMvcFtAssets(
       },
     };
   });
+}
+
+/**
+ * Map the wallet UI's FT assets (metalet v4 balance-list — the shared balance
+ * source) into the MvcFtTokenBalance shape the wallet_token_balance agent
+ * tool consumes. `balance` is the spendable display total (confirmed +
+ * unconfirmed), matching the wallet_balance native-coin convention; the
+ * confirmed/unconfirmed split rides along for the tool output.
+ */
+export function mvcFtTokenBalanceFromAssets(address: string, assets: MvcFtAsset[]): MvcFtTokenBalance {
+  const tokens = assets.map((asset) => ({
+    symbol: asset.symbol,
+    genesis: asset.genesis,
+    codeHash: asset.codeHash,
+    balance: asset.balance.display,
+    decimal: asset.decimal,
+    confirmed: asset.balance.confirmed,
+    unconfirmed: asset.balance.unconfirmed,
+    ...(asset.tokenName ? { tokenName: asset.tokenName } : {}),
+    ...(asset.sensibleId ? { sensibleId: asset.sensibleId } : {}),
+    ...(asset.utxoCount !== undefined ? { count: asset.utxoCount } : {}),
+  }));
+  return { address, count: tokens.length, tokens };
 }
 
 export async function executeMvcFtTransfer(
