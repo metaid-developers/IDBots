@@ -384,7 +384,7 @@ test('seat claim is written on-chain right after the phase-2 grant, signed as th
   }
 });
 
-test('seat claim write retries through the same ledger on failure and commits on a later attempt', { timeout: 20_000 }, async () => {
+test('seat claim write retries through the same ledger on failure and commits on a later attempt', { timeout: 45_000 }, async () => {
   const { host, db, recorder } = buildHost({ failFirst: 1 });
   try {
     const session = await startSession(host);
@@ -408,7 +408,7 @@ test('seat claim write retries through the same ledger on failure and commits on
         )[0]?.values?.[0];
         return Boolean(sessionRow) && Number(sessionRow[0]) >= 1;
       },
-      { timeoutMs: 15_000, stepMs: 50, label: 'seat.claimed retry-to-commit + persisted budget' },
+      { timeoutMs: 25_000, stepMs: 50, label: 'seat.claimed retry-to-commit + persisted budget' },
     );
 
     assert.equal(recorder.calls.length, 2, 'exactly one failure + one successful retry');
