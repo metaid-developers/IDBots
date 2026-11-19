@@ -138,6 +138,8 @@ Native selection returns ordinary `File` objects to the existing picker → size
 
 Picker cancellation resolves without an error. Permission denial, unsupported capability, oversize input, and native failure remain distinct result categories. A native failure does not open a second picker or replay an upload. Browser file selection, Web Share, clipboard, download, and open-new-tab behavior remain available when the corresponding native capability is absent.
 
+Voice input keeps using the remote PWA's `getUserMedia` pipeline; audio does not cross the `NativeCapabilities` plugin. On Android, the installed Capacitor `BridgeWebChromeClient` handles `AUDIO_CAPTURE` and launches the runtime `RECORD_AUDIO` / `MODIFY_AUDIO_SETTINGS` requests declared in the manifest. iOS declares `NSMicrophoneUsageDescription` so the system can present its permission prompt when recording is first requested. Neither platform requests microphone access at application launch, and a denial leaves the existing voice error handling intact.
+
 Android sharing reports that the system chooser was handed the signed URL; Android does not expose a reliable user-cancellation result. iOS reports the `UIActivityViewController` completed/cancelled result. Signed URLs are never logged or persisted by the shell. iOS secure screen is an opaque background mask, not a claim that screenshots can be prevented.
 
 ## Lifecycle and Navigation
