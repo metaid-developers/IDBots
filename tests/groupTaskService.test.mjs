@@ -2459,7 +2459,9 @@ test('closeGroupTask: the chair posts exactly one [STATUS:DONE]/[STATUS:CANCELLE
     assert.equal(announcements[0].groupId, GROUP_ID);
     assert.equal(
       announcements[0].opts.content,
-      '[STATUS:DONE] Task closed: accepted by the owner. Reason: goal met',
+      // P0-b (task #149): this harness close passes no actor, so the
+      // non-owner wording applies — it must not claim owner acceptance.
+      '[STATUS:DONE] Task closed: closed by the chair on behalf of the owner; owner acceptance pending. Reason: goal met',
     );
 
     // A repeat (no-op) close of the terminal task must NOT re-announce.
