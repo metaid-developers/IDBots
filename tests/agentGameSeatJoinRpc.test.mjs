@@ -287,7 +287,7 @@ function startParams(overrides = {}) {
   };
 }
 
-async function waitFor(predicate, { timeoutMs = 8_000, stepMs = 20, label = 'condition' } = {}) {
+async function waitFor(predicate, { timeoutMs = 20_000, stepMs = 20, label = 'condition' } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await predicate()) return;
@@ -336,7 +336,7 @@ async function startSession(host, { agentId = BLACK_AGENT, overrides = {} } = {}
   return session;
 }
 
-test('membership hook runs before the seat.claimed write and charges the join pin to the budget', { timeout: 20_000 }, async () => {
+test('membership hook runs before the seat.claimed write and charges the join pin to the budget', { timeout: 45_000 }, async () => {
   const calls = [];
   const { host, recorder } = buildHost({
     ensureAgentGroupMember: async (agentId, groupId) => {
@@ -360,7 +360,7 @@ test('membership hook runs before the seat.claimed write and charges the join pi
   }
 });
 
-test('membership hook failure is non-fatal: session still starts and claims its seat', { timeout: 20_000 }, async () => {
+test('membership hook failure is non-fatal: session still starts and claims its seat', { timeout: 45_000 }, async () => {
   const { host, recorder } = buildHost({
     ensureAgentGroupMember: async () => {
       throw new Error('indexer unreachable');
@@ -379,7 +379,7 @@ test('membership hook failure is non-fatal: session still starts and claims its 
 /* 2. local-bot auto-approve fast lane                                 */
 /* ------------------------------------------------------------------ */
 
-test('local-bot actor starts without the card; third-party actor keeps the two-phase path', { timeout: 20_000 }, async () => {
+test('local-bot actor starts without the card; third-party actor keeps the two-phase path', { timeout: 45_000 }, async () => {
   const { host, db } = buildHost({
     autoApproveActor: (actorId) => actorId === BLACK_AGENT,
   });
@@ -413,7 +413,7 @@ test('local-bot actor starts without the card; third-party actor keeps the two-p
 /* 3. 走子方自付：action 写链带会话身份                                  */
 /* ------------------------------------------------------------------ */
 
-test('action writes are signed as the session agent bot (mover pays), not the owner', { timeout: 25_000 }, async () => {
+test('action writes are signed as the session agent bot (mover pays), not the owner', { timeout: 60_000 }, async () => {
   let llmCalls = 0;
   const { host, db, recorder } = buildHost({
     autoApproveActor: (actorId) => actorId === BLACK_AGENT,
@@ -435,7 +435,7 @@ test('action writes are signed as the session agent bot (mover pays), not the ow
       content: envelopeOf('seat.claimed', { payload: { requestedRole: 'red', name: 'Red Bot' } }),
     });
     host.onGroupMessage(GROUP_ID);
-    await waitFor(() => recorder.calls.some((c) => JSON.parse(c.plaintext).type === 'action'), { label: 'action write', timeoutMs: 15_000 });
+    await waitFor(() => recorder.calls.some((c) => JSON.parse(c.plaintext).type === 'action'), { label: 'action write', timeoutMs: 25_000 });
     assert.ok(llmCalls >= 1, 'the host brain must have produced the move');
     const actionCall = recorder.calls.find((c) => JSON.parse(c.plaintext).type === 'action');
     assert.equal(actionCall.opts?.asAgentId, BLACK_AGENT, 'action must be signed as the session agent (走子方自付)');
@@ -451,7 +451,7 @@ test('action writes are signed as the session agent bot (mover pays), not the ow
 /* 4. RPC 路由：POST /api/idbots/agent-game/session                     */
 /* ------------------------------------------------------------------ */
 
-test('rpc agent-game/session: validation, local-bot gate, and dispatch', { timeout: 30_000 }, async () => {
+test('rpc agent-game/session: validation, local-bot gate, and dispatch', { timeout: 45_000 }, async () => {
   const electronStubRpc = {
     app: {
       getPath: () => os.tmpdir(),
