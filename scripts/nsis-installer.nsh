@@ -178,25 +178,28 @@
   ; instead. The uninstaller build is exempt so an existing install can still
   ; be removed from an unsupported machine.
   !ifndef BUILD_UNINSTALLER
-    ; HKLM\...\CurrentVersion is a shared registry key (not redirected under
-    ; WOW64) and holds "6.1"/"6.2"/"6.3" on Win7/8/8.1, "10.0" on Win10/11.
-    ; Block the known-legacy list rather than allowlisting "10.0" so an
-    ; unreadable value (or a future Windows) fails OPEN, not closed.
-    ReadRegStr $R1 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion" CurrentVersion
-    ClearErrors
-    ${If} $R1 == "5.0"
-    ${OrIf} $R1 == "5.1"
-    ${OrIf} $R1 == "5.2"
-    ${OrIf} $R1 == "6.0"
-    ${OrIf} $R1 == "6.1"
-    ${OrIf} $R1 == "6.2"
-    ${OrIf} $R1 == "6.3"
+    ; Windows 10+ detection. WARNING: HKLM\...\CurrentVersion\CurrentVersion
+    ; has been FROZEN at "6.3" since Windows 8.1 — Windows 10/11 still report
+    ; 6.3 in that value (an app-compatibility decision), so comparing it
+    ; against the legacy list blocks EVERY Windows 10/11 machine (run
+    ; 44530032518's test build did exactly that on a Windows 11 ARM64
+    ; machine, build 26200). CurrentMajorVersionNumber (DWORD, 10) exists
+    ; only on Windows 10+ and keeps tracking real versions: block when it is
+    ; absent (pre-Win10, or a machine that hides its version cannot be
+    ; verified) or below 10. A hypothetical future Windows raising the major
+    ; version still passes.
+    ReadRegDWORD $R1 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion" CurrentMajorVersionNumber
+    ${If} ${Errors}
+    ${OrIf} $R1 < 10
       MessageBox MB_OK|MB_ICONSTOP "IDBots requires Windows 10 (64-bit) or later. This computer is running an older version of Windows that IDBots cannot support. Please upgrade Windows and run this installer again." /SD IDOK
       Quit
     ${EndIf}
+    ClearErrors
     ; 32-bit Windows: a 32-bit installer process reports PROCESSOR_ARCHITECTURE
     ; =x86 with NO PROCESSOR_ARCHITEW6432 override (on 64-bit Windows the
-    ; override is always set, so both conditions are required).
+    ; override is always set, so both conditions are required). An x64
+    ; installer process on Windows-on-ARM reports AMD64 under WOW64 emulation
+    ; and passes here, as it should.
     ReadEnvStr $R2 "PROCESSOR_ARCHITEW6432"
     ${If} $R2 == ""
       ReadEnvStr $R2 "PROCESSOR_ARCHITECTURE"
