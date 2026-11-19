@@ -1101,3 +1101,4 @@ blob-report/
 !tests/studioChapterStore.test.mjs
 !tests/studioChapterClose.test.ts
 !tests/studioChapterTriggers.test.ts
+!tests/contextBudgetReport.test.mjs
