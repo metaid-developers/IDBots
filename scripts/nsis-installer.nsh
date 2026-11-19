@@ -1,3 +1,12 @@
+; Declared ONLY for the installer pass, and every reference stays inside
+; that same guard: the BUILD_UNINSTALLER pass instantiates the install-mode
+; page function with the un. prefix (assistedInstaller's !else branch) and
+; compiles customInstallMode there, but customInit — the only writer of
+; these snapshots — is installer-pass-only, so in the uninstaller pass the
+; force logic could only ever read empty strings. Guarding the body keeps
+; the uninstaller pass at its v1.1.1 shape (no references, no warnings
+; under -WX on any NSIS version) while the installer-side force logic from
+; 791fc96c4 is untouched (run 44502506341's packaging failure).
 !ifndef BUILD_UNINSTALLER
   Var IdbotsPrevUserDir
   Var IdbotsPrevMachineDir
@@ -238,13 +247,21 @@ _idbots_data_check_done:
 ; BEFORE registryAddInstallInfo touched them, so they are authoritative here.
 ; A fresh install (both snapshots empty) keeps the interactive page.
 !macro customInstallMode
-  ${If} ${isUpdated}
-    ${If} $IdbotsPrevUserDir != ""
-      StrCpy $isForceCurrentInstall "1"
-    ${ElseIf} $IdbotsPrevMachineDir != ""
-      StrCpy $isForceMachineInstall "1"
+  ; The BUILD_UNINSTALLER pass compiles this body too (the un.-prefixed
+  ; install-mode page function instantiates it), but $IdbotsPrevUserDir /
+  ; $IdbotsPrevMachineDir are snapshot by customInit — installer-pass-only —
+  ; so in the uninstaller pass the force logic could only read empty strings
+  ; and skip a page the user is entitled to see. Compile it installer-side
+  ; only; the uninstall-mode page keeps its v1.1.1 interactive behavior.
+  !ifndef BUILD_UNINSTALLER
+    ${If} ${isUpdated}
+      ${If} $IdbotsPrevUserDir != ""
+        StrCpy $isForceCurrentInstall "1"
+      ${ElseIf} $IdbotsPrevMachineDir != ""
+        StrCpy $isForceMachineInstall "1"
+      ${EndIf}
     ${EndIf}
-  ${EndIf}
+  !endif
 !macroend
 
 !macro customInstall
