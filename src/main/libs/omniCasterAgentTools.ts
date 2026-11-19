@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { ChainWriteCreatePin } from './postBuzzAgentTools';
 import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssistReceipt';
 import { PIN_REF_TOOL_RULE } from './chainPinRefGuard';
+import { buildOmniCastOrigin } from '../services/chainWriteAttribution';
 
 /** Minimal shape of the claude-agent-sdk tool() helper we depend on. */
 type SdkToolFactory = (
@@ -266,7 +267,9 @@ export function buildOmniCasterAgentTools(deps: {
             payload: cleanPayload,
             ...(encoding === 'base64' ? { encoding: 'base64' as const } : {}),
           },
-          { network, origin: 'tool:omni_cast' },
+          // Same session dimension as the RPC face (G3): the origin carries
+          // the session this cast was made from, not just the tool name.
+          { network, origin: buildOmniCastOrigin(sessionId) },
         );
         return textResult(
           formatCastResult({

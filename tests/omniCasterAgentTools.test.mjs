@@ -86,7 +86,7 @@ test('casts a JSON payload pin with the default 7-tuple', async () => {
     contentType: 'application/json',
     payload: JSON.stringify({ isLike: 1, likeTo: 'pinXYZi0' }),
   });
-  assert.deepEqual(call.options, { network: 'mvc', origin: 'tool:omni_cast' });
+  assert.deepEqual(call.options, { network: 'mvc', origin: `tool:omni_cast#s=${SESSION_ID}` });
   const text = result.content[0].text;
   assert.equal(result.isError, undefined);
   assert.match(text, /txid: tx-cast-1/);
@@ -105,7 +105,7 @@ test('forwards operation and network overrides', async () => {
     network: 'btc',
   });
   assert.equal(calls.createPin[0].metaidData.operation, 'revoke');
-  assert.deepEqual(calls.createPin[0].options, { network: 'btc', origin: 'tool:omni_cast' });
+  assert.deepEqual(calls.createPin[0].options, { network: 'btc', origin: `tool:omni_cast#s=${SESSION_ID}` });
 });
 
 test('rejects payload and payload_file together, and neither', async () => {

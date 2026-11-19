@@ -1113,3 +1113,5 @@ blob-report/
 !tests/studioChapterDividerUi.test.ts
 !tests/studioExperimentalAutomationDemote.test.ts
 !tests/dshSessionRetention.test.ts
+!tests/chainWriteAttribution.test.mjs
+!tests/rpcCreatePinCallerSession.test.mjs
