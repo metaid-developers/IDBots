@@ -190,6 +190,33 @@ export class SwapLedger {
   }
 
   /**
+   * Cross-process command serialization (2026-11-19 review P2): BEGIN
+   * IMMEDIATE on the ledger database. A concurrent swap-engine CLI process
+   * (two `--broadcast` runs on the same operator machine) blocks on the
+   * connection's busy_timeout, then fails with SQLITE_BUSY — visible and
+   * rerunnable; an in-process interleave fails with "cannot start a
+   * transaction within a transaction" — equally clean. Always pair with
+   * {@link unlockExclusive} in a finally. The ctor already sets
+   * `busy_timeout = 5000` and WAL, so readers keep working while the lock
+   * is held across the engine's awaits.
+   */
+  lockExclusive() {
+    this.db.exec('BEGIN IMMEDIATE;');
+  }
+
+  unlockExclusive() {
+    try {
+      this.db.exec('COMMIT;');
+    } catch {
+      try {
+        this.db.exec('ROLLBACK;');
+      } catch {
+        /* connection already clean */
+      }
+    }
+  }
+
+  /**
    * Record a newly detected deposit (engine vault poll). Returns
    * { row, created }. When the tokenIndex already has an ACTIVE row, the new
    * deposit is still recorded — but flagged rejected (duplicate index); the

@@ -157,6 +157,58 @@ async function expectCode(promise, code) {
 }
 
 // ---------------------------------------------------------------------------
+// cross-process serialization (2026-11-19 review P2)
+// ---------------------------------------------------------------------------
+
+test('concurrent mint-and-send runs serialize: the second cannot start while the first broadcast is in flight', async () => {
+  await withTempLedger('mint-lock-serialize', async (ledger) => {
+    const { row, txid } = claim(ledger, 842);
+    let releaseMint;
+    const mintGate = new Promise((resolve) => { releaseMint = resolve; });
+    let mintCalls = 0;
+    const first = makeDeps({
+      vaultRows: [vaultRow(txid, 842)],
+      overrides: {
+        mintItemPin: async () => {
+          mintCalls += 1;
+          await mintGate;
+          return { pinId: MINT_PIN, txids: [uniqueHex()], totalCost: 1500 };
+        },
+      },
+    });
+    const firstRun = mintAndSend({ ledger, album: ALBUM, row, deps: first.deps, broadcast: true });
+    // The first run holds the ledger's exclusive lock synchronously from
+    // entry; a second run starting now must be refused, not double-mint.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await assert.rejects(
+      () => mintAndSend({ ledger, album: ALBUM, row, deps: makeDeps().deps, broadcast: true }),
+      /within a transaction|database is locked|SQLITE_BUSY/i,
+      'a run starting inside the exclusive lock must refuse',
+    );
+    releaseMint();
+    const result = await firstRun;
+    assert.equal(result.state, 'sent');
+    assert.equal(mintCalls, 1, 'exactly one mint broadcast for the tokenIndex');
+    assert.equal(ledger.mintedRowsByToken(ALBUM.genesis, 842).length, 1);
+  });
+});
+
+test('the ledger lock releases on failure paths: a failed run leaves the lock free', async () => {
+  await withTempLedger('mint-lock-release', async (ledger) => {
+    const { row } = claim(ledger, 843);
+    const { deps } = makeDeps({ vaultRows: [] });
+    // DEPOSIT_NOT_IN_VAULT fails inside the lock; the finally must release it
+    // so the very next command can acquire it again.
+    await expectCode(
+      mintAndSend({ ledger, album: ALBUM, row, deps, broadcast: true }),
+      'DEPOSIT_NOT_IN_VAULT',
+    );
+    ledger.lockExclusive();
+    ledger.unlockExclusive();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // item path + probe classification
 // ---------------------------------------------------------------------------
 
