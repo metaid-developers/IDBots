@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="idbots_accent">#FFDC51</color>
+    <color name="idbots_on_accent">#20242A</color>
+    <color name="idbots_text">#20242A</color>
+    <color name="idbots_text_secondary">#535B66</color>
+</resources>

@@ -14,10 +14,11 @@ NS0 provides the native foundation, NS1 adds lifecycle and navigation integratio
 - camera, photo-library, and multi-document selection into the existing upload pipeline;
 - native system artifact sharing with current signed URLs and existing web fallbacks;
 - Android secure screenshots and iOS opaque background/app-switcher masking;
+- automatic Android APK update checks, system-managed downloads, integrity/signature verification, and guided installation;
 - keyboard, safe-area, theme, and iOS-native recharge policy integration;
 - focused static, adapter, lifecycle, navigation, origin-policy, build, and WebView evidence.
 
-Push notifications, signing, TestFlight, and release rollout are intentionally not implemented. Physical-device and real-service acceptance is a separate gate, not implied by debug builds.
+Push notifications, TestFlight, and public store rollout are intentionally not implemented. Physical-device and real-service acceptance is a separate gate, not implied by debug builds. Android release signing uses the owner-held identity documented in `SIGNING.md`.
 
 ## Architecture
 
@@ -80,6 +81,9 @@ pnpm run build:android        # staging debug APK
 pnpm run build:android:staging
 pnpm run build:android:production
 
+# Signed production APK; use one of the signing mechanisms in SIGNING.md.
+IDBOTS_ANDROID_SIGNING_INIT_SCRIPT=/absolute/path/prod-signing-init.gradle pnpm run build:android:release
+
 pnpm run build:ios            # staging Simulator debug app
 pnpm run build:ios:staging
 pnpm run build:ios:production
@@ -115,6 +119,26 @@ pnpm run test:e2e:mobile:gateway
 After the workflow reaches the default branch, use **Actions → Android Staging → Run workflow**. A push to `ci/android-cloud-build` can exercise it before merge when the workflow or mobile code changes. The artifact is named `IDBots-android-staging-run-<run-number>` and is retained for 10 days.
 
 The workflow only builds and tests. It does not sign a release, deploy the PWA, update staging, push to a registry, or publish to a store. Download the artifact through the GitHub Actions run page and install it with `adb install -r app-staging-debug.apk`.
+
+## Android APK Updates
+
+Production Android shells check `https://idbots.ai/update.json` on launch and after returning to the foreground, with a six-hour check interval. The existing desktop fields remain independent; native updates live in `data.value.android` and contain `version`, `versionCode`, `minVersionCode`, `date`, `url`, `sha256`, `size`, and bilingual `changeLog` entries. APKs use the versioned `https://app.idbots.world/downloads/` channel.
+
+A newer version opens a bilingual native update dialog. After the user chooses Update now, Android `DownloadManager` continues the download in the background and shows its own notification. The shell verifies the exact size and SHA-256, then checks the archive package name, integer version code, and complete signing-certificate set against the installed app before offering installation. Direct APK distribution cannot bypass Android's installation confirmation or, when required, the per-app unknown-sources permission.
+
+A user-dismissed version is not offered again for 24 hours unless its `minVersionCode` makes it required. Failed checks stay quiet and failed downloads offer Retry without affecting the installed app. Update state contains no account or product data.
+
+After building a signed release, generate a complete candidate manifest from the current live manifest and the exact APK:
+
+```bash
+curl --noproxy '*' -fsSL https://idbots.ai/update.json -o artifacts/update-before.json
+pnpm run release:android:metadata -- \
+  artifacts/IDBots-Android-0.1.4.apk \
+  artifacts/update-before.json \
+  artifacts/update.json
+```
+
+Edit `release-notes/android-release.json` for each release's date and bilingual notes. The metadata command derives the version from Gradle and calculates the APK size and SHA-256; never copy these values by hand. Build and verify the final production artifact from `main`, then publish the APK and manifest together and verify both public URLs.
 
 ## Native Surface
 
