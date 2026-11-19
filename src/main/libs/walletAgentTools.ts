@@ -5,6 +5,10 @@ import type {
   WalletTransferResult,
 } from '../services/walletTransferService';
 import type {
+  WalletTokenSendParams,
+  WalletTokenSendResult,
+} from '../services/walletTokenSendService';
+import type {
   MetabotWalletBalanceEntry,
   WalletBalanceQueryResult,
   WalletBalanceSnapshot,
@@ -29,6 +33,10 @@ export type WalletToolsControl = {
     params: WalletMvcTransferParams,
     host?: { confirmExternal?: (info: ExternalTransferInfo) => Promise<boolean> },
   ): Promise<WalletTransferResult>;
+  sendToken(
+    params: WalletTokenSendParams,
+    host?: { confirmExternal?: (info: ExternalTransferInfo) => Promise<boolean> },
+  ): Promise<WalletTokenSendResult>;
   listTransfers(limit?: number, metabotId?: number): unknown[];
   listMvcNfts(input: {
     metabotIds?: number[];
@@ -175,6 +183,25 @@ function formatTransferFailure(result: WalletTransferResult & { success: false }
   const lines = [`Transfer failed (${result.error_code}): ${result.error}`];
   if (result.have_sats != null) lines.push(`- have: ${result.have_sats} sats (${(result.have_sats / SATOSHI_PER_UNIT).toFixed(8)} SPACE)`);
   if (result.need_sats != null) lines.push(`- need: ${result.need_sats} sats (${(result.need_sats / SATOSHI_PER_UNIT).toFixed(8)} SPACE, amount + estimated fee)`);
+  return lines.join('\n');
+}
+
+function formatTokenSendSuccess(result: WalletTokenSendResult & { success: true }): string {
+  const lines: string[] = ['Token transfer broadcast on-chain.'];
+  lines.push(`- token: ${result.token_symbol} (genesis ${result.token_genesis})`);
+  lines.push(`- amount: ${result.amount} ${result.token_symbol}`);
+  lines.push(`- txid: ${result.txid}`);
+  lines.push(`- channel: ${result.channel}${result.channel === 'local' ? ' (local roster, no confirmation required)' : ' (external, owner-confirmed)'}`);
+  if (result.to_metabot_id != null) lines.push(`- to metabot_id: ${result.to_metabot_id}`);
+  lines.push(`- audit record id: ${result.audit_id}`);
+  return lines.join('\n');
+}
+
+function formatTokenSendFailure(result: WalletTokenSendResult & { success: false }): string {
+  const lines = [`Token send failed (${result.error_code}): ${result.error}`];
+  const symbol = result.token_symbol ? ` ${result.token_symbol}` : '';
+  if (result.have != null) lines.push(`- have: ${result.have}${symbol} (display units)`);
+  if (result.need != null) lines.push(`- need: ${result.need}${symbol} (display units)`);
   return lines.join('\n');
 }
 
@@ -412,6 +439,125 @@ export function buildWalletAgentTools(deps: {
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_transfer failed: ${msg}`, true);
+      }
+    }
+  );
+
+  const walletTokenSend = tool(
+    'wallet_token_send',
+    [
+      'Send an MVC20 token (MVC-FT, e.g. METAID) in ANY partial amount from THIS session MetaBot\'s own wallet to a target address or local MetaBot.',
+      'Use when the owner asks to transfer tokens ("转 0.1 个 METAID 给某人"), pay another bot in tokens, or move tokens between local bots. This is the arbitrary-amount token transfer — NOT wallet_token_transfer, which only moves a token\'s whole UTXO (TokenSell semantics).',
+      '`genesis` accepts the 40-hex contract genesis or the 64-hex genesis txid listed by wallet_token_balance; `amount` is in token DISPLAY units (decimal-aware, e.g. "0.1", not base units); `to` accepts a local metabot_id, a local bot name, or a raw MVC address.',
+      'Gate parity with wallet_transfer: local-roster targets execute immediately; external addresses ask the owner by default (token-aware dialog) unless the gate is disabled in settings — headless surfaces pass external_confirmed=true. Every attempt lands in the same audit ledger. The SPACE network fee is paid from the same wallet.',
+    ].join(' '),
+    {
+      genesis: z
+        .string()
+        .min(1)
+        .describe('Token genesis: 40-hex contract genesis or 64-hex genesis txid (wallet_token_balance lists both).'),
+      codehash: z
+        .string()
+        .optional()
+        .describe('Token codehash, only needed when several tokens share the same genesis.'),
+      to: z
+        .string()
+        .min(1)
+        .describe('Target: local metabot_id (e.g. "15"), local bot name, or MVC address.'),
+      amount: z
+        .string()
+        .min(1)
+        .describe('Amount in token display units, e.g. "0.1" (decimal-aware string, NOT base units).'),
+      memo: z.string().optional().describe('Optional note stored in the audit record.'),
+      external_confirmed: z
+        .boolean()
+        .optional()
+        .describe(
+          'Set true ONLY when the owner has already approved this external token transfer in the conversation. ' +
+            'Ignored whenever the host renders its own owner dialog.'
+        ),
+    },
+    async (args: {
+      genesis: string;
+      codehash?: string;
+      to: string;
+      amount: string;
+      memo?: string;
+      external_confirmed?: boolean;
+    }) => {
+      const metabotId = resolveMetabotId(sessionId);
+      if (metabotId == null) {
+        return textResult(
+          'wallet_token_send could not determine which MetaBot owns this session; token sends must spend the session bot\'s own wallet.',
+          true,
+        );
+      }
+      const genesisRaw = asString(args.genesis);
+      if (!/^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$/.test(genesisRaw)) {
+        return textResult(
+          'wallet_token_send: genesis must be the 40-hex contract genesis or the 64-hex genesis txid (see wallet_token_balance).',
+          true,
+        );
+      }
+      // Resolve `to` exactly like wallet_transfer: metabot id or local name →
+      // local mvc address; else raw address (gate parity depends on the same
+      // roster match).
+      const toRaw = asString(args.to);
+      if (!toRaw) {
+        return textResult('wallet_token_send requires `to` (metabot_id, name, or address).', true);
+      }
+      let toAddress = '';
+      if (/^\d+$/.test(toRaw)) {
+        const id = Number(toRaw);
+        const address = control.getMetabotMvcAddress(id);
+        if (!address) return textResult(`wallet_token_send: local MetaBot not found: ${toRaw}`, true);
+        toAddress = address;
+      } else if (!looksLikeMvcAddress(toRaw)) {
+        const id = control.resolveMetabotIdByName(toRaw);
+        if (id == null) {
+          return textResult(
+            `wallet_token_send: "${toRaw}" is neither a local MetaBot name nor an address. For an external address pass the full MVC address.`,
+            true,
+          );
+        }
+        const address = control.getMetabotMvcAddress(id) ?? '';
+        if (!address) return textResult(`wallet_token_send: MetaBot ${toRaw} has no mvc address.`, true);
+        toAddress = address;
+      } else {
+        toAddress = toRaw;
+      }
+      const amount = asString(args.amount);
+      if (!amount) {
+        return textResult('wallet_token_send requires `amount` in token display units (e.g. "0.1").', true);
+      }
+
+      try {
+        const result = await control.sendToken(
+          {
+            metabotId,
+            genesis: genesisRaw,
+            codehash: asString(args.codehash) || undefined,
+            to: toAddress,
+            amount,
+            memo: asString(args.memo) || undefined,
+            sessionId,
+            origin: 'tool:wallet_token_send',
+            // Channel-B owner acknowledgement for surfaces that render no dialog.
+            // The service consults it ONLY when no confirmExternal callback is
+            // wired, so a host dialog always keeps precedence.
+            externalConfirmed: args.external_confirmed === true ? true : undefined,
+          },
+          deps.confirmExternalTransfer ? { confirmExternal: deps.confirmExternalTransfer } : undefined,
+        );
+        // `=== true` (not bare truthiness): the project runs without
+        // strictNullChecks, where boolean truthiness does not narrow the
+        // discriminated union.
+        return result.success === true
+          ? textResult(formatTokenSendSuccess(result))
+          : textResult(formatTokenSendFailure(result), true);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_token_send failed: ${msg}`, true);
       }
     }
   );
@@ -1342,6 +1488,7 @@ export function buildWalletAgentTools(deps: {
     walletNftCancelSell,
     walletNftBuy,
     walletTokenBalance,
+    walletTokenSend,
     walletTokenTransfer,
     walletTokenSellOrders,
     walletTokenSell,

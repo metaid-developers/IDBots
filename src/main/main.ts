@@ -226,6 +226,7 @@ import {
   type WalletQueryChain,
 } from './services/walletQueryService';
 import { executeWalletMvcTransfer } from './services/walletTransferService';
+import { executeWalletTokenSend } from './services/walletTokenSendService';
 import { openMetabotBtcWallet, signBtcPsbtPartial } from './services/btcPartialSign';
 import { broadcastBtcTx, fetchBtcUtxos } from './libs/btcApi';
 import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
@@ -8338,6 +8339,22 @@ const getCoworkRunner = () => {
         transfer: (params, host) => withChainWriteBudget(
           'wallet_transfer',
           () => executeWalletMvcTransfer(
+            {
+              metabotStore: getMetabotStore(),
+              transferStore: getBotWalletTransferStore(),
+              settingsReader: getStore(),
+              getFeeRate: () => getGlobalFeeRate('mvc'),
+              confirmExternal: host?.confirmExternal,
+            },
+            params,
+          ),
+        ),
+        // wallet_token_send backend: partial-amount MVC20 transfers through
+        // the UI's FtManager path, with the SAME two-channel gate (dialog /
+        // external_confirmed) and the same audit ledger as wallet_transfer.
+        sendToken: (params, host) => withChainWriteBudget(
+          'wallet_token_send',
+          () => executeWalletTokenSend(
             {
               metabotStore: getMetabotStore(),
               transferStore: getBotWalletTransferStore(),

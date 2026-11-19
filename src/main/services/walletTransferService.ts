@@ -43,6 +43,13 @@ export interface ExternalTransferInfo {
   amountSats: number;
   estimatedFeeSats: number;
   memo?: string | null;
+  /**
+   * Token-send context (wallet_token_send): when present the owner dialog
+   * renders the token line (amount in display units + symbol + genesis)
+   * instead of the SPACE sats line; `amountSats` then holds token base
+   * units, not SPACE sats. Optional so native-coin callers stay unchanged.
+   */
+  token?: { symbol: string; amount: string; genesis: string } | null;
 }
 
 export type WalletTransferDeps = {

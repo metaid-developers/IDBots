@@ -261,6 +261,7 @@ tests/*
 !tests/metabotWalletService.test.mjs
 !tests/metabotWallet236CoinType.test.mjs
 !tests/mvcFtTokenBalanceSource.test.mjs
+!tests/walletTokenSend.test.mjs
 !tests/mvcSubsidyService.test.mjs
 !tests/imGatewayConnectivity.test.mjs
 !tests/groupTaskService.test.mjs
