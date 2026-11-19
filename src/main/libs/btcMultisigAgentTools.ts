@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import {
   assertMultisigInputsSignable,
+  assertPsbtInputsAboveCarrierFloor,
   buildMultisigPsbt,
   combinePsbts,
   createMultisigAddress,
   finalizePsbt,
+  psbtTransactionId,
   selectMultisigInputIndexes,
   summarizePsbt,
   summarizeRawTx,
@@ -55,20 +57,41 @@ function signQuestion(summary: PsbtSummary): string {
   ].join('\n');
 }
 
-function broadcastQuestion(rawTx: string): string {
+/**
+ * The broadcast approval card. With the source PSBT the owner sees the whole
+ * story — inputs (carrier-floor checked), fee, outputs; without it, only the
+ * outputs are derivable from the raw tx (segwit input values are witness data,
+ * not part of the tx), so the card says so and asks for the PSBT next time.
+ */
+function broadcastQuestion(rawTx: string, psbtSummary: PsbtSummary | null): string {
   const summary = summarizeRawTx(rawTx);
   const outputs = summary.outputs
     .map((output) => `- ${output.address}  ${output.value} sats`)
     .join('\n');
   const outputTotal = summary.outputs.reduce((sum, output) => sum + output.value, 0);
-  return [
+  const lines = [
     '即将广播一笔已完成的比特币交易。广播不可撤销。',
     'Broadcast a fully signed Bitcoin transaction. Broadcasting is irreversible.',
     `txid: ${summary.txid}`,
     `outputs_total: ${outputTotal} sats`,
-    'outputs:',
-    outputs,
-  ].join('\n');
+  ];
+  if (psbtSummary) {
+    const inputs = psbtSummary.inputs
+      .map((input) => `- ${input.txid}:${input.vout}  ${input.value == null ? 'unknown' : `${input.value} sats`}`)
+      .join('\n');
+    lines.push(
+      'inputs:',
+      inputs,
+      `fee: ${psbtSummary.feeSats == null ? 'unknown' : `${psbtSummary.feeSats} sats`}`,
+    );
+  } else {
+    lines.push(
+      'inputs/fee: 未知 — 未提供 psbt_hex。下次请把合并后的 PSBT 一并传入，主人才能看到输入与费用。',
+      'inputs/fee: unknown — no psbt_hex was provided; pass the combined PSBT next time so the owner can see inputs and fee.',
+    );
+  }
+  lines.push('outputs:', outputs);
+  return lines.join('\n');
 }
 
 /**
@@ -217,7 +240,7 @@ export function buildBtcMultisigAgentTools(deps: {
 
   const finalize = tool(
     'wallet_btc_finalize_psbt',
-    'Finish a PSBT that already has enough multisig signatures and return the raw transaction. This does not broadcast. Show the result to the owner, then call wallet_btc_broadcast only after they agree.',
+    'Finish a PSBT that already has enough multisig signatures and return the raw transaction. This does not broadcast. Refuses any PSBT that spends a sub-1000-sat input (inscription-carrier rule, Metalet parity) — even when the PSBT was co-signed outside IDBots. Show the result to the owner, then call wallet_btc_broadcast (passing psbt_hex) only after they agree.',
     {
       psbt_hex: z.string().min(1),
     },
@@ -289,16 +312,33 @@ export function buildBtcMultisigAgentTools(deps: {
 
   const broadcast = tool(
     'wallet_btc_broadcast',
-    'Broadcast a fully signed Bitcoin raw transaction. The owner must approve. Use this after wallet_btc_finalize_psbt, for both BTC and native MRC20 multisig spends.',
+    'Broadcast a fully signed Bitcoin raw transaction. The owner must approve. Use this after wallet_btc_finalize_psbt, for both BTC and native MRC20 multisig spends. Pass psbt_hex (the combined PSBT raw_tx came from) whenever you have it: the owner then sees the inputs and the fee, and the broadcast refuses on a txid mismatch or a sub-1000-sat carrier input.',
     {
       raw_tx: z.string().min(1).describe('Signed transaction hex.'),
+      psbt_hex: z.string().min(1).optional().describe('Combined PSBT behind raw_tx — enables the inputs/fee view plus the carrier-floor and txid cross-checks.'),
     },
-    async (args: { raw_tx: string }) => {
+    async (args: { raw_tx: string; psbt_hex?: string }) => {
       const metabotId = requireSession('wallet_btc_broadcast');
       if (typeof metabotId !== 'number') return textResult(metabotId.error, true);
+      let summary: PsbtSummary | null = null;
       let question: string;
       try {
-        question = broadcastQuestion(args.raw_tx);
+        if (args.psbt_hex) {
+          // Defense in depth behind finalize: an already-raw transaction may
+          // only be shown honestly if it IS the PSBT's transaction, and the
+          // carrier floor applies to the external co-signing path too.
+          assertPsbtInputsAboveCarrierFloor(args.psbt_hex);
+          const psbtTxid = psbtTransactionId(args.psbt_hex);
+          const rawTxid = summarizeRawTx(args.raw_tx).txid;
+          if (psbtTxid !== rawTxid) {
+            return textResult(
+              `wallet_btc_broadcast refused: psbt_hex commits to ${psbtTxid} but raw_tx is ${rawTxid} — showing one transaction while broadcasting another is not allowed.`,
+              true,
+            );
+          }
+          summary = summarizePsbt(args.psbt_hex);
+        }
+        question = broadcastQuestion(args.raw_tx, summary);
       } catch (error) {
         return textResult(`wallet_btc_broadcast failed: ${errorText(error)}`, true);
       }

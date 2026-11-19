@@ -270,3 +270,110 @@ test('approved sign returns the partial PSBT and approved broadcast returns the 
   assert.match(questions[1], /irreversible/);
   assert.equal(calls.filter((call) => call.startsWith('sign:')).length, 1);
 });
+
+/**
+ * An EXTERNAL PSBT — the shape a Metalet co-signer can hand back: built with
+ * bitcoinjs directly, bypassing buildMultisigPsbt's own floors. This is the
+ * hole the 2026-11-19 release review flagged: everything inside IDBots is
+ * floored, but finalize/broadcast previously accepted outside-built PSBTs
+ * unchecked. (Our own signer refuses sub-floor inputs at selection time, so
+ * the 546-sat cases stay unsigned here — exactly how an external PSBT arrives
+ * before some OTHER party's signatures would be collected.)
+ */
+function externallyBuiltPsbt(value: number): string {
+  const descriptor = createMultisigAddress(2, pubkeys(2));
+  const witnessScript = Buffer.from(descriptor.witnessScriptHex, 'hex');
+  const psbt = new bitcoin.Psbt({ network: bitcoin.networks.bitcoin });
+  // The prevout of a P2WSH output is the P2WSH lockscript; the multisig
+  // witness script rides separately (exactly how an external tool sees it).
+  psbt.addInput({
+    hash: TXID,
+    index: 0,
+    witnessUtxo: { script: bitcoin.address.toOutputScript(descriptor.address, bitcoin.networks.bitcoin), value },
+    witnessScript,
+  });
+  psbt.addOutput({ address: descriptor.address, value: value - 46 });
+  return psbt.toHex();
+}
+
+/** A hand-built raw tx (no witness — txid never covers witness data) whose
+ *  single input/output mirror a PSBT's unsigned transaction, for broadcast
+ *  dialog cross-check cases without going through our finalize. */
+function handBuiltRawTx(address: string, outputValue: number): string {
+  const tx = new bitcoin.Transaction();
+  tx.version = 2;
+  tx.addInput(Buffer.from(TXID, 'hex'), 0);
+  tx.addOutput(bitcoin.address.toOutputScript(address, bitcoin.networks.bitcoin), outputValue);
+  return tx.toHex();
+}
+
+function signedCombined(psbtHex: string): string {
+  return combinePsbts([
+    signBtcPsbtPartial(wallet(0), { psbtHex }).psbtHex,
+    signBtcPsbtPartial(wallet(1), { psbtHex }).psbtHex,
+  ]);
+}
+
+test('finalize refuses an externally co-signed PSBT that spends a sub-floor carrier input', () => {
+  assert.throws(() => finalizePsbt(externallyBuiltPsbt(546)), /inscription-carrier floor/);
+});
+
+test('1000 sats exactly passes the carrier floor at finalize (owner ruling)', () => {
+  const finalized = finalizePsbt(signedCombined(externallyBuiltPsbt(1000)));
+  assert.equal(finalized.txid, summarizeRawTx(finalized.rawTx).txid);
+});
+
+test('broadcast shows inputs and fee from psbt_hex and refuses mismatch or carrier-floor inputs', async () => {
+  const { tool, handlers, control, calls } = toolHarness();
+  const questions: string[] = [];
+  buildBtcMultisigAgentTools({
+    tool: tool as any,
+    control,
+    sessionId: 's1',
+    resolveMetabotId: () => 7,
+    confirmSign: async () => true,
+    confirmBroadcast: async (question) => {
+      questions.push(question);
+      return true;
+    },
+  });
+
+  const descriptor = createMultisigAddress(2, pubkeys(3));
+  const psbtHex = buildMultisigPsbt({
+    witnessScriptHex: descriptor.witnessScriptHex,
+    inputs: [{ txid: TXID, vout: 0, value: 50_000 }],
+    outputs: [{ address: descriptor.address, value: 40_000 }],
+  }).psbtHex;
+  const combined = signedCombined(psbtHex);
+  const raw = finalizePsbt(combined).rawTx;
+
+  const ok = await handlers.wallet_btc_broadcast.handler({ raw_tx: raw, psbt_hex: combined });
+  assert.equal(ok.isError, undefined);
+  assert.match(ok.content[0].text, /broadcast-txid/);
+  assert.match(questions[0], /inputs:/);
+  assert.match(questions[0], /50000 sats/);
+  assert.match(questions[0], /fee: 10000 sats/);
+  assert.equal(calls.filter((call) => call.startsWith('broadcast:')).length, 1);
+
+  // A psbt_hex that is NOT the raw_tx's transaction refuses: the dialog would
+  // describe one transaction while broadcasting another.
+  const mismatch = await handlers.wallet_btc_broadcast.handler({ raw_tx: handBuiltRawTx(descriptor.address, 12_345), psbt_hex: combined });
+  assert.equal(mismatch.isError, true);
+  assert.match(mismatch.content[0].text, /commits to/);
+
+  // A 546-sat carrier input refuses at the dialog too (defense in depth
+  // behind finalize — an external PSBT paired with its matching raw tx).
+  const floorDescriptor = createMultisigAddress(2, pubkeys(2));
+  const floorPsbt = externallyBuiltPsbt(546);
+  const floorRaw = handBuiltRawTx(floorDescriptor.address, 500);
+  const floored = await handlers.wallet_btc_broadcast.handler({ raw_tx: floorRaw, psbt_hex: floorPsbt });
+  assert.equal(floored.isError, true);
+  assert.match(floored.content[0].text, /inscription-carrier floor/);
+
+  // Without psbt_hex the card says inputs/fee are unknown — and still works.
+  const before = calls.filter((call) => call.startsWith('broadcast:')).length;
+  const blind = await handlers.wallet_btc_broadcast.handler({ raw_tx: raw });
+  assert.equal(blind.isError, undefined);
+  assert.match(questions[questions.length - 1], /unknown/);
+  assert.equal(calls.filter((call) => call.startsWith('broadcast:')).length, before + 1);
+});

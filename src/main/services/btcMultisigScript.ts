@@ -415,9 +415,56 @@ function trimExtraSignatures(psbt: bitcoin.Psbt): void {
   });
 }
 
+/**
+ * Metalet-parity inscription-carrier floor for PSBT INPUTS (see btcSpendPolicy:
+ * a sub-1000-sat output may be an MRC20 / Pin carrier — spending it as plain
+ * BTC destroys the asset it carries). Our builder already refuses sub-floor
+ * inputs; this closes the EXTERNAL hole: a PSBT co-signed outside this host
+ * (Metalet co-signers) can carry a 546-sat carrier as an input. Enforced at
+ * finalize AND at the broadcast dialog. Inputs without a witness UTXO (rare
+ * legacy shapes this host never signs) cannot be value-checked here and stay
+ * the caller's responsibility. TX outputs are deliberately NOT floored here:
+ * protocol-mandated carrier outputs (MRC20 commit/reveal) are legitimate
+ * external transaction shapes, and the output floor remains the builder's gate.
+ */
+function assertNoSubFloorCarrierInputs(psbt: bitcoin.Psbt): void {
+  psbt.data.inputs.forEach((input, index) => {
+    const value = input.witnessUtxo?.value;
+    if (value != null && !isBtcSpendableSats(Number(value))) {
+      fail(`input ${index} carries ${value} sats — below the ${BTC_MIN_SPENDABLE_SATS}-sat inscription-carrier floor (Metalet parity); refusing to spend it as plain BTC`);
+    }
+  });
+}
+
+/** Hex-accepting wrapper for the carrier-floor input check (broadcast dialog). */
+export function assertPsbtInputsAboveCarrierFloor(psbtHex: string): void {
+  assertNoSubFloorCarrierInputs(readPsbt(psbtHex));
+}
+
+/**
+ * The txid the PSBT's unsigned transaction commits to. A broadcast dialog is
+ * built from the PSBT summary + this; if the raw_tx the caller wants to
+ * publish is NOT this exact transaction, the dialog would describe one
+ * transaction while broadcasting another, so the tool refuses on mismatch.
+ * Works on a partial (unfinalized) PSBT — bitcoinjs' extractTransaction()
+ * refuses those, but the tool must cross-check the COMBINED PSBT. The txid
+ * never covers witness data, so the legacy serialization rebuilt here from
+ * the public getters equals the finalized transaction's txid.
+ */
+export function psbtTransactionId(psbtHex: string): string {
+  const psbt = readPsbt(psbtHex);
+  const tx = new bitcoin.Transaction();
+  tx.version = psbt.version;
+  tx.locktime = psbt.locktime;
+  psbt.txInputs.forEach((input) => tx.addInput(input.hash, input.index, input.sequence));
+  psbt.txOutputs.forEach((output) => tx.addOutput(output.script, output.value));
+  return tx.getId();
+}
+
 export function finalizePsbt(psbtHex: string): { rawTx: string; txid: string } {
   const psbt = readPsbt(psbtHex);
   assertSighashAllInputs(psbt);
+  assertNoSubFloorCarrierInputs(psbt);
   trimExtraSignatures(psbt);
   try {
     psbt.finalizeAllInputs();
