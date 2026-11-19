@@ -7316,15 +7316,25 @@ const getCoworkRunner = () => {
       // MCP) launches one headless Chromium per DSH session. Prefer the
       // installed Chrome over a Playwright-managed download. See
       // services/coworkAutomationPreference.ts.
+      // Studio demotion (owner ruling 2026-11-19, Phase 2): the
+      // assistant-mode owner chat NEVER mounts the experimental automation
+      // families — the census showed 0 Studio calls while the two families'
+      // schemas cost ~108KB ≈ 27K tokens on every Studio request. The
+      // switches stay authoritative for BotWorks/worker/automation surfaces
+      // of the same bot; Studio works through the first-party bot_browser_*
+      // tools and Worker delegation.
       browserAutomationProvider: (coworkSessionId: string) => {
+        if (getStudioChiefOfStaffService().isStudioOwnerSession(coworkSessionId)) return undefined;
         const metabotId = getCoworkStore().getSessionMetabotId(coworkSessionId);
         return metabotAutomationProviders.browser(metabotId ?? null);
       },
       // Per-bot switch (default OFF since 2026-11-12, explicit '1' opts in):
       // 0.1.7 experimental desktop computer use (cua-driver native,
       // in-process). Requires the app to hold the macOS Accessibility/Screen
-      // Recording grants — the OS prompts on first use.
+      // Recording grants — the OS prompts on first use. Same Studio demotion
+      // as the browser family above (owner ruling 2026-11-19).
       computerUseProvider: (coworkSessionId: string) => {
+        if (getStudioChiefOfStaffService().isStudioOwnerSession(coworkSessionId)) return false;
         const metabotId = getCoworkStore().getSessionMetabotId(coworkSessionId);
         return metabotAutomationProviders.computer(metabotId ?? null);
       },
