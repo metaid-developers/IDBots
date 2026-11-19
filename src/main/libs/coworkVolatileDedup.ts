@@ -60,6 +60,7 @@ export function hashVolatileSection(text: string): string {
 
 const RECENT_SESSIONS_REL_AGE_RE = /^(- )\((?:just now|\d+[mhd] ago)\)( IDBots:\/\/)/gm;
 const EXPERIENCE_SUBBLOCK_RE = /<(metabot_self_identity|value_boundaries|work_reviews|recent_daily_summaries|proven_techniques|knowledge|procedures)\b[^>]*>[\s\S]*?<\/\1>(?:\s*<instruction>[\s\S]*?<\/instruction>)?/g;
+const MEMORY_SUBBLOCK_RE = /<(ownerMemories|contactMemories|conversationMemories|ownerOperationalPreferences|botDirectives)\b[^>]*>[\s\S]*?<\/\1>/g;
 
 function normalizeHashInput(key: string, text: string): string {
   if (key === 'recent-sessions') {
@@ -93,6 +94,36 @@ export function applyVolatileDedup(
           const tag = match[1];
           const chunk = match[0].trim();
           const subKey = `experience:${tag}`;
+          const subHash = hashVolatileSection(chunk);
+          const prevSubHash = state.hashes.get(subKey);
+          state.hashes.set(subKey, subHash);
+          if (prevSubHash === subHash) continue;
+          subKept.push(chunk);
+        }
+        if (subKept.length > 0) {
+          kept.push(subKept.join('\n\n'));
+        }
+        continue;
+      }
+    }
+    // Memory sub-block dedup (Phase 2 slice 3, 2026-11-18 Studio
+    // post-mortem: ownerMemories re-injected ~2K chars × 23 messages/day
+    // because cerebellum re-ranking kept the block byte-unstable while the
+    // MEMBERSHIP stayed identical). Same sub-block treatment as the
+    // experience block: each <ownerMemories>/<contactMemories>/… chunk
+    // dedups on its own hash — a pure re-rank of the same memories is
+    // skipped (last turn's injection is fresh in history), while a new or
+    // edited memory changes its chunk's hash and re-injects just that
+    // chunk. Runs regardless of alwaysInject: the blanket exemption above
+    // only remains as fail-open for renders that match no known sub-block.
+    if (section.key === 'memory') {
+      const matches = [...text.matchAll(MEMORY_SUBBLOCK_RE)];
+      if (matches.length > 0) {
+        const subKept: string[] = [];
+        for (const match of matches) {
+          const tag = match[1];
+          const chunk = match[0].trim();
+          const subKey = `memory:${tag}`;
           const subHash = hashVolatileSection(chunk);
           const prevSubHash = state.hashes.get(subKey);
           state.hashes.set(subKey, subHash);
