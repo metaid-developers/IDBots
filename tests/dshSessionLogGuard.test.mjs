@@ -277,12 +277,25 @@ test('on Windows the flush opens a write-mode handle so FlushFileBuffers is allo
 
 test('on Windows an unflushable artifact degrades to a skipped audit, not unreadable', withPlatform('win32', async () => {
   const dir = tempRoot();
-  // A directory fails to open on every platform (EISDIR / EPERM), which makes
-  // the Windows fsync-refusal path deterministic on this host too.
-  const result = await flushSessionLogArtifact(dir);
-  assert.equal(result.error, null, 'a refused Windows fsync must NOT raise the quit verdict');
-  assert.equal(result.flushed, false);
-  assert.match(result.detail ?? '', /skipped on win32/);
+  // A READ-ONLY artifact file is the deterministic unflushable fixture on
+  // every host: opening it 'r+' fails with EPERM on real Windows and EACCES
+  // on POSIX (where the win32 platform mock still routes the failure through
+  // the same skip branch). Two earlier fixtures rest on false premises:
+  // a directory opens and even FlushFileBuffers fine on real Windows, and a
+  // path nested UNDER a file resolves to ENOENT on Windows before any
+  // attribute check — both missed the refusal path (found the first time
+  // this suite ran on win-sign, 2026-11-19).
+  const artifact = path.join(dir, 'session.v4.jsonl.zstd');
+  await fsp.writeFile(artifact, 'locked log bytes');
+  await fsp.chmod(artifact, 0o444);
+  try {
+    const result = await flushSessionLogArtifact(artifact);
+    assert.equal(result.error, null, 'a refused Windows fsync must NOT raise the quit verdict');
+    assert.equal(result.flushed, false);
+    assert.match(result.detail ?? '', /skipped on win32/);
+  } finally {
+    await fsp.chmod(artifact, 0o666).catch(() => undefined);
+  }
 }));
 
 // ── c2. cleanup sequence ordering ─────────────────────────────────────────
@@ -510,8 +523,12 @@ test('audit lines carry path, verdict, size and mtime', () => {
 });
 
 test('candidate artifacts prefer the zstd generation over the plaintext one', () => {
+  // dshSessionLogCandidates joins platform-natively (path.join), so the
+  // expected list must be built the same way — a POSIX-literal expectation
+  // fails on a real Windows host with backslash separators.
+  const sessionDir = path.join(path.sep, 'root', '--p--', 'cw-1');
   assert.deepEqual(
-    dshSessionLogCandidates('/root/--p--/cw-1'),
-    ['/root/--p--/cw-1/session.v4.jsonl.zstd', '/root/--p--/cw-1/session.v4.jsonl'],
+    dshSessionLogCandidates(sessionDir),
+    [path.join(sessionDir, 'session.v4.jsonl.zstd'), path.join(sessionDir, 'session.v4.jsonl')],
   );
 });
