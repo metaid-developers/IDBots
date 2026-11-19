@@ -8915,14 +8915,23 @@ export class CoworkRunner extends EventEmitter {
       return false;
     }
     const space = (sats: number) => `${sats} sats (${(sats / 100_000_000).toFixed(8)} SPACE)`;
+    // Token sends render the token line (display units + symbol + genesis);
+    // amountSats then holds token base units, not SPACE sats.
+    const token = info.token;
+    const amountZh = token
+      ? `- 金额: ${token.amount} ${token.symbol} (MVC20 代币, genesis ${token.genesis})`
+      : `- 金额: ${space(info.amountSats)}`;
+    const amountEn = token
+      ? `- amount: ${token.amount} ${token.symbol} (MVC20 token, genesis ${token.genesis})`
+      : `- amount: ${space(info.amountSats)}`;
     const question = tApp(
       `Agent 将从本机 MetaBot 钱包向【外部地址】转账（不可撤销）：\n` +
       `- from: ${info.fromAddress}\n- to: ${info.toAddress}\n` +
-      `- 金额: ${space(info.amountSats)}\n- 预估手续费: ${space(info.estimatedFeeSats)}\n` +
+      `${amountZh}\n- 预估手续费: ${space(info.estimatedFeeSats)}\n` +
       `是否允许本次转账？`,
-      `The agent is about to transfer SPACE from a local MetaBot wallet to an EXTERNAL address (irreversible):\n` +
+      `The agent is about to transfer from a local MetaBot wallet to an EXTERNAL address (irreversible):\n` +
       `- from: ${info.fromAddress}\n- to: ${info.toAddress}\n` +
-      `- amount: ${space(info.amountSats)}\n- estimated fee: ${space(info.estimatedFeeSats)}\n` +
+      `${amountEn}\n- estimated fee: ${space(info.estimatedFeeSats)}\n` +
       `Allow this transfer?`
     );
     const outcome = await this.requestSafetyApproval(
@@ -8935,6 +8944,7 @@ export class CoworkRunner extends EventEmitter {
         to: info.toAddress,
         amount_sats: info.amountSats,
         estimated_fee_sats: info.estimatedFeeSats,
+        ...(token ? { token: { symbol: token.symbol, amount: token.amount, genesis: token.genesis } } : {}),
       } as Record<string, unknown>,
       'allow'
     );

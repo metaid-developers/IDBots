@@ -5,6 +5,16 @@ import type {
   WalletTransferResult,
 } from '../services/walletTransferService';
 import type {
+  WalletTokenSendParams,
+  WalletTokenSendResult,
+} from '../services/walletTokenSendService';
+import type {
+  WalletTxChain,
+  WalletTxStatus,
+  WalletTxVerifyInput,
+  WalletTxVerifyResult,
+} from '../services/walletTxStatusService';
+import type {
   MetabotWalletBalanceEntry,
   WalletBalanceQueryResult,
   WalletBalanceSnapshot,
@@ -29,6 +39,12 @@ export type WalletToolsControl = {
     params: WalletMvcTransferParams,
     host?: { confirmExternal?: (info: ExternalTransferInfo) => Promise<boolean> },
   ): Promise<WalletTransferResult>;
+  sendToken(
+    params: WalletTokenSendParams,
+    host?: { confirmExternal?: (info: ExternalTransferInfo) => Promise<boolean> },
+  ): Promise<WalletTokenSendResult>;
+  getTxStatus(input: { chain: WalletTxChain; txid: string; receiver?: string }): Promise<WalletTxStatus>;
+  verifyTx(input: WalletTxVerifyInput): Promise<WalletTxVerifyResult>;
   listTransfers(limit?: number, metabotId?: number): unknown[];
   listMvcNfts(input: {
     metabotIds?: number[];
@@ -175,6 +191,76 @@ function formatTransferFailure(result: WalletTransferResult & { success: false }
   const lines = [`Transfer failed (${result.error_code}): ${result.error}`];
   if (result.have_sats != null) lines.push(`- have: ${result.have_sats} sats (${(result.have_sats / SATOSHI_PER_UNIT).toFixed(8)} SPACE)`);
   if (result.need_sats != null) lines.push(`- need: ${result.need_sats} sats (${(result.need_sats / SATOSHI_PER_UNIT).toFixed(8)} SPACE, amount + estimated fee)`);
+  return lines.join('\n');
+}
+
+function formatTokenSendSuccess(result: WalletTokenSendResult & { success: true }): string {
+  const lines: string[] = ['Token transfer broadcast on-chain.'];
+  lines.push(`- token: ${result.token_symbol} (genesis ${result.token_genesis})`);
+  lines.push(`- amount: ${result.amount} ${result.token_symbol}`);
+  lines.push(`- txid: ${result.txid}`);
+  lines.push(`- channel: ${result.channel}${result.channel === 'local' ? ' (local roster, no confirmation required)' : ' (external, owner-confirmed)'}`);
+  if (result.to_metabot_id != null) lines.push(`- to metabot_id: ${result.to_metabot_id}`);
+  lines.push(`- audit record id: ${result.audit_id}`);
+  return lines.join('\n');
+}
+
+function formatTokenSendFailure(result: WalletTokenSendResult & { success: false }): string {
+  const lines = [`Token send failed (${result.error_code}): ${result.error}`];
+  const symbol = result.token_symbol ? ` ${result.token_symbol}` : '';
+  if (result.have != null) lines.push(`- have: ${result.have}${symbol} (display units)`);
+  if (result.need != null) lines.push(`- need: ${result.need}${symbol} (display units)`);
+  return lines.join('\n');
+}
+
+function formatTxStatus(status: WalletTxStatus): string {
+  if (!status.found) {
+    const lines = [`Tx NOT FOUND on ${status.chain} (raw tx / indexer returned nothing).`];
+    if (status.note) lines.push(`- note: ${status.note}`);
+    lines.push(`- explorer: ${status.explorerUrl}`);
+    return lines.join('\n');
+  }
+  const lines = [`Tx status (${status.chain}): FOUND.`];
+  const confirmedText = status.confirmed === true
+    ? `yes${status.blockHeight ? ` (block ${status.blockHeight}` : ''}${status.confirmations != null ? `, ${status.confirmations} confirmations` : ''}${status.blockHeight ? ')' : ''}`
+    : status.confirmed === false
+      ? 'not confirmed yet'
+      : 'unknown';
+  lines.push(`- confirmed: ${confirmedText}`);
+  if (status.evidence === 'receiver-utxo-list') {
+    lines.push('- evidence: receiver UTXO set (a spent-onward output drops out, so "not confirmed" may also mean already spent)');
+  }
+  if (status.blockTimeIso) lines.push(`- block time: ${status.blockTimeIso}`);
+  if (status.feeSats != null) lines.push(`- fee: ${status.feeSats} sats`);
+  for (const out of status.outputs.slice(0, 10)) {
+    lines.push(
+      `- output #${out.index}: ${out.address ?? '(non-standard script)'} ${out.sats != null ? `${out.sats} sats` : ''}`.trimEnd(),
+    );
+  }
+  if (status.outputs.length > 10) lines.push(`- … ${status.outputs.length - 10} more outputs`);
+  if (status.note) lines.push(`- note: ${status.note}`);
+  lines.push(`- explorer: ${status.explorerUrl}`);
+  return lines.join('\n');
+}
+
+function formatTxVerify(result: WalletTxVerifyResult): string {
+  const lines = [`Payment verification: ${result.verdict}.`];
+  lines.push(`- chain: ${result.chain}, txid: ${result.txid}`);
+  if (result.confirmed === true) lines.push('- confirmed: yes');
+  else if (result.confirmed === false) lines.push('- confirmed: no (or already spent onward)');
+  else lines.push('- confirmed: unknown');
+  for (const reason of result.reasons) lines.push(`- evidence: ${reason}`);
+  for (const match of result.matched) {
+    const parts = [`output #${match.index}`];
+    if (match.address) parts.push(`to ${match.address}`);
+    if (match.sats != null) parts.push(`${match.sats} sats`);
+    if (match.tokenAmount != null) parts.push(`${match.tokenAmount} base units`);
+    lines.push(`- matched: ${parts.join(', ')}`);
+  }
+  if (result.actual?.tokenDisplay != null) {
+    lines.push(`- actual token amount: ${result.actual.tokenDisplay} (base ${result.actual.tokenBaseUnits})`);
+  }
+  lines.push(`- explorer: ${result.status.explorerUrl}`);
   return lines.join('\n');
 }
 
@@ -412,6 +498,222 @@ export function buildWalletAgentTools(deps: {
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_transfer failed: ${msg}`, true);
+      }
+    }
+  );
+
+  const walletTokenSend = tool(
+    'wallet_token_send',
+    [
+      'Send an MVC20 token (MVC-FT, e.g. METAID) in ANY partial amount from THIS session MetaBot\'s own wallet to a target address or local MetaBot.',
+      'Use when the owner asks to transfer tokens ("转 0.1 个 METAID 给某人"), pay another bot in tokens, or move tokens between local bots. This is the arbitrary-amount token transfer — NOT wallet_token_transfer, which only moves a token\'s whole UTXO (TokenSell semantics).',
+      '`genesis` accepts the 40-hex contract genesis or the 64-hex genesis txid listed by wallet_token_balance; `amount` is in token DISPLAY units (decimal-aware, e.g. "0.1", not base units); `to` accepts a local metabot_id, a local bot name, or a raw MVC address.',
+      'Gate parity with wallet_transfer: local-roster targets execute immediately; external addresses ask the owner by default (token-aware dialog) unless the gate is disabled in settings — headless surfaces pass external_confirmed=true. Every attempt lands in the same audit ledger. The SPACE network fee is paid from the same wallet.',
+    ].join(' '),
+    {
+      genesis: z
+        .string()
+        .min(1)
+        .describe('Token genesis: 40-hex contract genesis or 64-hex genesis txid (wallet_token_balance lists both).'),
+      codehash: z
+        .string()
+        .optional()
+        .describe('Token codehash, only needed when several tokens share the same genesis.'),
+      to: z
+        .string()
+        .min(1)
+        .describe('Target: local metabot_id (e.g. "15"), local bot name, or MVC address.'),
+      amount: z
+        .string()
+        .min(1)
+        .describe('Amount in token display units, e.g. "0.1" (decimal-aware string, NOT base units).'),
+      memo: z.string().optional().describe('Optional note stored in the audit record.'),
+      external_confirmed: z
+        .boolean()
+        .optional()
+        .describe(
+          'Set true ONLY when the owner has already approved this external token transfer in the conversation. ' +
+            'Ignored whenever the host renders its own owner dialog.'
+        ),
+    },
+    async (args: {
+      genesis: string;
+      codehash?: string;
+      to: string;
+      amount: string;
+      memo?: string;
+      external_confirmed?: boolean;
+    }) => {
+      const metabotId = resolveMetabotId(sessionId);
+      if (metabotId == null) {
+        return textResult(
+          'wallet_token_send could not determine which MetaBot owns this session; token sends must spend the session bot\'s own wallet.',
+          true,
+        );
+      }
+      const genesisRaw = asString(args.genesis);
+      if (!/^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$/.test(genesisRaw)) {
+        return textResult(
+          'wallet_token_send: genesis must be the 40-hex contract genesis or the 64-hex genesis txid (see wallet_token_balance).',
+          true,
+        );
+      }
+      // Resolve `to` exactly like wallet_transfer: metabot id or local name →
+      // local mvc address; else raw address (gate parity depends on the same
+      // roster match).
+      const toRaw = asString(args.to);
+      if (!toRaw) {
+        return textResult('wallet_token_send requires `to` (metabot_id, name, or address).', true);
+      }
+      let toAddress = '';
+      if (/^\d+$/.test(toRaw)) {
+        const id = Number(toRaw);
+        const address = control.getMetabotMvcAddress(id);
+        if (!address) return textResult(`wallet_token_send: local MetaBot not found: ${toRaw}`, true);
+        toAddress = address;
+      } else if (!looksLikeMvcAddress(toRaw)) {
+        const id = control.resolveMetabotIdByName(toRaw);
+        if (id == null) {
+          return textResult(
+            `wallet_token_send: "${toRaw}" is neither a local MetaBot name nor an address. For an external address pass the full MVC address.`,
+            true,
+          );
+        }
+        const address = control.getMetabotMvcAddress(id) ?? '';
+        if (!address) return textResult(`wallet_token_send: MetaBot ${toRaw} has no mvc address.`, true);
+        toAddress = address;
+      } else {
+        toAddress = toRaw;
+      }
+      const amount = asString(args.amount);
+      if (!amount) {
+        return textResult('wallet_token_send requires `amount` in token display units (e.g. "0.1").', true);
+      }
+
+      try {
+        const result = await control.sendToken(
+          {
+            metabotId,
+            genesis: genesisRaw,
+            codehash: asString(args.codehash) || undefined,
+            to: toAddress,
+            amount,
+            memo: asString(args.memo) || undefined,
+            sessionId,
+            origin: 'tool:wallet_token_send',
+            // Channel-B owner acknowledgement for surfaces that render no dialog.
+            // The service consults it ONLY when no confirmExternal callback is
+            // wired, so a host dialog always keeps precedence.
+            externalConfirmed: args.external_confirmed === true ? true : undefined,
+          },
+          deps.confirmExternalTransfer ? { confirmExternal: deps.confirmExternalTransfer } : undefined,
+        );
+        // `=== true` (not bare truthiness): the project runs without
+        // strictNullChecks, where boolean truthiness does not narrow the
+        // discriminated union.
+        return result.success === true
+          ? textResult(formatTokenSendSuccess(result))
+          : textResult(formatTokenSendFailure(result), true);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_token_send failed: ${msg}`, true);
+      }
+    }
+  );
+
+  const walletTxStatus = tool(
+    'wallet_tx_status',
+    [
+      'Check whether a transaction exists on-chain and whether it is confirmed, for MVC (SPACE), BTC, or DOGE.',
+      'Use AFTER any wallet_transfer / wallet_token_send / NFT action to confirm the tx landed, or when the owner asks "这笔交易确认了吗 / 生效了吗".',
+      'BTC uses mempool.space (block height, confirmations count, fee, output addresses); DOGE uses blockchair (confirmed txs only — a pending tx reports as not-found until it mines); MVC uses the metalet raw-tx endpoint plus, when a receiver address is passed, the receiver UTXO set (height > 0 = confirmed).',
+      'Read-only. For MVC pass `receiver` (the address that should have received funds) to get a definitive confirmation answer; without it only "tx exists in the network view" can be stated.',
+    ].join(' '),
+    {
+      txid: z.string().min(1).describe('Transaction id (64 hex).'),
+      chain: z.enum(['mvc', 'btc', 'doge']).default('mvc').describe('Chain of the tx (default mvc).'),
+      receiver: z
+        .string()
+        .optional()
+        .describe(
+          'Address that should hold the tx outputs (recommended for MVC: enables the utxo-based confirmation check; for BTC/DOGE optional, filters matching outputs).'
+        ),
+    },
+    async (args: { txid: string; chain?: WalletTxChain; receiver?: string }) => {
+      const txid = asString(args.txid);
+      if (!/^[0-9a-fA-F]{64}$/.test(txid)) {
+        return textResult('wallet_tx_status: txid must be 64 hex.', true);
+      }
+      try {
+        const status = await control.getTxStatus({
+          chain: args.chain ?? 'mvc',
+          txid,
+          receiver: asString(args.receiver) || undefined,
+        });
+        return textResult(formatTxStatus(status));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_tx_status failed: ${msg}`, true);
+      }
+    }
+  );
+
+  const walletTxVerify = tool(
+    'wallet_tx_verify',
+    [
+      'Verify that a transaction actually delivered an expected payment: pass what SHOULD have arrived and get VERIFIED / MISMATCH / NOT_FOUND with tx-level evidence.',
+      'Use when someone claims "我已经付款了" and the agent must check before delivering, or to double-check your own transfer reached the recipient.',
+      'Native coins (MVC SPACE / BTC / DOGE): pass receiver + amount_sats; the tx raw is decoded and outputs to the recipient are summed against the expectation (tolerance_sats allowed for fee-side rounding).',
+      'MVC20 tokens (MVC chain): pass token_genesis (+ token_codehash when forked) + token_amount (display units) + receiver; token outputs are decoded from the raw tx (meta-contract token proto), amounts compared exactly, attribution to the receiver checked, and the receiver-side token balance reported as supporting evidence.',
+      'Read-only. VERIFIED means tx-level decode matched the expectation; MISMATCH lists exactly what differs.',
+    ].join(' '),
+    {
+      txid: z.string().min(1).describe('Transaction id (64 hex).'),
+      chain: z.enum(['mvc', 'btc', 'doge']).default('mvc').describe('Chain of the tx (default mvc).'),
+      receiver: z.string().optional().describe('Expected recipient address (required for native amount checks; required with token_amount).'),
+      amount_sats: z.number().int().positive().optional().describe('Native-coin expectation in sats (e.g. 10000000 = 0.1 SPACE). Omit for token checks.'),
+      tolerance_sats: z.number().int().nonnegative().optional().describe('Allowed shortfall in sats (default 0).'),
+      token_genesis: z.string().optional().describe('MVC20 token genesis (40-hex or 64-hex) when verifying a token payment.'),
+      token_codehash: z.string().optional().describe('Token codehash when forked tokens share the genesis.'),
+      token_amount: z.string().optional().describe('Expected token amount in display units (e.g. "0.1"); requires receiver.'),
+    },
+    async (args: {
+      txid: string;
+      chain?: WalletTxChain;
+      receiver?: string;
+      amount_sats?: number;
+      tolerance_sats?: number;
+      token_genesis?: string;
+      token_codehash?: string;
+      token_amount?: string;
+    }) => {
+      const txid = asString(args.txid);
+      if (!/^[0-9a-fA-F]{64}$/.test(txid)) {
+        return textResult('wallet_tx_verify: txid must be 64 hex.', true);
+      }
+      const hasNative = Number.isInteger(args.amount_sats) && Number(args.amount_sats) > 0;
+      const tokenGenesis = asString(args.token_genesis);
+      if (!hasNative && !tokenGenesis) {
+        return textResult(
+          'wallet_tx_verify: pass amount_sats (+ receiver) for a native-coin payment, or token_genesis (+ token_amount + receiver) for an MVC20 payment.',
+          true,
+        );
+      }
+      try {
+        const result = await control.verifyTx({
+          chain: args.chain ?? 'mvc',
+          txid,
+          receiver: asString(args.receiver) || undefined,
+          ...(hasNative ? { amountSats: Number(args.amount_sats) } : {}),
+          ...(Number.isInteger(args.tolerance_sats) ? { toleranceSats: Number(args.tolerance_sats) } : {}),
+          ...(tokenGenesis ? { tokenGenesis } : {}),
+          ...(asString(args.token_codehash) ? { tokenCodehash: asString(args.token_codehash) } : {}),
+          ...(asString(args.token_amount) ? { tokenAmount: asString(args.token_amount) } : {}),
+        });
+        return textResult(formatTxVerify(result));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_tx_verify failed: ${msg}`, true);
       }
     }
   );
@@ -1342,11 +1644,14 @@ export function buildWalletAgentTools(deps: {
     walletNftCancelSell,
     walletNftBuy,
     walletTokenBalance,
+    walletTokenSend,
     walletTokenTransfer,
     walletTokenSellOrders,
     walletTokenSell,
     walletTokenBuy,
     walletTokenTakeAlias,
     walletTokenCancelSell,
+    walletTxStatus,
+    walletTxVerify,
   ];
 }
