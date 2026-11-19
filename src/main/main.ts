@@ -7361,6 +7361,7 @@ const getCoworkRunner = () => {
       // of the same bot; Studio works through the first-party bot_browser_*
       // tools and Worker delegation.
       browserAutomationProvider: (coworkSessionId: string) => {
+        if (!getCoworkRunner().mobileBrowserAutomationAllowed(coworkSessionId)) return undefined;
         if (getStudioChiefOfStaffService().isStudioOwnerSession(coworkSessionId)) return undefined;
         const metabotId = getCoworkStore().getSessionMetabotId(coworkSessionId);
         return metabotAutomationProviders.browser(metabotId ?? null);
@@ -7378,7 +7379,12 @@ const getCoworkRunner = () => {
       // Metabot-keyed variants for intent prewarms that fire before any
       // session record exists (the home composer's bot pick) — same opt-in
       // semantics, keyed on the bot directly.
-      browserAutomationForMetabot: (metabotId: number | null) => metabotAutomationProviders.browser(metabotId),
+      browserAutomationForMetabot: (metabotId: number | null) => {
+        // New cloud chats do not pre-launch a browser before intent exists.
+        // The real turn mounts it only after an automation expansion.
+        if (isServerMode()) return undefined;
+        return metabotAutomationProviders.browser(metabotId);
+      },
       computerUseForMetabot: (metabotId: number | null) => metabotAutomationProviders.computer(metabotId),
       mcpServersForMetabot: (metabotId: number | null) => {
         // REQ-A-5: local MCP servers are disabled in server mode.
