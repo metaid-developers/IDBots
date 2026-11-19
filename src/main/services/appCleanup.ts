@@ -69,9 +69,23 @@ export async function runAppCleanup(deps: AppCleanupDeps): Promise<void> {
   // mtimes on this exact instant; the guard cannot prevent every truncation,
   // but it makes one durable and visible instead of silent. Read-only: a
   // failed check logs, never rewrites.
-  await deps.guardSessionLogs?.().catch((error) => {
-    deps.error('[SessionLogGuard] Quit-time session-log guard failed:', error);
-  });
+  //
+  // The guard shares the quit watchdog's 5s budget with closeDshRuntime; on a
+  // slow disk / AV scan its per-session stat+fsync+read-back sequence could
+  // crowd the runtime close past the watchdog — forcing the exit into exactly
+  // the truncation class the guard exists to prevent. Bound the guard itself:
+  // past ~1.5s, draining the runtime matters more than one more fsync, and
+  // the startup invariant scan re-checks whatever the quit guard missed.
+  const SESSION_LOG_GUARD_DEADLINE_MS = 1_500;
+  await Promise.race([
+    deps.guardSessionLogs?.().catch((error) => {
+      deps.error('[SessionLogGuard] Quit-time session-log guard failed:', error);
+    }) ?? Promise.resolve(),
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, SESSION_LOG_GUARD_DEADLINE_MS);
+      timer.unref?.();
+    }),
+  ]);
 
   await deps.closeDshRuntime?.().catch((error) => {
     deps.error('Failed to close DSH runtime:', error);

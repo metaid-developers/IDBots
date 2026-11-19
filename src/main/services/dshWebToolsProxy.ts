@@ -63,6 +63,9 @@ export interface DshWebToolsProxyDeps {
   requestTimeoutMs?: number;
   /** Primary-upstream timeout (ms) when a relay fallback is available. */
   fallbackPrimaryTimeoutMs?: number;
+  /** Shared budget (ms) across the whole attempt ladder; clamps below the
+   *  client's 60s tool budget so the fallback attempt can actually run. */
+  ladderBudgetMs?: number;
   /** Brief suppression window (ms) after consecutive DeepSeek transport errors. */
   transportCooldownMs?: number;
 }
@@ -75,6 +78,11 @@ export interface DshWebToolsProxy extends DshWebToolsProxyDescriptor {
 const DEFAULT_EXHAUSTED_TTL_MS = 15 * 60_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 50_000;
 const DEFAULT_FALLBACK_PRIMARY_TIMEOUT_MS = 25_000;
+/** Shared budget for the WHOLE attempt ladder. Without it the worst case is
+ *  deepseek 25s + relay 50s = 75s against the DSH tool-web client's 60s
+ *  budget — the client aborts and cancels the relay attempt the ladder
+ *  exists to protect. Sits under the client budget with headroom. */
+const DEFAULT_LADDER_BUDGET_MS = 55_000;
 const DEFAULT_TRANSPORT_COOLDOWN_MS = 60_000;
 const CONSECUTIVE_TRANSPORT_FAILURE_THRESHOLD = 2;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -160,6 +168,7 @@ export async function createDshWebToolsProxy(deps: DshWebToolsProxyDeps): Promis
   const exhaustedTtlMs = Math.max(1_000, deps.exhaustedTtlMs ?? DEFAULT_EXHAUSTED_TTL_MS);
   const requestTimeoutMs = Math.max(1, deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
   const fallbackPrimaryTimeoutMs = Math.max(1, deps.fallbackPrimaryTimeoutMs ?? DEFAULT_FALLBACK_PRIMARY_TIMEOUT_MS);
+  const ladderBudgetMs = Math.max(1, deps.ladderBudgetMs ?? DEFAULT_LADDER_BUDGET_MS);
   const transportCooldownMs = Math.max(1_000, deps.transportCooldownMs ?? DEFAULT_TRANSPORT_COOLDOWN_MS);
   const token = randomBytes(24).toString('hex');
   /** A 401/402/403 from DeepSeek suppresses that upstream until this time. */
@@ -251,6 +260,12 @@ export async function createDshWebToolsProxy(deps: DshWebToolsProxyDeps): Promis
     };
     res.once('close', onClientClose);
 
+    // Shared ladder budget: per-attempt timeouts alone can sum past the
+    // DSH tool-web client's 60s budget (deepseek 25s + relay 50s = 75s), so
+    // the client would abort and cancel a relay attempt this ladder is
+    // meant to protect. Clamp every attempt to the REMAINING shared budget.
+    const ladderDeadline = now() + Math.min(ladderBudgetMs, requestTimeoutMs + fallbackPrimaryTimeoutMs);
+
     try {
       for (let i = 0; i < candidates.length; i += 1) {
         if (clientAbort.signal.aborted || res.destroyed || res.writableEnded) {
@@ -258,9 +273,12 @@ export async function createDshWebToolsProxy(deps: DshWebToolsProxyDeps): Promis
         }
         const upstream = candidates[i];
         const isLast = i === candidates.length - 1;
-        const attemptTimeoutMs = !isLast && upstream.label === 'deepseek'
-          ? Math.min(requestTimeoutMs, fallbackPrimaryTimeoutMs)
-          : requestTimeoutMs;
+        const attemptTimeoutMs = Math.min(
+          !isLast && upstream.label === 'deepseek'
+            ? Math.min(requestTimeoutMs, fallbackPrimaryTimeoutMs)
+            : requestTimeoutMs,
+          Math.max(1, ladderDeadline - now()),
+        );
         let response: Response;
         try {
           response = await fetchImpl(`${upstream.baseURL}/${kind}`, {

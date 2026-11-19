@@ -129,6 +129,28 @@ test('service materializes one persistent stage entry, dedupes messages, and kee
   assert.deepEqual(service.listPresentedRequestIds(), [], 'the overlay is never suppressed for an invisible stage card');
 });
 
+test('disk snapshots are debounced: streaming commits write nothing until dispose flushes', async (t) => {
+  // 2026-11-19 review P2: speech streaming committed a state every ~600ms and
+  // each commit synchronously rewrote the WHOLE snapshot file on the main
+  // process. The write is now debounced — in-flight commits must NOT hit the
+  // disk, and dispose must flush the latest state synchronously (nothing
+  // follows dispose).
+  const { service, stageRoot } = fixture(t);
+  const snapFile = path.join(stageRoot, 'session-states.json');
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }, 'Write the report.'));
+  const run = service.getRunInternals('s');
+  await run.queue;
+
+  service.observeMessageUpdate('s', 'm1', 'partial streaming text');
+  assert.equal(fs.existsSync(snapFile), false, 'an in-flight speech commit must not write the snapshot synchronously');
+
+  service.dispose();
+  assert.equal(fs.existsSync(snapFile), true, 'dispose must flush the snapshot synchronously');
+  const parsed = JSON.parse(fs.readFileSync(snapFile, 'utf8'));
+  assert.equal(parsed.version, 1);
+  assert.ok(parsed.sessions.s, 'the session state must be in the flushed snapshot');
+});
+
 test('final projection reports through the showcase role and carries the report URI in stage state', async (t) => {
   const { service } = fixture(t);
   service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));

@@ -2108,12 +2108,22 @@
     }
     return { sections, shown, more: total - shown };
   }
+  /* Transient dedupe memory. The stage iframe is a persistent page (new
+     sessions are adopted without reload), so this Set would otherwise grow
+     for the page's whole lifetime. Capped LRU-style: insertion order evicts
+     the oldest id past the cap. Beats older than 6s are dropped by the
+     freshness check anyway, so a re-add of an evicted id can only replay a
+     stale beat, never a live one. */
+  var TRANSIENT_SEEN_CAP = 200;
   function shouldPlayTransient(seen, transient, nowMs) {
     if (!transient || typeof transient.id !== 'string' || !transient.id) return false;
     if (seen.has(transient.id)) return false;
     const at = typeof transient.at === 'number' ? transient.at : 0;
     if (at > 0 && nowMs - at >= 6000) return false;
     seen.add(transient.id);
+    if (seen.size > TRANSIENT_SEEN_CAP) {
+      seen.delete(seen.values().next().value);
+    }
     return true;
   }
   function placeGlow(place) { return PLACE_GLOW[place] || PLACE_GLOW.mind; }

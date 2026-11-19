@@ -1442,10 +1442,18 @@ export class DshTurnHub {
    * the guard only ever reads and fsyncs what it finds.
    */
   listActiveDshSessions(): Array<{ coworkSessionId: string; dshSessionId: string }> {
-    return [...this.dshByCowork.entries()].map(([coworkSessionId, dshSessionId]) => ({
+    // The in-flight map alone misses idle / just-settled sessions — exactly
+    // the "quit seconds after the last frame" window a quit flush exists to
+    // close. The pinned mapping lives until the hub closes, so at quit time
+    // it covers every session this hub ever drove; merge (in-flight wins).
+    const merged = new Map(this.dshByCowork)
+    for (const [coworkSessionId, dshSessionId] of this.pinnedDshIds) {
+      if (!merged.has(coworkSessionId)) merged.set(coworkSessionId, dshSessionId)
+    }
+    return [...merged.entries()].map(([coworkSessionId, dshSessionId]) => ({
       coworkSessionId,
       dshSessionId,
-    }));
+    }))
   }
 
   async close(): Promise<void> {

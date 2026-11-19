@@ -194,3 +194,69 @@ test('isPeerAttachmentReadablePath scopes peer thumbnails to the private-chat in
   const tmpBase = '';
   assert.equal(isPeerAttachmentReadablePath(path.join(os.tmpdir(), PRIVATE_CHAT_INBOUND_DIR_NAME, 'abc.png'), tmpBase), true);
 });
+
+test('attachment download streams with a cap: refuses oversize without buffering the whole body', async () => {
+  // The peer names the pin, so the body size is the peer's choice. The old
+  // arrayBuffer() path buffered the WHOLE body (twice) before the cap check;
+  // the streaming path must refuse at the cap and never materialize.
+  const oversized = Buffer.alloc(33 * 1024 * 1024, 7);
+  const originalFetch = global.fetch;
+  let bufferedPeak = 0;
+  global.fetch = async () => ({
+    ok: true,
+    headers: { get: () => null },
+    body: new ReadableStream({
+      start(controller) {
+        // Serve in 1MB chunks; track the largest single allocation the
+        // reader side could observe (the old path would hold everything).
+        for (let i = 0; i < oversized.length; i += 1024 * 1024) {
+          controller.enqueue(oversized.subarray(i, Math.min(i + 1024 * 1024, oversized.length)));
+        }
+        controller.close();
+      },
+    }),
+    arrayBuffer: async () => { bufferedPeak = oversized.length; return oversized.buffer; },
+  });
+  try {
+    const logs = [];
+    const result = await materializePrivateChatFileMessage({
+      payload: { attachment: ATTACHMENT_URI, fileType: 'jpeg', encrypt: 'aes' },
+      sharedSecretCandidates: [SHARED_SECRET_HEX],
+      emitLog: (message) => logs.push(message),
+    });
+    assert.equal(result, null, 'oversize body must be refused');
+    assert.ok(logs.some((line) => /exceeds the .* chat limit mid-stream/.test(line)), `expected a mid-stream cap log, got: ${logs.join(' | ')}`);
+    assert.equal(bufferedPeak, 0, 'the arrayBuffer fallback must never run when a streamable body exists');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('attachment download refuses an oversized Content-Length before reading the body', async () => {
+  const originalFetch = global.fetch;
+  let bodyRead = false;
+  global.fetch = async () => ({
+    ok: true,
+    headers: { get: (name) => (String(name).toLowerCase() === 'content-length' ? String(40 * 1024 * 1024) : null) },
+    body: new ReadableStream({
+      start(controller) {
+        bodyRead = true;
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.close();
+      },
+    }),
+    arrayBuffer: async () => new ArrayBuffer(0),
+  });
+  try {
+    const logs = [];
+    const result = await materializePrivateChatFileMessage({
+      payload: { attachment: ATTACHMENT_URI, fileType: 'jpeg', encrypt: 'aes' },
+      sharedSecretCandidates: [SHARED_SECRET_HEX],
+      emitLog: (message) => logs.push(message),
+    });
+    assert.equal(result, null, 'a declared-oversize attachment must be refused');
+    assert.ok(logs.some((line) => /declares \d+ bytes/.test(line)), `expected a declared-size refusal log, got: ${logs.join(' | ')}`);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

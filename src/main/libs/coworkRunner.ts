@@ -11262,6 +11262,19 @@ export class CoworkRunner extends EventEmitter {
     return Date.now() - entry.lastProbeAt < CoworkRunner.PROVIDER_QUOTA_REPROBE_AFTER_MS ? entry : null;
   }
 
+  /**
+   * Whether an alternative-route candidate draws on a provider the memory
+   * already knows is quota-dry (live bypass window). The plain resolvers only
+   * decline the FAILED route's upstream — when several routes share one
+   * exhausted balance (relay + fallback brain on one account), both the
+   * pre-gate bypass and the GT-02 ladder kept re-picking another route the
+   * memory had already written off: one doomed 429 attempt plus a switch
+   * notice per turn until the 10-minute re-probe. 2026-11-19 review P2.
+   */
+  private isQuotaDeadAlternative(route: DshProviderRouteInfo | null | undefined): boolean {
+    return route != null && this.quotaExhaustedBypassEntry(route.provider) !== null;
+  }
+
   private markProviderQuotaExhausted(provider: string): void {
     const now = Date.now();
     const entry = this.providerQuotaExhausted.get(provider);
@@ -11291,11 +11304,11 @@ export class CoworkRunner extends EventEmitter {
     deadRoute: DshProviderRouteInfo,
   ): { route: DshProviderRouteInfo; targetZh: string; targetEn: string } | null {
     const brainFallback = this.resolveSessionFallbackDshRoute(sessionId, deadRoute);
-    if (brainFallback) {
+    if (brainFallback && !this.isQuotaDeadAlternative(brainFallback)) {
       return { route: brainFallback, targetZh: '该 Bot 的备用模型', targetEn: "the bot's fallback model" };
     }
     const rescue = this.resolveCurrentDefaultDshRoute(sessionId, deadRoute);
-    if (rescue.route) {
+    if (rescue.route && !this.isQuotaDeadAlternative(rescue.route)) {
       return rescue.source === 'system-rescue'
         ? { route: rescue.route, targetZh: '系统兜底模型', targetEn: 'the system rescue model' }
         : { route: rescue.route, targetZh: '当前默认模型', targetEn: 'the current default model' };
@@ -13725,13 +13738,27 @@ export class CoworkRunner extends EventEmitter {
         // attempt — nothing is anchored: the next turn re-resolves from
         // scratch.
         let fallbackRoute = this.resolveSessionFallbackDshRoute(sessionId, gateSourceRoute);
+        // Quota-dead avoidance (2026-11-19 review P2): on a QUOTA death, an
+        // alternative whose provider the memory already wrote off would only
+        // buy another doomed 429 — decline it and let the rescue chain look
+        // further. Non-quota gates leave the plain GT-02 behavior untouched.
+        if (fallbackRoute && gateQuota && this.isQuotaDeadAlternative(fallbackRoute)) {
+          coworkLog('WARN', 'runDshSessionLocal', 'GT-02 gate declines a quota-dead brain fallback', {
+            sessionId,
+            provider: fallbackRoute.provider,
+            model: fallbackRoute.model,
+          });
+          fallbackRoute = null;
+        }
         let fallbackIsCurrentDefault = false;
         let fallbackIsSystemRescue = false;
         if (!fallbackRoute && (gateQuota || gateTransient || gateConfigHard || gateRuntimeBoot)) {
           const rescue = this.resolveCurrentDefaultDshRoute(sessionId, gateSourceRoute);
-          fallbackRoute = rescue.route;
-          fallbackIsCurrentDefault = rescue.source === 'default';
-          fallbackIsSystemRescue = rescue.source === 'system-rescue';
+          fallbackRoute = rescue.route && gateQuota && this.isQuotaDeadAlternative(rescue.route)
+            ? null
+            : rescue.route;
+          fallbackIsCurrentDefault = fallbackRoute != null && rescue.source === 'default';
+          fallbackIsSystemRescue = fallbackRoute != null && rescue.source === 'system-rescue';
           if (!fallbackRoute) {
             ladderNoTargetKind = 'no-alternative';
           }
