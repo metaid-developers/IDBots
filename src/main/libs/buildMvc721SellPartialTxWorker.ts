@@ -5,7 +5,7 @@
  * Runs under ELECTRON_RUN_AS_NODE, same as buildMvcTransferRawTxWorker.
  */
 
-import { getMvcWallet, parseAddressIndexFromPath } from '../services/metabotWalletService';
+import { getMvcWalletFromPath } from '../services/metabotWalletService';
 import {
   buildMvc721SellPartialTx,
   normalizeMrc721Outpoint,
@@ -36,8 +36,9 @@ async function main(): Promise<void> {
     outpoint?: { txid?: string; vout?: number; satoshis?: number };
   };
 
-  const addressIndex = parseAddressIndexFromPath(pathStr);
-  const wallet = await getMvcWallet(mnemonic as string, addressIndex);
+  // Path-aware derivation (parity with buildMvcTransferRawTxWorker): a legacy
+  // 236-segment issuer bot must derive its own address, not the 10001 default.
+  const wallet = await getMvcWalletFromPath(mnemonic as string, pathStr);
   const sellerAddress = wallet.getAddress();
   const outpoint = normalizeMrc721Outpoint(payload.outpoint);
   const built = buildMvc721SellPartialTx({
