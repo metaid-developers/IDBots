@@ -182,6 +182,7 @@ import { mockCreateWalletAndFund, mockPushConfigToChain } from './services/chain
 import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
 import { PaymentInfoStore } from './services/paymentInfoStore';
 import { readPaymentReceivingInfo } from './services/paymentCardEmitter';
+import { isPeerAttachmentReadablePath } from './services/privateChatFileMessage';
 import {
   decryptPaymentInfo,
   derivePaymentInfoKey,
@@ -16402,7 +16403,7 @@ if (!gotTheLock) {
     });
   });
 
-  registerIpcHandler('cowork:session:readLocalImage', async (_event, options: { path: string; maxBytes?: number }) => {
+  registerIpcHandler('cowork:session:readLocalImage', async (_event, options: { path: string; maxBytes?: number; scope?: 'peer-attachment' }) => {
     try {
       const rawPath = typeof options?.path === 'string' ? options.path.trim() : '';
       if (!rawPath) {
@@ -16410,6 +16411,14 @@ if (!gotTheLock) {
       }
 
       const resolvedPath = path.resolve(rawPath);
+      // Peer-attachment scope: the caller (A2A peer bubble thumbnails) reads
+      // paths named inside REMOTE message text, so it may only ever see files
+      // the private-chat daemon itself wrote. The owner's own composer
+      // attachments (no scope) keep reading any path they explicitly chose.
+      if (options?.scope === 'peer-attachment'
+        && !isPeerAttachmentReadablePath(resolvedPath, app.getPath('userData'))) {
+        return { success: false, error: 'Image path is outside the private-chat inbound scope' };
+      }
       const extension = path.extname(resolvedPath).toLowerCase();
       const mimeType = LOCAL_IMAGE_PREVIEW_EXTENSION_MIME[extension];
       if (!mimeType) {

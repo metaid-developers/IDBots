@@ -40,6 +40,15 @@ export const setLocalImagePreviewEntry = (
 };
 
 /**
+ * Read scope for an image preview. `peer-attachment` marks a thumbnail whose
+ * path came out of REMOTE message text (A2A peer bubbles): the main process
+ * then only ever serves files the private-chat daemon wrote, so a peer cannot
+ * make the app read arbitrary local images by writing an attachment-marker
+ * line. Owner-chosen composer attachments use no scope.
+ */
+export type LocalImagePreviewScope = 'peer-attachment';
+
+/**
  * Resolve a local image into a data URL, memoized per path. Reads never throw:
  * a failed or unsupported read is cached as `error` so the caller can render a
  * non-empty fallback instead of an empty hole.
@@ -47,12 +56,13 @@ export const setLocalImagePreviewEntry = (
 export const loadLocalImagePreview = async (
   path: string,
   maxBytes: number = LOCAL_IMAGE_PREVIEW_MAX_BYTES,
+  scope?: LocalImagePreviewScope,
 ): Promise<LocalImagePreviewEntry> => {
   const cached = localImagePreviewCache.get(path);
   if (cached) return cached;
 
   try {
-    const result = await window.electron.cowork.readLocalImage({ path, maxBytes });
+    const result = await window.electron.cowork.readLocalImage({ path, maxBytes, ...(scope ? { scope } : {}) });
     if (result?.success && typeof result.dataUrl === 'string' && result.dataUrl) {
       return setLocalImagePreviewEntry(path, { status: 'ready', dataUrl: result.dataUrl });
     }
