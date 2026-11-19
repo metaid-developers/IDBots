@@ -361,6 +361,13 @@ test('WebGPU orb compiles pipelines asynchronously and tears down late timed-out
   assert.match(stage, /WebGL2 orb lost mid-session, remounting/);
   assert.match(stage, /orbFailed = false/);
   assert.match(stage, /clearOrbRecoveryTimer\(\)/);
+  // Field triage: when both tiers fail, the real WebGL2 reason (software
+  // renderer, RDP basic display) must reach diagnostics, not just
+  // "No WebGPU adapter".
+  assert.match(orb, /WebGL2 fallback also failed/);
+  // The lenient WebGL2 attempt falls to the integrated GPU instead of
+  // re-requesting the (possibly blocklisted) discrete one.
+  assert.match(orb, /canvas\.getContext\('webgl2', \{ \.\.\.baseAttrs, powerPreference: 'low-power' \}\)/);
 });
 
 test('WebGPU orb specializes and dead-code strips WGSL and provides a pixel-equivalent WebGL2 fallback', () => {

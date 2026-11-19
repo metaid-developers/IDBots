@@ -284,7 +284,15 @@ export async function ensurePythonRuntimeReady(): Promise<{ success: boolean; er
 
     console.log(`[python-runtime] Sync runtime to userData: ${userRoot}`);
     if (fs.existsSync(userRoot)) {
-      fs.rmSync(userRoot, { recursive: true, force: true });
+      // Windows: a Defender scan or a lingering python.exe holds the tree for
+      // a moment and a bare rmSync turns EBUSY/EPERM into "pip skills lost
+      // their runtime until reboot". Same retry posture as skillManager.
+      fs.rmSync(userRoot, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === 'win32' ? 5 : 0,
+        retryDelay: process.platform === 'win32' ? 200 : 0,
+      });
     }
     fs.mkdirSync(path.dirname(userRoot), { recursive: true });
     cpRecursiveSync(bundledRoot, userRoot, { force: true, dereference: true });

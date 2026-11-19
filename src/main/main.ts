@@ -560,7 +560,7 @@ import { createAgentGameHost, type AgentGameHost } from './agentGame';
 import type { GameManifest, GameSession } from './agentGame/abi';
 import { toSessionView as toPublicSessionView } from './agentGame/abi';
 import { assignGroupChatTask, resolveMetabotIdByName, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
-import { cancelActiveDownload, downloadUpdate, installUpdate, applyMacUpdateSilently, relaunchPendingMacUpdate, cleanupStaleDownloads } from './libs/appUpdateInstaller';
+import { cancelActiveDownload, downloadUpdate, installUpdate, applyMacUpdateSilently, relaunchPendingMacUpdate, cleanupStaleDownloads, isTrustedUpdateInstallerPath, isUpdaterDrivenShutdown } from './libs/appUpdateInstaller';
 import { fetchFromLocalOrFallback, fetchJsonWithFallbackOnMiss, isEmptyListDataPayload } from './services/localIndexerProxy';
 import { HostLocationService, type SystemFix } from './services/hostLocationService';
 import { freshGetUrlAndInit } from './services/freshFetch';
@@ -21712,6 +21712,11 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   });
 
   registerIpcHandler('appUpdate:install', async (_event, filePath: string) => {
+    // The renderer-supplied path is executed (NSIS spawn / DMG mount), so it
+    // must be the updater's own temp artifact — never an arbitrary file.
+    if (!isTrustedUpdateInstallerPath(filePath)) {
+      return { success: false, error: 'Refusing to install from an untrusted path' };
+    }
     try {
       await installUpdate(filePath);
       return { success: true };
@@ -21725,6 +21730,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   registerIpcHandler('appUpdate:applySilent', async (_event, filePath: string) => {
     if (process.platform !== 'darwin') {
       return { success: false, error: 'Silent apply is only supported on macOS' };
+    }
+    if (!isTrustedUpdateInstallerPath(filePath)) {
+      return { success: false, error: 'Refusing to apply an untrusted path' };
     }
     try {
       await applyMacUpdateSilently(filePath);
@@ -22773,6 +22781,13 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   };
 
   const DESKTOP_CLEANUP_TIMEOUT_MS = 5_000;
+  // An updater-driven quit gets a longer budget: the NSIS installer launches,
+  // the app quits in the same breath, and the installer force-kills whatever
+  // outlives its grace loop. A big sql.js save (full db.export + atomic
+  // rename) or the session-log flush must finish inside THIS budget or the
+  // whole point of the flush is lost to the kill.
+  const UPDATE_CLEANUP_TIMEOUT_MS = 15_000;
+  const cleanupTimeoutMs = () => (isUpdaterDrivenShutdown() ? UPDATE_CLEANUP_TIMEOUT_MS : DESKTOP_CLEANUP_TIMEOUT_MS);
 
   const finishCleanupAndExit = () => {
     if (isCleanupFinished) return;
@@ -22797,9 +22812,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     flushJevRelayCallStats();
 
     const watchdog = setTimeout(() => {
-      console.warn(`[Main] App cleanup exceeded ${DESKTOP_CLEANUP_TIMEOUT_MS}ms; forcing exit.`);
+      console.warn(`[Main] App cleanup exceeded ${cleanupTimeoutMs()}ms; forcing exit.`);
       finishCleanupAndExit();
-    }, DESKTOP_CLEANUP_TIMEOUT_MS);
+    }, cleanupTimeoutMs());
     watchdog.unref();
 
     void runAppCleanup()
@@ -22820,9 +22835,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     isCleanupInProgress = true;
     isQuitting = true;
     const watchdog = setTimeout(() => {
-      console.warn(`[Main] App cleanup during ${signal} exceeded ${DESKTOP_CLEANUP_TIMEOUT_MS}ms; forcing exit.`);
+      console.warn(`[Main] App cleanup during ${signal} exceeded ${cleanupTimeoutMs()}ms; forcing exit.`);
       finishCleanupAndExit();
-    }, DESKTOP_CLEANUP_TIMEOUT_MS);
+    }, cleanupTimeoutMs());
     watchdog.unref();
     void runAppCleanup()
       .catch((error) => {

@@ -65,8 +65,11 @@
   ${If} $R0 == 0
     ${If} ${isUpdated}
       ; Auto-update launches the installer while calling app.quit(). Poll the
-      ; fast native tasklist check for up to ~5s so SQLite flushes cleanly
-      ; without spawning PowerShell on every 250ms tick.
+      ; fast native tasklist check for up to ~30s: the app's own cleanup
+      ; watchdog gives an updater-driven quit 15s (big sql.js saves and the
+      ; session-log flush need it), and the force-kill below must never land
+      ; inside that window. The fast tasklist check exits the loop the moment
+      ; the app is really gone; PowerShell is never spawned on the hot path.
       StrCpy $R1 0
       _idbots_grace_loop_${_IDBOTS_CHK_ID}:
         Sleep 250
@@ -79,7 +82,7 @@
           Goto _idbots_stop_process_${_IDBOTS_CHK_ID}
         ${EndIf}
         IntOp $R1 $R1 + 1
-        ${If} $R1 < 20
+        ${If} $R1 < 120
           Goto _idbots_grace_loop_${_IDBOTS_CHK_ID}
         ${EndIf}
       Goto _idbots_stop_process_${_IDBOTS_CHK_ID}
