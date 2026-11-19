@@ -277,23 +277,24 @@ test('on Windows the flush opens a write-mode handle so FlushFileBuffers is allo
 
 test('on Windows an unflushable artifact degrades to a skipped audit, not unreadable', withPlatform('win32', async () => {
   const dir = tempRoot();
-  // A READ-ONLY file is the deterministic unflushable fixture on every host:
-  // opening it 'r+' fails with EPERM on real Windows and EACCES on POSIX
-  // (where the win32 platform mock still routes the failure through the same
-  // skip branch). The previous fixture — a directory — rests on a false
-  // premise: Windows opens 'r+' directory handles and even FlushFileBuffers
-  // them, so the refusal path was never reached on a real Windows host
-  // (found the first time this suite ran on win-sign, 2026-11-19).
-  const blocker = path.join(dir, 'readonly-blocker.log');
-  await fsp.writeFile(blocker, 'not flushable through');
-  await fsp.chmod(blocker, 0o444);
+  // A READ-ONLY artifact file is the deterministic unflushable fixture on
+  // every host: opening it 'r+' fails with EPERM on real Windows and EACCES
+  // on POSIX (where the win32 platform mock still routes the failure through
+  // the same skip branch). Two earlier fixtures rest on false premises:
+  // a directory opens and even FlushFileBuffers fine on real Windows, and a
+  // path nested UNDER a file resolves to ENOENT on Windows before any
+  // attribute check — both missed the refusal path (found the first time
+  // this suite ran on win-sign, 2026-11-19).
+  const artifact = path.join(dir, 'session.v4.jsonl.zstd');
+  await fsp.writeFile(artifact, 'locked log bytes');
+  await fsp.chmod(artifact, 0o444);
   try {
-    const result = await flushSessionLogArtifact(path.join(blocker, 'session.v4.jsonl.zstd'));
+    const result = await flushSessionLogArtifact(artifact);
     assert.equal(result.error, null, 'a refused Windows fsync must NOT raise the quit verdict');
     assert.equal(result.flushed, false);
     assert.match(result.detail ?? '', /skipped on win32/);
   } finally {
-    await fsp.chmod(blocker, 0o666).catch(() => undefined);
+    await fsp.chmod(artifact, 0o666).catch(() => undefined);
   }
 }));
 
