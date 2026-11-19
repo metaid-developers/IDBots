@@ -148,6 +148,7 @@ class IdbotsSdkServer extends HarnessSdkJsonRpcServer {
     // write claim (SessionAlreadyOwnedError); chaining lands the loser on the
     // reuse path instead.
     this.idbotsEnsureInflight = new Map()
+    this.idbotsHostToolSurfaces = new Map()
 
     ctx.on('agent/created', ({ agent }) => {
       this.idbotsAgents.set(String(agent.id), agent)
@@ -267,6 +268,7 @@ class IdbotsSdkServer extends HarnessSdkJsonRpcServer {
     ctx.on('agent/disposed', ({ agent }) => {
       this.idbotsAgents.delete(String(agent.id))
       this.idbotsRoute.delete(String(agent.id))
+      this.idbotsHostToolSurfaces.delete(String(agent.id))
     }, { global: true })
 
     // 0.1.5 live streaming bridge: 'assistant/chunk' left the durable session
@@ -397,11 +399,30 @@ class IdbotsSdkServer extends HarnessSdkJsonRpcServer {
   async idbotsEnsureSessionExclusive(hostParams) {
     const { sessionId, provider, model, maxTokens, reasoningEffort, cwd } = hostParams ?? {}
     const id = String(sessionId ?? '')
+    const hasHostToolSurface = Array.isArray(hostParams?.hostTools)
+    const hostToolSignature = hasHostToolSurface ? JSON.stringify(hostParams.hostTools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    }))) : null
+    const liveSurfaceMatches = () => {
+      if (!hasHostToolSurface) return true
+      const previous = this.idbotsHostToolSurfaces.get(id)
+      return previous === hostToolSignature || (previous === undefined && hostParams.hostTools.length === 0)
+    }
+    const disposeLiveAgent = async () => {
+      await this.idbotsDisposeSession({ sessionId: id })
+      this.idbotsAgents.delete(id)
+      this.idbotsHostToolSurfaces.delete(id)
+    }
     if (this.idbotsAgents.has(id)) {
-      const agent = this.idbotsAgents.get(id)
-      this.idbotsBindRoute(agent, { provider, model, maxTokens, reasoningEffort })
-      this.idbotsBindWorkspace(agent, cwd)
-      return { ensured: true, resumed: false }
+      if (!liveSurfaceMatches()) await disposeLiveAgent()
+      else {
+        const agent = this.idbotsAgents.get(id)
+        this.idbotsBindRoute(agent, { provider, model, maxTokens, reasoningEffort })
+        this.idbotsBindWorkspace(agent, cwd)
+        return { ensured: true, resumed: false }
+      }
     }
 
     const agentOptions = {
@@ -432,6 +453,10 @@ class IdbotsSdkServer extends HarnessSdkJsonRpcServer {
           // in flight — prefer reusing the live agent over retrying.
           const live = this.idbotsAgents.get(id)
           if (live !== undefined) {
+            if (!liveSurfaceMatches()) {
+              await disposeLiveAgent()
+              continue
+            }
             this.idbotsBindRoute(live, { provider, model, maxTokens, reasoningEffort })
             this.idbotsBindWorkspace(live, cwd)
             return { ensured: true, resumed: false }
@@ -459,6 +484,7 @@ class IdbotsSdkServer extends HarnessSdkJsonRpcServer {
     // agent's scoped context (shadowing globals, unwound on disposal).
     this.idbotsRegisterSections(hostParams.sections, handle.agent?.ctx)
     this.idbotsRegisterHostTools(hostParams.hostTools, handle.agent?.ctx)
+    if (hasHostToolSurface) this.idbotsHostToolSurfaces.set(id, hostToolSignature)
     this.idbotsBindRoute(handle.agent, { provider, model, maxTokens, reasoningEffort })
     this.idbotsBindWorkspace(handle.agent, cwd)
     // Register with the stock server's bookkeeping (private at the type level,
@@ -481,6 +507,7 @@ class IdbotsSdkServer extends HarnessSdkJsonRpcServer {
     if (typeof record?.handle?.dispose !== 'function') return { disposed: false }
     await record.handle.dispose()
     this.sessions.delete(id)
+    this.idbotsHostToolSurfaces.delete(id)
     return { disposed: true }
   }
 
