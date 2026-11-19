@@ -19,4 +19,21 @@
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
     </style>
+
+    <style name="IDBots.Dialog" parent="Theme.AppCompat.DayNight.Dialog.Alert">
+        <item name="colorAccent">@color/idbots_accent</item>
+        <item name="android:buttonBarPositiveButtonStyle">@style/IDBots.Dialog.Button.Positive</item>
+        <item name="android:buttonBarNegativeButtonStyle">@style/IDBots.Dialog.Button.Secondary</item>
+    </style>
+
+    <style name="IDBots.Dialog.Button.Positive" parent="Widget.AppCompat.Button.ButtonBar.AlertDialog">
+        <item name="android:background">@drawable/bg_update_primary</item>
+        <item name="android:textColor">@color/idbots_on_accent</item>
+        <item name="android:minHeight">48dp</item>
+    </style>
+
+    <style name="IDBots.Dialog.Button.Secondary" parent="Widget.AppCompat.Button.ButtonBar.AlertDialog">
+        <item name="android:textColor">@color/idbots_text_secondary</item>
+        <item name="android:minHeight">48dp</item>
+    </style>
 </resources>

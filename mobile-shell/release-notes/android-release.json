@@ -1,0 +1,22 @@
+{
+  "date": "2026-11-19",
+  "minVersionCode": 0,
+  "changeLog": {
+    "ch": {
+      "title": "更新说明",
+      "content": [
+        "新增 APK 自动检查更新、系统后台下载和安装引导。",
+        "安装前校验 APK 的 SHA-256、包名、版本号和官方签名证书。",
+        "新增中英文更新进度、失败重试和安装权限指引。"
+      ]
+    },
+    "en": {
+      "title": "Release Notes",
+      "content": [
+        "Adds automatic APK update checks, system-managed background downloads, and guided installation.",
+        "Verifies every APK's SHA-256, package name, version, and official signing certificate before installation.",
+        "Adds bilingual update progress, retry, and installation-permission guidance."
+      ]
+    }
+  }
+}
