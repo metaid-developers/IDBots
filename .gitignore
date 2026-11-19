@@ -1104,3 +1104,4 @@ blob-report/
 !tests/contextBudgetReport.test.mjs
 !tests/studioToolSlimming.test.ts
 !tests/studioMemoryDedup.test.ts
+!tests/studioChapterDream.test.mjs
