@@ -21,6 +21,7 @@ import type {
   WalletQueryChain,
 } from '../services/walletQueryService';
 import type { MvcNftBalance, MvcNftSellOrders, MvcNftSellOrder } from '../services/mvcNftService';
+import type { Mrc20Asset } from '../services/mrc20Service';
 import { appendNftCardBlock, findNftCardDetail, type NftCardEmitFields } from './nftCardMarkdown';
 import { withNftCardHostStamp } from './tradeActivityStamp';
 
@@ -53,6 +54,15 @@ export type WalletToolsControl = {
     metabotId: number | null;
     address: string;
     balance?: MvcNftBalance;
+    error?: string;
+  }>>;
+  listMrc20s(input: {
+    metabotIds?: number[];
+    address?: string;
+  }): Promise<Array<{
+    metabotId: number | null;
+    address: string;
+    assets?: Mrc20Asset[];
     error?: string;
   }>>;
   transferNft(params: {
@@ -281,6 +291,21 @@ function formatMvcNftBalance(balance: MvcNftBalance): string {
     for (const item of collection.items) {
       lines.push(`  - #${item.tokenIndex} ${item.name || '(unnamed)'} (${item.satoshi} sats, tx ${item.txId}:${item.outputIndex})`);
     }
+  }
+  return lines.join('\n');
+}
+
+function formatMrc20Balance(assets: Mrc20Asset[]): string {
+  if (assets.length === 0) return '- no MRC20 tokens held';
+  const lines: string[] = [`- ${assets.length} MRC20 token(s)`];
+  for (const asset of assets) {
+    lines.push(
+      `- ${asset.symbol || '(unnamed)'}${asset.tokenName ? ` (${asset.tokenName})` : ''}: ` +
+        `${asset.balance.display} ${asset.symbol || ''}`.trimEnd() +
+        ` [confirmed ${asset.balance.confirmed} / unconfirmed ${asset.balance.unconfirmed}` +
+        ` / pendingIn ${asset.balance.pendingIn} / pendingOut ${asset.balance.pendingOut}]` +
+        ` (mrc20Id ${asset.mrc20Id}, decimal ${asset.decimal})`,
+    );
   }
   return lines.join('\n');
 }
@@ -1296,6 +1321,70 @@ export function buildWalletAgentTools(deps: {
     }
   );
 
+  const walletMrc20Balance = tool(
+    'wallet_mrc20_balance',
+    [
+      'Query MRC20 token (BTC-side inscription token) holdings for local MetaBots by id or name, or for a raw BTC address.',
+      'Use when the user asks what MRC20 tokens a bot holds, or before planning MRC20 work (transfers stay owner-gated). Completes the asset picture: wallet_balance covers native coins, wallet_token_balance covers MVC20 FT, wallet_nft_balance covers NFTs, this covers MRC20.',
+      'Returns per address: token count and each token with symbol/name, spendable display balance (confirmed + unconfirmed), pendingIn/pendingOut (unconfirmed inscription movements), mrc20Id and decimal.',
+      'Read-only public chain data via the same Metalet v3 mrc20 balance-list endpoint the wallet UI uses. Batch multiple metabot_ids in ONE call.',
+    ].join(' '),
+    {
+      metabot_ids: z
+        .array(z.number().int().positive())
+        .optional()
+        .describe('Local MetaBot ids to query, e.g. [1, 15]. Batch in one call.'),
+      names: z
+        .array(z.string())
+        .optional()
+        .describe('Local MetaBot names to resolve and query.'),
+      address: z
+        .string()
+        .optional()
+        .describe('Explicit BTC address to query (used as-is).'),
+    },
+    async (args: {
+      metabot_ids?: number[];
+      names?: string[];
+      address?: string;
+    }) => {
+      const metabotIds: number[] = [];
+      for (const raw of args.metabot_ids ?? []) {
+        const id = Number(raw);
+        if (Number.isInteger(id) && id > 0 && !metabotIds.includes(id)) metabotIds.push(id);
+      }
+      for (const rawName of args.names ?? []) {
+        const name = asString(rawName);
+        if (!name) continue;
+        const id = control.resolveMetabotIdByName(name);
+        if (id == null) {
+          return textResult(`wallet_mrc20_balance: local MetaBot not found by name: ${name}`, true);
+        }
+        if (!metabotIds.includes(id)) metabotIds.push(id);
+      }
+      const address = asString(args.address);
+      if (metabotIds.length === 0 && !address) {
+        return textResult('wallet_mrc20_balance requires metabot_ids, names, or address (pass the ids you want in ONE call).', true);
+      }
+      try {
+        const entries = await control.listMrc20s({ metabotIds, address: address || undefined });
+        const sections: string[] = [];
+        for (const entry of entries) {
+          const label = entry.metabotId != null ? `metabot_id ${entry.metabotId}` : 'address';
+          if (entry.error) {
+            sections.push(`# ${label} ${entry.address}\n- lookup failed: ${entry.error}`);
+            continue;
+          }
+          sections.push(`# ${label} ${entry.address}\n${formatMrc20Balance(entry.assets ?? [])}`);
+        }
+        return textResult(sections.join('\n') || 'No addresses resolved.');
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_mrc20_balance failed: ${msg}`, true);
+      }
+    }
+  );
+
   const walletTokenTransfer = tool(
     'wallet_token_transfer',
     [
@@ -1645,6 +1734,7 @@ export function buildWalletAgentTools(deps: {
 
   return [
     walletBalance,
+    walletMrc20Balance,
     walletTransfer,
     walletNftBalance,
     walletNftTransfer,

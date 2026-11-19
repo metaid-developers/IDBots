@@ -263,6 +263,8 @@ tests/*
 !tests/mvcFtTokenBalanceSource.test.mjs
 !tests/walletTokenSend.test.mjs
 !tests/walletTxStatus.test.mjs
+!tests/walletBtcCarrierBalance.test.mjs
+!tests/walletMrc20BalanceTool.test.mjs
 !tests/mvcSubsidyService.test.mjs
 !tests/imGatewayConnectivity.test.mjs
 !tests/groupTaskService.test.mjs
