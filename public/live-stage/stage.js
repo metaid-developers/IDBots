@@ -363,7 +363,46 @@
     const message = error instanceof Error ? error.message : String(error);
     window.__liveStageOrbError = message;
     console.warn('[LiveStage] WebGPU fallback:', message);
+    scheduleOrbRecovery();
   }
+
+  // A failed orb used to be a one-way door: orbFailed stayed true for the
+  // rest of the session, so a single WebGPU/WebGL2 loss (Windows TDR driver
+  // reset, wedged adapter, RDP reconnect) demoted the stage to the static CSS
+  // membrane forever — the host only re-patches state, it never reloads the
+  // page. GPU stacks do recover, so every fallback arms ONE bounded retry
+  // (30s while visible, or immediately on the next re-show): the retry
+  // rebuilds through the normal ladder and, if it fails again, just re-arms.
+  const ORB_RECOVERY_RETRY_MS = 30_000;
+  let orbRecoveryTimer = 0;
+
+  function clearOrbRecoveryTimer() {
+    if (orbRecoveryTimer) {
+      clearTimeout(orbRecoveryTimer);
+      orbRecoveryTimer = 0;
+    }
+  }
+
+  function retryFailedOrb() {
+    clearOrbRecoveryTimer();
+    if (!orbFailed || orbStarting || !state.enabled || document.hidden) return;
+    orbFailed = false;
+    syncOrb();
+  }
+
+  function scheduleOrbRecovery() {
+    clearOrbRecoveryTimer();
+    if (document.hidden) return;
+    orbRecoveryTimer = setTimeout(retryFailedOrb, ORB_RECOVERY_RETRY_MS);
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      clearOrbRecoveryTimer();
+      return;
+    }
+    if (orbFailed) retryFailedOrb();
+  });
 
   function failOrbLayer(layer, previous, error) {
     if (orb !== layer) {
@@ -389,6 +428,21 @@
       console.warn('[LiveStage] WebGPU lost mid-session, switching to WebGL2:', message);
       orbPreferWebGL = true;
       disposeAllOrbLayers();
+      // 'loading' brings the CSS membrane back while the remount compiles,
+      // instead of a blank gap between two opacity-0 canvases.
+      body.dataset.orbBackend = 'loading';
+      window.__liveStageBackend = 'loading';
+      mountOrb(layer.family);
+    } else if (hadController && failedBackend === 'webgl2') {
+      // A lost WebGL2 context used to fall through to the terminal CSS
+      // membrane. Driver resets recover — remount the WebGL2 orb (preferWebGL
+      // is already true) and arm the same bounded retry ladder.
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('[LiveStage] WebGL2 orb lost mid-session, remounting:', message);
+      disposeAllOrbLayers();
+      body.dataset.orbBackend = 'loading';
+      window.__liveStageBackend = 'loading';
+      scheduleOrbRecovery();
       mountOrb(layer.family);
     } else {
       orb = null;
@@ -1014,6 +1068,7 @@
   document.addEventListener('visibilitychange', applyState);
   window.addEventListener('pagehide', () => {
     disposeAllOrbLayers();
+    clearOrbRecoveryTimer();
     stopInteractionCountdown();
     stopHeldRelease();
     clearInterval(elapsedTimer);
