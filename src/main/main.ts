@@ -229,7 +229,8 @@ import { executeWalletMvcTransfer } from './services/walletTransferService';
 import { openMetabotBtcWallet, signBtcPsbtPartial } from './services/btcPartialSign';
 import { broadcastBtcTx, fetchBtcUtxos } from './libs/btcApi';
 import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
-import { executeMvcTokenSellTrade, getMvcFtTokenBalance, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
+import { executeMvcTokenSellTrade, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
+import { listMvcFtAssets, mvcFtTokenBalanceFromAssets } from './services/mvcFtService';
 import {
   broadcastMvcTx,
   buyMrc721Listing,
@@ -8445,7 +8446,8 @@ const getCoworkRunner = () => {
         },
       // ----- FT TokenSell backends (wallet_token_* tools; mirror the NFT
       // block above — same chain-write budget gate, same session-own-wallet
-      // posture enforced in the tools layer). -----
+      // posture enforced in the tools layer). listMvcFtTokens reads the SAME
+      // metalet v4 balance-list source the wallet UI uses. -----
       listMvcFtTokens: async (input) => {
         const store = getMetabotStore();
         const entries: Array<{ metabotId: number | null; address: string; error?: string }> = [];
@@ -8464,7 +8466,7 @@ const getCoworkRunner = () => {
           entries.map(async (entry) => {
             if (entry.error) return entry;
             try {
-              return { ...entry, balance: await getMvcFtTokenBalance(entry.address) };
+              return { ...entry, balance: mvcFtTokenBalanceFromAssets(entry.address, await listMvcFtAssets(entry.address)) };
             } catch (error) {
               return { ...entry, error: error instanceof Error ? error.message : String(error) };
             }

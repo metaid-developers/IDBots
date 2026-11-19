@@ -915,6 +915,7 @@ export function buildWalletAgentTools(deps: {
       .map(
         (t) =>
           `- ${t.symbol || '?'} balance ${t.balance}${t.decimal !== undefined ? ` (decimal ${t.decimal})` : ''} ` +
+          `${t.confirmed !== undefined || t.unconfirmed !== undefined ? `[confirmed ${t.confirmed ?? '0'} / unconfirmed ${t.unconfirmed ?? '0'}] ` : ''}` +
           `[genesis ${t.genesis}${t.codeHash ? ` codehash ${t.codeHash}` : ''}]`,
       )
       .join('\n');
@@ -925,8 +926,8 @@ export function buildWalletAgentTools(deps: {
     [
       'Query MVC FT (fungible token / MetaContract FT) holdings for local MetaBots by id or name, or for a raw address.',
       'Use when the user asks what tokens a bot holds, or before listing a token for sale (wallet_token_sell).',
-      'Returns per address: token count and each token with symbol, base-unit balance (string), decimal, genesis and codehash — the identifiers wallet_token_sell needs.',
-      'Read-only public chain data via the open-api-mvc contract/ft endpoints. Batch multiple metabot_ids in ONE call.',
+      'Returns per address: token count and each token with symbol, spendable balance (confirmed + unconfirmed, base-unit string), decimal, genesis and codehash — the identifiers wallet_token_sell needs.',
+      'Read-only public chain data via the same Metalet v4 balance-list endpoint the wallet UI uses. Batch multiple metabot_ids in ONE call.',
     ].join(' '),
     {
       metabot_ids: z
