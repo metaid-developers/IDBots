@@ -14932,6 +14932,15 @@ export class CoworkRunner extends EventEmitter {
     // disableMemoryUpdates mounts neither (legacy orchestrator blackout).
     const sessionMemoryReadEnabled = this.isSessionMemoryReadEnabled(sessionId, activeSession);
     const sessionMemoryWriteEnabled = this.isSessionMemoryWriteEnabled(sessionId, activeSession);
+    // Studio owner-chat tool slimming (Phase 2 slice 1, 2026-11-19 census):
+    // the assistant-mode owner chat never called the worker-economy protocol
+    // families below (0 calls across 30 recent sessions, every surface), and
+    // their schemas alone cost ~36KB ≈ 9K tokens of EVERY Studio request.
+    // The Twin's job here is conversation + delegation — a Worker session
+    // that actually trades metatasks/escrow/gig groups mounts its own set.
+    // Family mounts below take `&& !isStudioOwnerChat`; flipping the gate
+    // restores the family for Studio.
+    const isStudioOwnerChat = this.isAssistantModeOwnerChatSession(sessionId);
     const memoryTools: any[] = [
       tool(
         'conversation_search',
@@ -15650,21 +15659,25 @@ export class CoworkRunner extends EventEmitter {
         // challenge, ruling, review, editor registry chain, genesis
         // constitution, param proposals. Payloads are schema-gated
         // pre-write (composite draft-07 schemas, see agentpediaSchemas).
-        memoryTools.push(
-          ...buildAgentpediaAgentTools({
-            tool,
-            createPin: createPinForSession,
-            sessionId,
-            resolveMetabotId,
-          })
-        );
+        // Studio owner chat skips the family (census: 0 calls there; the
+        // encyclopedia workflow belongs to worker/automation surfaces).
+        if (!isStudioOwnerChat) {
+          memoryTools.push(
+            ...buildAgentpediaAgentTools({
+              tool,
+              createPin: createPinForSession,
+              sessionId,
+              resolveMetabotId,
+            })
+          );
+        }
         // Metaprotocol registry writer (/protocols/metaprotocol):
         // post_metaprotocol publish/update. Payloads are schema-gated
         // pre-write, MetaSo-prechecked with a MANAPI degraded scan, and
         // updates pass the registrant identity cascade before any chain
         // write. The read twin (metaprotocol_registry) registers with the
         // read tools below; only the writer belongs to the chain-write gate.
-        if (this.metaProtocolRegistry) {
+        if (this.metaProtocolRegistry && !isStudioOwnerChat) {
           const metaProtocolTools = buildMetaProtocolAgentTools({
             tool,
             metaProtocol: this.metaProtocolRegistry,
@@ -15799,7 +15812,7 @@ export class CoworkRunner extends EventEmitter {
         })
       );
     }
-    if (this.metataskTools && this.metabotChainWrite) {
+    if (this.metataskTools && this.metabotChainWrite && !isStudioOwnerChat) {
       memoryTools.push(
         ...buildMetataskAgentTools({
           tool,
@@ -15824,7 +15837,7 @@ export class CoworkRunner extends EventEmitter {
     // including the surf allowlist (a surf that posts/engages predicts its
     // reception first). The tool writes a local ledger row — no chain spend —
     // and the nightly dream reconciles it.
-    if (this.predictionTools) {
+    if (this.predictionTools && !isStudioOwnerChat) {
       memoryTools.push(
         ...buildPredictionAgentTools({
           tool,
@@ -15934,7 +15947,7 @@ export class CoworkRunner extends EventEmitter {
     // funds flow — no wallet/transfer call lives in these tools; the goods
     // custody legs are the party bots' own mrc721_transfer txids recorded as
     // machine proof. Mounted next to the mrc721 tools (same session-scope).
-    if (this.escrowTools) {
+    if (this.escrowTools && !isStudioOwnerChat) {
       memoryTools.push(
         ...buildEscrowAgentTools({
           tool,
@@ -16030,7 +16043,7 @@ export class CoworkRunner extends EventEmitter {
         })
       );
     }
-    if (this.groupChat) {
+    if (this.groupChat && !isStudioOwnerChat) {
       memoryTools.push(
         ...buildGroupChatAgentTools({
           tool,
