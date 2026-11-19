@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
+import { collapseWindowsPathKeys } from './windowsPathEnv';
 
 export interface AppUpdateDownloadProgress {
   received: number;
@@ -170,6 +171,92 @@ export async function assertInstallerBundleVersion(installerPath: string, source
   }
   console.log(
     `[AppUpdate] Bundle version check passed: ${incomingVersion} matches update manifest ${declaredVersion}`,
+  );
+}
+
+/**
+ * Version the Windows NSIS installer reports about itself (PE version
+ * resource, `ProductVersion` — electron-builder sets it to the app version).
+ *
+ * The path travels to PowerShell through an environment variable instead of a
+ * command-line string so Chinese usernames and spaces cannot break it, and the
+ * env map goes through collapseWindowsPathKeys (the { ...process.env } PATH
+ * casing hazard). Returns null when PowerShell cannot run or the resource is
+ * unreadable — callers decide whether that is fatal.
+ */
+export async function readWindowsInstallerVersion(exePath: string): Promise<string | null> {
+  const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+  const powershell = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(
+        powershell,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-Command',
+          "$ErrorActionPreference='Stop';(Get-Item -LiteralPath $env:IDBOTS_UPDATE_EXE).VersionInfo.ProductVersion",
+        ],
+        {
+          windowsHide: true,
+          timeout: 15_000,
+          env: collapseWindowsPathKeys({ ...process.env, IDBOTS_UPDATE_EXE: exePath }),
+        },
+      );
+    } catch {
+      resolve(null);
+      return;
+    }
+    let out = '';
+    child.stdout?.on('data', (chunk) => {
+      out += String(chunk);
+    });
+    child.once('error', () => resolve(null));
+    child.once('close', (code) => {
+      const version = out.split(/\r?\n/).map((line) => line.trim()).find((line) => line !== '') ?? '';
+      resolve(code === 0 && version !== '' ? version : null);
+    });
+  });
+}
+
+/**
+ * Windows twin of assertInstallerBundleVersion: refuse a mislabeled installer
+ * before anything touches the installed app (the v1.0.1 incident class — a
+ * republished exe that still reports the old version makes the updater
+ * re-offer the same update forever).
+ *
+ * Same contract as the macOS gate: no sidecar (installer copied in by hand)
+ * keeps the legacy behavior. One deliberate difference: an UNREADABLE version
+ * resource fails open (warn + proceed) because a machine where PowerShell is
+ * blocked must not lose the ability to update — TLS and the optional sha256
+ * checksum still protect integrity there. A READABLE version that disagrees
+ * with the manifest fails closed.
+ */
+export async function assertWindowsInstallerBundleVersion(
+  installerPath: string,
+  readVersion: (exePath: string) => Promise<string | null> = readWindowsInstallerVersion,
+): Promise<void> {
+  const declaredVersion = await readDeclaredInstallerVersion(installerPath);
+  if (!declaredVersion) {
+    console.log('[AppUpdate] No download metadata sidecar; skipping installer version check');
+    return;
+  }
+  const incomingVersion = await readVersion(installerPath);
+  if (!incomingVersion) {
+    console.warn('[AppUpdate] Could not read the installer version resource; skipping installer version check');
+    return;
+  }
+  const normalize = (version: string) => version.trim().replace(/^v/i, '');
+  if (normalize(incomingVersion) !== normalize(declaredVersion)) {
+    throw new Error(
+      `Refusing to install a mislabeled update: the installer reports ${incomingVersion} but the update manifest declares ${declaredVersion}`,
+    );
+  }
+  console.log(
+    `[AppUpdate] Installer version check passed: ${incomingVersion} matches update manifest ${declaredVersion}`,
   );
 }
 
@@ -912,6 +999,12 @@ async function installWindowsNsis(exePath: string): Promise<void> {
   console.log(`[AppUpdate] Windows NSIS install (interactive mode)`);
   console.log(`[AppUpdate]   installer: ${exePath}`);
   console.log(`[AppUpdate]   appPid: ${process.pid}`);
+
+  // Mislabeled-installer gate (v1.0.1 incident class): never spawn an exe
+  // whose own version resource disagrees with the version the update manifest
+  // declared. Refusing here leaves the running app untouched and the user
+  // with a clear error instead of an update loop.
+  await assertWindowsInstallerBundleVersion(exePath);
 
   const installerPid = await launchWindowsNsisInstaller(exePath);
   console.log(`[AppUpdate] Installer PID: ${installerPid}, calling app.quit()`);

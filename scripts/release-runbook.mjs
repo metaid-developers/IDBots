@@ -314,9 +314,15 @@ async function downloadArtifacts() {
       console.log(`DMG ${dmgName} size=${dmgSize} sha512=${dmgSha512}`);
     }
     const exeName = `IDBots.Setup.${version}.exe`;
-    const exeSize = statSync(join(assetDir, exeName)).size;
+    const exePath = join(assetDir, exeName);
+    const exeSize = statSync(exePath).size;
+    // Hex SHA-256 of the full installer. The client verifies it when the
+    // website manifest carries `windowsX64.sha256` (same digest format); the
+    // website SOP must copy this value into update.json.
+    const exeSha256 = createHash("sha256").update(readFileSync(exePath)).digest("hex");
     console.log(`EXE size=${exeSize}`);
-    phaseFinished(state, "download", { ok: true, assetDir });
+    console.log(`EXE sha256=${exeSha256}`);
+    phaseFinished(state, "download", { ok: true, assetDir, exeSha256 });
   } catch (error) {
     phaseFinished(state, "download", { ok: false, error: String(error) });
     console.error(error instanceof Error ? error.message : String(error));
@@ -559,8 +565,28 @@ async function main() {
         macArmUrl: value.macArm?.url,
         macIntelUrl: value.macIntel?.url,
         windowsUrl: value.windowsX64.url,
+        windowsSha256: typeof value.windowsX64?.sha256 === "string" && value.windowsX64.sha256.trim()
+          ? value.windowsX64.sha256.trim()
+          : "(missing)",
       }, null, 2));
       const ok = value.version === state.version;
+      // Installer integrity cross-check: the website manifest is the only place
+      // the client can learn windowsX64.sha256. A PRESENT checksum that
+      // disagrees with the release artifact is a hard failure (never ship a
+      // manifest that would make every client reject the download); a missing
+      // field only warns so the website generator can adopt the field at its
+      // own pace.
+      const expectedSha = state.phases?.download?.result?.exeSha256 ?? "";
+      const liveSha = typeof value.windowsX64?.sha256 === "string" ? value.windowsX64.sha256.trim() : "";
+      if (expectedSha && liveSha && liveSha !== expectedSha) {
+        phaseFinished(state, "website", { ok: false, error: "windowsX64.sha256 mismatch" });
+        console.error(`Live update.json windowsX64.sha256 ${liveSha} does not match release artifact ${expectedSha}`);
+        process.exitCode = 1;
+        return;
+      }
+      if (expectedSha && !liveSha) {
+        console.warn("Live update.json has no windowsX64.sha256 — add the hex digest printed by the download step so clients verify the installer");
+      }
       phaseFinished(state, "website", { ok });
       if (!ok) {
         console.error(`Live update.json version ${value.version} does not match ${state.version}`);

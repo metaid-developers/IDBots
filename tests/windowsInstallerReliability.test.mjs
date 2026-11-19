@@ -52,6 +52,8 @@ Module._load = function patchedLoad(request, parent, isMain) {
 };
 const {
   launchWindowsNsisInstaller,
+  assertWindowsInstallerBundleVersion,
+  resolveDownloadMetaPath,
 } = require('../dist-electron/main/libs/appUpdateInstaller.js');
 const {
   runVersionChangeBackupAsync,
@@ -106,6 +108,81 @@ test('Windows updater reports a launcher failure instead of quitting into no ins
   const source = read('src/main/libs/appUpdateInstaller.ts');
   assert.match(source, /const installerPid = await launchWindowsNsisInstaller\(exePath\);[\s\S]*?app\.quit\(\)/);
   assert.doesNotMatch(source, /wscript\.exe|ExecutionPolicy Bypass|idbots-update-.*\.ps1/);
+});
+
+// ── Windows installer version gate (v1.0.1 mislabeled-bundle incident class) ──
+
+function sidecarFor(installerPath, version) {
+  const metaPath = resolveDownloadMetaPath(installerPath);
+  fs.writeFileSync(metaPath, JSON.stringify({
+    url: 'https://cdn.example.com/IDBots.Setup.exe',
+    platform: 'win32',
+    arch: 'x64',
+    version,
+    downloadedSize: 1024,
+    updatedAt: Date.now(),
+  }), 'utf8');
+  return metaPath;
+}
+
+test('Windows install refuses an installer whose version resource contradicts the manifest', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'win-update-gate-'));
+  const installerPath = path.join(dir, 'idbots-update-0123abcdef456789.exe');
+  fs.writeFileSync(installerPath, 'fake');
+  sidecarFor(installerPath, '1.1.2');
+  try {
+    await assert.rejects(
+      assertWindowsInstallerBundleVersion(installerPath, async () => '1.1.1'),
+      /mislabeled update: the installer reports 1\.1\.1 .* declares 1\.1\.2/,
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+});
+
+test('Windows install accepts a matching version resource, tolerating a v-prefix', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'win-update-gate-'));
+  const installerPath = path.join(dir, 'idbots-update-0123abcdef456789.exe');
+  fs.writeFileSync(installerPath, 'fake');
+  sidecarFor(installerPath, '1.1.2');
+  try {
+    await assert.doesNotReject(
+      assertWindowsInstallerBundleVersion(installerPath, async () => 'v1.1.2'),
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+});
+
+test('Windows install keeps the legacy behavior without a sidecar and fails open on an unreadable version resource', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'win-update-gate-'));
+  const installerPath = path.join(dir, 'idbots-update-0123abcdef456789.exe');
+  fs.writeFileSync(installerPath, 'fake');
+  try {
+    // No sidecar next to the installer → the gate must not block.
+    await assert.doesNotReject(
+      assertWindowsInstallerBundleVersion(installerPath, async () => '1.1.1'),
+    );
+    // Sidecar present but PowerShell could not read the version resource →
+    // fail open (a machine where PowerShell is blocked must still be able to
+    // update); only a READABLE contradiction is fatal.
+    sidecarFor(installerPath, '1.1.2');
+    await assert.doesNotReject(
+      assertWindowsInstallerBundleVersion(installerPath, async () => null),
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+});
+
+test('Windows NSIS install gates the installer version resource before spawning it', () => {
+  const source = read('src/main/libs/appUpdateInstaller.ts');
+  const install = source.slice(source.indexOf('async function installWindowsNsis'));
+  assert.match(
+    install,
+    /await assertWindowsInstallerBundleVersion\(exePath\);[\s\S]*?launchWindowsNsisInstaller\(exePath\)/,
+    'the version gate must run before the installer is spawned',
+  );
 });
 
 test('NSIS customCheckAppRunning closes IDBots and INSTDIR child processes safely and repairs broken shortcuts', () => {
