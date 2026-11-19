@@ -1,8 +1,11 @@
 // Studio chapter close flow (Phase 1 slice 2, owner ruling 方案 B): the
-// manual trigger end-to-end — preload channel → main handler → runner
+// close path end-to-end — preload channel → main handler → runner
 // closeSessionChapter (idle-time LLM card with deterministic fallback →
 // durable chapter row → native compactNow → next chapter → divider message)
-// → composer tool-row button. Pure-module behavior is unit-tested; the
+// → composer tool-row button is HIDDEN (owner ruling 2026-11-19): chapters close
+// automatically (budget / task boundary), and the plumbing stays because the
+// auto path and the frozen mobile contract ride the same channel.
+// Pure-module behavior is unit-tested; the
 // plumbing is pinned with static wiring checks (house style for this area).
 
 import test from 'node:test';
@@ -143,14 +146,16 @@ test('the IPC channel is plumbed end to end and allowlisted', () => {
   assert.ok(contractSource.includes('closeChapter'), 'the regenerated IPC contract includes the channel');
 });
 
-test('the Studio composer tool row carries the chapter close button with i18n in both languages', () => {
-  assert.ok(panelSource.includes('<StudioChapterCloseButton'), 'the button is mounted in the panel');
-  assert.ok(
-    panelSource.includes('disabled={isStreaming}'),
-    'the button disables while a turn is streaming',
-  );
-  const zhBlock = i18nSource.slice(i18nSource.indexOf('coworkManualCompact: \'手动压缩\''), i18nSource.indexOf('coworkManualCompact: \'手动压缩\'') + 300);
-  const enBlock = i18nSource.slice(i18nSource.indexOf("coworkManualCompact: 'Compact now'"), i18nSource.indexOf("coworkManualCompact: 'Compact now'") + 300);
+test('the manual chapter close button stays out of the composer tool row (owner ruling: chapters close automatically)', () => {
+  assert.ok(!panelSource.includes('<StudioChapterCloseButton'), 'the button is NOT mounted in the panel');
+  assert.ok(!panelSource.includes('StudioChapterCloseButton'), 'no dangling import or reference either');
+  // The divider chips still render the manual close reason (an explicit
+  // close can still arrive over the IPC/mobile path), so the i18n block
+  // keeps its keys in both languages.
+  const zhBlock = i18nSource.slice(i18nSource.indexOf('coworkManualCompact: \'手动压缩\''), i18nSource.indexOf('coworkManualCompact: \'手动压缩\'') + 500);
+  const enBlock = i18nSource.slice(i18nSource.indexOf("coworkManualCompact: 'Compact now'"), i18nSource.indexOf("coworkManualCompact: 'Compact now'") + 500);
   assert.ok(zhBlock.includes('studioChapterClose:'));
   assert.ok(enBlock.includes('studioChapterClose:'));
+  assert.ok(zhBlock.includes('studioChapterReasonManual:'));
+  assert.ok(enBlock.includes('studioChapterReasonManual:'));
 });

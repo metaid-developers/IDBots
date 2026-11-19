@@ -10,7 +10,6 @@ import { resolveLocalPathAgainstCwd, type LocalFilePathResolver } from '../../ut
 import { buildLocalPreviewUri } from './localPreviewUri';
 import { buildSessionComposerCommands } from '../../components/cowork/composerCommandCatalog';
 import FolderSelectorPopover from '../../components/cowork/FolderSelectorPopover';
-import StudioChapterCloseButton from './StudioChapterCloseButton';
 import type { MetaBotForSelector } from '../../components/cowork/MetaBotSelector';
 import ModelEffortPicker, { type ModelEffortValue } from '../../components/ModelEffortPicker';
 import {
@@ -1345,9 +1344,11 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           identity anymore. */}
       <div className="flex items-center justify-end gap-0.5 pb-1.5">
         <div className="flex shrink-0 items-center gap-0.5">
-          {currentSession && !currentSession.id.startsWith('optimistic-browser-') && (
-            <StudioChapterCloseButton sessionId={currentSession.id} disabled={isStreaming} />
-          )}
+          {/* Manual chapter close is gone from the composer (owner ruling
+              2026-11-19): chapters close automatically at the turn-end
+              evaluation (budget / task boundary), and a user-facing button
+              read as a required chore. The IPC channel stays for the system
+              path and the mobile contract. */}
           <ModelEffortPicker
             dropdownDirection="up"
             compact
