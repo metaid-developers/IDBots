@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('path');
-const { existsSync } = require('fs');
+const { existsSync, readdirSync } = require('fs');
 const { spawnSync } = require('child_process');
 const { ensurePortableGit } = require('./setup-mingit.js');
 const { readMacAppVersion } = require('./verify-release-artifact-version.cjs');
@@ -142,6 +142,71 @@ async function beforePack(context) {
   await ensurePortableGit({ required: true });
 }
 
+// Windows MAX_PATH guard (measured against the REAL packed tree).
+//
+// The per-user default install dir is C:\Users\<u>\AppData\Local\Programs\IDBots\
+// = 40 + len(username) chars, so an installed file's absolute path is
+// 40 + len(username) + <path relative to the unpacked app root>. NSIS cannot
+// extract paths beyond 260 chars, and a mid-install extraction failure means
+// a PARTIAL install (missing runtime files) — the "cannot install" class for
+// long/Chinese usernames. Measured 2026-11-19: the deepest packaged path
+// (a SKILLs doc file) sits at 256/260 for a 20-char username, so this gate
+// fails the build the moment the payload grows even slightly deeper.
+const WIN_MAX_PATH_LIMIT = 260;
+const WIN_DEEPEST_BUDGET_USERNAME = 20;
+const WIN_WARN_BUDGET_USERNAME = 30;
+
+function verifyWindowsInstallPathBudget(appOutDir) {
+  const deepest = { rel: '', len: 0 };
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.isFile()) {
+        const rel = path.relative(appOutDir, full);
+        if (rel.length > deepest.len) {
+          deepest.rel = rel;
+          deepest.len = rel.length;
+        }
+      }
+    }
+  };
+  walk(appOutDir);
+  if (!deepest.len) {
+    console.warn('[electron-builder-hooks] No packaged files found for the install-path budget check');
+    return;
+  }
+  const installedAt = (usernameLen) => 40 + usernameLen + deepest.len;
+  console.log(`[electron-builder-hooks] Deepest packaged path: ${deepest.len} chars (resources/…${deepest.rel.slice(-90)})`);
+  console.log(
+    `[electron-builder-hooks] Installed path budget: ${installedAt(WIN_DEEPEST_BUDGET_USERNAME)}/${WIN_MAX_PATH_LIMIT} `
+    + `for a ${WIN_DEEPEST_BUDGET_USERNAME}-char username, ${installedAt(WIN_WARN_BUDGET_USERNAME)} `
+    + `for ${WIN_WARN_BUDGET_USERNAME} (limit ${WIN_MAX_PATH_LIMIT})`,
+  );
+  if (installedAt(WIN_DEEPEST_BUDGET_USERNAME) > WIN_MAX_PATH_LIMIT) {
+    throw new Error(
+      `[electron-builder-hooks] Windows install-path overflow: the deepest packaged file reaches `
+      + `${installedAt(WIN_DEEPEST_BUDGET_USERNAME)} chars for a ${WIN_DEEPEST_BUDGET_USERNAME}-char username `
+      + `(NSIS limit ${WIN_MAX_PATH_LIMIT}): ${deepest.rel}. A long-username install would fail mid-extraction `
+      + '(partial install). Trim the payload or shorten the resource path before shipping.',
+    );
+  }
+  if (installedAt(WIN_WARN_BUDGET_USERNAME) > WIN_MAX_PATH_LIMIT) {
+    console.warn(
+      `[electron-builder-hooks] Windows install-path tight: a ${WIN_WARN_BUDGET_USERNAME}-char username would `
+      + `exceed ${WIN_MAX_PATH_LIMIT} chars (${installedAt(WIN_WARN_BUDGET_USERNAME)}). `
+      + 'Consider trimming deep SKILLs/runtime doc files.',
+    );
+  }
+}
+
 async function afterPack(context) {
   verifyPackagedRuntimes(context);
   console.log('[electron-builder-hooks] Nested packaged runtimes present in Resources');
@@ -153,6 +218,7 @@ async function afterPack(context) {
   }
 
   if (isWindowsTarget(context)) {
+    verifyWindowsInstallPathBudget(context.appOutDir);
     const bashPath = findPackagedBash(context.appOutDir);
     if (!bashPath) {
       throw new Error(
