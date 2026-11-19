@@ -23,7 +23,7 @@ import { runServerBootstrap, ServerBootstrapStore, type ServerBootstrapRun } fro
 import { createServerBootstrapFacts, createServerBootstrapStepExecutors } from './server/bootstrapSteps';
 import { SqliteStore } from './sqliteStore';
 import { isAllowedPaymentLaunchUrl } from './paymentLaunchUrl';
-import { registerIpcHandler } from './ipc/registry';
+import { isGatewayInvokeEvent, registerIpcHandler } from './ipc/registry';
 import { broadcastToRenderers } from './ipc/broadcast';
 import {
   listPendingPermissions,
@@ -17324,7 +17324,7 @@ if (!gotTheLock) {
     }
   });
 
-  registerIpcHandler('groupTask:close', async (_event, input: { taskId?: number; status?: string; reason?: string; rating?: number; ratingComment?: string }) => {
+  registerIpcHandler('groupTask:close', async (event, input: { taskId?: number; status?: string; reason?: string; rating?: number; ratingComment?: string }) => {
     try {
       const taskId = Number(input?.taskId);
       if (!Number.isInteger(taskId) || taskId <= 0) {
@@ -17350,8 +17350,13 @@ if (!gotTheLock) {
           reason: typeof input?.reason === 'string' ? input.reason : undefined,
           rating,
           ratingComment,
-          // The UI close action is the owner's — recorded on the status event.
-          actor: { kind: 'owner' },
+          // P0-a (#149): derive the status-event actor from the invoke
+          // discriminator (REQ-A-13) instead of assuming the caller — a
+          // gateway invoke (gateway.clientId) is the chair closing remotely,
+          // a renderer invoke (senderFrame) is the owner's UI action.
+          // Hardcoding 'owner' here used to record the chair's remote closes
+          // as owner acceptance while the UI showed the owner hint for both.
+          actor: isGatewayInvokeEvent(event) ? { kind: 'chair' } : { kind: 'owner' },
         }));
       broadcastGroupTaskEvent({ type: 'groupTask:statusChanged', taskId, status: task.status, at: Date.now() });
       return { success: true, task };
@@ -17360,18 +17365,22 @@ if (!gotTheLock) {
     }
   });
 
-  registerIpcHandler('groupTask:reopen', async (_event, input: { taskId?: number; reason?: string }) => {
+  registerIpcHandler('groupTask:reopen', async (event, input: { taskId?: number; reason?: string }) => {
     try {
       const taskId = Number(input?.taskId);
       if (!Number.isInteger(taskId) || taskId <= 0) {
         throw new Error('taskId is required');
       }
-      // P0-1: review -> executing 补充执行通道 (Back to work). Owner-only UI
-      // action; the chair reopens via the on-chain [STATUS:EXECUTING] tag.
+      // P0-1: review -> executing 补充执行通道 (Back to work). The chair
+      // normally reopens via the on-chain [STATUS:EXECUTING] tag, but the
+      // gateway allowlist exposes this channel too (all groupTask:* are P2),
+      // so the actor is derived from the invoke discriminator the same way as
+      // groupTask:close (P0-a #149) — renderer invoke = owner, gateway
+      // invoke = chair; never assumed.
       const task = await withSqliteRecovery('groupTask:reopen', () =>
         reopenGroupTask(taskId, {
           reason: typeof input?.reason === 'string' ? input.reason : undefined,
-          actor: { kind: 'owner' },
+          actor: isGatewayInvokeEvent(event) ? { kind: 'chair' } : { kind: 'owner' },
         }));
       broadcastGroupTaskEvent({ type: 'groupTask:statusChanged', taskId, status: task.status, at: Date.now() });
       return { success: true, task };

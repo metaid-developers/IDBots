@@ -21,6 +21,22 @@ export type RegisteredIpcHandler = (
   ...args: any[]
 ) => any;
 
+/**
+ * P0-a (#149): true when the invoke arrived over the gateway instead of a
+ * renderer. Discriminates on the frozen REQ-A-13 shape — a synthetic gateway
+ * event carries `gateway.clientId` with null sender/senderFrame, a renderer
+ * invoke has a real sender frame and no `gateway`. Handlers that record WHO
+ * acted must derive the status-event actor from this discriminator instead of
+ * assuming the caller: a gateway invoke is the chair acting remotely, a
+ * renderer invoke is the owner's UI action.
+ */
+export function isGatewayInvokeEvent(
+  event: IpcMainInvokeEvent | SyntheticGatewayInvokeEvent,
+): event is SyntheticGatewayInvokeEvent {
+  const candidate = event as Partial<SyntheticGatewayInvokeEvent>;
+  return typeof candidate.gateway?.clientId === 'string';
+}
+
 const handlers = new Map<string, RegisteredIpcHandler>();
 
 /**
