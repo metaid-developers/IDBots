@@ -10,6 +10,15 @@
 	request_body {
 		max_size 26MB
 	}
+	# Versioned, signed Android packages live outside the replaceable PWA bundles.
+	handle /downloads/* {
+		root * /srv/mobile-bundles
+		file_server
+		header Content-Type "application/vnd.android.package-archive"
+		header Content-Disposition "attachment"
+		header Cache-Control "public, max-age=31536000, immutable"
+	}
+
 	# Plan B tenant credit routes are server-to-server only and their responses
 	# carry single-use upstream redeem codes (a bearer value: first redeemer
 	# wins). They are reachable exclusively on the internal tenants network
