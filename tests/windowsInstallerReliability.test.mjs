@@ -54,6 +54,8 @@ const {
   launchWindowsNsisInstaller,
   assertWindowsInstallerBundleVersion,
   resolveDownloadMetaPath,
+  isTrustedUpdateInstallerPath,
+  isUpdaterDrivenShutdown,
 } = require('../dist-electron/main/libs/appUpdateInstaller.js');
 const {
   runVersionChangeBackupAsync,
@@ -325,4 +327,58 @@ test('asynchronous version backup preserves pre-upgrade bytes and marker semanti
       // Temp cleanup is best-effort, including on Windows CI.
     }
   }
+});
+
+// ── Win-compat P2 batch: reuse checksum, IPC path trust, shutdown budget, MAX_PATH ──
+
+test('the install IPC only accepts updater temp-dir artifacts, whatever the renderer sends', () => {
+  const temp = os.tmpdir();
+  assert.equal(isTrustedUpdateInstallerPath(path.join(temp, 'idbots-update-0123abcdef456789.exe'), temp), true);
+  assert.equal(isTrustedUpdateInstallerPath(path.join(temp, 'idbots-update-0123abcdef456789.dmg'), temp), true);
+  assert.equal(isTrustedUpdateInstallerPath(path.join(temp, 'evil.exe'), temp), false, 'wrong name');
+  assert.equal(isTrustedUpdateInstallerPath(path.join(temp, 'idbots-update-zzzz.exe'), temp), false, 'name is not 16 hex chars');
+  assert.equal(isTrustedUpdateInstallerPath(path.join(temp, 'sub', 'idbots-update-0123abcdef456789.exe'), temp), false, 'subdirectory rejected');
+  assert.equal(isTrustedUpdateInstallerPath(path.join(os.homedir(), 'elsewhere', 'idbots-update-0123abcdef456789.exe'), temp), false, 'another tree rejected');
+  assert.equal(isTrustedUpdateInstallerPath('', temp), false);
+  assert.equal(isTrustedUpdateInstallerPath(undefined, temp), false);
+});
+
+test('both install handlers gate the renderer-supplied path before executing it', () => {
+  const source = read('src/main/main.ts');
+  const install = source.slice(source.indexOf("registerIpcHandler('appUpdate:install'"));
+  const applySilent = source.slice(source.indexOf("registerIpcHandler('appUpdate:applySilent'"));
+  assert.match(install, /if \(!isTrustedUpdateInstallerPath\(filePath\)\)/);
+  assert.match(applySilent, /if \(!isTrustedUpdateInstallerPath\(filePath\)\)/);
+});
+
+test('an updater-driven quit extends the cleanup watchdog past the installer kill window', () => {
+  // The NSIS installer launches and the app quits in the same breath; the app
+  // side must know the quit is updater-driven (set in installWindowsNsis) or
+  // its 5s budget would lose the race it was extended for.
+  const source = read('src/main/libs/appUpdateInstaller.ts');
+  assert.match(source, /updaterDrivenShutdown = true;/);
+  assert.match(source, /app\.quit\(\)/);
+  const mainSource = read('src/main/main.ts');
+  assert.match(mainSource, /const UPDATE_CLEANUP_TIMEOUT_MS = 15_000;/);
+  assert.match(mainSource, /const cleanupTimeoutMs = \(\) => \(isUpdaterDrivenShutdown\(\) \? UPDATE_CLEANUP_TIMEOUT_MS : DESKTOP_CLEANUP_TIMEOUT_MS\);/);
+  assert.equal(isUpdaterDrivenShutdown(), false, 'flag starts false in a fresh module');
+});
+
+test('the NSIS grace loop waits ~30s for an updater-driven quit before force-killing', () => {
+  const source = read('scripts/nsis-installer.nsh');
+  assert.match(source, /\$R1 < 120/, '120 × 250ms = 30s for the isUpdated grace loop');
+  assert.match(source, /up to ~30s/);
+});
+
+test('the Windows package build fails on an install-path overflow', () => {
+  const source = read('scripts/electron-builder-hooks.cjs');
+  assert.match(source, /const WIN_MAX_PATH_LIMIT = 260;/);
+  assert.match(source, /function verifyWindowsInstallPathBudget\(appOutDir\)/);
+  assert.match(source, /verifyWindowsInstallPathBudget\(context\.appOutDir\)/, 'wired into afterPack for Windows targets');
+  assert.match(source, /installedAt\(WIN_DEEPEST_BUDGET_USERNAME\) > WIN_MAX_PATH_LIMIT/);
+});
+
+test('the python runtime re-sync survives Windows file-handle races with bounded retries', () => {
+  const source = read('src/main/libs/pythonRuntime.ts');
+  assert.match(source, /fs\.rmSync\(userRoot, \{[\s\S]*?maxRetries: process\.platform === 'win32' \? 5 : 0,[\s\S]*?retryDelay: process\.platform === 'win32' \? 200 : 0,/);
 });

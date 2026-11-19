@@ -413,6 +413,57 @@ test('11. completed download reused on next launch: zero network transfer', asyn
   assert.equal(events[0].percent, 1);
 });
 
+test('11b. reuse re-verifies the manifest checksum before trusting a completed file', async () => {
+  const url = makeUrl();
+  const total = 2200;
+  const id = stableIdFor(url, VERSION);
+  const body = payloadOf(total);
+  fs.writeFileSync(finalPathFor(id), body);
+  writeMeta(id, { url, totalSize: total, downloadedSize: total });
+
+  let fetchCalled = false;
+  fetchImpl = async () => {
+    fetchCalled = true;
+    throw new Error('must not fetch');
+  };
+
+  const { events, cb } = collectProgress();
+  const filePath = await installer.downloadUpdate(url, cb, {
+    version: VERSION,
+    expectedSha256: sha256Hex(body),
+  });
+  assert.equal(fetchCalled, false, 'a matching completed download still needs no network');
+  assert.equal(filePath, finalPathFor(id));
+  assert.equal(events[0].percent, 1);
+});
+
+test('11c. reuse with a stale checksum is rejected and the republished bad bytes discarded', async () => {
+  const url = makeUrl();
+  const total = 2200;
+  const id = stableIdFor(url, VERSION);
+  // Broken bytes under the same URL+version (the republished-artifact class):
+  // without the re-hash this file would be reused forever, checksum bypassed.
+  fs.writeFileSync(finalPathFor(id), payloadOf(total, { seed: 9 }));
+  writeMeta(id, { url, totalSize: total, downloadedSize: total });
+
+  let fetchCalled = false;
+  fetchImpl = async () => {
+    fetchCalled = true;
+    throw new Error('must not fetch');
+  };
+
+  await assert.rejects(
+    installer.downloadUpdate(url, () => {}, {
+      version: VERSION,
+      expectedSha256: sha256Hex(payloadOf(total)),
+    }),
+    /Reused download checksum mismatch/,
+  );
+  assert.equal(fs.existsSync(finalPathFor(id)), false, 'bad bytes are not kept forever');
+  assert.equal(fs.existsSync(metaPathFor(id)), false, 'sidecar discarded so the next attempt starts fresh');
+  assert.equal(fetchCalled, false);
+});
+
 test('12. stale artifacts cleaned, recent and in-flight files kept', async () => {
   const old = Date.now() - 8 * 24 * 60 * 60 * 1000; // 8 days
   const artifacts = [

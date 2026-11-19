@@ -535,6 +535,19 @@ export async function downloadUpdate(
     if (meta && metaMatches(meta) && meta.totalSize !== undefined && meta.downloadedSize === meta.totalSize) {
       const finalStat = await fs.promises.stat(finalPath).catch(() => null);
       if (finalStat && finalStat.size === meta.totalSize && finalStat.size > 0) {
+        // The completed file may predate this manifest, so its bytes were
+        // never seen by this run's checksum. Re-hash before trusting it: a
+        // broken artifact republished under the same URL+version would
+        // otherwise be reused forever with verification silently bypassed.
+        if (options.expectedSha256) {
+          const actual = await hashFile(finalPath, 'sha256');
+          if (actual !== options.expectedSha256) {
+            await fs.promises.unlink(finalPath).catch(() => {});
+            await fs.promises.unlink(metaPath).catch(() => {});
+            throw new Error(`Reused download checksum mismatch: expected ${options.expectedSha256}, got ${actual}`);
+          }
+          console.log('[AppUpdate] Reused download checksum verified (sha256)');
+        }
         console.log(`[AppUpdate] Reusing previously completed download: ${finalPath}`);
         onProgress({ received: meta.totalSize, total: meta.totalSize, percent: 1, speed: undefined });
         return finalPath;
@@ -975,6 +988,36 @@ export async function applyMacUpdateSilently(dmgPath: string): Promise<void> {
   }
 }
 
+/**
+ * The install/apply IPC handlers accept a path from the renderer and EXECUTE
+ * it (NSIS spawn, hdiutil mount + bundle copy), so a compromised renderer
+ * must not be able to point them at an arbitrary local binary. Accept only
+ * the updater's own stable-named artifacts inside the OS temp dir — the same
+ * naming `downloadUpdate` produces (`idbots-update-<16 hex>.exe|.dmg`).
+ */
+export function isTrustedUpdateInstallerPath(filePath: string, tempDir: string = app.getPath('temp')): boolean {
+  if (typeof filePath !== 'string' || filePath.length === 0) return false;
+  if (!/^idbots-update-[0-9a-f]{16}\.(exe|dmg)$/.test(path.basename(filePath))) return false;
+  const normalize = (value: string) => (process.platform === 'win32' ? value.toLowerCase() : value);
+  try {
+    return normalize(path.resolve(path.dirname(filePath))) === normalize(path.resolve(tempDir));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True once the updater has spawned the installer and asked the app to quit.
+ * The NSIS installer force-kills stragglers after its grace loop, so main
+ * extends its cleanup watchdog on this shutdown — a large sql.js save (full
+ * db.export + atomic rename) or the session-log flush must finish before the
+ * kill lands. Exported as a function so a test can pin the wiring.
+ */
+let updaterDrivenShutdown = false;
+export function isUpdaterDrivenShutdown(): boolean {
+  return updaterDrivenShutdown;
+}
+
 export function launchWindowsNsisInstaller(
   exePath: string,
   spawnImpl: typeof spawn = spawn,
@@ -1008,5 +1051,6 @@ async function installWindowsNsis(exePath: string): Promise<void> {
 
   const installerPid = await launchWindowsNsisInstaller(exePath);
   console.log(`[AppUpdate] Installer PID: ${installerPid}, calling app.quit()`);
+  updaterDrivenShutdown = true;
   app.quit();
 }
