@@ -51,10 +51,10 @@ test('Android has API 26 and explicit staging and production variants', () => {
   assert.match(backPlugin, /getBridge\(\)\.getActivity\(\)\.finish\(\)/);
 });
 
-test('production startup uses declarative config, safe lifecycle, version 0.1.2, and branded launcher assets', () => {
+test('production startup uses declarative config, safe lifecycle, version 0.1.3, and branded launcher assets', () => {
   const build = read('../android/app/build.gradle');
-  assert.match(build, /versionCode 4/);
-  assert.match(build, /versionName "0\.1\.2"/);
+  assert.match(build, /versionCode 5/);
+  assert.match(build, /versionName "0\.1\.3"/);
   const bootstrap = read('../android/app/src/main/java/com/idbots/world/NativeBootstrap.java');
   assert.doesNotMatch(bootstrap, /readAllBytes\s*\(/);
   assert.match(bootstrap, /ByteArrayOutputStream/);
