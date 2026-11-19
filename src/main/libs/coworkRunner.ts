@@ -12564,12 +12564,15 @@ export class CoworkRunner extends EventEmitter {
       promptImagesPromise.catch(() => undefined);
       await this.syncDshSkillSessionEnv(dshSessionId, sessionId, cwd);
       const hostToolsBuilt = this.buildDshHostTools(sessionId, prompt)
+      const hostToolsForTurn = this.isMobileOwnerChatSession(sessionId)
+        ? hostToolsBuilt.filter((tool) => isMobileToolVisible(tool.name, this.mobileToolExpansions.get(sessionId) ?? []))
+        : hostToolsBuilt
       // Hand-off boundary #1 (registry + pre-warm): a single tool whose
       // parameters are not a top-level object schema rejects the WHOLE
       // provider request ("tools.77.function.parameters must be a JSON Schema
       // of type object"). Coerce and name what was repaired — the tool name is
       // the only useful fingerprint when this recurs.
-      const hostToolsGuard = guardHostToolSchemas(hostToolsBuilt)
+      const hostToolsGuard = guardHostToolSchemas(hostToolsForTurn)
       if (hostToolsGuard.coerced.length > 0) {
         coworkLog('WARN', 'runDshSessionLocal', formatHostToolSchemaGuardWarning(hostToolsGuard.coerced))
       }
