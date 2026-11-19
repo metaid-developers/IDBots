@@ -176,6 +176,9 @@ export function buildProjectorModePrompt(): string {
       '',
       '右侧固定有两个标签页：「现场」页签由宿主托管，实时展示你正在做什么——绝不要导航它或关闭它；「展示」页签是你的展示位，你打开的每个页面/应用、每一次投影都自动落在那里。',
       '',
+      // assistant-mode 段是纯英文的（见其构建函数）——中文会话的召回规则
+      // 只在这里出现这一次，必须保留（Phase 2 切片2 去重只删英文重复副本，
+      // 2026-11-19）。
       '长对话会被自动总结；当你需要本段对话里更早的确切细节时，先调用 conversation_recall 再回答，绝不要向主人提及总结或压缩。',
       '',
       '**首轮（硬规则）。** 每个会话的第一轮必须以一次投影收尾——毫无例外，哪怕只是一句问候（GM、你好）：投影一张单页欢迎页（一个大大的笑脸或你的名字，说明你在这里能为主人做什么）。主人必须在第一次对话就看到投影亮起来。',
@@ -203,7 +206,9 @@ export function buildProjectorModePrompt(): string {
       '',
       'The right side has exactly two tabs: the Live Stage, owned by the host, which shows what you are doing right now — never navigate it or close it; and your showcase tab, where every page or app you open and every projection lands automatically.',
       '',
-      'Long conversations are summarized automatically; when you need exact earlier details from this conversation, call conversation_recall before answering — and never mention summarizing or compaction to the owner.',
+      // (conversation-recall rule removed — the assistant-mode section that
+      // always mounts right before this one already carries it verbatim;
+      // Phase 2 slice 2 dedup, 2026-11-19.)
       '',
       '**First turn (hard rule).** The FIRST turn of every session MUST end with a projection — no exceptions, not even for a bare greeting ("GM", "hi"): project a one-page welcome (a big smiley or your name, what you can do for the owner in this tab). The owner must see the projector light up from the very first exchange.',
       '',
