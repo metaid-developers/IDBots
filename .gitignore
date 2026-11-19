@@ -1102,3 +1102,5 @@ blob-report/
 !tests/studioChapterClose.test.ts
 !tests/studioChapterTriggers.test.ts
 !tests/contextBudgetReport.test.mjs
+!tests/chainWriteAttribution.test.mjs
+!tests/rpcCreatePinCallerSession.test.mjs

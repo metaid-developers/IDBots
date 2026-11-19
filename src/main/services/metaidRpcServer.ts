@@ -105,6 +105,14 @@ import { executeMrc20Transfer } from './mrc20Service';
 import { buildMetaappHomepage } from './metabotHomepage';
 import { METAAPP_PIN_ID_PATTERN } from './metaAppProtocol';
 import { readRpcJsonObjectBody } from './rpcJsonObjectBody';
+import {
+  buildRpcCreatePinOrigin,
+  classifyCallerSession,
+  isStrictCallerSessionEnabled,
+  lookupCoworkSessionMetabotId,
+  normalizeCallerSessionId,
+  shouldRejectCallerSession,
+} from './chainWriteAttribution';
 import type {
   BotBrowserTabAction,
   BotBrowserTabCommand,
@@ -3005,7 +3013,13 @@ export function startMetaidRpcServer(
       return;
     }
 
-    let payload: { metabot_id: number; metaidData: MetaidDataPayload; network?: string; fee_rate?: number };
+    let payload: {
+      metabot_id: number;
+      metaidData: MetaidDataPayload;
+      network?: string;
+      fee_rate?: number;
+      caller_session_id?: unknown;
+    };
     try {
       payload = JSON.parse(body);
     } catch {
@@ -3024,6 +3038,31 @@ export function startMetaidRpcServer(
       res.end(
         JSON.stringify({ success: false, error: 'metabot_id and metaidData required' })
       );
+      return;
+    }
+
+    // Caller attribution (G1/G2): `caller_session_id` is an optional
+    // declaration. Cross-check it against cowork_sessions.metabot_id and
+    // encode the verdict into the ledger origin. Default: record only.
+    // Strict mode (IDBOTS_RPC_STRICT_CALLER_SESSION): a mismatch is refused
+    // before any wallet work with 409. Unknown sessions stay recorded —
+    // "does not exist" is itself a baseline signal (G2), not an auth failure.
+    const callerSessionId = normalizeCallerSessionId(payload.caller_session_id);
+    const callerSessionMatch = callerSessionId
+      ? classifyCallerSession(
+          lookupCoworkSessionMetabotId(getStore().getDatabase(), callerSessionId),
+          metabot_id,
+        )
+      : undefined;
+    if (shouldRejectCallerSession(callerSessionMatch, isStrictCallerSessionEnabled())) {
+      res.writeHead(409);
+      res.end(JSON.stringify({
+        success: false,
+        error: 'caller_session_id does not belong to metabot_id',
+        code: 'CALLER_SESSION_MISMATCH',
+        caller_session_id: callerSessionId,
+        metabot_id,
+      }));
       return;
     }
 
@@ -3049,7 +3088,7 @@ export function startMetaidRpcServer(
       const result = await createPin(store, metabot_id, metaidData as MetaidDataPayload, {
         network: network as 'mvc' | 'doge' | 'btc',
         feeRate,
-        origin: 'rpc',
+        origin: buildRpcCreatePinOrigin(callerSessionId, callerSessionMatch),
       });
       res.writeHead(200);
       const txid = result.txids[0];
