@@ -147,6 +147,24 @@ jobs:
       - name: Run Windows installer reliability tests
         run: node --test tests/windowsInstallerReliability.test.mjs
 
+      # Grammar gate for scripts/nsis-installer.nsh: the regex test above
+      # pins source shapes but cannot see NSIS grammar (unknown $vars expand
+      # silently, labels only fail at compile). Compile the syntax harness
+      # under -WX, both shapes, BEFORE packaging so a makensis-level break
+      # surfaces here instead of inside the first real signing run. NSIS is
+      # installed on demand: the electron-builder cache is empty on a cold
+      # runner.
+      - name: Compile the NSIS syntax harness (makensis -WX)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $cached = Get-ChildItem "$env:LOCALAPPDATA\electron-builder\Cache\nsis" -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue) -and -not ($cached -and (Test-Path (Join-Path $cached.FullName 'makensis.exe')))) {
+            choco install nsis -y --no-progress
+          }
+          node scripts/verify-nsis-harness.mjs --require-makensis
+
       - name: Run LLM-safe text tests
         run: node --test tests/llmSafeText.test.mjs
 

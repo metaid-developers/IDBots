@@ -22,6 +22,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "check:cross-platform-paths": "node scripts/check-cross-platform-paths.js",
     "check:dsh-deps": "node scripts/check-dsh-runtime-deps.cjs",
+    "check:nsis-harness": "node scripts/verify-nsis-harness.mjs",
     "check:twemoji-bundle": "node scripts/verify-twemoji-bundle.mjs",
     "check:dist-electron": "node scripts/verify-dist-electron.mjs",
     "check:chain-coverage": "node scripts/test-chain-coverage.mjs --check",

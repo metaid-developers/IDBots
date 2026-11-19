@@ -43,9 +43,14 @@ Unicode true
   Page custom StartApp
 !macroend
 
-!macro WinShell::SetLnkAUMI shortcut appId
-  DetailPrint "SetLnkAUMI ${shortcut} ${appId}"
-!macroend
+; WinShell::SetLnkAUMI in nsis-installer.nsh is a PLUGIN call (an NSIS
+; `Name::Call` token always resolves as a plugin — a same-named define or
+; macro is never reached) and the harness NSIS distributions (brew / choco)
+; do not carry the WinShell.dll that electron-builder's NSIS bundle ships.
+; The harness therefore compiles with IDBOTS_NSIS_SYNTAX_HARNESS defined,
+; which gates exactly those three fixed-string plugin one-liners inside
+; customInstall. Every other line of the production macros still compiles
+; here under -WX.
 
 LangString appRunning 0 "IDBots is running."
 LangString appCannotBeClosed 0 "IDBots cannot be closed."
