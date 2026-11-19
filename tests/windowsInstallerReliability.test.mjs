@@ -382,3 +382,45 @@ test('the python runtime re-sync survives Windows file-handle races with bounded
   const source = read('src/main/libs/pythonRuntime.ts');
   assert.match(source, /fs\.rmSync\(userRoot, \{[\s\S]*?maxRetries: process\.platform === 'win32' \? 5 : 0,[\s\S]*?retryDelay: process\.platform === 'win32' \? 200 : 0,/);
 });
+
+// ── Update-wizard scope skip + auto-launch retarget (#5) ──
+
+const { shouldRetargetAutoLaunch } = require('../dist-electron/main/autoLaunchManager.js');
+
+test('auto-launch retargets only when the path moved and the user still wants it', () => {
+  assert.equal(
+    shouldRetargetAutoLaunch({ lastRegisteredExePath: 'C:\\App\\old\\IDBots.exe', currentExePath: 'C:\\App\\new\\IDBots.exe', autoLaunchEnabled: true }),
+    true,
+    'moved install with auto-launch on → re-register',
+  );
+  assert.equal(
+    shouldRetargetAutoLaunch({ lastRegisteredExePath: 'C:\\App\\old\\IDBots.exe', currentExePath: 'C:\\App\\new\\IDBots.exe', autoLaunchEnabled: false }),
+    false,
+    'user opted out → never forced back on',
+  );
+  assert.equal(
+    shouldRetargetAutoLaunch({ lastRegisteredExePath: 'C:\\App\\IDBots.exe', currentExePath: 'C:\\App\\IDBots.exe', autoLaunchEnabled: true }),
+    false,
+    'same path → nothing to do',
+  );
+  assert.equal(
+    shouldRetargetAutoLaunch({ lastRegisteredExePath: undefined, currentExePath: 'C:\\App\\IDBots.exe', autoLaunchEnabled: true }),
+    false,
+    'first run registers separately, no retarget',
+  );
+});
+
+test('an update skips the install-mode page by forcing the previous install scope', () => {
+  const source = read('scripts/nsis-installer.nsh');
+  assert.match(source, /!macro customInstallMode/, 'electron-builder hook that runs inside the page pre function');
+  assert.match(source, /\$\{If\} \$IdbotsPrevUserDir != ""[\s\S]*?StrCpy \$isForceCurrentInstall "1"/, 'per-user history → force per-user, page aborts');
+  assert.match(source, /\$\{ElseIf\} \$IdbotsPrevMachineDir != ""[\s\S]*?StrCpy \$isForceMachineInstall "1"/, 'per-machine history → force per-machine');
+  assert.match(source, /\$\{If\} \$\{isUpdated\}/, 'a fresh install keeps the interactive page');
+});
+
+test('the app re-registers auto-launch when the exe path moved since last boot', () => {
+  const source = read('src/main/main.ts');
+  assert.match(source, /shouldRetargetAutoLaunch\(\{/);
+  assert.match(source, /'auto_launch_last_exe'/);
+  assert.match(source, /Re-registered auto-launch for the moved install/);
+});

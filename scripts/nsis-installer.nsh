@@ -212,6 +212,24 @@
 _idbots_data_check_done:
 !macroend
 
+; electron-builder's install-mode page (per-user vs per-machine) has no
+; skipPageIfUpdated, so every "auto" update asked the user a question whose
+; answer could fork a second install into a different directory. This hook
+; runs inside the page's pre function: force the previous install's scope and
+; electron-builder aborts the page itself. customInit snapshotted the
+; pre-upgrade registry values into $IdbotsPrevUserDir/$IdbotsPrevMachineDir
+; BEFORE registryAddInstallInfo touched them, so they are authoritative here.
+; A fresh install (both snapshots empty) keeps the interactive page.
+!macro customInstallMode
+  ${If} ${isUpdated}
+    ${If} $IdbotsPrevUserDir != ""
+      StrCpy $isForceCurrentInstall "1"
+    ${ElseIf} $IdbotsPrevMachineDir != ""
+      StrCpy $isForceMachineInstall "1"
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 !macro customInstall
   ; electron-builder preserves shortcuts on upgrade and therefore does not
   ; recreate one the user previously deleted. Restore only a missing link;
