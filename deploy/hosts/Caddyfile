@@ -10,13 +10,34 @@
 	request_body {
 		max_size 26MB
 	}
-	# Legal pages (terms/privacy/custody/support) are plain static HTML kept
-	# out of the replaceable PWA bundles; sources live in deploy/legal/.
-	handle /terms /privacy /custody /support {
-		root * /srv/legal
-		try_files {path} {path}.html
+	# Legal pages (terms/privacy/custody/support, legacy /disclosure alias)
+	# are plain static HTML kept out of the replaceable PWA bundles; sources
+	# live in deploy/legal/ and deploy to /srv/idbots-legal on the host.
+	# Filename mapping mirrors the deployed host Caddyfile (2026-11-21).
+	handle /terms {
+		root * /srv/idbots-legal
+		rewrite * /terms.html
 		file_server
-		header Cache-Control "public, max-age=3600"
+	}
+	handle /privacy {
+		root * /srv/idbots-legal
+		rewrite * /privacy.html
+		file_server
+	}
+	handle /custody {
+		root * /srv/idbots-legal
+		rewrite * /custody.html
+		file_server
+	}
+	handle /support {
+		root * /srv/idbots-legal
+		rewrite * /support.html
+		file_server
+	}
+	handle /disclosure {
+		root * /srv/idbots-legal
+		rewrite * /custody.html
+		file_server
 	}
 	# Versioned, signed Android packages live outside the replaceable PWA bundles.
 	handle /downloads/* {
