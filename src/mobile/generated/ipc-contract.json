@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.0.0",
-  "allowlistVersion": "1.1.0",
+  "allowlistVersion": "1.2.0",
   "source": "src/main/preload.ts",
   "methods": [
     {

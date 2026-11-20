@@ -6,7 +6,8 @@ export type MobileAppRoute =
   | { kind: 'notification'; eventId: string }
   | { kind: 'session'; sessionId: string }
   | { kind: 'task'; taskId: string }
-  | { kind: 'scheduled_run'; taskId: string; runId: string };
+  | { kind: 'scheduled_run'; taskId: string; runId: string }
+  | { kind: 'bot_automation'; metabotId: number; section: 'surf' | 'daily_report'; runId?: string };
 
 function segment(value: string): string {
   return encodeURIComponent(value);
@@ -28,10 +29,15 @@ export function notificationCenterPath(eventId?: string): string {
 export function notificationTargetPath(target: AgentNotificationTarget): string {
   if (target.kind === 'session') return `/app/sessions/${segment(target.sessionId)}`;
   if (target.kind === 'task') return `/app/tasks/${segment(target.taskId)}`;
+  if (target.kind === 'bot_automation') {
+    const params = new URLSearchParams({ section: target.section });
+    if (target.runId) params.set('runId', target.runId);
+    return `/app/bots/${segment(String(target.metabotId))}/automation?${params.toString()}`;
+  }
   return `/app/scheduled/${segment(target.taskId)}/runs/${segment(target.runId)}`;
 }
 
-export function parseMobileAppRoute(pathname: string): MobileAppRoute {
+export function parseMobileAppRoute(pathname: string, search = ''): MobileAppRoute {
   const parts = pathname.replace(/\/+$/, '').split('/').filter(Boolean);
   if (parts.length === 1 && parts[0] === 'app') return { kind: 'root' };
   if (parts[0] !== 'app') return { kind: 'root' };
@@ -47,6 +53,20 @@ export function parseMobileAppRoute(pathname: string): MobileAppRoute {
   if (parts.length === 3 && parts[1] === 'tasks') {
     const taskId = decoded(parts[2]!);
     return taskId ? { kind: 'task', taskId } : { kind: 'root' };
+  }
+  if (parts.length === 4 && parts[1] === 'bots' && parts[3] === 'automation') {
+    const metabotId = Number(parts[2]);
+    if (Number.isInteger(metabotId) && metabotId > 0) {
+      const params = new URLSearchParams(search);
+      const rawRunId = params.get('runId');
+      const runId = rawRunId ? decoded(rawRunId) : null;
+      return {
+        kind: 'bot_automation',
+        metabotId,
+        section: params.get('section') === 'daily_report' ? 'daily_report' : 'surf',
+        ...(runId ? { runId } : {}),
+      };
+    }
   }
   if (parts.length === 5 && parts[1] === 'scheduled' && parts[3] === 'runs') {
     const taskId = decoded(parts[2]!);

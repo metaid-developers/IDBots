@@ -64,7 +64,7 @@ function TabFallback(): JSX.Element {
 }
 
 export default function MobileApp(): JSX.Element {
-  const initialRouteRef = useRef<MobileAppRoute>(parseMobileAppRoute(window.location.pathname));
+  const initialRouteRef = useRef<MobileAppRoute>(parseMobileAppRoute(window.location.pathname, window.location.search));
   const [tab, setTab] = useState<MobileTab>(readActiveTab);
   const [purchase, setPurchase] = useState<{
     section: PurchaseSection;
@@ -78,6 +78,12 @@ export default function MobileApp(): JSX.Element {
   const [browserRequest, setBrowserRequest] = useState<MobileBrowserRequest | null>(null);
   const [taskAttentionCount, setTaskAttentionCount] = useState(0);
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(initialRouteRef.current.kind === 'notifications');
+  const [automationRequest, setAutomationRequest] = useState<{
+    metabotId: number;
+    section: 'surf' | 'daily_report';
+    runId?: string;
+    nonce: number;
+  } | null>(null);
   const [taskDeepLink, setTaskDeepLink] = useState<string | undefined>(
     initialRouteRef.current.kind === 'task' ? initialRouteRef.current.taskId : undefined,
   );
@@ -89,6 +95,7 @@ export default function MobileApp(): JSX.Element {
 
   const selectTab = useCallback((next: MobileTab) => {
     if (next === 'browser') setBrowserVisited(true);
+    setAutomationRequest(null);
     setNotificationCenterOpen(false);
     window.history.replaceState({}, '', '/app/');
     setTab(next);
@@ -191,7 +198,19 @@ export default function MobileApp(): JSX.Element {
     tab === 'chat' && !notificationCenterOpen && (typeof document === 'undefined' || document.visibilityState === 'visible'),
   );
 
+  const openBotAutomation = useCallback((target: Extract<AgentNotificationTarget, { kind: 'bot_automation' }>): boolean => {
+    setAutomationRequest((current) => ({
+      metabotId: target.metabotId,
+      section: target.section,
+      ...(target.runId ? { runId: target.runId } : {}),
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
+    setTab('me');
+    return true;
+  }, []);
+
   const openNotificationTarget = useCallback(async (target: AgentNotificationTarget): Promise<boolean> => {
+    if (target.kind === 'bot_automation') return openBotAutomation(target);
     if (target.kind === 'session') return openWorkSession(target.sessionId);
     if (target.kind === 'task') {
       setTaskDeepLink(target.taskId);
@@ -201,7 +220,7 @@ export default function MobileApp(): JSX.Element {
     setScheduledDeepLink({ taskId: target.taskId, runId: target.runId });
     setTab('tasks');
     return true;
-  }, [openWorkSession]);
+  }, [openBotAutomation, openWorkSession]);
 
   const openNotification = useCallback(async (item: AgentNotification): Promise<boolean> => {
     if (item.readAt === null) await getMobileElectron().notification.markRead([item.eventId]);
@@ -231,6 +250,10 @@ export default function MobileApp(): JSX.Element {
       return;
     }
     setNotificationCenterOpen(false);
+    if (route.kind === 'bot_automation') {
+      openBotAutomation(route);
+      return;
+    }
     if (route.kind === 'session') {
       setTab('chat');
       await openWorkSession(route.sessionId);
@@ -243,7 +266,7 @@ export default function MobileApp(): JSX.Element {
     }
     setScheduledDeepLink({ taskId: route.taskId, runId: route.runId });
     setTab('tasks');
-  }, [openNotification, openWorkSession]);
+  }, [openBotAutomation, openNotification, openWorkSession]);
 
   const pendingNativeEventRef = useRef<string | null>(null);
   useEffect(() => getNativeAdapter().onPushNotificationOpen((eventId) => {
@@ -270,7 +293,7 @@ export default function MobileApp(): JSX.Element {
   }, [handleRoute, chat.isReady]);
 
   useEffect(() => {
-    const onPopState = () => void handleRoute(parseMobileAppRoute(window.location.pathname));
+    const onPopState = () => void handleRoute(parseMobileAppRoute(window.location.pathname, window.location.search));
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, [handleRoute]);
@@ -380,6 +403,8 @@ export default function MobileApp(): JSX.Element {
                   usageSignal={usageSignal}
                   notificationUnreadCount={notificationUnreadCount}
                   onOpenNotification={openNotification}
+                  onOpenWorkSession={openWorkSession}
+                  automationRequest={automationRequest}
                 />
               </Suspense>
             ) : null}

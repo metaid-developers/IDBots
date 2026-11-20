@@ -142,6 +142,27 @@ test('scheduled terminal mapping ignores running/skipped and preserves run targe
   assert.equal(store.get('scheduled:run-2').priority, 'high');
 });
 
+test('daily-report and Surf outcomes map to stable authoritative targets', (t) => {
+  const { store } = setup(t);
+  const service = new NotificationService(store, () => {});
+  assert.equal(service.recordDailyReport({ runId: '42', metabotId: 7, sessionId: 'report-session', outcome: 'completed', language: 'en' }), true);
+  assert.equal(service.recordDailyReport({ runId: '43', metabotId: 7, sessionId: null, outcome: 'failed', language: 'en' }), true);
+  assert.equal(service.recordSurfRun({ runId: 'surf-1', metabotId: 9, botName: 'Researcher', outcome: 'done', language: 'en' }), true);
+  assert.equal(service.recordSurfRun({ runId: 'surf-1', metabotId: 9, botName: 'Researcher', outcome: 'done', language: 'en' }), false);
+  assert.equal(store.get('daily_report:42').target.kind, 'session');
+  assert.equal(store.get('daily_report:42').target.sessionId, 'report-session');
+  assert.deepEqual(store.get('daily_report:43').target, { kind: 'bot_automation', metabotId: 7, section: 'daily_report', runId: '43' });
+  assert.deepEqual(store.get('surf:surf-1').target, { kind: 'bot_automation', metabotId: 9, section: 'surf', runId: 'surf-1' });
+  assert.equal(store.getUnreadCount('report'), 3);
+  assert.equal(service.recordLongTermTask({ taskId: 'task-1', subtaskId: 'sub-1', reason: 'proposed', title: 'Launch plan', metabotId: 7, sessionId: 'session-1', outcome: 'waiting_owner', language: 'en' }), true);
+  assert.equal(service.recordLongTermTask({ taskId: 'task-1', subtaskId: 'sub-1', reason: 'accepted', title: 'Launch plan', metabotId: 7, sessionId: 'session-1', outcome: 'completed', language: 'en' }), true);
+  assert.equal(service.recordLongTermTask({ taskId: 'task-1', subtaskId: 'sub-1', reason: 'rejected', title: 'Launch plan', metabotId: 7, sessionId: 'session-1', outcome: 'failed', language: 'en' }), true);
+  assert.equal(store.get('longterm:task-1:sub-1:proposed').category, 'action');
+  assert.equal(store.get('longterm:task-1:sub-1:proposed').priority, 'high');
+  assert.deepEqual(store.get('longterm:task-1:sub-1:accepted').target, { kind: 'task', taskId: 'task-1' });
+  assert.equal(store.get('longterm:task-1:sub-1:rejected').priority, 'high');
+});
+
 test('permission request resolution marks the unread event read and emits one change', (t) => {
   const { store } = setup(t);
   const changed = [];

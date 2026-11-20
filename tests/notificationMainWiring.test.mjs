@@ -22,6 +22,19 @@ test('scheduler exposes and invokes a best-effort terminal hook', () => {
   assert.match(main, /onRunTerminal: \(task, run\) =>/);
 });
 
+test('daily-report and Surf terminal outcomes feed the same notification service', () => {
+  assert.match(main, /onResult: \(result\) => \{/);
+  assert.match(main, /recordDailyReport\(\{/);
+  assert.match(main, /recordSurfRun\(\{/);
+  assert.match(main, /payload\.status !== 'running'/);
+});
+
+test('long-term task transitions notify only owner-relevant outcomes', () => {
+  assert.match(main, /recordLongTermTask\(\{/);
+  assert.match(main, /detailForFocus\.stage === 'done'/);
+  assert.match(main, /change\.status === 'rejected'/);
+});
+
 test('notification IPC and change event are P1 through CR-WSE-002', () => {
   for (const channel of ['list', 'get', 'getUnreadCount', 'markRead', 'markAllRead']) {
     assert.match(allowlist, new RegExp(`'notification:${channel}': \\{ tier: 'P1'`));

@@ -57,6 +57,7 @@ import type {
   ScheduledTaskRun,
 } from './types';
 import type { AgentNotification } from '@/types/notification';
+import type { MetawebSurfRunInfo } from '@/types/metawebSurf';
 import { selectFileOnPhone, type PhoneFileSelectionOptions } from './installShim';
 import { uploadFile, type UploadTransport } from './upload';
 import { getMockArtifact, MOCK_ARTIFACT_PATHS } from './mockArtifacts';
@@ -1621,6 +1622,40 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     },
   ];
   let metabotSeq = 2;
+  const automationSettings = new Map<number, Map<string, string>>();
+  const readAutomationLocal = <T,>(key: string, fallback: T): T => {
+    if (typeof window === 'undefined') return fallback;
+    try {
+      const raw = window.localStorage.getItem(key);
+      return raw ? JSON.parse(raw) as T : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+  const writeAutomationLocal = (key: string, value: unknown): void => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      // Storage failures do not affect the in-memory mock.
+    }
+  };
+  const storedAutomationSettings = readAutomationLocal<Record<string, Record<string, string>>>('idbots.mobile.automationSettings.v1', {});
+  for (const [id, values] of Object.entries(storedAutomationSettings)) {
+    automationSettings.set(Number(id), new Map(Object.entries(values)));
+  }
+  const storedBotEnabled = readAutomationLocal<Record<string, boolean>>('idbots.mobile.botEnabled.v1', {});
+  for (const bot of metabotFixtures) {
+    if (typeof storedBotEnabled[String(bot.id)] === 'boolean') bot.enabled = storedBotEnabled[String(bot.id)];
+  }
+  const persistAutomationSettings = () => {
+    writeAutomationLocal('idbots.mobile.automationSettings.v1', Object.fromEntries(
+      [...automationSettings].map(([id, values]) => [id, Object.fromEntries(values)]),
+    ));
+  };
+  const persistBotEnabled = () => {
+    writeAutomationLocal('idbots.mobile.botEnabled.v1', Object.fromEntries(metabotFixtures.map((bot) => [bot.id, bot.enabled])));
+  };
 
   const metabotImpl: Record<string, unknown> = {
     list: () =>
@@ -1699,7 +1734,10 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
           if (input.a2a_auto_reply_enabled !== undefined) bot.a2a_auto_reply_enabled = input.a2a_auto_reply_enabled;
           if (input.a2a_max_incoming_turns !== undefined) bot.a2a_max_incoming_turns = input.a2a_max_incoming_turns;
           if (input.a2a_bye_cooldown_ms !== undefined) bot.a2a_bye_cooldown_ms = input.a2a_bye_cooldown_ms;
-          if (typeof input.enabled === 'boolean') bot.enabled = input.enabled;
+          if (typeof input.enabled === 'boolean') {
+            bot.enabled = input.enabled;
+            persistBotEnabled();
+          }
         }
         bot.metabot_info_pinid = bot.metabot_info_pinid ?? `mock-info-${bot.id}`;
         bot.chain_sync_state = 'synced';
@@ -1713,7 +1751,19 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
         if (!bot) return { success: false, error: 'metabot not found' };
         bot.enabled = Boolean(enabled);
         bot.updated_at = now();
+        persistBotEnabled();
         return { success: true, metabot: { ...bot } };
+      }),
+    getSetting: (metabotId: number, key: string) =>
+      guardOnline(async () => ({ success: true, value: automationSettings.get(metabotId)?.get(key) ?? null })),
+    setSetting: (metabotId: number, key: string, value: string) =>
+      guardOnline(async () => {
+        if (typeof key !== 'string' || typeof value !== 'string') return { success: false, error: 'invalid setting' };
+        const values = automationSettings.get(metabotId) ?? new Map<string, string>();
+        values.set(key, value);
+        automationSettings.set(metabotId, values);
+        persistAutomationSettings();
+        return { success: true };
       }),
   };
 
@@ -1963,6 +2013,28 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     pickVoucher: () => Promise.resolve({ success: false }),
   };
 
+  let surfRunSeq = 1;
+  const surfRuns: MetawebSurfRunInfo[] = [{
+    id: 'mock-surf-1',
+    metabotId: 1,
+    trigger: 'manual-ui',
+    status: 'done',
+    stats: {
+      fetched: 4, deepRead: 3, savedToKb: 2, knowledgePoints: 2, liked: 0, commented: 0,
+      answered: 0, posted: 1, challenged: 0, inboxHandled: 1, inboxPresented: 1,
+      discoveredProtocols: 0, tasksScheduled: 0, sessionSkipped: 0,
+    },
+    reportMarkdown: '## Mock Surf report\n\nFour useful MetaWeb items reviewed and one original post created.',
+    reportJson: null,
+    briefingMarkdown: null,
+    error: null,
+    startedAt: new Date(bootAt - 3_600_000).toISOString(),
+    finishedAt: new Date(bootAt - 3_500_000).toISOString(),
+    createdAt: new Date(bootAt - 3_600_000).toISOString(),
+    updatedAt: new Date(bootAt - 3_500_000).toISOString(),
+  }];
+  let experimentalAutomationEnabled = true;
+
   const electron: Record<string, unknown> = {
     // REQ-E-3: the server is linux/x64; keep the same values so desktop
     // renderer services that branch on platform never take a desktop path.
@@ -2047,6 +2119,120 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
           globalMetaId: 'mock-globalmetaid',
           twinMetabotId: 1,
         })),
+    },
+    experimentalAutomation: {
+      get: () => guardOnline(async () => ({ enabled: experimentalAutomationEnabled })),
+      set: (enabled: boolean) => guardOnline(async () => {
+        experimentalAutomationEnabled = Boolean(enabled);
+        return { success: true };
+      }),
+    },
+    dailyReport: {
+      runNow: () => guardOnline(async () => {
+        if (!experimentalAutomationEnabled) return { status: 'unavailable', reason: 'experimental_disabled' };
+        if (automationSettings.get(1)?.get('dailyReport.enabled') !== '1') {
+          return { status: 'unavailable', reason: 'feature_disabled' };
+        }
+        const session = createSession({
+          title: `Daily report ${new Date(now()).toISOString().slice(0, 10)}`,
+          prompt: 'Generate a concise daily briefing.',
+          metabotId: 1,
+        });
+        pushUserMessage(session, 'Generate a concise daily briefing.');
+        session.messages.push({
+          id: nextMessageId(),
+          type: 'assistant',
+          content: 'Daily briefing: tasks completed, one decision needs review.',
+          timestamp: now(),
+        });
+        session.updatedAt = now();
+        notifications.push({
+          eventId: `mock-daily-${session.id}`,
+          type: 'daily_report.completed',
+          category: 'report',
+          createdAt: now(),
+          metabotId: 1,
+          sessionId: session.id,
+          taskId: null,
+          runId: session.id,
+          title: 'Daily report ready',
+          body: 'Your Twin daily report is ready.',
+          priority: 'normal',
+          target: { kind: 'session', sessionId: session.id },
+          readAt: null,
+        });
+        emitter.emit('notification:changed', { eventId: `mock-daily-${session.id}` });
+        return { status: 'completed', sessionId: session.id };
+      }),
+    },
+    surf: {
+      listRuns: (metabotId: number, limit = 20) => guardOnline(async () => ({
+        success: true,
+        runs: surfRuns.filter((run) => run.metabotId === metabotId).slice(0, limit).map((run) => ({ ...run })),
+      })),
+      listRunsByDay: (metabotId: number, dayStartIso: string, dayEndIso: string) => guardOnline(async () => ({
+        success: true,
+        runs: surfRuns.filter((run) => run.metabotId === metabotId && run.createdAt >= dayStartIso && run.createdAt < dayEndIso),
+      })),
+      listRunDays: (metabotId: number) => guardOnline(async () => ({
+        success: true,
+        days: [...new Set(surfRuns.filter((run) => run.metabotId === metabotId).map((run) => run.createdAt.slice(0, 10)))],
+      })),
+      runNow: (metabotId: number) => guardOnline(async () => {
+        if (surfRuns.some((run) => run.metabotId === metabotId && run.status === 'running')) {
+          return { success: false, error: 'A surf run is already in progress' };
+        }
+        if (!metabotFixtures.some((bot) => bot.id === metabotId)) return { success: false, error: 'metabot not found' };
+        const createdAt = new Date(now()).toISOString();
+        const run: MetawebSurfRunInfo = {
+          id: `mock-surf-${++surfRunSeq}`,
+          metabotId,
+          trigger: 'manual-ui',
+          status: 'running',
+          stats: {
+            fetched: 0, deepRead: 0, savedToKb: 0, knowledgePoints: 0, liked: 0, commented: 0,
+            answered: 0, posted: 0, challenged: 0, inboxHandled: 0, inboxPresented: 0,
+            discoveredProtocols: 0, tasksScheduled: 0, sessionSkipped: 0,
+          },
+          reportMarkdown: null,
+          reportJson: null,
+          briefingMarkdown: null,
+          error: null,
+          startedAt: createdAt,
+          finishedAt: null,
+          createdAt,
+          updatedAt: createdAt,
+        };
+        surfRuns.unshift(run);
+        emitter.emit('metabot:surfStatusChanged', { metabotId, runId: run.id, trigger: run.trigger, status: 'running' });
+        later(() => {
+          run.status = 'done';
+          run.finishedAt = new Date(now()).toISOString();
+          run.updatedAt = run.finishedAt;
+          run.reportMarkdown = '## New Surf report\n\nReviewed fresh MetaWeb activity and saved the useful findings.';
+          run.stats = { ...run.stats, fetched: 5, deepRead: 3, savedToKb: 2, posted: 1 };
+          notifications.push({
+            eventId: `surf:${run.id}`,
+            type: 'surf.completed',
+            category: 'report',
+            createdAt: now(),
+            metabotId,
+            sessionId: null,
+            taskId: null,
+            runId: run.id,
+            title: 'Surf completed',
+            body: 'Open the Surf report for your Bot.',
+            priority: 'normal',
+            target: { kind: 'bot_automation', metabotId, section: 'surf', runId: run.id },
+            readAt: null,
+          });
+          emitter.emit('notification:changed', { eventId: `surf:${run.id}` });
+          emitter.emit('metabot:surfStatusChanged', { metabotId, runId: run.id, trigger: run.trigger, status: 'done', error: null });
+        }, 150);
+        return { success: true, runId: run.id };
+      }),
+      onStatusChanged: (callback: (payload: { metabotId: number; runId: string; trigger: string; status: string; error?: string | null }) => void) =>
+        emitter.on('metabot:surfStatusChanged', callback as never),
     },
     notification: {
       list: (options?: {

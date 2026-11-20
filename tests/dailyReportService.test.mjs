@@ -658,6 +658,27 @@ test('runNow: a run in flight → unavailable (no double-running)', async () => 
   service.stop();
 });
 
+test('runNow: emits stable outcome IDs after persistence, including collector failure', async () => {
+  const outcomes = [];
+  const successful = setup({ nowMs: NOW_9AM });
+  successful.deps.onResult = (result) => outcomes.push(result);
+  await successful.service.runNow();
+  successful.service.stop();
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0].status, 'completed');
+  assert.equal(typeof outcomes[0].runId, 'string');
+  assert.equal(outcomes[0].metabotId, 7);
+
+  const failed = setup({ collectFacts: () => { throw new Error('collector unavailable'); } });
+  failed.deps.onResult = (result) => outcomes.push(result);
+  const result = await failed.service.runNow();
+  failed.service.stop();
+  assert.equal(result.status, 'failed');
+  assert.equal(outcomes.length, 2);
+  assert.equal(outcomes[1].status, 'failed');
+  assert.equal(outcomes[1].error, 'collector unavailable');
+});
+
 test('runNow: stopped service reports unavailable instead of throwing', async () => {
   const { service } = setup({ nowMs: NOW_9AM });
   service.stop();

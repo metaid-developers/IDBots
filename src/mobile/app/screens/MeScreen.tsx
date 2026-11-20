@@ -122,6 +122,8 @@ export default function MeScreen(props: {
   usageSignal?: number;
   notificationUnreadCount?: number;
   onOpenNotification: (item: AgentNotification) => Promise<boolean>;
+  onOpenWorkSession?: (sessionId: string) => Promise<boolean>;
+  automationRequest?: { metabotId: number; section: 'surf' | 'daily_report'; runId?: string; nonce: number } | null;
 }): JSX.Element {
   const identity = useIdentity(props.resyncCounter);
   const [stack, setStack] = useState<MeStackEntry[]>([]);
@@ -190,6 +192,15 @@ export default function MeScreen(props: {
     setStack((current) => [...current, route]);
     pushHistoryEntry();
   }, [pushHistoryEntry]);
+
+  const lastAutomationRequestRef = useRef(0);
+  useEffect(() => {
+    const request = props.automationRequest;
+    if (!request || request.nonce === lastAutomationRequestRef.current) return;
+    lastAutomationRequestRef.current = request.nonce;
+    if (top === 'botEdit') setEditingBotId(request.metabotId);
+    else pushRoute('botEdit', request.metabotId);
+  }, [props.automationRequest, pushRoute, top]);
 
   const lastUsageSignal = useRef(0);
   useEffect(() => {
@@ -334,12 +345,16 @@ export default function MeScreen(props: {
         return (
           <>
             <BotEditPage
+              key={props.automationRequest ? `${editingBotId}-${props.automationRequest.nonce}` : editingBotId}
               botId={editingBotId}
               onBack={requestBack}
               onSaved={requestBack}
               onDirtyChange={(dirty) => {
                 dirtyRef.current = dirty;
               }}
+              onOpenSession={props.onOpenWorkSession}
+              initialTab={props.automationRequest ? 'automation' : 'basic'}
+              initialSurfRunId={props.automationRequest?.section === 'surf' ? props.automationRequest.runId : undefined}
             />
             {confirmDiscard ? <DiscardConfirmSheet onCancel={() => setConfirmDiscard(false)} onDiscard={discardAndBack} /> : null}
           </>
