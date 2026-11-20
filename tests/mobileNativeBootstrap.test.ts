@@ -89,38 +89,54 @@ test('iOS accepts a document-start bridge and detects the platform', () => {
   });
 });
 
-test('native React use fails closed when the bridge is absent', () => {
+test('native shell without a bridge falls back instead of bricking the launch', () => {
   const window = nativeWindow('android');
   delete window.idbotsNative;
   withGlobals(window, () => {
-    assert.throws(() => confirmNativeBootstrap(), /NATIVE_BRIDGE_MISSING/);
+    assert.equal(confirmNativeBootstrap(), null);
+    assert.equal(window.idbotsNativeBootstrapError, 'NATIVE_BRIDGE_MISSING');
+    assert.equal(window.idbotsNativeProof, undefined);
+    assert.equal(window.idbotsMobile, undefined);
   });
 });
 
-test('native React use rejects an origin or version mismatch', () => {
+test('late document-start injection from an older shell falls back to web mode', () => {
+  const late = nativeWindow('android');
+  (late.idbotsNative as unknown as { bootstrap: IdbotsNativeBridge['bootstrap'] }).bootstrap = { phase: 'after-load' as never, origin: ORIGIN, platform: 'android' };
+  withGlobals(late, () => {
+    assert.equal(confirmNativeBootstrap(), null);
+    assert.equal(late.idbotsNativeBootstrapError, 'NATIVE_BOOTSTRAP_TOO_LATE');
+  });
+});
+
+test('origin and version mismatches fall back and are recorded', () => {
   const wrongOrigin = nativeWindow('android');
   (wrongOrigin.idbotsNative as unknown as { bootstrap: IdbotsNativeBridge['bootstrap'] }).bootstrap = { phase: 'document-start', origin: 'https://evil.example', platform: 'android' };
   withGlobals(wrongOrigin, () => {
-    assert.throws(() => confirmNativeBootstrap(), /NATIVE_ORIGIN_MISMATCH/);
+    assert.equal(confirmNativeBootstrap(), null);
+    assert.equal(wrongOrigin.idbotsNativeBootstrapError, 'NATIVE_ORIGIN_MISMATCH');
   });
 
   const wrongVersion = nativeWindow('ios');
   (wrongVersion.idbotsNative as unknown as { nativeBridgeVersion: number }).nativeBridgeVersion = 2;
   withGlobals(wrongVersion, () => {
-    assert.throws(() => confirmNativeBootstrap(), /NATIVE_BRIDGE_VERSION_UNSUPPORTED/);
+    assert.equal(confirmNativeBootstrap(), null);
+    assert.equal(wrongVersion.idbotsNativeBootstrapError, 'NATIVE_BRIDGE_VERSION_UNSUPPORTED');
   });
 });
 
-test('native React use rejects late injection, wrong platforms, and malformed capabilities', () => {
-  const late = nativeWindow('android');
-  (late.idbotsNative as unknown as { bootstrap: IdbotsNativeBridge['bootstrap'] }).bootstrap = { phase: 'document-start', origin: ORIGIN, platform: 'ios' };
-  withGlobals(late, () => {
-    assert.throws(() => confirmNativeBootstrap(), /NATIVE_PLATFORM_MISMATCH/);
+test('platform and capability mismatches fall back and are recorded', () => {
+  const wrongPlatform = nativeWindow('android');
+  (wrongPlatform.idbotsNative as unknown as { bootstrap: IdbotsNativeBridge['bootstrap'] }).bootstrap = { phase: 'document-start', origin: ORIGIN, platform: 'ios' };
+  withGlobals(wrongPlatform, () => {
+    assert.equal(confirmNativeBootstrap(), null);
+    assert.equal(wrongPlatform.idbotsNativeBootstrapError, 'NATIVE_PLATFORM_MISMATCH');
   });
 
   const malformed = nativeWindow('android');
   (malformed.idbotsNative as IdbotsNativeBridge).getCapabilities = () => ({ ...capabilities(), camera: undefined }) as unknown as MobileNativeCapabilities;
   withGlobals(malformed, () => {
-    assert.throws(() => confirmNativeBootstrap(), /NATIVE_CAPABILITY_INVALID:camera/);
+    assert.equal(confirmNativeBootstrap(), null);
+    assert.equal(malformed.idbotsNativeBootstrapError, 'NATIVE_CAPABILITY_INVALID:camera');
   });
 });
