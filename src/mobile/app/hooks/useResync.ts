@@ -94,11 +94,9 @@ export function recoverNativeAppState(
   resync: () => void,
 ): void {
   if (!active) return;
-  if (bridge.connection.getState() === 'online') {
-    resync();
-    return;
-  }
+  const wasOnline = bridge.connection.getState() === 'online';
   bridge.gateway?.reconnectNow();
+  if (wasOnline) resync();
 }
 
 /**

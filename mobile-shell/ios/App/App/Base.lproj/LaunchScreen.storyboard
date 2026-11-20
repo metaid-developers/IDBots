@@ -1,22 +1,110 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="17132" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
-    <device id="retina4_7" orientation="portrait" appearance="light"/>
+    <device id="retina6_1" orientation="portrait" appearance="light"/>
     <dependencies>
         <deployment identifier="iOS"/>
         <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="17105"/>
-        <capability name="System colors in document resources" minToolsVersion="11.0"/>
+        <capability name="Safe area layout guides" minToolsVersion="9.0"/>
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
     <scenes>
-        <!--View Controller-->
         <scene sceneID="EHf-IW-A2E">
             <objects>
                 <viewController id="01J-lp-oVM" sceneMemberID="viewController">
-                    <imageView key="view" userInteractionEnabled="NO" contentMode="scaleAspectFill" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="Splash" id="snD-IY-ifK">
-                        <rect key="frame" x="0.0" y="0.0" width="375" height="667"/>
-                        <autoresizingMask key="autoresizingMask"/>
-                        <color key="backgroundColor" systemColor="systemBackgroundColor"/>
-                    </imageView>
+                    <view key="view" contentMode="scaleToFill" id="snD-IY-ifK">
+                        <rect key="frame" x="0.0" y="0.0" width="390" height="844"/>
+                        <subviews>
+                            <imageView contentMode="scaleAspectFit" translatesAutoresizingMaskIntoConstraints="NO" image="LaunchTile" id="tile-1">
+                                <rect key="frame" x="47" y="154" width="296" height="296"/>
+                            </imageView>
+                            <imageView contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" translatesAutoresizingMaskIntoConstraints="NO" image="LaunchRobot" id="robot-1">
+                                <rect key="frame" x="63" y="170" width="264" height="264"/>
+                            </imageView>
+                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="IDBots" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" translatesAutoresizingMaskIntoConstraints="NO" id="wordmark-1">
+                                <rect key="frame" x="92" y="486" width="206" height="55"/>
+                                <fontDescription key="fontDescription" type="system" weight="heavy" pointSize="46"/>
+                                <color key="textColor" red="0.1882352941" green="0.1921568627" blue="0.2000000000" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                            </label>
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="loader-1">
+                                <rect key="frame" x="164" y="748" width="62" height="10"/>
+                                <subviews>
+                                    <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="load-a">
+                                        <rect key="frame" x="0.0" y="0.0" width="10" height="10"/>
+                                        <color key="backgroundColor" red="1" green="0.8588235294" blue="0.6274509804" alpha="0.55" colorSpace="custom" customColorSpace="sRGB"/>
+                                    </view>
+                                    <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="load-b">
+                                        <rect key="frame" x="26" y="0.0" width="10" height="10"/>
+                                        <color key="backgroundColor" red="1" green="0.8588235294" blue="0.6274509804" alpha="0.8000000000" colorSpace="custom" customColorSpace="sRGB"/>
+                                    </view>
+                                    <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="load-c">
+                                        <rect key="frame" x="52" y="0.0" width="10" height="10"/>
+                                        <color key="backgroundColor" red="0.9568627451" green="0.4156862745" blue="0.1294117647" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                    </view>
+                                </subviews>
+                                <constraints>
+                                    <constraint firstItem="load-a" firstAttribute="leading" secondItem="loader-1" secondAttribute="leading" id="lc1"/>
+                                    <constraint firstItem="load-a" firstAttribute="centerY" secondItem="loader-1" secondAttribute="centerY" id="lc2"/>
+                                    <constraint firstItem="load-a" firstAttribute="width" constant="10" id="lc3"/>
+                                    <constraint firstItem="load-a" firstAttribute="height" constant="10" id="lc4"/>
+                                    <constraint firstItem="load-b" firstAttribute="centerX" secondItem="loader-1" secondAttribute="centerX" id="lc5"/>
+                                    <constraint firstItem="load-b" firstAttribute="centerY" secondItem="loader-1" secondAttribute="centerY" id="lc6"/>
+                                    <constraint firstItem="load-b" firstAttribute="width" constant="10" id="lc7"/>
+                                    <constraint firstItem="load-b" firstAttribute="height" constant="10" id="lc8"/>
+                                    <constraint firstItem="load-c" firstAttribute="trailing" secondItem="loader-1" secondAttribute="trailing" id="lc9"/>
+                                    <constraint firstItem="load-c" firstAttribute="centerY" secondItem="loader-1" secondAttribute="centerY" id="lc10"/>
+                                    <constraint firstItem="load-c" firstAttribute="width" constant="10" id="lc11"/>
+                                    <constraint firstItem="load-c" firstAttribute="height" constant="10" id="lc12"/>
+                                </constraints>
+                            </view>
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="px-1"><rect key="frame" x="40" y="108" width="10" height="10"/><color key="backgroundColor" red="1" green="0.8588235294" blue="0.6274509804" alpha="0.9000000000" colorSpace="custom" customColorSpace="sRGB"/></view>
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="px-2"><rect key="frame" x="332" y="88" width="8" height="8"/><color key="backgroundColor" red="0.9568627451" green="0.4156862745" blue="0.1294117647" alpha="0.8500000000" colorSpace="custom" customColorSpace="sRGB"/></view>
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="px-3"><rect key="frame" x="356" y="470" width="8" height="8"/><color key="backgroundColor" red="1" green="0.8588235294" blue="0.6274509804" alpha="0.6000000000" colorSpace="custom" customColorSpace="sRGB"/></view>
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="px-4"><rect key="frame" x="44" y="512" width="8" height="8"/><color key="backgroundColor" red="0.1882352941" green="0.1921568627" blue="0.2000000000" alpha="0.2800000000" colorSpace="custom" customColorSpace="sRGB"/></view>
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="px-5"><rect key="frame" x="318" y="596" width="6" height="6"/><color key="backgroundColor" red="0.9568627451" green="0.4156862745" blue="0.1294117647" alpha="0.5000000000" colorSpace="custom" customColorSpace="sRGB"/></view>
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="px-6"><rect key="frame" x="302" y="136" width="6" height="6"/><color key="backgroundColor" red="1" green="0.8588235294" blue="0.6274509804" alpha="0.7000000000" colorSpace="custom" customColorSpace="sRGB"/></view>
+                        </subviews>
+                        <color key="backgroundColor" red="1" green="0.7019607843" blue="0.2196078431" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <constraints>
+                            <constraint firstItem="tile-1" firstAttribute="centerX" secondItem="snD-IY-ifK" secondAttribute="centerX" id="c1"/>
+                            <constraint firstItem="tile-1" firstAttribute="centerY" secondItem="snD-IY-ifK" secondAttribute="centerY" constant="-120" id="c2"/>
+                            <constraint firstItem="tile-1" firstAttribute="width" constant="296" id="c3"/>
+                            <constraint firstItem="tile-1" firstAttribute="height" constant="296" id="c4"/>
+                            <constraint firstItem="robot-1" firstAttribute="centerX" secondItem="tile-1" secondAttribute="centerX" id="c5"/>
+                            <constraint firstItem="robot-1" firstAttribute="centerY" secondItem="tile-1" secondAttribute="centerY" id="c6"/>
+                            <constraint firstItem="robot-1" firstAttribute="width" constant="264" id="c7"/>
+                            <constraint firstItem="robot-1" firstAttribute="height" constant="264" id="c8"/>
+                            <constraint firstItem="wordmark-1" firstAttribute="centerX" secondItem="snD-IY-ifK" secondAttribute="centerX" id="c9"/>
+                            <constraint firstItem="wordmark-1" firstAttribute="top" secondItem="tile-1" secondAttribute="bottom" constant="36" id="c10"/>
+                            <constraint firstItem="loader-1" firstAttribute="centerX" secondItem="snD-IY-ifK" secondAttribute="centerX" id="c11"/>
+                            <constraint firstItem="loader-1" firstAttribute="width" constant="62" id="c12"/>
+                            <constraint firstItem="loader-1" firstAttribute="height" constant="10" id="c13"/>
+                            <constraint firstAttribute="bottom" secondItem="loader-1" secondAttribute="bottom" constant="86" id="c14"/>
+                            <constraint firstItem="px-1" firstAttribute="leading" secondItem="snD-IY-ifK" secondAttribute="leading" constant="40" id="p1a"/>
+                            <constraint firstItem="px-1" firstAttribute="top" secondItem="snD-IY-ifK" secondAttribute="top" constant="108" id="p1b"/>
+                            <constraint firstItem="px-1" firstAttribute="width" constant="10" id="p1c"/>
+                            <constraint firstItem="px-1" firstAttribute="height" constant="10" id="p1d"/>
+                            <constraint firstAttribute="trailing" secondItem="px-2" secondAttribute="trailing" constant="50" id="p2a"/>
+                            <constraint firstItem="px-2" firstAttribute="top" secondItem="snD-IY-ifK" secondAttribute="top" constant="88" id="p2b"/>
+                            <constraint firstItem="px-2" firstAttribute="width" constant="8" id="p2c"/>
+                            <constraint firstItem="px-2" firstAttribute="height" constant="8" id="p2d"/>
+                            <constraint firstAttribute="trailing" secondItem="px-3" secondAttribute="trailing" constant="26" id="p3a"/>
+                            <constraint firstItem="px-3" firstAttribute="top" secondItem="snD-IY-ifK" secondAttribute="top" constant="470" id="p3b"/>
+                            <constraint firstItem="px-3" firstAttribute="width" constant="8" id="p3c"/>
+                            <constraint firstItem="px-3" firstAttribute="height" constant="8" id="p3d"/>
+                            <constraint firstItem="px-4" firstAttribute="leading" secondItem="snD-IY-ifK" secondAttribute="leading" constant="44" id="p4a"/>
+                            <constraint firstItem="px-4" firstAttribute="top" secondItem="snD-IY-ifK" secondAttribute="top" constant="512" id="p4b"/>
+                            <constraint firstItem="px-4" firstAttribute="width" constant="8" id="p4c"/>
+                            <constraint firstItem="px-4" firstAttribute="height" constant="8" id="p4d"/>
+                            <constraint firstAttribute="trailing" secondItem="px-5" secondAttribute="trailing" constant="66" id="p5a"/>
+                            <constraint firstItem="px-5" firstAttribute="top" secondItem="snD-IY-ifK" secondAttribute="top" constant="596" id="p5b"/>
+                            <constraint firstItem="px-5" firstAttribute="width" constant="6" id="p5c"/>
+                            <constraint firstItem="px-5" firstAttribute="height" constant="6" id="p5d"/>
+                            <constraint firstAttribute="trailing" secondItem="px-6" secondAttribute="trailing" constant="82" id="p6a"/>
+                            <constraint firstItem="px-6" firstAttribute="top" secondItem="snD-IY-ifK" secondAttribute="top" constant="136" id="p6b"/>
+                            <constraint firstItem="px-6" firstAttribute="width" constant="6" id="p6c"/>
+                            <constraint firstItem="px-6" firstAttribute="height" constant="6" id="p6d"/>
+                        </constraints>
+                    </view>
                 </viewController>
                 <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
             </objects>
@@ -24,9 +112,7 @@
         </scene>
     </scenes>
     <resources>
-        <image name="Splash" width="1366" height="1366"/>
-        <systemColor name="systemBackgroundColor">
-            <color white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
-        </systemColor>
+        <image name="LaunchRobot" width="264" height="264"/>
+        <image name="LaunchTile" width="296" height="296"/>
     </resources>
 </document>
