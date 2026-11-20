@@ -29,6 +29,7 @@ test('mobile personal-agent prompt defines the cloud boundary and a concise mobi
   assert.match(prompt, /scheduled and long-running work can continue while the phone is closed/);
   assert.match(prompt, /NOT running on the phone/);
   assert.match(prompt, /smallest sufficient tool set/);
+  assert.match(prompt, /<instant_ack> block is present, the opening is already visible: do not repeat it/);
   assert.match(prompt, /Ordinary web information belongs in web_search \/ web_fetch/);
   assert.match(prompt, /There is only a phone conversation surface/);
   assert.doesNotMatch(prompt, /projection_begin|bot_browser_preview_local|right projector|left chat/);
