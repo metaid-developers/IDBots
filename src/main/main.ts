@@ -14657,10 +14657,15 @@ if (!gotTheLock) {
         // language is named explicitly (resolved from the same persisted app
         // language the UI reads) — a fresh English install greets in English
         // even though the model's context is otherwise mixed-language.
-        const greetingPrompt = tApp(
-          '用户刚刚第一次进入 IDBots。现在用中文向他问好，并按照你的新手引导说明行动。',
-          'The user just opened IDBots for the very first time. Greet them in English now, following your onboarding instructions.',
-        );
+        const greetingPrompt = isServerMode()
+          ? tApp(
+            '用户第一次打开 IDBots 移动端。请用中文、以 2 到 3 个短段落自然地欢迎他：介绍你是他的 Twin Bot 和个人 AI 助手；用一句话说明你在他的专属云端运行环境中工作，可以在手机关闭后继续定时和长期任务；邀请他先给你起个名字，或告诉你想完成的第一件事。不要介绍桌面工作区、左右分栏或其他产品形态，不要罗列功能。',
+            'The user just opened IDBots on mobile for the first time. Welcome them in English with 2 or 3 short paragraphs: introduce yourself as their Twin Bot and personal AI assistant; explain in one sentence that you run in their dedicated cloud runtime and can continue scheduled and long-term work while their phone is closed; invite them to give you a name or tell you the first thing they want to accomplish. Do not describe desktop workspaces, split panes, or other product forms, and do not list features.',
+          )
+          : tApp(
+            '用户刚刚第一次进入 IDBots。现在用中文向他问好，并按照你的新手引导说明行动。',
+            'The user just opened IDBots for the very first time. Greet them in English now, following your onboarding instructions.',
+          );
         void runner.startSession(session.id, greetingPrompt, {
           skipInitialUserMessage: true,
           workspaceRoot: baseCwd,
