@@ -66,6 +66,7 @@ declare global {
     };
     idbotsNative?: IdbotsNativeBridge;
     idbotsNativeProof?: IdbotsNativeProof;
+    idbotsNativeBootstrapError?: string;
   }
 }
 
