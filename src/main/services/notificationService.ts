@@ -64,6 +64,10 @@ export class NotificationService {
     return inserted;
   }
 
+  getStore(): NotificationStore {
+    return this.store;
+  }
+
   list(options: AgentNotificationListOptions) {
     return this.store.list(options);
   }

@@ -79,6 +79,29 @@ test('list supports category, unread filters, stable pagination, and read state'
   assert.equal(store.getUnreadCount(), 0);
 });
 
+test('outbox claims survive retry delays and process restart recovery', (t) => {
+  const { store } = setup(t);
+  store.record(input('event-1'));
+  assert.deepEqual(store.claimPendingOutbox(999), []);
+  assert.deepEqual(store.claimPendingOutbox(1000).map((item) => ({ eventId: item.eventId, attemptCount: item.attemptCount })), [{ eventId: 'event-1', attemptCount: 0 }]);
+  assert.deepEqual(store.claimPendingOutbox(1001), []);
+  store.retryOutbox('event-1', 'network unavailable', 16000);
+  assert.deepEqual(store.claimPendingOutbox(15999), []);
+  assert.deepEqual(store.claimPendingOutbox(16000).map((item) => item.attemptCount), [1]);
+  store.markOutboxDelivered('event-1');
+  assert.deepEqual(store.listPendingOutbox(), []);
+});
+
+test('an abandoned claim is recovered and read events are never claimed', (t) => {
+  const { store } = setup(t);
+  store.record(input('event-1'));
+  store.record(input('event-2', { createdAt: 2000 }));
+  assert.equal(store.claimPendingOutbox(2000).length, 2);
+  store.markRead(['event-1'], 3000);
+  assert.deepEqual(store.claimPendingOutbox(32_001).map((item) => item.eventId), ['event-2']);
+  assert.deepEqual(store.claimPendingOutbox(33_001), []);
+});
+
 test('cowork terminal mapping is stable, localized, and deduped by turn marker', (t) => {
   const { store } = setup(t);
   const changed = [];

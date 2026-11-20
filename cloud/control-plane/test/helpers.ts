@@ -12,6 +12,7 @@ import { createMetricsServer, createPublicServer } from '../src/server.js';
 import { MetricsRegistry } from '../src/metrics.js';
 import { encryptSecret } from '../src/crypto.js';
 import type { AppContext } from '../src/context.js';
+import { PushDeliveryService } from '../src/services/pushDelivery.js';
 
 /** Fresh migrated SQLite database in a unique temp directory. */
 export function freshDb(): Database.Database {
@@ -61,6 +62,7 @@ export async function startTestApp(options: {
   loginBundleDir?: string;
   /** CP_ADMIN_API_TOKEN override (credit routes; unset = surface disabled). */
   adminApiToken?: string;
+  pushProvider?: 'disabled' | 'fake' | 'fcm';
 }): Promise<TestApp> {
   const port = await freePort();
   const metricsPort = await freePort();
@@ -74,6 +76,7 @@ export async function startTestApp(options: {
     CP_TENANT_IMAGE: options.tenantImage ?? 'fake-tenant:test',
     CP_TENANT_NETWORK: 'idbots-test',
     CP_SMS_MODE: 'fake',
+    CP_PUSH_PROVIDER: options.pushProvider ?? 'disabled',
     CP_FAKE_SMS_NUMBERS: (options.fakeSmsNumbers ?? ['+8613900000100']).join(','),
     ...(options.alertWebhook ? { CP_ALERT_WEBHOOK: options.alertWebhook } : {}),
     ...(options.tenantEnv
@@ -90,6 +93,7 @@ export async function startTestApp(options: {
     sms: new FakeSmsProvider(config.fakeSmsNumbers),
     poller: null,
     metrics: new MetricsRegistry(),
+    push: new PushDeliveryService(options.db, config),
   };
   const server = createPublicServer(app, {
     ...(options.wsProxy ? { wsProxy: options.wsProxy } : {}),

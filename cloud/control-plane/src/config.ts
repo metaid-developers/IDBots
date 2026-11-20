@@ -91,6 +91,30 @@ export interface ControlPlaneConfig {
    * reach the route.
    */
   adminApiToken: string | null;
+  push: {
+    provider: 'disabled' | 'fake' | 'fcm';
+    fcm: { projectId: string; clientEmail: string; privateKey: string } | null;
+  };
+}
+
+function parsePushConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig['push'] {
+  const provider = env.CP_PUSH_PROVIDER ?? 'disabled';
+  if (provider !== 'disabled' && provider !== 'fake' && provider !== 'fcm') {
+    throw new ConfigError('CP_PUSH_PROVIDER must be "disabled", "fake", or "fcm"');
+  }
+  if (provider !== 'fcm') return { provider, fcm: null };
+  const raw = env.CP_FCM_SERVICE_ACCOUNT_JSON;
+  if (!raw) throw new ConfigError('CP_FCM_SERVICE_ACCOUNT_JSON is required when CP_PUSH_PROVIDER=fcm');
+  let value: Record<string, unknown>;
+  try {
+    value = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    throw new ConfigError('CP_FCM_SERVICE_ACCOUNT_JSON must contain a valid service account');
+  }
+  if (typeof value.project_id !== 'string' || typeof value.client_email !== 'string' || typeof value.private_key !== 'string') {
+    throw new ConfigError('CP_FCM_SERVICE_ACCOUNT_JSON must contain project_id, client_email, and private_key');
+  }
+  return { provider, fcm: { projectId: value.project_id, clientEmail: value.client_email, privateKey: value.private_key } };
 }
 
 const FAKE_SMS_ALLOWED_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
@@ -255,6 +279,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
     loginBundleDir: env.CP_LOGIN_BUNDLE_DIR ?? defaultLoginBundleDir(),
     asr,
     adminApiToken: env.CP_ADMIN_API_TOKEN ? env.CP_ADMIN_API_TOKEN : null,
+    push: parsePushConfig(env),
   };
 }
 

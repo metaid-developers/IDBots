@@ -47,7 +47,7 @@ interface TenantAuth {
   userId: string;
 }
 
-function requireTenant(app: AppContext, reqCtx: RequestCtx): TenantAuth {
+export function requireTenant(app: AppContext, reqCtx: RequestCtx): TenantAuth {
   const supplied = String(reqCtx.req?.headers.authorization ?? '')
     .replace(/^Bearer\s+/i, '')
     .trim();

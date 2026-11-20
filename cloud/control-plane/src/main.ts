@@ -8,6 +8,7 @@ import { TenantPoller } from './services/poller.js';
 import { reconcileAtStartup } from './services/reconcile.js';
 import { MetricsRegistry } from './metrics.js';
 import type { AppContext } from './context.js';
+import { PushDeliveryService } from './services/pushDelivery.js';
 
 /**
  * Process entry point: load config, open the database (running migrations),
@@ -37,7 +38,8 @@ async function main(): Promise<void> {
   const sms: SmsProvider =
     config.smsMode === 'fake' ? new FakeSmsProvider(config.fakeSmsNumbers) : new AliyunSmsProvider();
 
-  const app: AppContext = { config, db, docker, sms, poller: null, metrics: new MetricsRegistry() };
+  const app: AppContext = { config, db, docker, sms, poller: null, metrics: new MetricsRegistry(), push: new PushDeliveryService(db, config) };
+  app.push.start();
 
   // REQ-B-11: reconcile before the poller takes over.
   await reconcileAtStartup(app).catch((err) => {
@@ -67,6 +69,7 @@ async function main(): Promise<void> {
 
   const shutdown = (signal: string): void => {
     console.log(JSON.stringify({ msg: 'shutting down', signal }));
+    app.push.stop();
     void poller.stop().finally(() => {
       publicServer.close(() => {
         metricsServer.close(() => {

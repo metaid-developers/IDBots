@@ -225,9 +225,54 @@ function migration4(db: Database.Database): void {
   `);
 }
 
+function migration5(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE user_devices (
+      device_id       TEXT PRIMARY KEY,
+      user_id         TEXT NOT NULL REFERENCES users(id),
+      installation_id TEXT NOT NULL,
+      platform        TEXT NOT NULL CHECK (platform IN ('android', 'ios')),
+      provider        TEXT NOT NULL,
+      token_enc       TEXT NOT NULL,
+      app_version     TEXT,
+      shell_version   TEXT,
+      enabled         INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+      created_at      INTEGER NOT NULL,
+      last_seen_at    INTEGER NOT NULL,
+      UNIQUE(user_id, installation_id)
+    );
+    CREATE INDEX idx_user_devices_active ON user_devices(user_id, enabled);
+    CREATE TABLE push_deliveries (
+      event_id            TEXT NOT NULL,
+      device_id           TEXT NOT NULL REFERENCES user_devices(device_id),
+      event_json          TEXT NOT NULL,
+      state               TEXT NOT NULL CHECK (state IN ('pending', 'sending', 'sent', 'retry', 'invalid', 'disabled', 'cancelled', 'failed')),
+      attempts            INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at     INTEGER NOT NULL,
+      claimed_at          INTEGER,
+      provider_message_id TEXT,
+      last_error          TEXT,
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL,
+      PRIMARY KEY(event_id, device_id)
+    );
+    CREATE INDEX idx_push_deliveries_due ON push_deliveries(state, next_attempt_at);
+    CREATE TABLE notification_preferences (
+      user_id       TEXT PRIMARY KEY REFERENCES users(id),
+      enabled       INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+      work          INTEGER NOT NULL DEFAULT 1 CHECK (work IN (0, 1)),
+      action        INTEGER NOT NULL DEFAULT 1 CHECK (action IN (0, 1)),
+      report        INTEGER NOT NULL DEFAULT 1 CHECK (report IN (0, 1)),
+      system        INTEGER NOT NULL DEFAULT 1 CHECK (system IN (0, 1)),
+      updated_at    INTEGER NOT NULL
+    );
+  `);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'initial-schema', up: migration1 },
   { version: 2, name: 'asr-usage', up: migration2 },
   { version: 3, name: 'credit-ledger', up: migration3 },
   { version: 4, name: 'credit-apply', up: migration4 },
+  { version: 5, name: 'notification-device-delivery', up: migration5 },
 ];
