@@ -5,7 +5,9 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { defaultBotBrains } from '../src/mobile/app/botDefaults.ts';
+import { resolveNewBotAvatar } from '../src/mobile/app/botAvatarSelection.ts';
 import { BotEditorForm, type EditorBrainOption } from '../src/mobile/app/components/BotEditorForm.tsx';
+import { BotAvatar } from '../src/mobile/app/components/BotAvatar.tsx';
 import { mobileI18n, t } from '../src/mobile/i18n.ts';
 import { BUILTIN_AVATARS } from '../src/renderer/assets/builtinAvatarCatalog.ts';
 import type { MobileMetabot } from '../src/mobile/bridge/types.ts';
@@ -61,10 +63,40 @@ test('mobile avatar settings enable the same 20 built-in avatars as desktop', ()
   const source = readFileSync(new URL('../src/mobile/app/components/BotEditorForm.tsx', import.meta.url), 'utf8');
   assert.match(source, /AvatarPickerModal/);
   assert.match(source, /allowBuiltin=\{true\}/);
+  assert.match(source, /currentReference=\{props.avatar \?\? ''\}/);
   assert.equal(BUILTIN_AVATARS.length, 20);
   for (const avatar of BUILTIN_AVATARS) {
     assert.ok(existsSync(new URL(`../public/${avatar.src}`, import.meta.url)), avatar.src);
   }
+});
+
+test('mobile creation assigns a random built-in avatar while preserving an explicit choice or removal', () => {
+  for (let index = 0; index < BUILTIN_AVATARS.length; index += 1) {
+    assert.equal(
+      resolveNewBotAvatar(undefined, () => (index + 0.5) / BUILTIN_AVATARS.length),
+      BUILTIN_AVATARS[index].metafileUri,
+    );
+  }
+  assert.equal(resolveNewBotAvatar('data:image/png;base64,custom'), 'data:image/png;base64,custom');
+  assert.equal(resolveNewBotAvatar(null), null);
+  const source = readFileSync(new URL('../src/mobile/app/hooks/useMetabots.ts', import.meta.url), 'utf8');
+  assert.match(source, /avatar: resolveNewBotAvatar\(input.avatar\)/);
+});
+
+test('mobile BotAvatar renders built-in metafile references instead of falling back to initials', () => {
+  const html = renderToStaticMarkup(
+    <BotAvatar name="Minimal Bot" avatar={BUILTIN_AVATARS[0].metafileUri} testId="builtin-avatar" />,
+  );
+  assert.match(html, /data-avatar-state="builtin"/);
+  assert.match(html, /builtin-avatars\/01-D0\.png/);
+  assert.doesNotMatch(html, />M</);
+});
+
+test('mobile avatar upload requests bounded decoding before canvas rendering', () => {
+  const source = readFileSync(new URL('../src/mobile/app/avatarUpload.ts', import.meta.url), 'utf8');
+  assert.match(source, /createImageBitmap\(file, \{ resizeWidth: AVATAR_MAX_EDGE, resizeQuality: 'high' \}\)/);
+  assert.match(source, /bitmap\.close\?\.\(\)/);
+  assert.match(source, /Older WebViews may expose createImageBitmap without resize support/);
 });
 
 test('Twin badge appears in the editor and both Bot list implementations use it', () => {

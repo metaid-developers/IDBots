@@ -143,6 +143,12 @@ import { tryAutoAnswerLowRiskQuestion } from './coworkPermissionRisk';
 import type { CoworkContextUsage, CoworkUsageStats } from './coworkContextUsage';
 import { composePromptSections, PROMPT_SECTION_ORDER } from './promptComposer';
 import { buildAssistantModePrompt, buildProjectorModePrompt, buildProjectorWelcomeHoldPrompt } from './assistantModePrompt';
+import {
+  buildMobileModePrompt,
+  buildMobileTwinOrchestrationPrompt,
+  buildMobileTwinProductPrimerSection,
+  buildMobileWelcomeGuidePrompt,
+} from './mobileModePrompt';
 import { CHAIN_IDENTIFIER_VERBATIM_RULE } from './chainIdentifierPrompt';
 import { QA_BEHAVIOR_RULE } from './qaBehaviorPrompt';
 import { SOCIAL_TRUST_RULE } from './socialTrustPrompt';
@@ -6925,7 +6931,7 @@ export class CoworkRunner extends EventEmitter {
     return isMobileOwnerChatSessionProfile({
       serverMode: isServerMode(),
       session: this.store.getSession(sessionId),
-      sourceChannel: this.store.getConversationSourceContextBySession(sessionId).sourceChannel,
+      sourceChannel: this.store.getConversationSourceContextBySession(sessionId)?.sourceChannel,
     });
   }
 
@@ -6990,6 +6996,7 @@ export class CoworkRunner extends EventEmitter {
     // including direct chats, which the IM gateway stores under the 'a2a'
     // session type; check the channel BEFORE the session type.
     if (typeof sourceChannel === 'string' && sourceChannel.startsWith('im:')) return false;
+    if (this.isMobileOwnerChatSession(sessionId)) return false;
     // Studio assistant-mode owner chats: a human is waiting on every reply.
     // Checked before the session-type branch — the assistantMode marker is
     // the more specific signal (isAssistantModeOwnerChatSession itself
@@ -7088,6 +7095,7 @@ export class CoworkRunner extends EventEmitter {
    */
   private buildWelcomeBootstrapPrompt(sessionId: string): string {
     if (!this.isWelcomeSession(sessionId)) return '';
+    if (this.isMobileOwnerChatSession(sessionId)) return buildMobileWelcomeGuidePrompt();
     const guide = readBootstrapDoc();
     if (!guide.trim()) return '';
     return [
@@ -7107,6 +7115,7 @@ export class CoworkRunner extends EventEmitter {
    */
   private buildTwinProductPrimerPrompt(sessionId: string): string {
     if (!this.isTwinSession(sessionId)) return '';
+    if (this.isMobileOwnerChatSession(sessionId)) return buildMobileTwinProductPrimerSection();
     return buildTwinProductPrimerSection(readTwinProductPrimer(app.getAppPath()));
   }
 
@@ -7117,6 +7126,12 @@ export class CoworkRunner extends EventEmitter {
    */
   private buildTwinOrchestrationPrompt(sessionId: string): string {
     if (!this.isTwinSession(sessionId)) return '';
+    if (this.isMobileOwnerChatSession(sessionId)) {
+      return [
+        buildMobileTwinOrchestrationPrompt(),
+        buildPortableTaskIntentRubricSpec(),
+      ].join('\n');
+    }
     // Phase 2 slice 2 (owner-approved wording pass, docs/design/
     // studio-prompt-compression-proposal.md): same rules, ~40% fewer chars —
     // duplicate guidance merged, connective prose tightened, every hard rule
@@ -7165,6 +7180,7 @@ export class CoworkRunner extends EventEmitter {
     if (!this.isTwinSession(sessionId) || !this.listLocalWorkers) return '';
     const session = this.store.getSession(sessionId);
     if (!session || session.autoOrigin) return '';
+    if (this.isMobileOwnerChatSession(sessionId)) return '';
     if (this.store.getConversationSourceContextBySession(sessionId).sourceChannel !== 'cowork_ui') return '';
     try {
       return buildTwinFirstWorkerNudge(await this.listLocalWorkers(sessionId));
@@ -7532,7 +7548,8 @@ export class CoworkRunner extends EventEmitter {
     metawebDeepSections = true,
     assistantMode = false,
     projectorMode = false,
-    projectorHeld = false
+    projectorHeld = false,
+    mobileMode = false
   ): string {
     return composePromptSections([
       { name: 'persona:metabot', order: PROMPT_SECTION_ORDER.PERSONA, text: personaBlock },
@@ -7603,6 +7620,9 @@ export class CoworkRunner extends EventEmitter {
       // interactive owner chats (see isAssistantModeOwnerChatSession).
       ...(assistantMode
         ? [{ name: 'idbots:assistant-mode', order: PROMPT_SECTION_ORDER.ASSISTANT_MODE, text: buildAssistantModePrompt(projectorMode) }]
+        : []),
+      ...(mobileMode
+        ? [{ name: 'idbots:mobile-mode', order: PROMPT_SECTION_ORDER.MOBILE_MODE, text: buildMobileModePrompt() }]
         : []),
       // Bot Internet projector mode (owner ruling 2026-11-07): mounted only
       // for sessions carrying the per-session assistantMode marker from the
@@ -9828,6 +9848,7 @@ export class CoworkRunner extends EventEmitter {
       const systemPromptProfile = this.getSystemPromptProfileForSession(sessionId);
       const { skillsSection, skillsCatalogMode } = this.resolveSkillsPromptForTurn(sessionId, activeSession, baseSystemPrompt);
       activeSession.skillsCatalogMode = skillsCatalogMode;
+      const mobileOwnerChatMode = this.isMobileOwnerChatSession(sessionId);
       const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
         baseSystemPrompt,
         this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
@@ -9842,9 +9863,10 @@ export class CoworkRunner extends EventEmitter {
           systemPromptProfile.metawebMode,
           this.getMetawebPromptTier(sessionId, activeSession),
         ),
-        this.isAssistantModeOwnerChatSession(sessionId),
-        this.isProjectorModeSession(sessionId),
-        this.isProjectorHeldByStage?.(sessionId) === true
+        !mobileOwnerChatMode && this.isAssistantModeOwnerChatSession(sessionId),
+        !mobileOwnerChatMode && this.isProjectorModeSession(sessionId),
+        !mobileOwnerChatMode && this.isProjectorHeldByStage?.(sessionId) === true,
+        mobileOwnerChatMode
       );
       this.trackSystemPromptHash(activeSession, sessionId, effectiveSystemPrompt);
 
@@ -9981,6 +10003,7 @@ export class CoworkRunner extends EventEmitter {
       const systemPromptProfile = this.getSystemPromptProfileForSession(sessionId);
       const { skillsSection, skillsCatalogMode } = this.resolveSkillsPromptForTurn(sessionId, activeSession, baseSystemPrompt);
       activeSession.skillsCatalogMode = skillsCatalogMode;
+      const mobileOwnerChatMode = this.isMobileOwnerChatSession(sessionId);
       const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
         baseSystemPrompt,
         this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
@@ -9995,9 +10018,10 @@ export class CoworkRunner extends EventEmitter {
           systemPromptProfile.metawebMode,
           this.getMetawebPromptTier(sessionId, activeSession),
         ),
-        this.isAssistantModeOwnerChatSession(sessionId),
-        this.isProjectorModeSession(sessionId),
-        this.isProjectorHeldByStage?.(sessionId) === true
+        !mobileOwnerChatMode && this.isAssistantModeOwnerChatSession(sessionId),
+        !mobileOwnerChatMode && this.isProjectorModeSession(sessionId),
+        !mobileOwnerChatMode && this.isProjectorHeldByStage?.(sessionId) === true,
+        mobileOwnerChatMode
       );
       this.trackSystemPromptHash(activeSession, sessionId, effectiveSystemPrompt);
 
@@ -11953,11 +11977,11 @@ export class CoworkRunner extends EventEmitter {
         // session id) keep professional streaming. Explicit owner_update
         // calls own visible progress in both cases. The getter stays live so
         // a mid-session mode flip is honored.
-        assistantModeProvider: (dshSessionId: string) => (
-          dshSessionId.startsWith('cw-')
-            ? this.isAssistantModeOwnerChatSession(dshSessionId.slice('cw-'.length))
-            : false
-        ),
+        assistantModeProvider: (dshSessionId: string) => {
+          if (!dshSessionId.startsWith('cw-')) return false;
+          const sessionId = dshSessionId.slice('cw-'.length);
+          return this.isAssistantModeOwnerChatSession(sessionId) || this.isMobileOwnerChatSession(sessionId);
+        },
         log: (level, message, detail) => coworkLog(level.toUpperCase() as 'INFO' | 'WARN' | 'ERROR', 'dshTurnHub', message, detail as Record<string, unknown> | undefined),
         // REQ-A-31: desktop keeps adaptive memory-pressure reaping. Server
         // mode keeps its fixed 10-minute bound instead of cold-booting after
@@ -12462,17 +12486,13 @@ export class CoworkRunner extends EventEmitter {
       // newer turnAck message wins the renderer's tail scan by construction).
       try {
         const ackSourceChannel = this.store.getConversationSourceContextBySession(sessionId)?.sourceChannel
-        // First-sentence bubbles are an assistant-mode promise (the owner's
-        // 2026-11-03 requirement); professional mode streams the model's own
-        // text directly and needs no host opening. Pure host-authored turns
-        // carry no user message. Already-persisted cross-session deliveries
-        // are different: the owner still needs an immediate, contextual
-        // opening even though insertion is not repeated. The GATE alone
-        // decides — it encodes the 2026-11-09 surface ruling (assistant mode
-        // = the per-session Studio marker; the global Settings toggle is
-        // retired), so an outer mode check here would silently strip the
-        // first-sentence promise from marker sessions.
-        assistantOwnerChatForTurn = this.isAssistantModeOwnerChatSession(sessionId);
+        // Studio and mobile personal-agent chats share the first-sentence
+        // promise; professional desktop sessions stream the model's own text
+        // directly and need no host opening. Pure host-authored turns carry no
+        // user message. Already-persisted cross-session deliveries still need
+        // an immediate contextual opening even though insertion is not repeated.
+        assistantOwnerChatForTurn = this.isAssistantModeOwnerChatSession(sessionId)
+          || this.isMobileOwnerChatSession(sessionId);
         const crossSessionDelivery = /<cross_session_message\b|\[ORCH-NOTIFY\]/i.test(prompt);
         if (ackSourceChannel === 'cowork_ui' && assistantOwnerChatForTurn
           && (activeSession.acknowledgeOwner || !activeSession.skipInitialUserMessage || crossSessionDelivery)) {
@@ -12732,8 +12752,8 @@ export class CoworkRunner extends EventEmitter {
       // Group tasks, A2A/IM, long-term and scheduled automation sessions —
       // and every BotWorks owner chat — keep the professional chain.
       const assistantMode = this.isAssistantModeOwnerChatSession(sessionId);
-      // Cloud mobile owner chats share the low default only: prompt/ack
-      // semantics stay professional and explicit picks still win.
+      // Cloud mobile owner chats use the mobile personal-agent prompt and the
+      // same low-latency interaction posture as Studio; explicit picks still win.
       const mobileOwnerChatMode = this.isMobileOwnerChatSession(sessionId);
       const fastOwnerChatMode = assistantMode || mobileOwnerChatMode;
       const sessionEffortPicked = effectiveEffortRung != null;

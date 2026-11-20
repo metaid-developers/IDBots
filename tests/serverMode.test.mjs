@@ -467,12 +467,12 @@ test('REQ-A-5 server mode never offers desktop-only agent tools to the model', (
 // Cloud mobile owner-chat performance profile.
 // ---------------------------------------------------------------------------
 
-test('mobile owner-chat profile only matches interactive standard cowork UI sessions', () => {
+test('mobile owner-chat profile matches every interactive mobile owner session, including reopened Studio sessions', () => {
   const standard = { sessionType: 'standard', autoOrigin: null };
   assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: standard, sourceChannel: 'cowork_ui' }), true);
   assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: false, session: standard, sourceChannel: 'cowork_ui' }), false);
   assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: { ...standard, autoOrigin: 'schedule' }, sourceChannel: 'cowork_ui' }), false);
-  assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: { ...standard, sessionType: 'browser' }, sourceChannel: 'cowork_ui' }), false);
+  assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: { ...standard, sessionType: 'browser' }, sourceChannel: 'cowork_ui' }), true);
   assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: { ...standard, sessionType: 'a2a' }, sourceChannel: 'cowork_ui' }), false);
   assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: standard, sourceChannel: 'im:telegram' }), false);
   assert.equal(serverMode.isMobileOwnerChatSession({ serverMode: true, session: null, sourceChannel: 'cowork_ui' }), false);

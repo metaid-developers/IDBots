@@ -104,6 +104,8 @@ export const PROMPT_SECTION_ORDER = {
    * coworkRunner).
    */
   ASSISTANT_MODE: 55,
+  /** Cloud mobile personal-agent style and runtime facts; replaces the desktop modes. */
+  MOBILE_MODE: 55,
   /**
    * Bot Internet projector section (buildProjectorModePrompt): right after
    * assistant-mode, so its projection rules read as an override of the

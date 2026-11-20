@@ -3,6 +3,7 @@ import { avatarInitial } from '../botList';
 import { isRenderableAvatar } from '../avatar';
 import NftAvatarFrame from '../../../renderer/components/metabots/NftAvatarFrame';
 import { parseNftAvatarReference } from '../../../renderer/components/metabots/nftAvatarPresentation.js';
+import { getBuiltinAvatarByReference } from '../../../renderer/assets/builtinAvatars';
 
 /**
  * Shared MetaBot avatar (UE rework 2026-10-29, A1/A2/A3/A4).
@@ -21,11 +22,12 @@ export function BotAvatar(props: {
 }): JSX.Element {
   const [broken, setBroken] = useState(false);
   const renderable = isRenderableAvatar(props.avatar);
+  const builtinAvatar = getBuiltinAvatarByReference(props.avatar);
   const size = props.size ?? 40;
   const dimension = { width: size, height: size };
-  if (parseNftAvatarReference(props.avatar)) {
+  if (parseNftAvatarReference(props.avatar) || builtinAvatar) {
     return (
-      <span data-testid={props.testId} data-avatar-state="nft" style={dimension} className="relative block shrink-0">
+      <span data-testid={props.testId} data-avatar-state={builtinAvatar ? 'builtin' : 'nft'} style={dimension} className="relative block shrink-0">
         <NftAvatarFrame
           avatar={props.avatar}
           fallbackSource={props.fallbackSource}

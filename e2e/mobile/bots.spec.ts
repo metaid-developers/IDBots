@@ -32,6 +32,8 @@ test.describe('Bot lifecycle and configuration', () => {
     await expect(row).toBeVisible({ timeout: 30_000 });
     await expect(row.getByTestId(/bot-role-/)).toHaveText('Research worker');
     await expect(row.getByTestId(/bot-avatar-/)).toBeVisible();
+    await expect(row.getByTestId(/bot-avatar-/)).toHaveAttribute('data-avatar-state', 'builtin');
+    await expect(row.locator('img')).toHaveAttribute('src', /builtin-avatars\//);
     await attachScreen(testInfo, page, 'bot-created-on-chain');
 
     // Edit mode (A6 third level): tapping the row pushes the full editor.

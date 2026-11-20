@@ -194,16 +194,17 @@ export interface MobileOwnerChatSessionShape {
   sessionType?: string | null;
 }
 
-/** Interactive cloud-PWA chat, not an unattended or desktop/Studio surface. */
+/** Interactive cloud-PWA/native chat, including a desktop-created session reopened on mobile. */
 export function isMobileOwnerChatSession(input: {
   serverMode: boolean;
   session: MobileOwnerChatSessionShape | null | undefined;
   sourceChannel: string;
 }): boolean {
+  const sessionType = input.session?.sessionType ?? 'standard';
   return input.serverMode
     && input.session != null
     && !input.session.autoOrigin
-    && (input.session.sessionType ?? 'standard') === 'standard'
+    && (sessionType === 'standard' || sessionType === 'browser')
     && input.sourceChannel === 'cowork_ui';
 }
 

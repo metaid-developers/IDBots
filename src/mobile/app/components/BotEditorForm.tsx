@@ -319,6 +319,7 @@ function AvatarField(props: {
         <AvatarPickerModal
           ownerAddress={props.ownerAddress}
           ownerGlobalMetaId={props.ownerGlobalMetaId}
+          currentReference={props.avatar ?? ''}
           loadNfts={loadNfts}
           maxLocalBytes={200 * 1024}
           allowBuiltin={true}

@@ -165,6 +165,10 @@ public class NativeCapabilitiesPlugin: CAPPlugin, CAPBridgedPlugin, UIImagePicke
             call.reject("A file URI is required", "NATIVE_FAILED")
             return
         }
+        if let requestedLength = call.getInt("length") {
+            readFileChunk(call, url: url, requestedLength: requestedLength)
+            return
+        }
         let temporary = call.getBool("temporary", false)
         defer { if temporary { deleteTemporaryCameraFile(raw) } }
         do {
@@ -192,6 +196,53 @@ public class NativeCapabilitiesPlugin: CAPPlugin, CAPBridgedPlugin, UIImagePicke
             ])
         } catch {
             call.reject("Unable to read the selected file", "NATIVE_FAILED", error)
+        }
+    }
+
+    private func readFileChunk(_ call: CAPPluginCall, url: URL, requestedLength: Int) {
+        let offset = max(0, call.getInt("offset") ?? 0)
+        let temporary = call.getBool("temporary", false)
+        DispatchQueue.global(qos: .userInitiated).async {
+            var end = false
+            defer { if temporary && end { self.deleteTemporaryCameraFile(url.absoluteString) } }
+            do {
+                if url.isFileURL && !self.isOwnedCameraFile(url) {
+                    call.reject("Only temporary camera files can be read by path", "NATIVE_FAILED")
+                    return
+                }
+                if requestedLength <= 0 || offset > self.maxFileBytes {
+                    call.reject("Invalid file chunk request", "NATIVE_FAILED")
+                    return
+                }
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                let values = try url.resourceValues(forKeys: [.fileSizeKey, .nameKey])
+                if let size = values.fileSize, size > self.maxFileBytes {
+                    call.reject("File exceeds the 25 MB limit", "TOO_LARGE")
+                    return
+                }
+                let length = min(requestedLength, 256 * 1024)
+                let handle = try FileHandle(forReadingFrom: url)
+                defer { try? handle.close() }
+                try handle.seek(toOffset: UInt64(offset))
+                let data = try handle.read(upToCount: length) ?? Data()
+                if offset + data.count > self.maxFileBytes {
+                    call.reject("File exceeds the 25 MB limit", "TOO_LARGE")
+                    return
+                }
+                end = data.count < length || (values.fileSize.map { offset + data.count >= $0 } ?? false)
+                call.resolve([
+                    "name": values.name ?? url.lastPathComponent,
+                    "mime": self.mimeType(for: url),
+                    "size": values.fileSize ?? -1,
+                    "offset": offset,
+                    "chunked": true,
+                    "end": end,
+                    "data": data.base64EncodedString(),
+                ])
+            } catch {
+                call.reject("Unable to read the selected file", "NATIVE_FAILED", error)
+            }
         }
     }
 
