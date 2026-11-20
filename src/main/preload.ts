@@ -838,6 +838,18 @@ contextBridge.exposeInMainWorld('electron', {
     runNow: (opts?: { force?: boolean }) =>
       ipcRenderer.invoke('dailyReport:runNow', opts) as Promise<DailyReportRunNowResult>,
   },
+  notification: {
+    list: (options?: unknown) => ipcRenderer.invoke('notification:list', options ?? {}),
+    get: (eventId: string) => ipcRenderer.invoke('notification:get', eventId),
+    getUnreadCount: (category?: string) => ipcRenderer.invoke('notification:getUnreadCount', category),
+    markRead: (eventIds: string[]) => ipcRenderer.invoke('notification:markRead', eventIds),
+    markAllRead: (category?: string) => ipcRenderer.invoke('notification:markAllRead', category),
+    onChanged: (callback: (payload: { eventId: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: { eventId: string }) => callback(payload);
+      ipcRenderer.on('notification:changed', handler);
+      return () => ipcRenderer.removeListener('notification:changed', handler);
+    },
+  },
   feeRates: {
     getTiers: () => ipcRenderer.invoke('feeRates:getTiers') as Promise<Record<string, { title: string; desc: string; feeRate: number }[]>>,
     getSelected: () => ipcRenderer.invoke('feeRates:getSelected') as Promise<Record<string, string>>,

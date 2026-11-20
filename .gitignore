@@ -117,6 +117,8 @@ tests/*
 !tests/bundleService.test.mjs
 !tests/bundleCreditBalance.test.mjs
 !tests/mobileChannels.test.mjs
+!tests/notificationStore.test.mjs
+!tests/notificationMainWiring.test.mjs
 !tests/mobileShim.test.ts
 !tests/mobileNativeBootstrap.test.ts
 !tests/mobileNativeAdapter.test.ts
