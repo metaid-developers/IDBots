@@ -217,6 +217,18 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   let turnCounter = 0;
   let currentSettings = deps.getSettings();
   let diskSnapshotMap: Map<string, LiveStageState> | null = null;
+  /**
+   * The session the owner is actually looking at (showSession on reveal —
+   * including the boot restore — or a human-origin message typed into it).
+   * The stage page is ONE shared page per Bot, so a patch from any other
+   * session overwrites what the owner sees (2026-11-20 串台 report: session
+   * B's last resting screen surfaced in session A whenever a refresh
+   * re-patched B's finished run). While a session is revealed, other
+   * sessions' patches are HELD: their state stays current in memory (and on
+   * the disk snapshot) and showSession re-delivers it on reveal. Null before
+   * the first reveal keeps legacy behavior (deliver everything).
+   */
+  let revealedSessionId: string | null = null;
 
   const snapshotFilePath = (): string | null =>
     deps.stageRoot ? path.join(deps.stageRoot, 'session-states.json') : null;
@@ -495,10 +507,14 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   /**
    * While a run's state carries peers or groups, refresh the companion rail
    * every 10s (chat activity arrives out-of-band); clear once both lists are
-   * empty or the run is torn down.
+   * empty, the run finished, or the run is torn down. A finished run must not
+   * keep a periodic patch source: its resting screen belongs to a past turn,
+   * and every re-delivery would re-capture the shared per-Bot stage page
+   * (2026-11-20 cross-session bleed).
    */
   function syncCompanionsTimer(run: LiveStageRun): void {
-    const hasCompanions = (run.state.activePeers?.length ?? 0) > 0 || (run.state.activeGroups?.length ?? 0) > 0;
+    const hasCompanions = !run.finished
+      && ((run.state.activePeers?.length ?? 0) > 0 || (run.state.activeGroups?.length ?? 0) > 0);
     if (hasCompanions && !run.companionsTimer) {
       run.companionsTimer = setInterval(() => {
         try {
@@ -736,6 +752,12 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   async function attemptPatchDelivery(run: LiveStageRun): Promise<void> {
     // The stage is its own tab now: a projected report no longer freezes it.
     if (!run.state.enabled) return;
+    // One shared page per Bot: a patch from a session the owner is not
+    // looking at would overwrite the visible scene. Hold it — the state stays
+    // current in memory and on the disk snapshot, and showSession resets the
+    // delivered-revision watermark so switching to that session delivers the
+    // held state immediately.
+    if (revealedSessionId != null && run.state.sessionId !== revealedSessionId) return;
     if (run.state.revision <= run.deliveredRevision) return;
     if (run.tabId == null && deps.getStageTab) {
       const bound = await deps.getStageTab(run.state.sessionId);
@@ -1455,9 +1477,15 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
    */
   function showSession(sessionId: string): void {
     currentSettings = deps.getSettings();
-    if (!currentSettings.enabled || typeof sessionId !== 'string' || !sessionId.trim()) return;
+    if (typeof sessionId !== 'string' || !sessionId.trim()) return;
     const session = deps.getSession(sessionId);
     if (!session || session.sessionType !== 'browser' || session.assistantMode !== true) return;
+    // The renderer just revealed this session (selection or boot restore):
+    // from now on the shared stage page belongs to it, and every other
+    // session's patch holds until it is revealed in turn. Tracked even while
+    // the stage is disabled so re-enabling never aims at a stale session.
+    revealedSessionId = sessionId;
+    if (!currentSettings.enabled) return;
     if (deps.isSessionClaimed?.(sessionId)) return;
     const existing = runs.get(sessionId);
     if (existing) {
@@ -1538,6 +1566,11 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     }
     const humanOrigin = message.type === 'user' && !isLiveStageWorkerReport(message)
       && (!message.metadata?.origin || message.metadata.origin === 'user' || message.metadata.origin === 'quick_action');
+    if (humanOrigin) {
+      // The owner just typed into this session: it owns the shared stage page
+      // from here on, even without an explicit reveal.
+      revealedSessionId = sessionId;
+    }
     let run = runs.get(sessionId);
     const submissionId = humanOrigin ? String(message.metadata?.submissionId ?? message.id) : null;
     if (humanOrigin && submissionId && run?.submissionId !== submissionId) {
@@ -1690,6 +1723,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     if (!run || run.finished) return;
     run.finished = true;
     clearDelegationWait(run);
+    // Freeze the resting screen: no periodic rail refresh, no HUD churn, no
+    // re-delivery of this scene onto the shared per-Bot page after this.
+    syncCompanionsTimer(run);
     const delegations = openDelegationsFor(run);
     if (!run.errored && delegations.length > 0) {
       // The twin's turn ended but delegated workers are still running: the
@@ -1713,6 +1749,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     run.finished = true;
     run.errored = true;
     clearDelegationWait(run);
+    syncCompanionsTimer(run);
     const language = run.state.language;
     const { reason, hint } = describeStudioTurnError(typeof error === 'string' ? error : '', language);
     const copy = {
@@ -1725,8 +1762,11 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     run.directorGeneration += 1;
     schedulePatch(run);
     // A failed turn is owner-facing: bring the stage (with its problem scene)
-    // forward so the owner sees what happened.
-    activateStage(run);
+    // forward so the owner sees what happened — but only when this session
+    // owns the shared page; a background session's failure must not flash
+    // another conversation's scene (its problem scene waits in the held
+    // patch and lands on reveal).
+    if (revealedSessionId == null || revealedSessionId === sessionId) activateStage(run);
   }
 
   // Stage interaction card: present → poll-drain → respond, all in-process.
@@ -1995,6 +2035,11 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     if (run) teardownRun(run);
     runs.delete(sessionId);
     removePersistedSessionStageState(sessionId);
+    if (revealedSessionId === sessionId) {
+      // The revealed session is gone: lift the hold instead of pinning every
+      // other session's patch until some future reveal.
+      revealedSessionId = null;
+    }
   }
 
   function refreshChiefOfStaffHud(targetSessionId?: string): void {
@@ -2005,6 +2050,12 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       : [...runs.values()];
     for (const run of targets) {
       if (!run.state.enabled) continue;
+      // A finished run's resting screen belongs to a past turn: refreshing it
+      // only churns revisions and re-delivers a stale scene onto the shared
+      // per-Bot page, overwriting the session the owner is looking at
+      // (2026-11-20 cross-session bleed). Its HUD refreshes when the next
+      // turn revives the run; showSession re-delivers the frozen state.
+      if (run.finished) continue;
       // Explicit refreshes (10s timer, chat persistence) bypass the 2.5s
       // lister cache and refill it with fresh rows.
       run.companionsCache = null;

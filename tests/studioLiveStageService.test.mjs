@@ -706,3 +706,86 @@ test('NFT worker avatar fallback, speaking transition, and async remote avatar r
   assert.equal(workerNode.label, '阿墨');
   assert.match(String(workerNode.avatar), /^avatars\/[0-9a-f]{16}\.png$/);
 });
+
+// 2026-11-20 cross-session bleed (owner report): every Studio session of one
+// Twin shares ONE stage page (botKey adoption). Nothing used to stop a
+// FINISHED session's run from re-delivering its resting screen — session B's
+// last reply surfaced in session A whenever the global HUD refresh re-patched
+// B after A's turn completed. Three regression gates below.
+
+test('a finished sibling run cannot re-capture the shared stage after the revealed session completes', async (t) => {
+  // The task HUD changes on every read — exactly what a finished run's
+  // companions signature looks like after the board moved underneath it.
+  let hudReads = 0;
+  const { service, patches } = fixture(t, false, 7, null, {
+    getLiveTaskHud: () => ({ queuedDecisions: 0, tasks: [{ id: `t-${++hudReads}`, title: 'moved', state: 'in_progress', accepted: 0, total: 1 }] }),
+  });
+  // Session B works a turn and finishes (its resting screen stays in the run).
+  service.observeMessage('b', message('b-u1', 'user', { origin: 'user', submissionId: 'b-sub-1' }, 'Search the news.'));
+  service.observeMessage('b', message('b-final', 'assistant', { isFinal: true }, 'Search done — here is the summary.'));
+  service.observeComplete('b');
+  const runB = service.getRunInternals('b');
+  await runB.queue;
+  assert.equal(service.getState('b').family, 'complete');
+
+  // The owner reveals session A and its turn completes.
+  service.showSession('a');
+  const runA0 = service.getRunInternals('a');
+  await runA0.queue;
+  const afterReveal = patches.length;
+  service.observeMessage('a', message('a-u1', 'user', { origin: 'user', submissionId: 'a-sub-1' }, 'Continue our discussion.'));
+  service.observeMessage('a', message('a-final', 'assistant', { isFinal: true }, 'Back with the analysis.'));
+  service.observeComplete('a');
+  const runA = service.getRunInternals('a');
+  await runA.queue;
+  const afterATurn = patches.length;
+  assert.ok(afterATurn > afterReveal, 'the revealed session keeps patching');
+  assert.ok(patches.slice(afterReveal, afterATurn).every((p) => p.state.sessionId === 'a'), 'only the revealed session reaches the shared page');
+
+  // The completion broadcast refreshes every run with changed HUD data —
+  // finished runs must be frozen, not re-delivered over A's resting screen.
+  service.refreshChiefOfStaffHud();
+  await Promise.all([runA.queue, runB.queue]);
+  assert.equal(patches.length, afterATurn, 'a global refresh must not churn finished runs onto the shared page');
+  service.refreshChiefOfStaffHud('b');
+  await runB.queue;
+  assert.equal(patches.length, afterATurn, 'even a targeted refresh must not re-deliver a finished run');
+});
+
+test('a finished run with companions on the rail stops its 10s refresh timer', async (t) => {
+  const { service } = fixture(t, false, 7, null, {
+    listActivePrivateChats: () => [{ id: 'p1', name: 'Peer', status: 'open', updatedAt: 1 }],
+  });
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }, 'Chat with the peer.'));
+  const run = service.getRunInternals('s');
+  await run.queue;
+  assert.ok(run.state.activePeers?.length, 'the rail carries the peer');
+  assert.ok(run.companionsTimer, 'live companions arm the periodic rail refresh');
+  service.observeComplete('s');
+  await run.queue;
+  assert.equal(run.companionsTimer, null, 'finishing must stop the periodic rail refresh');
+});
+
+test('background session patches hold while another session is revealed and deliver on reveal', async (t) => {
+  const { service, patches } = fixture(t);
+  service.showSession('a');
+  service.observeMessage('a', message('a-u1', 'user', { origin: 'user', submissionId: 'a-sub-1' }, 'Work here.'));
+  const runA = service.getRunInternals('a');
+  await runA.queue;
+  const afterReveal = patches.length;
+
+  // Background activity in session B (a scheduled turn streams without any
+  // human message): its patches must hold, A's scene stays on the page.
+  service.observeMessage('b', message('b-tool', 'tool_use', { toolName: 'bash', toolUseId: 't1' }));
+  const runB = service.getRunInternals('b');
+  await runB.queue;
+  service.observeMessage('b', message('b-final', 'assistant', { isFinal: true }, 'Background result.'));
+  await runB.queue;
+  assert.ok(patches.slice(afterReveal).every((p) => p.state.sessionId === 'a'), 'no background session content reaches the shared stage while A is revealed');
+
+  // Revealing B delivers its held state immediately.
+  service.showSession('b');
+  await Promise.all([runA.queue, runB.queue]);
+  assert.ok(patches.slice(afterReveal).some((p) => p.state.sessionId === 'b'), 'reveal delivers the held background state');
+  assert.ok(patches.slice(afterReveal).every((p) => ['a', 'b'].includes(p.state.sessionId)), 'only revealed sessions ever deliver');
+});
