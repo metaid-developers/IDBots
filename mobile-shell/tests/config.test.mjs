@@ -82,6 +82,48 @@ test('production startup uses declarative config, safe lifecycle, version 0.1.4,
   }
 });
 
+test('launcher icons preserve the square artwork and separate maskable safe-area assets', () => {
+  const generator = read('../scripts/generate-launcher-icons.mjs');
+  assert.match(generator, /scale=\$\{contentSize\}:\$\{contentSize\}:flags=neighbor/);
+  assert.doesNotMatch(generator, /crop=/);
+  const source = readFileSync(new URL('../../public/logo.png', import.meta.url));
+  assert.equal(source.readUInt32BE(16), 1080);
+  assert.equal(source.readUInt32BE(20), 1080);
+  for (const [density, legacySize, adaptiveSize] of [
+    ['mdpi', 48, 108],
+    ['hdpi', 72, 162],
+    ['xhdpi', 96, 216],
+    ['xxhdpi', 144, 324],
+    ['xxxhdpi', 192, 432],
+  ]) {
+    for (const [name, size] of [
+      ['ic_launcher.png', legacySize],
+      ['ic_launcher_round.png', legacySize],
+      ['ic_launcher_foreground.png', adaptiveSize],
+    ]) {
+      const png = readFileSync(new URL(`../android/app/src/main/res/mipmap-${density}/${name}`, import.meta.url));
+      assert.equal(png.readUInt32BE(16), size, `${density}/${name}`);
+      assert.equal(png.readUInt32BE(20), size, `${density}/${name}`);
+    }
+  }
+  for (const [path, size] of [
+    ['../ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png', 1024],
+    ['../../src/mobile/app/public/icon-192.png', 192],
+    ['../../src/mobile/app/public/icon-512.png', 512],
+    ['../../src/mobile/app/public/icon-maskable-512.png', 512],
+    ['../../src/mobile/app/public/apple-touch-icon.png', 180],
+    ['../../src/mobile/login/public/icon-192.png', 192],
+  ]) {
+    const png = readFileSync(new URL(path, import.meta.url));
+    assert.equal(png.readUInt32BE(16), size, path);
+    assert.equal(png.readUInt32BE(20), size, path);
+  }
+  const manifest = JSON.parse(read('../../src/mobile/app/public/manifest.webmanifest'));
+  assert.deepEqual(manifest.icons.slice(-2).map((icon) => icon.purpose), ['any', 'maskable']);
+  assert.equal(manifest.icons.at(-2).src, 'icon-512.png');
+  assert.equal(manifest.icons.at(-1).src, 'icon-maskable-512.png');
+});
+
 test('Gradle wrapper remains executable in Git and on disk', () => {
   const entry = execFileSync('git', ['ls-files', '--stage', 'mobile-shell/android/gradlew'], {
     cwd: repoRoot,
