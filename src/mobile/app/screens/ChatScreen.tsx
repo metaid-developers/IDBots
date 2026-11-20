@@ -609,6 +609,9 @@ export default function ChatScreen(props: {
     },
     [],
   );
+  const dismissComposerKeyboard = useCallback(() => {
+    textareaRef.current?.blur();
+  }, []);
   const voice = useVoiceInput({
     getDraftAndCaret: () => {
       const textarea = textareaRef.current;
@@ -627,6 +630,7 @@ export default function ChatScreen(props: {
     // words in the draft instead of dropping them.
     onFinalText: (text) => {
       const outcome = sendVoiceMessage(chat, text, { blocked: composerBlocked });
+      if (outcome === 'sent') dismissComposerKeyboard();
       if (outcome === 'empty') showVoiceHint(t('mobile.chat.voice.hintNoSpeech'));
       else if (outcome === 'kept_in_draft') showVoiceHint(t('mobile.chat.voice.hintKeptInDraft'));
     },
@@ -740,6 +744,9 @@ export default function ChatScreen(props: {
 
   const submit = () => {
     if (!canSubmit) return;
+    dismissComposerKeyboard();
+    setEmojiPanelOpen(false);
+    setComposerMenuOpen(false);
     void chat.send(draft, attachments);
   };
 

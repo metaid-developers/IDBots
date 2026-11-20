@@ -64,6 +64,8 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record your voice to send voice messages in a conversation.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Take photos to attach them to your conversation.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

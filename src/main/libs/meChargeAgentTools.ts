@@ -443,6 +443,18 @@ export function buildMeChargeAgentTools(deps: {
               true,
             );
           }
+          // Blind-confirmation guard: if the hold read failed AND the caller
+          // brought no expectations, the owner would be asked to approve a
+          // capture shown as "amount unknown / payee (unknown)". Refuse
+          // instead — the freeze receipt the caller already received carries
+          // both values, so the fix is to retry the read (action=status) or
+          // pass expected_amount_me + expected_payee explicitly.
+          if (!known && (expectedMilli == null || !expectedPayee)) {
+            return textResult(
+              'me_charge capture refused: the hold could not be read right now and no expected_amount_me/expected_payee were supplied, so the owner would have to confirm an UNKNOWN amount. Nothing was charged — check the order with action=status, or retry capture passing the expected_amount_me and expected_payee values from the freeze receipt.',
+              true,
+            );
+          }
           const refusal = await confirmCharge({
             action: 'capture',
             metabotId: owner,

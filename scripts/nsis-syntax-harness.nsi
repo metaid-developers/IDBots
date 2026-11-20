@@ -43,20 +43,52 @@ Unicode true
   Page custom StartApp
 !macroend
 
-!macro WinShell::SetLnkAUMI shortcut appId
-  DetailPrint "SetLnkAUMI ${shortcut} ${appId}"
-!macroend
+; WinShell::SetLnkAUMI in nsis-installer.nsh is a PLUGIN call (an NSIS
+; `Name::Call` token always resolves as a plugin — a same-named define or
+; macro is never reached) and the harness NSIS distributions (brew / choco)
+; do not carry the WinShell.dll that electron-builder's NSIS bundle ships.
+; The harness therefore compiles with IDBOTS_NSIS_SYNTAX_HARNESS defined,
+; which gates exactly those three fixed-string plugin one-liners inside
+; customInstall. Every other line of the production macros still compiles
+; here under -WX.
 
 LangString appRunning 0 "IDBots is running."
 LangString appCannotBeClosed 0 "IDBots cannot be closed."
 
 !include "${IDBOTS_NSIS_SCRIPT}"
 
+; Mirror electron-builder's REAL per-pass compile surface (verified against
+; app-builder-lib 24.13.3 templates, run 44502506341's packaging failure):
+;
+;  - installer pass: .onInit's !else branch inserts customInit; the install
+;    section body inserts customInstall; assistedInstaller's page block
+;    (guarded !ifndef BUILD_UNINSTALLER) inserts customFinishPage and
+;    PAGE_INSTALL_MODE, whose page function body inserts customInstallMode.
+;  - uninstaller pass: NONE of the page block compiles, and .onInit /
+;    install-section bodies are empty — EXCEPT assistedInstaller's !else
+;    branch inserts PAGE_INSTALL_MODE again, whose !else branch
+;    instantiates the page function with the un. prefix, so
+;    customInstallMode's body STILL compiles (and its uninstall-mode page
+;    variant runs at uninstall time). A $var it references must therefore
+;    be declared in BOTH passes; a declaration guarded by
+;    !ifndef BUILD_UNINSTALLER becomes warning 6000 here — fatal under
+;    electron-builder's -WX — and silently empties the reference at
+;    uninstaller runtime (run 44502506341 died exactly there).
+;  - $appExe/$launchLink are template-declared installer-pass-only
+;    (installer.nsi !else branch); newDesktopLink/newStartMenuLink are
+;    template-declared unconditionally but referenced by no uninstaller-pass
+;    code — newer NSIS (local brew 3.13) 6001-fatalizes unused vars under
+;    -WX while the pinned 3.0.4.1 does not, so the wrapper declares them
+;    installer-pass-only to stay green on BOTH gate NSIS versions.
 !ifndef BUILD_UNINSTALLER
+  Var appExe
   Var newDesktopLink
   Var newStartMenuLink
-  Var appExe
+  Var isForceCurrentInstall
+  Var isForceMachineInstall
+!endif
 
+!ifndef BUILD_UNINSTALLER
   !insertmacro customFinishPage
 !endif
 
@@ -66,7 +98,20 @@ Section "harness"
   WriteUninstaller "${IDBOTS_NSIS_OUTPUT}.uninst.exe"
 SectionEnd
 Section "un.harness"
-  !insertmacro customCheckAppRunning
+  ; The real uninstaller pass compiles uninstaller.nsh, whose only fragment
+  ; hook is customUnInstall (undefined in this repo) — an empty uninstall
+  ; payload is the faithful mirror; the section shell only exists so
+  ; WriteUninstaller has something to embed.
+SectionEnd
+; The real BUILD_UNINSTALLER pass still compiles customInstallMode's body:
+; assistedInstaller's !else branch inserts PAGE_INSTALL_MODE, whose !else
+; branch instantiates the install-mode page function with the un. prefix,
+; and that function body's !ifmacrodef customInstallmode (NSIS resolves
+; macro names case-insensitively) compiles our customInstallMode. Mirror it
+; so an installer-only $var declaration fails right here, exactly like the
+; real pass (run 44502506341 died there under -WX).
+Section "harness.uninstallmode-surface"
+  !insertmacro customInstallMode
 SectionEnd
 !else
 Section "harness"
@@ -75,6 +120,7 @@ Section "harness"
   StrCpy $appExe "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
   !insertmacro customCheckAppRunning
   !insertmacro customInit
+  !insertmacro customInstallMode
   !insertmacro customInstall
 SectionEnd
 !endif

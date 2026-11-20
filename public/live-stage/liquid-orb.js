@@ -445,7 +445,52 @@ void main() {
   window.buildLiquidOrbShaderSource = buildOrbShaderSource;
   window.buildLiquidOrbGlslSource = buildOrbGlslSource;
 
-  async function acquireHardwareDevice(abortIfSignaled) {
+  /**
+   * Await a GPU promise under the startup budget. abortIfSignaled above only
+   * runs AFTER an await settles, so a requestAdapter()/requestDevice() that
+   * never resolves (wedged Windows display driver, suspended RDP session)
+   * used to hang the whole renderer promise and the WebGL2 tier inside it
+   * never ran — the stage sat on the CSS membrane until the outer 20s timer
+   * demoted it for good. Racing the promise against the budget signal keeps
+   * the 4.5s budget honest: a hung GPU call rejects with the same timeout
+   * error and the existing WebGL2 fallback proceeds.
+   */
+  function raceWithAbort(promise, abortIfSignaled, budgetSignal) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        try {
+          abortIfSignaled();
+        } catch (error) {
+          reject(error);
+        }
+      };
+      if (budgetSignal?.aborted) {
+        onAbort();
+        return;
+      }
+      budgetSignal?.addEventListener('abort', onAbort, { once: true });
+      const detach = () => budgetSignal?.removeEventListener('abort', onAbort);
+      promise.then(
+        (value) => {
+          if (settled) return;
+          settled = true;
+          detach();
+          resolve(value);
+        },
+        (error) => {
+          if (settled) return;
+          settled = true;
+          detach();
+          reject(error);
+        },
+      );
+    });
+  }
+
+  async function acquireHardwareDevice(abortIfSignaled, budgetSignal) {
     const candidates = [
       undefined,
       { powerPreference: 'high-performance' },
@@ -457,7 +502,8 @@ void main() {
     for (const opts of candidates) {
       let adapter = null;
       try {
-        adapter = opts ? await navigator.gpu.requestAdapter(opts) : await navigator.gpu.requestAdapter();
+        const request = opts ? navigator.gpu.requestAdapter(opts) : navigator.gpu.requestAdapter();
+        adapter = await raceWithAbort(request, abortIfSignaled, budgetSignal);
       } catch (error) {
         lastError = error;
         continue;
@@ -469,7 +515,7 @@ void main() {
         continue;
       }
       try {
-        const device = await adapter.requestDevice();
+        const device = await raceWithAbort(adapter.requestDevice(), abortIfSignaled, budgetSignal);
         abortIfSignaled();
         return device;
       } catch (error) {
@@ -642,7 +688,7 @@ void main() {
     try {
       abortIfSignaled();
       if (!device) {
-        device = await acquireHardwareDevice(abortIfSignaled);
+        device = await acquireHardwareDevice(abortIfSignaled, budgetAbort?.signal);
       }
       const format = navigator.gpu.getPreferredCanvasFormat();
       const reusePipeline = Boolean(
@@ -743,7 +789,12 @@ void main() {
       const strictGl = canvas.getContext('webgl2', { ...baseAttrs, failIfMajorPerformanceCaveat: true });
       if (strictGl) return strictGl;
     }
-    const gl = canvas.getContext('webgl2', baseAttrs);
+    // The lenient attempt keeps the orb alive when the strict one was refused
+    // (e.g. a blocklisted discrete GPU). Asking for high-performance here
+    // again would pin dual-GPU Windows laptops to dGPU power draw for a
+    // mostly-idle orb AND re-hit the same refused adapter — fall to the
+    // integrated one instead.
+    const gl = canvas.getContext('webgl2', { ...baseAttrs, powerPreference: 'low-power' });
     if (!gl) return null;
     if (!allowSoftware) {
       const dbg = gl.getExtension('WEBGL_debug_renderer_info');
@@ -858,7 +909,12 @@ void main() {
         console.warn('[LiquidOrb] WebGPU unavailable, falling back to WebGL2:', message);
         try {
           return initWebGL2Backend(canvas, options, startedAt, false);
-        } catch {
+        } catch (webgl2Error) {
+          // The WebGPU error alone reads as "No WebGPU adapter" even when the
+          // real story was the WebGL2 tier refusing too (software renderer,
+          // RDP). Log the second failure — the main process relays
+          // [LiquidOrb] messages into diagnostics — then rethrow the first.
+          console.warn('[LiquidOrb] WebGL2 fallback also failed:', webgl2Error instanceof Error ? webgl2Error.message : String(webgl2Error));
           throw webgpuError;
         }
       }

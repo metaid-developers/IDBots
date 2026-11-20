@@ -281,7 +281,27 @@ const isGlmFamilyModelId = (modelId) => /(?:^|\/)glm-/i.test(String(modelId ?? '
  *  the ID.Bots relay triggers proactive compaction much earlier while still
  *  allowing single-turn 1M-window requests and preserving default 0.16 tail
  *  retention (~109K-147K tokens) without retainRatio override. Small-window
- *  models (<256K) keep the 0.9 tier. */
+ *  models (<256K) keep the 0.9 tier.
+ *
+ *  Why 0.35 is safely reachable on this relay (2026-11-19 review evidence
+ *  pass): the relay's TRUE acceptance line is far above the 0.35 threshold.
+ *  The 2026-11-12 incident (fdef7f3dc) measured 259,414 tokens accepted and
+ *  the next request rejected near ~262K — a 0.35 threshold would then have
+ *  been unreachable, and 93f5fabb8's first version of this block cited an
+ *  assist-base-service chain-failover fix ("context-overflow rejections fail
+ *  over to the next chain provider", abs e402759) that is not resolvable in
+ *  this repo, so that claim was dropped as unverifiable. The verified datum
+ *  that replaces it: the 2026-11-18 Studio post-mortem session (see the
+ *  budget-trigger forensics in src/main/libs/studioChapterTriggers.ts) ran a
+ *  full day on this relay to ~530K tokens of real usage with zero compaction
+ *  and zero upstream rejections — twice the old rejection line. 0.35
+ *  (~350-367K) therefore sits comfortably inside the relay's accepted range
+ *  while still bounding tail burn. Residual risk: if the relay ever silently
+ *  lowers its true cap again, turns past the line die exactly as in the
+ *  11-12 incident; the overflow-shrink kernel patch (scripts/
+ *  dsh-kernel-patches) plus the GT-02 overflow gate are the reactive nets,
+ *  and a one-off >300K probe against metaso.network is the cheap way to
+ *  re-verify before trusting this tier on a new relay deployment. */
 const COMPACTION_THRESHOLD_RATIO_IDBOTS_RELAY = 0.35
 const IDBOTS_RELAY_HOST = 'metaso.network'
 

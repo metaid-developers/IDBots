@@ -6,7 +6,6 @@ import {
   type MvcTokenSellListingRef,
 } from './walletRawTxService';
 import { isRetryableMvcBroadcastError, resolveBroadcastTxResult } from '../libs/mvcSpend';
-import { freshGetUrlAndInit } from './freshFetch';
 import { mvc } from 'meta-contract';
 import {
   decodeTokenSellSeedLock,
@@ -18,8 +17,10 @@ import {
  * MVC FT TokenSell service — the FT trading counterpart of mvcNftService.
  *
  * Read path:
- *  - FT holdings per address (open-api-mvc contract/ft endpoints — the same
- *    ones the live-fire discovery used).
+ *  - FT holdings per address moved to mvcFtService (metalet v4 balance-list,
+ *    the same source the wallet UI uses) — see mvcFtTokenBalanceFromAssets.
+ *    The former open-api-mvc balance fetch parsed a field the endpoint never
+ *    sends and reported hard zeros (session 0c841356).
  *  - Listing verification: TokenSell has NO chain-wide order index (the
  *    listing four-tuple travels off-chain between counterparties by design);
  *    given a tuple we verify it against the chain — raw LIST tx, the seed
@@ -32,7 +33,6 @@ import {
  */
 
 const METALET_HOST = 'https://www.metalet.space';
-const APIMVC_HOST = 'https://api.microvisionchain.com/open-api-mvc';
 const NET = 'livenet';
 const RETRYABLE_MVC_TOKEN_SELL_BUILD_ATTEMPTS = 3;
 const RETRYABLE_MVC_TOKEN_SELL_BROADCAST_DELAY_MS = 750;
@@ -45,6 +45,11 @@ export interface MvcFtTokenSummary {
   balance: string;
   decimal?: number;
   count?: number;
+  /** Display-unit split when the balance source provides it (metalet v4). */
+  confirmed?: string;
+  unconfirmed?: string;
+  tokenName?: string;
+  sensibleId?: string;
 }
 
 export interface MvcFtTokenBalance {
@@ -64,18 +69,7 @@ export interface MvcTokenSellOrderVerify {
   txid: string;
 }
 
-interface RawFtBalanceRow {
-  symbol?: string;
-  genesis?: string;
-  codeHash?: string;
-  codehash?: string;
-  balance?: string | number;
-  decimal?: number | string;
-  count?: number | string;
-}
-
 interface MvcTokenSellServiceDeps {
-  fetchFtBalance: (address: string) => Promise<RawFtBalanceRow[]>;
   fetchRawTx: (txid: string) => Promise<string>;
   buildTradeRawTx: typeof buildMvcTokenSellRawTx;
   broadcastTx: (rawTx: string) => Promise<string>;
@@ -93,12 +87,6 @@ async function sleep(ms: number): Promise<void> {
 }
 
 const defaultDeps: MvcTokenSellServiceDeps = {
-  fetchFtBalance: async (address) => {
-    const freshRequest = freshGetUrlAndInit(`${APIMVC_HOST}/contract/ft/address/${encodeURIComponent(address)}/balance`);
-    const response = await fetch(freshRequest.url, freshRequest.init);
-    const rows = (await response.json()) as RawFtBalanceRow[];
-    return Array.isArray(rows) ? rows : [];
-  },
   fetchRawTx: async (txid) => {
     const response = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/tx/raw?txId=${txid}&net=mainnet`);
     const json = (await response.json()) as { data?: { hex?: string } };
@@ -119,30 +107,6 @@ const defaultDeps: MvcTokenSellServiceDeps = {
 };
 
 const tokenSellDesc = require('meta-contract/dist/mcp02/contract-desc/tokenSell_desc.json');
-
-/** FT holdings for one address (open-api-mvc; base-unit string balances). */
-export async function getMvcFtTokenBalance(
-  address: string,
-  deps: Pick<MvcTokenSellServiceDeps, 'fetchFtBalance'> = defaultDeps,
-): Promise<MvcFtTokenBalance> {
-  if (!address || typeof address !== 'string') throw new Error('address is required');
-  const rows = await deps.fetchFtBalance(address);
-  const tokens: MvcFtTokenSummary[] = [];
-  for (const row of rows) {
-    const genesis = String(row.genesis || '').trim();
-    const codeHash = String(row.codeHash || row.codehash || '').trim();
-    if (!genesis) continue;
-    tokens.push({
-      symbol: String(row.symbol || ''),
-      genesis,
-      codeHash,
-      balance: String(row.balance ?? '0'),
-      decimal: row.decimal !== undefined ? Number(row.decimal) : undefined,
-      count: row.count !== undefined ? Number(row.count) : undefined,
-    });
-  }
-  return { address, count: tokens.length, tokens };
-}
 
 /**
  * Verify a TokenSell listing four-tuple against the chain:

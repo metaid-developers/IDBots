@@ -1,5 +1,5 @@
 import { API_NET, API_TARGET, FtManager, mvc } from 'meta-contract';
-import { getMvcWallet, parseAddressIndexFromPath } from '../services/metabotWalletService';
+import { getMvcWalletFromPath } from '../services/metabotWalletService';
 import {
   attachMvcFundingSignatureContext,
   selectMvcFundingUtxos,
@@ -95,8 +95,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const addressIndex = parseAddressIndexFromPath(pathStr);
-  const mvcWallet = await getMvcWallet(mnemonic, addressIndex);
+  // Path-aware derivation (parity with buildMvcTransferRawTxWorker): a legacy
+  // 236-segment issuer bot must derive its own address, not the 10001 default.
+  const mvcWallet = await getMvcWalletFromPath(mnemonic, pathStr);
   const senderWif = mvcWallet.getPrivateKey();
   const senderAddress = mvcWallet.getAddress();
   const ftManager = new FtManager({

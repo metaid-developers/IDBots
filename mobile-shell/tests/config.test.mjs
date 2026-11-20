@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createCapacitorConfig, getFlavor } from '../scripts/flavors.mjs';
@@ -51,10 +51,13 @@ test('Android has API 26 and explicit staging and production variants', () => {
   assert.match(backPlugin, /getBridge\(\)\.getActivity\(\)\.finish\(\)/);
 });
 
-test('production startup uses declarative config, safe lifecycle, version 0.1.2, and branded launcher assets', () => {
+test('production startup uses declarative config, safe lifecycle, version 0.1.5, and branded launcher assets', () => {
   const build = read('../android/app/build.gradle');
-  assert.match(build, /versionCode 4/);
-  assert.match(build, /versionName "0\.1\.2"/);
+  assert.match(build, /versionCode 7/);
+  assert.match(build, /versionName "0\.1\.5"/);
+  const iosProject = read('../ios/App/App.xcodeproj/project.pbxproj');
+  assert.equal(iosProject.match(/CURRENT_PROJECT_VERSION = 7;/g)?.length, 2);
+  assert.equal(iosProject.match(/MARKETING_VERSION = 0\.1\.5;/g)?.length, 2);
   const bootstrap = read('../android/app/src/main/java/com/idbots/world/NativeBootstrap.java');
   assert.doesNotMatch(bootstrap, /readAllBytes\s*\(/);
   assert.match(bootstrap, /ByteArrayOutputStream/);
@@ -66,20 +69,97 @@ test('production startup uses declarative config, safe lifecycle, version 0.1.2,
   for (const [path, size] of [
     ['../android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png', 192],
     ['../android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png', 192],
-    ['../android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png', 432],
-    ['../android/app/src/main/res/drawable/splash.png', 432],
   ]) {
     const png = readFileSync(new URL(path, import.meta.url));
     assert.equal(png.readUInt32BE(16), size, path);
     assert.equal(png.readUInt32BE(20), size, path);
   }
-  const resRoot = new URL('../android/app/src/main/res/', import.meta.url);
-  for (const directory of readdirSync(resRoot)) {
-    if (!directory.startsWith('drawable-port-') && !directory.startsWith('drawable-land-')) continue;
-    const png = readFileSync(new URL(`${directory}/splash.png`, resRoot));
-    assert.equal(png.readUInt32BE(16), 432, directory);
-    assert.equal(png.readUInt32BE(20), 432, directory);
+});
+
+test('approved amber splash preserves the robot aspect ratio on Android, iOS, and PWA', () => {
+  const androidSplash = read('../android/app/src/main/res/drawable/splash.xml');
+  assert.match(androidSplash, /@drawable\/splash_art/);
+  assert.match(androidSplash, /android:gravity="center"/);
+  assert.match(androidSplash, /@color\/idbots_launch/);
+  for (const [density, scale] of [['mdpi', 1], ['hdpi', 1.5], ['xhdpi', 2], ['xxhdpi', 3], ['xxxhdpi', 4]]) {
+    for (const orientation of ['port', 'land']) {
+      const path = `../android/app/src/main/res/drawable-${orientation}-${density}/splash_art.png`;
+      const png = readFileSync(new URL(path, import.meta.url));
+      assert.equal(png.readUInt32BE(16), 390 * scale, path);
+      assert.equal(png.readUInt32BE(20), 844 * scale, path);
+    }
   }
+  const storyboard = read('../ios/App/App/Base.lproj/LaunchScreen.storyboard');
+  assert.match(storyboard, /contentMode="scaleAspectFit"/);
+  assert.doesNotMatch(storyboard, /scaleAspectFill/);
+  assert.match(storyboard, /image="LaunchRobot"/);
+  assert.match(storyboard, /image="LaunchTile"/);
+  assert.doesNotMatch(storyboard, /userDefinedRuntimeAttributes/);
+  for (const size of [264, 528, 792]) {
+    const png = readFileSync(new URL(`../ios/App/App/Assets.xcassets/LaunchRobot.imageset/launch-robot-${size}.png`, import.meta.url));
+    assert.equal(png.readUInt32BE(16), size);
+    assert.equal(png.readUInt32BE(20), size);
+  }
+  for (const size of [296, 592, 888]) {
+    const png = readFileSync(new URL(`../ios/App/App/Assets.xcassets/LaunchTile.imageset/launch-tile-${size}.png`, import.meta.url));
+    assert.equal(png.readUInt32BE(16), size);
+    assert.equal(png.readUInt32BE(20), size);
+  }
+  const pwa = read('../../src/mobile/app/index.html');
+  assert.match(pwa, /id="idbots-launch-splash"/);
+  assert.match(pwa, /object-fit: contain/);
+  assert.match(pwa, /#FEB338/);
+  const bootstrap = read('../../src/mobile/app/bootstrap.tsx');
+  assert.match(bootstrap, /finally \{/);
+  assert.match(bootstrap, /getElementById\('idbots-launch-splash'\)\?\.remove\(\)/);
+  const manifest = JSON.parse(read('../../src/mobile/app/public/manifest.webmanifest'));
+  assert.equal(manifest.background_color, '#FEB338');
+  assert.equal(manifest.theme_color, '#FEB338');
+});
+
+test('launcher icons use the full original artwork without adaptive cropping or added margins', () => {
+  const generator = read('../scripts/generate-launcher-icons.mjs');
+  assert.match(generator, /scale=\$\{size\}:\$\{size\}:flags=neighbor/);
+  assert.doesNotMatch(generator, /crop=|pad=/);
+  const source = readFileSync(new URL('../../public/logo.png', import.meta.url));
+  assert.equal(source.readUInt32BE(16), 1080);
+  assert.equal(source.readUInt32BE(20), 1080);
+  for (const [density, size] of [
+    ['mdpi', 48],
+    ['hdpi', 72],
+    ['xhdpi', 96],
+    ['xxhdpi', 144],
+    ['xxxhdpi', 192],
+  ]) {
+    for (const name of ['ic_launcher.png', 'ic_launcher_round.png']) {
+      const png = readFileSync(new URL(`../android/app/src/main/res/mipmap-${density}/${name}`, import.meta.url));
+      assert.equal(png.readUInt32BE(16), size, `${density}/${name}`);
+      assert.equal(png.readUInt32BE(20), size, `${density}/${name}`);
+    }
+  }
+  for (const [path, size] of [
+    ['../ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png', 1024],
+    ['../../src/mobile/app/public/icon-192.png', 192],
+    ['../../src/mobile/app/public/icon-512.png', 512],
+    ['../../src/mobile/app/public/apple-touch-icon.png', 180],
+    ['../../src/mobile/login/public/icon-192.png', 192],
+  ]) {
+    const png = readFileSync(new URL(path, import.meta.url));
+    assert.equal(png.readUInt32BE(16), size, path);
+    assert.equal(png.readUInt32BE(20), size, path);
+  }
+  for (const path of [
+    '../android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml',
+    '../android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml',
+    '../../src/mobile/app/public/icon-maskable-512.png',
+  ]) {
+    assert.throws(() => readFileSync(new URL(path, import.meta.url)), /ENOENT/, path);
+  }
+  const manifest = JSON.parse(read('../../src/mobile/app/public/manifest.webmanifest'));
+  assert.equal(manifest.icons.length, 2);
+  assert.equal(manifest.icons.at(-1).src, 'icon-512.png');
+  assert.equal(manifest.icons.at(-1).purpose, 'any');
+  assert.equal(manifest.icons.some((icon) => icon.purpose === 'maskable'), false);
 });
 
 test('Gradle wrapper remains executable in Git and on disk', () => {

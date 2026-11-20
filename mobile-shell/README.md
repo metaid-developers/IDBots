@@ -14,10 +14,11 @@ NS0 provides the native foundation, NS1 adds lifecycle and navigation integratio
 - camera, photo-library, and multi-document selection into the existing upload pipeline;
 - native system artifact sharing with current signed URLs and existing web fallbacks;
 - Android secure screenshots and iOS opaque background/app-switcher masking;
+- automatic Android APK update checks, system-managed downloads, integrity/signature verification, and guided installation;
 - keyboard, safe-area, theme, and iOS-native recharge policy integration;
 - focused static, adapter, lifecycle, navigation, origin-policy, build, and WebView evidence.
 
-Push notifications, signing, TestFlight, and release rollout are intentionally not implemented. Physical-device and real-service acceptance is a separate gate, not implied by debug builds.
+Push notifications, TestFlight, and public store rollout are intentionally not implemented. Physical-device and real-service acceptance is a separate gate, not implied by debug builds. Android release signing uses the owner-held identity documented in `SIGNING.md`.
 
 ## Architecture
 
@@ -80,6 +81,9 @@ pnpm run build:android        # staging debug APK
 pnpm run build:android:staging
 pnpm run build:android:production
 
+# Signed production APK; use one of the signing mechanisms in SIGNING.md.
+IDBOTS_ANDROID_SIGNING_INIT_SCRIPT=/absolute/path/prod-signing-init.gradle pnpm run build:android:release
+
 pnpm run build:ios            # staging Simulator debug app
 pnpm run build:ios:staging
 pnpm run build:ios:production
@@ -116,6 +120,26 @@ After the workflow reaches the default branch, use **Actions → Android Staging
 
 The workflow only builds and tests. It does not sign a release, deploy the PWA, update staging, push to a registry, or publish to a store. Download the artifact through the GitHub Actions run page and install it with `adb install -r app-staging-debug.apk`.
 
+## Android APK Updates
+
+Production Android shells check `https://idbots.ai/update.json` on launch and after returning to the foreground, with a six-hour check interval. The existing desktop fields remain independent; native updates live in `data.value.android` and contain `version`, `versionCode`, `minVersionCode`, `date`, `url`, `sha256`, `size`, and bilingual `changeLog` entries. APKs use the versioned `https://app.idbots.world/downloads/` channel.
+
+A newer version opens a bilingual native update dialog. After the user chooses Update now, Android `DownloadManager` continues the download in the background and shows its own notification. The shell verifies the exact size and SHA-256, then checks the archive package name, integer version code, and complete signing-certificate set against the installed app before offering installation. Direct APK distribution cannot bypass Android's installation confirmation or, when required, the per-app unknown-sources permission.
+
+A user-dismissed version is not offered again for 24 hours unless its `minVersionCode` makes it required. Failed checks stay quiet and failed downloads offer Retry without affecting the installed app. Update state contains no account or product data.
+
+After building a signed release, generate a complete candidate manifest from the current live manifest and the exact APK:
+
+```bash
+curl --noproxy '*' -fsSL https://idbots.ai/update.json -o artifacts/update-before.json
+pnpm run release:android:metadata -- \
+  artifacts/IDBots-Android-0.1.5.apk \
+  artifacts/update-before.json \
+  artifacts/update.json
+```
+
+Edit `release-notes/android-release.json` for each release's date and bilingual notes. The metadata command derives the version from Gradle and calculates the APK size and SHA-256; never copy these values by hand. Build and verify the final production artifact from `main`, then publish the APK and manifest together and verify both public URLs.
+
 ## Native Surface
 
 `nativeBridgeVersion` is `1`. `getCapabilities()` returns a fresh object with these values:
@@ -137,6 +161,8 @@ The bootstrap also records `phase: 'document-start'`, the expected origin, and t
 Native selection returns ordinary `File` objects to the existing picker → size/type checks → image re-encoding → ordered upload progress → per-session draft pipeline. Each file is read sequentially. Both native layers enforce the same 25 MiB limit before and during reads; they do not persist document URIs or selected content. Only app-created camera files are temporary and are removed after reads or cancellation.
 
 Picker cancellation resolves without an error. Permission denial, unsupported capability, oversize input, and native failure remain distinct result categories. A native failure does not open a second picker or replay an upload. Browser file selection, Web Share, clipboard, download, and open-new-tab behavior remain available when the corresponding native capability is absent.
+
+Voice input keeps using the remote PWA's `getUserMedia` pipeline; audio does not cross the `NativeCapabilities` plugin. On Android, the installed Capacitor `BridgeWebChromeClient` handles `AUDIO_CAPTURE` and launches the runtime `RECORD_AUDIO` / `MODIFY_AUDIO_SETTINGS` requests declared in the manifest. iOS declares `NSMicrophoneUsageDescription` so the system can present its permission prompt when recording is first requested. Neither platform requests microphone access at application launch, and a denial leaves the existing voice error handling intact.
 
 Android sharing reports that the system chooser was handed the signed URL; Android does not expose a reliable user-cancellation result. iOS reports the `UIActivityViewController` completed/cancelled result. Signed URLs are never logged or persisted by the shell. iOS secure screen is an opaque background mask, not a claim that screenshots can be prevented.
 

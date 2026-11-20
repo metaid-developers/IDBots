@@ -1,0 +1,22 @@
+{
+  "date": "2026-11-20",
+  "minVersionCode": 0,
+  "changeLog": {
+    "ch": {
+      "title": "更新说明",
+      "content": [
+        "应用图标完整显示原始机器人图案，不再放大或裁剪。",
+        "Android、iOS 和 PWA 启用统一黄底启动画面。",
+        "修复切换后台后持续显示“正在重连”及界面按钮无响应的问题。"
+      ]
+    },
+    "en": {
+      "title": "Release Notes",
+      "content": [
+        "Shows the complete original robot artwork without launcher-icon zooming or cropping.",
+        "Adds the approved amber launch screen across Android, iOS, and the PWA.",
+        "Fixes stuck reconnecting indicators and unresponsive controls after returning from the background."
+      ]
+    }
+  }
+}

@@ -114,6 +114,7 @@ import { ensureSandboxReady, getSandboxStatus, onSandboxProgress } from './libs/
 import { startCoworkOpenAICompatProxy, stopCoworkOpenAICompatProxy, setScheduledTaskDeps, setFreeQuotaExhaustedListener } from './libs/coworkOpenAICompatProxy';
 import { startDshWebToolsProxy, stopDshWebToolsProxy, resolveDeepSeekWebToolsUpstream, relayWebToolsBase } from './services/dshWebToolsProxy';
 import { dshSessionRootFor, isOfficialDeepSeekRoute } from './libs/coworkDshTurn';
+import { archiveIdleDshSessions, dshSessionColdRootFor, DSH_SESSION_RETENTION_IDLE_DAYS } from './libs/dshSessionRetention';
 import { formatSessionLogAuditLine, guardActiveSessionLogsAtQuit, scanSessionLogsForHeaderInvariant } from './libs/dshSessionLogGuard';
 import { buildImageSkillEnvOverrides } from './libs/skillImageProviderEnv';
 import { isWorkspaceMetabotId, resolveBotWorkspaceCwd, resolveSessionWorkingDirectory, shouldUseBotWorkspaceCwd } from './libs/botWorkspace';
@@ -132,7 +133,7 @@ import {
 } from './libs/dataGuard';
 import { getSkillServiceManager } from './skillServices';
 import { createTray, destroyTray, updateTrayMenu } from './trayManager';
-import { isAutoLaunched, getAutoLaunchEnabled, setAutoLaunchEnabled } from './autoLaunchManager';
+import { isAutoLaunched, getAutoLaunchEnabled, setAutoLaunchEnabled, shouldRetargetAutoLaunch } from './autoLaunchManager';
 import { ScheduledTaskStore, DEFAULT_AGENT_MAX_FIRES, SCHEDULED_TASK_SESSION_MODES } from './scheduledTaskStore';
 import { dshPluginsDirFor, resolveDshPluginEntries } from './libs/dshPluginManager';
 import { GroupTaskStore, setGroupTaskStoreStatusBroadcaster, type GroupTaskStatus } from './groupTaskStore';
@@ -182,6 +183,7 @@ import { mockCreateWalletAndFund, mockPushConfigToChain } from './services/chain
 import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
 import { PaymentInfoStore } from './services/paymentInfoStore';
 import { readPaymentReceivingInfo } from './services/paymentCardEmitter';
+import { isPeerAttachmentReadablePath } from './services/privateChatFileMessage';
 import {
   decryptPaymentInfo,
   derivePaymentInfoKey,
@@ -225,10 +227,14 @@ import {
   type WalletQueryChain,
 } from './services/walletQueryService';
 import { executeWalletMvcTransfer } from './services/walletTransferService';
+import { executeWalletTokenSend } from './services/walletTokenSendService';
+import { getWalletTxStatus, verifyWalletTx } from './services/walletTxStatusService';
 import { openMetabotBtcWallet, signBtcPsbtPartial } from './services/btcPartialSign';
 import { broadcastBtcTx, fetchBtcUtxos } from './libs/btcApi';
 import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
-import { executeMvcTokenSellTrade, getMvcFtTokenBalance, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
+import { executeMvcTokenSellTrade, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
+import { listMvcFtAssets, mvcFtTokenBalanceFromAssets } from './services/mvcFtService';
+import { listMrc20Assets } from './services/mrc20Service';
 import {
   broadcastMvcTx,
   buyMrc721Listing,
@@ -559,7 +565,7 @@ import { createAgentGameHost, type AgentGameHost } from './agentGame';
 import type { GameManifest, GameSession } from './agentGame/abi';
 import { toSessionView as toPublicSessionView } from './agentGame/abi';
 import { assignGroupChatTask, resolveMetabotIdByName, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
-import { cancelActiveDownload, downloadUpdate, installUpdate, applyMacUpdateSilently, relaunchPendingMacUpdate, cleanupStaleDownloads } from './libs/appUpdateInstaller';
+import { cancelActiveDownload, downloadUpdate, installUpdate, applyMacUpdateSilently, relaunchPendingMacUpdate, cleanupStaleDownloads, isTrustedUpdateInstallerPath, isUpdaterDrivenShutdown } from './libs/appUpdateInstaller';
 import { fetchFromLocalOrFallback, fetchJsonWithFallbackOnMiss, isEmptyListDataPayload } from './services/localIndexerProxy';
 import { HostLocationService, type SystemFix } from './services/hostLocationService';
 import { freshGetUrlAndInit } from './services/freshFetch';
@@ -5629,8 +5635,37 @@ const runStartupGroupTaskCommStatsBackfill = (): void => {
  * then the services themselves — so no single step can block the main thread
  * the way the old synchronous startup block did.
  */
+/**
+ * DSH session-log retention (Phase 2 slice 6, owner-approved Proposal A):
+ * sessions whose kernel log was last written longer than the retention window
+ * ago are MOVED (rename, same volume) to <userData>/dsh-sessions/cold — the
+ * months-long Studio conversation writes ~17MB/day and nothing ever reclaimed
+ * it. Active sessions are untouched; an archived session restores
+ * transparently on its next turn (see the hub's restore hook in
+ * coworkDshTurn.runTurnExclusive), so old conversations keep their full
+ * kernel history. Best-effort: any failure only skips the sweep until the
+ * next startup.
+ */
+const runDshSessionRetentionSweep = async (): Promise<void> => {
+  try {
+    const liveRoot = dshSessionRootFor(app.getPath('userData'));
+    const result = archiveIdleDshSessions({
+      liveRoot,
+      coldRoot: dshSessionColdRootFor(liveRoot),
+      idleDays: DSH_SESSION_RETENTION_IDLE_DAYS,
+    });
+    startupLog(`dsh session retention sweep done (scanned=${result.scanned}, archived=${result.archived}, idleDays=${DSH_SESSION_RETENTION_IDLE_DAYS})`);
+    if (result.archived > 0) {
+      console.info(`[Main] Archived ${result.archived} idle DSH session log(s) (>${DSH_SESSION_RETENTION_IDLE_DAYS}d idle) to dsh-sessions/cold`);
+    }
+  } catch (error) {
+    console.warn('[Main] DSH session retention sweep failed; continuing:', error);
+  }
+};
+
 const startStartupIdleTier = (): void => {
   runIdleStartupSteps([
+    { label: 'dsh session retention sweep', run: runDshSessionRetentionSweep },
     { label: 'metaid experience backfill', run: runStartupMetaIDExperienceBackfill },
     { label: 'group task deliverable backfill', run: runStartupGroupTaskDeliverableBackfill },
     { label: 'group task comm stats backfill', run: runStartupGroupTaskCommStatsBackfill },
@@ -7137,6 +7172,10 @@ const getCoworkRunner = () => {
         return { mode: 'launch' as const, headless: true, ...detectSystemChromium() };
       },
       computer: (metabotId: number | null) => {
+        // Cloud tenants have no user desktop to control. Keep browser
+        // automation available, but never mount the native CUA provider or
+        // its dozens of desktop-only schemas on this surface.
+        if (isServerMode()) return false;
         if (!isExperimentalAutomationAllowed(getStoreOrNull())) return false;
         return isCoworkComputerUseEnabled(getMetabotStore(), metabotId);
       },
@@ -7314,22 +7353,38 @@ const getCoworkRunner = () => {
       // MCP) launches one headless Chromium per DSH session. Prefer the
       // installed Chrome over a Playwright-managed download. See
       // services/coworkAutomationPreference.ts.
+      // Studio demotion (owner ruling 2026-11-19, Phase 2): the
+      // assistant-mode owner chat NEVER mounts the experimental automation
+      // families — the census showed 0 Studio calls while the two families'
+      // schemas cost ~108KB ≈ 27K tokens on every Studio request. The
+      // switches stay authoritative for BotWorks/worker/automation surfaces
+      // of the same bot; Studio works through the first-party bot_browser_*
+      // tools and Worker delegation.
       browserAutomationProvider: (coworkSessionId: string) => {
+        if (!getCoworkRunner().mobileBrowserAutomationAllowed(coworkSessionId)) return undefined;
+        if (getStudioChiefOfStaffService().isStudioOwnerSession(coworkSessionId)) return undefined;
         const metabotId = getCoworkStore().getSessionMetabotId(coworkSessionId);
         return metabotAutomationProviders.browser(metabotId ?? null);
       },
       // Per-bot switch (default OFF since 2026-11-12, explicit '1' opts in):
       // 0.1.7 experimental desktop computer use (cua-driver native,
       // in-process). Requires the app to hold the macOS Accessibility/Screen
-      // Recording grants — the OS prompts on first use.
+      // Recording grants — the OS prompts on first use. Same Studio demotion
+      // as the browser family above (owner ruling 2026-11-19).
       computerUseProvider: (coworkSessionId: string) => {
+        if (getStudioChiefOfStaffService().isStudioOwnerSession(coworkSessionId)) return false;
         const metabotId = getCoworkStore().getSessionMetabotId(coworkSessionId);
         return metabotAutomationProviders.computer(metabotId ?? null);
       },
       // Metabot-keyed variants for intent prewarms that fire before any
       // session record exists (the home composer's bot pick) — same opt-in
       // semantics, keyed on the bot directly.
-      browserAutomationForMetabot: (metabotId: number | null) => metabotAutomationProviders.browser(metabotId),
+      browserAutomationForMetabot: (metabotId: number | null) => {
+        // New cloud chats do not pre-launch a browser before intent exists.
+        // The real turn mounts it only after an automation expansion.
+        if (isServerMode()) return undefined;
+        return metabotAutomationProviders.browser(metabotId);
+      },
       computerUseForMetabot: (metabotId: number | null) => metabotAutomationProviders.computer(metabotId),
       mcpServersForMetabot: (metabotId: number | null) => {
         // REQ-A-5: local MCP servers are disabled in server mode.
@@ -8346,8 +8401,29 @@ const getCoworkRunner = () => {
             params,
           ),
         ),
+        // wallet_token_send backend: partial-amount MVC20 transfers through
+        // the UI's FtManager path, with the SAME two-channel gate (dialog /
+        // external_confirmed) and the same audit ledger as wallet_transfer.
+        sendToken: (params, host) => withChainWriteBudget(
+          'wallet_token_send',
+          () => executeWalletTokenSend(
+            {
+              metabotStore: getMetabotStore(),
+              transferStore: getBotWalletTransferStore(),
+              settingsReader: getStore(),
+              getFeeRate: () => getGlobalFeeRate('mvc'),
+              confirmExternal: host?.confirmExternal,
+            },
+            params,
+          ),
+        ),
         listTransfers: (limit, metabotId) =>
           getBotWalletTransferStore().list(limit, metabotId),
+        // wallet_tx_status / wallet_tx_verify backends: read-only chain
+        // lookups (metalet raw tx + receiver utxo derivation, mempool.space
+        // for BTC, blockchair for DOGE). No write budget applies.
+        getTxStatus: (input) => getWalletTxStatus({}, input),
+        verifyTx: (input) => verifyWalletTx({}, input),
         // wallet_nft_balance backend: structured MVC NFT holdings per local
         // MetaBot address or raw address (wallet-api count/summary/utxo).
         listMvcNfts: async (input) => {
@@ -8444,7 +8520,8 @@ const getCoworkRunner = () => {
         },
       // ----- FT TokenSell backends (wallet_token_* tools; mirror the NFT
       // block above — same chain-write budget gate, same session-own-wallet
-      // posture enforced in the tools layer). -----
+      // posture enforced in the tools layer). listMvcFtTokens reads the SAME
+      // metalet v4 balance-list source the wallet UI uses. -----
       listMvcFtTokens: async (input) => {
         const store = getMetabotStore();
         const entries: Array<{ metabotId: number | null; address: string; error?: string }> = [];
@@ -8463,7 +8540,34 @@ const getCoworkRunner = () => {
           entries.map(async (entry) => {
             if (entry.error) return entry;
             try {
-              return { ...entry, balance: await getMvcFtTokenBalance(entry.address) };
+              return { ...entry, balance: mvcFtTokenBalanceFromAssets(entry.address, await listMvcFtAssets(entry.address)) };
+            } catch (error) {
+              return { ...entry, error: error instanceof Error ? error.message : String(error) };
+            }
+          }),
+        );
+      },
+      // wallet_mrc20_balance backend: read-only MRC20 holdings per local
+      // MetaBot BTC address (wallet UI's same metalet v3 balance-list).
+      listMrc20s: async (input) => {
+        const store = getMetabotStore();
+        const entries: Array<{ metabotId: number | null; address: string; error?: string }> = [];
+        for (const metabotId of input.metabotIds ?? []) {
+          const address = store.getMetabotById(metabotId)?.btc_address ?? '';
+          entries.push(
+            address
+              ? { metabotId, address }
+              : { metabotId, address: '', error: 'local MetaBot not found or has no btc address' },
+          );
+        }
+        if (input.address?.trim()) {
+          entries.push({ metabotId: null, address: input.address.trim() });
+        }
+        return await Promise.all(
+          entries.map(async (entry) => {
+            if (entry.error) return entry;
+            try {
+              return { ...entry, assets: await listMrc20Assets(entry.address) };
             } catch (error) {
               return { ...entry, error: error instanceof Error ? error.message : String(error) };
             }
@@ -14553,10 +14657,15 @@ if (!gotTheLock) {
         // language is named explicitly (resolved from the same persisted app
         // language the UI reads) — a fresh English install greets in English
         // even though the model's context is otherwise mixed-language.
-        const greetingPrompt = tApp(
-          '用户刚刚第一次进入 IDBots。现在用中文向他问好，并按照你的新手引导说明行动。',
-          'The user just opened IDBots for the very first time. Greet them in English now, following your onboarding instructions.',
-        );
+        const greetingPrompt = isServerMode()
+          ? tApp(
+            '用户第一次打开 IDBots 移动端。请用中文、以 2 到 3 个短段落自然地欢迎他：介绍你是他的 Twin Bot 和个人 AI 助手；用一句话说明你在他的专属云端运行环境中工作，可以在手机关闭后继续定时和长期任务；邀请他先给你起个名字，或告诉你想完成的第一件事。不要介绍桌面工作区、左右分栏或其他产品形态，不要罗列功能。',
+            'The user just opened IDBots on mobile for the first time. Welcome them in English with 2 or 3 short paragraphs: introduce yourself as their Twin Bot and personal AI assistant; explain in one sentence that you run in their dedicated cloud runtime and can continue scheduled and long-term work while their phone is closed; invite them to give you a name or tell you the first thing they want to accomplish. Do not describe desktop workspaces, split panes, or other product forms, and do not list features.',
+          )
+          : tApp(
+            '用户刚刚第一次进入 IDBots。现在用中文向他问好，并按照你的新手引导说明行动。',
+            'The user just opened IDBots for the very first time. Greet them in English now, following your onboarding instructions.',
+          );
         void runner.startSession(session.id, greetingPrompt, {
           skipInitialUserMessage: true,
           workspaceRoot: baseCwd,
@@ -16402,7 +16511,7 @@ if (!gotTheLock) {
     });
   });
 
-  registerIpcHandler('cowork:session:readLocalImage', async (_event, options: { path: string; maxBytes?: number }) => {
+  registerIpcHandler('cowork:session:readLocalImage', async (_event, options: { path: string; maxBytes?: number; scope?: 'peer-attachment' }) => {
     try {
       const rawPath = typeof options?.path === 'string' ? options.path.trim() : '';
       if (!rawPath) {
@@ -16410,6 +16519,14 @@ if (!gotTheLock) {
       }
 
       const resolvedPath = path.resolve(rawPath);
+      // Peer-attachment scope: the caller (A2A peer bubble thumbnails) reads
+      // paths named inside REMOTE message text, so it may only ever see files
+      // the private-chat daemon itself wrote. The owner's own composer
+      // attachments (no scope) keep reading any path they explicitly chose.
+      if (options?.scope === 'peer-attachment'
+        && !isPeerAttachmentReadablePath(resolvedPath, app.getPath('userData'))) {
+        return { success: false, error: 'Image path is outside the private-chat inbound scope' };
+      }
       const extension = path.extname(resolvedPath).toLowerCase();
       const mimeType = LOCAL_IMAGE_PREVIEW_EXTENSION_MIME[extension];
       if (!mimeType) {
@@ -21712,6 +21829,11 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   });
 
   registerIpcHandler('appUpdate:install', async (_event, filePath: string) => {
+    // The renderer-supplied path is executed (NSIS spawn / DMG mount), so it
+    // must be the updater's own temp artifact — never an arbitrary file.
+    if (!isTrustedUpdateInstallerPath(filePath)) {
+      return { success: false, error: 'Refusing to install from an untrusted path' };
+    }
     try {
       await installUpdate(filePath);
       return { success: true };
@@ -21725,6 +21847,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   registerIpcHandler('appUpdate:applySilent', async (_event, filePath: string) => {
     if (process.platform !== 'darwin') {
       return { success: false, error: 'Silent apply is only supported on macOS' };
+    }
+    if (!isTrustedUpdateInstallerPath(filePath)) {
+      return { success: false, error: 'Refusing to apply an untrusted path' };
     }
     try {
       await applyMacUpdateSilently(filePath);
@@ -22773,6 +22898,13 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   };
 
   const DESKTOP_CLEANUP_TIMEOUT_MS = 5_000;
+  // An updater-driven quit gets a longer budget: the NSIS installer launches,
+  // the app quits in the same breath, and the installer force-kills whatever
+  // outlives its grace loop. A big sql.js save (full db.export + atomic
+  // rename) or the session-log flush must finish inside THIS budget or the
+  // whole point of the flush is lost to the kill.
+  const UPDATE_CLEANUP_TIMEOUT_MS = 15_000;
+  const cleanupTimeoutMs = () => (isUpdaterDrivenShutdown() ? UPDATE_CLEANUP_TIMEOUT_MS : DESKTOP_CLEANUP_TIMEOUT_MS);
 
   const finishCleanupAndExit = () => {
     if (isCleanupFinished) return;
@@ -22797,9 +22929,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     flushJevRelayCallStats();
 
     const watchdog = setTimeout(() => {
-      console.warn(`[Main] App cleanup exceeded ${DESKTOP_CLEANUP_TIMEOUT_MS}ms; forcing exit.`);
+      console.warn(`[Main] App cleanup exceeded ${cleanupTimeoutMs()}ms; forcing exit.`);
       finishCleanupAndExit();
-    }, DESKTOP_CLEANUP_TIMEOUT_MS);
+    }, cleanupTimeoutMs());
     watchdog.unref();
 
     void runAppCleanup()
@@ -22820,9 +22952,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     isCleanupInProgress = true;
     isQuitting = true;
     const watchdog = setTimeout(() => {
-      console.warn(`[Main] App cleanup during ${signal} exceeded ${DESKTOP_CLEANUP_TIMEOUT_MS}ms; forcing exit.`);
+      console.warn(`[Main] App cleanup during ${signal} exceeded ${cleanupTimeoutMs()}ms; forcing exit.`);
       finishCleanupAndExit();
-    }, DESKTOP_CLEANUP_TIMEOUT_MS);
+    }, cleanupTimeoutMs());
     watchdog.unref();
     void runAppCleanup()
       .catch((error) => {
@@ -23481,6 +23613,29 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     if (!isServerMode() && !getStore().get('auto_launch_initialized')) {
       getStore().set('auto_launch_initialized', true);
       setAutoLaunchEnabled(true);
+    }
+
+    // An upgrade that moved the install directory leaves the OS login-item
+    // entry pointing at the old exe (the NSIS uninstaller never touches the
+    // Windows Run key): auto-launch would silently fail — or boot the stale
+    // old version out of the leftover directory. Re-register when auto-launch
+    // is ON and the exe path moved since the last registration; the current
+    // path is recorded on every boot so the NEXT move is detected. A user who
+    // opted out is never forced back on.
+    if (!isServerMode()) {
+      const exePathNow = app.getPath('exe');
+      const lastRegisteredExePath = getStore().get<string | undefined>('auto_launch_last_exe');
+      if (shouldRetargetAutoLaunch({
+        lastRegisteredExePath,
+        currentExePath: exePathNow,
+        autoLaunchEnabled: getAutoLaunchEnabled(),
+      })) {
+        setAutoLaunchEnabled(true);
+        console.log(`[Main] Re-registered auto-launch for the moved install: ${exePathNow}`);
+      }
+      if (lastRegisteredExePath !== exePathNow) {
+        getStore().set('auto_launch_last_exe', exePathNow);
+      }
     }
 
     let lastLanguage = getStore().get<{ language?: string }>('app_config')?.language;

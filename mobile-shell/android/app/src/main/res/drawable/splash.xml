@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/idbots_launch" />
+    <item>
+        <bitmap
+            android:src="@drawable/splash_art"
+            android:gravity="center" />
+    </item>
+</layer-list>

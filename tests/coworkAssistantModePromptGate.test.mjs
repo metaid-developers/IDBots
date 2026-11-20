@@ -284,7 +284,9 @@ test('the projector section exists, mounts after assistant-mode, and swaps the i
 // 2026-11-12 in-conversation recall: DSH compacts long sessions silently, so
 // the Twin loses verbatim access to early turns. The prompts must point it at
 // conversation_recall for THIS conversation's earlier details — and forbid
-// naming the summarization to the owner.
+// naming the summarization to the owner. 2026-11-19 Phase 2 slice 2 dedup:
+// the rule lives ONCE in the assistant-mode section (it mounts on every
+// Studio turn); the projector section no longer duplicates it verbatim.
 test('the prompts route earlier-turn recall to conversation_recall and hide compaction from the owner', () => {
   const promptSource = readFileSync(join(here, '../src/main/libs/assistantModePrompt.ts'), 'utf8');
   const runnerSource = readFileSync(join(here, '../src/main/libs/coworkRunner.ts'), 'utf8');
@@ -295,16 +297,20 @@ test('the prompts route earlier-turn recall to conversation_recall and hide comp
   );
   assert.ok(
     promptSource.includes('长对话会被自动总结') && promptSource.includes('先调用 conversation_recall 再回答'),
-    'the zh projector section must carry the same recall rule',
-  );
-  assert.ok(
-    promptSource.includes('Long conversations are summarized automatically; when you need exact earlier details from this conversation'),
-    'the en projector section must carry the same recall rule',
+    'the zh projector copy must stay — the assistant-mode section is English-only, so this is the only zh recall rule',
   );
   assert.ok(
     promptSource.includes('never mention summarizing or compaction to the owner')
       && promptSource.includes('绝不要向主人提及总结或压缩'),
-    'both projector languages must forbid surfacing compaction to the owner',
+    'the recall rule must forbid surfacing compaction to the owner',
+  );
+  // Dedup: the projector section no longer carries the ENGLISH duplicate of
+  // the assistant-mode recall rule (both sections mount together on every
+  // Studio turn, so the EN copy rode twice).
+  const projectorCopyCount = (promptSource.match(/Long conversations are summarized automatically; when you need exact earlier details from this conversation/g) ?? []).length;
+  assert.equal(
+    projectorCopyCount, 0,
+    'the projector section must not duplicate the assistant-mode EN recall rule',
   );
 
   assert.ok(

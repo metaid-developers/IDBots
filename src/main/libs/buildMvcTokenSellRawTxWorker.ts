@@ -32,7 +32,7 @@
  */
 
 import { readFileSync } from 'fs';
-import { getMvcWallet, parseAddressIndexFromPath } from '../services/metabotWalletService';
+import { getMvcWalletFromPath } from '../services/metabotWalletService';
 import {
   assertTokenSellAmountGates,
   assertTokenTransferAmountGates,
@@ -214,8 +214,9 @@ async function main(): Promise<void> {
   );
   const feeRate = Number.isFinite(Number(payload.feeRate)) && Number(payload.feeRate) > 0 ? Number(payload.feeRate) : 1;
 
-  const addressIndex = parseAddressIndexFromPath(pathStr);
-  const mvcWallet = await getMvcWallet(mnemonic, addressIndex);
+  // Path-aware derivation (parity with buildMvcTransferRawTxWorker): a legacy
+  // 236-segment issuer bot must derive its own address, not the 10001 default.
+  const mvcWallet = await getMvcWalletFromPath(mnemonic, pathStr);
   const signer: TokenSellSigner = signerFromWif(mvcWallet.getPrivateKey(), 'real');
   const sellerAddress = mvcWallet.getAddress();
   logStep('wallet resolved', { action, address: sellerAddress });

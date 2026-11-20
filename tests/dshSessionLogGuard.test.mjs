@@ -21,6 +21,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { zstdCompress } from 'node:zlib';
+import { readFileSync } from 'node:fs';
 
 import {
   DSH_SESSION_LOG_GUARD_POLICY,
@@ -243,6 +244,60 @@ test('flushSessionLogArtifact fsyncs a read-only handle and never creates a file
   assert.equal(fs.existsSync(missing), false, 'the guard never creates artifacts');
 });
 
+function withPlatform(platform, fn) {
+  return async () => {
+    const realPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: platform });
+    try {
+      await fn();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: realPlatform });
+    }
+  };
+}
+
+test('on Windows the flush opens a write-mode handle so FlushFileBuffers is allowed', withPlatform('win32', async () => {
+  const dir = tempRoot();
+  const artifact = path.join(dir, 'session.v4.jsonl.zstd');
+  await fsp.writeFile(artifact, await encodeArtifact(JSON.stringify(HEADER), ['{"type":"event"}']));
+  const realOpen = fsp.open;
+  const modes = [];
+  fsp.open = (p, mode, ...rest) => { modes.push(mode); return realOpen.call(fsp, p, mode, ...rest); };
+  try {
+    const result = await flushSessionLogArtifact(artifact);
+    // 'r' fsync is an EPERM machine on Windows (FlushFileBuffers requires a
+    // write-mode handle) — the fix pins the write-mode open, never a write.
+    assert.deepEqual(modes, ['r+']);
+    assert.equal(result.flushed, true);
+    assert.equal(result.error, null);
+  } finally {
+    fsp.open = realOpen;
+  }
+}));
+
+test('on Windows an unflushable artifact degrades to a skipped audit, not unreadable', withPlatform('win32', async () => {
+  const dir = tempRoot();
+  // A READ-ONLY artifact file is the deterministic unflushable fixture on
+  // every host: opening it 'r+' fails with EPERM on real Windows and EACCES
+  // on POSIX (where the win32 platform mock still routes the failure through
+  // the same skip branch). Two earlier fixtures rest on false premises:
+  // a directory opens and even FlushFileBuffers fine on real Windows, and a
+  // path nested UNDER a file resolves to ENOENT on Windows before any
+  // attribute check — both missed the refusal path (found the first time
+  // this suite ran on win-sign, 2026-11-19).
+  const artifact = path.join(dir, 'session.v4.jsonl.zstd');
+  await fsp.writeFile(artifact, 'locked log bytes');
+  await fsp.chmod(artifact, 0o444);
+  try {
+    const result = await flushSessionLogArtifact(artifact);
+    assert.equal(result.error, null, 'a refused Windows fsync must NOT raise the quit verdict');
+    assert.equal(result.flushed, false);
+    assert.match(result.detail ?? '', /skipped on win32/);
+  } finally {
+    await fsp.chmod(artifact, 0o666).catch(() => undefined);
+  }
+}));
+
 // ── c2. cleanup sequence ordering ─────────────────────────────────────────
 
 test('cleanup sequence guards session logs BEFORE the DSH runtime closes', async () => {
@@ -349,6 +404,50 @@ test('startup scan of a missing root is a silent no-op', async () => {
   assert.deepEqual(result, { scanned: 0, ok: 0, problems: [], truncated: false });
 });
 
+test('startup scan reads a bounded prefix for large artifacts and still verdicts correctly', async () => {
+  const root = tempRoot();
+  const projectDir = path.join(root, 'p1');
+  const bigOkDir = path.join(projectDir, encodeDshSessionSegment('cw-big-ok'));
+  const cutFrameDir = path.join(projectDir, encodeDshSessionSegment('cw-big-framecut'));
+  for (const dir of [bigOkDir, cutFrameDir]) await fsp.mkdir(dir, { recursive: true });
+
+  // >256KiB artifact whose frame 1 (the header) IS complete inside the
+  // prefix: the scan must report ok from the prefix read alone. Random
+  // padding — zstd would crush a repeated-character line below the window.
+  const bigOkBytes = await encodeArtifact(JSON.stringify(HEADER), ['{"type":"event"}', crypto.randomBytes(400 * 1024).toString('base64')]);
+  await fsp.writeFile(path.join(bigOkDir, 'session.v4.jsonl.zstd'), bigOkBytes);
+  assert.ok(bigOkBytes.length > 256 * 1024, 'fixture must exceed the prefix window');
+
+  // >256KiB artifact whose prefix cuts frame 1 mid-body (frame 1 itself
+  // carries a huge padding line): the prefix probe is inconclusive, so the
+  // scan falls back to one full read and reports the artifact's REAL verdict
+  // (header_not_isolated) — never the false 'frame 1 is unreadable' a cut
+  // prefix alone would produce.
+  const cutFrameBytes = await encodeArtifact(`${JSON.stringify(HEADER)}\n${crypto.randomBytes(400 * 1024).toString('base64')}`);
+  await fsp.writeFile(path.join(cutFrameDir, 'session.v4.jsonl.zstd'), cutFrameBytes);
+  assert.ok(cutFrameBytes.length > 256 * 1024, 'cut fixture must exceed the prefix window');
+
+  const result = await scanSessionLogsForHeaderInvariant({ sessionRoot: root });
+  assert.equal(result.scanned, 2);
+  assert.equal(result.ok, 1, 'the healthy large artifact passes from its prefix');
+  assert.equal(result.problems.length, 1);
+  assert.equal(result.problems[0].verdict, 'header_not_isolated');
+  assert.match(result.problems[0].detail, /frame 1 carries more than the header line/);
+});
+
+test('quit roster covers idle and just-settled sessions, not only in-flight turns', () => {
+  // 2026-11-19 review P2: the roster fed from the in-flight map alone missed
+  // exactly the "quit seconds after the last frame" window — the last frames
+  // of a settled session were never flushed/verified. The hub must merge the
+  // restart-surviving pinned mapping into the roster.
+  const hubSource = readFileSync(new URL('../src/main/libs/coworkDshTurn.ts', import.meta.url), 'utf8');
+  const rosterStart = hubSource.indexOf('listActiveDshSessions()');
+  assert.notEqual(rosterStart, -1, 'hub must expose listActiveDshSessions');
+  const roster = hubSource.slice(rosterStart, rosterStart + 700);
+  assert.match(roster, /pinnedDshIds/, 'the roster must merge the pinned (hub-lifetime) mapping');
+  assert.match(roster, /this\.dshByCowork/, 'the roster keeps the in-flight mapping (in-flight wins)');
+});
+
 test('startup scan honours the artifact cap instead of walking an unbounded root', async () => {
   const root = tempRoot();
   const projectDir = path.join(root, '--cap--');
@@ -424,8 +523,12 @@ test('audit lines carry path, verdict, size and mtime', () => {
 });
 
 test('candidate artifacts prefer the zstd generation over the plaintext one', () => {
+  // dshSessionLogCandidates joins platform-natively (path.join), so the
+  // expected list must be built the same way — a POSIX-literal expectation
+  // fails on a real Windows host with backslash separators.
+  const sessionDir = path.join(path.sep, 'root', '--p--', 'cw-1');
   assert.deepEqual(
-    dshSessionLogCandidates('/root/--p--/cw-1'),
-    ['/root/--p--/cw-1/session.v4.jsonl.zstd', '/root/--p--/cw-1/session.v4.jsonl'],
+    dshSessionLogCandidates(sessionDir),
+    [path.join(sessionDir, 'session.v4.jsonl.zstd'), path.join(sessionDir, 'session.v4.jsonl')],
   );
 });

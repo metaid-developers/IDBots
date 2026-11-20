@@ -43,6 +43,12 @@ export const DEFAULT_TIMEOUT_GRACE_MS = 10_000;
 /** Default app-level ping interval; 0 disables it. */
 export const DEFAULT_KEEPALIVE_INTERVAL_MS = 25_000;
 
+/** Transport open plus welcome must complete within this window. */
+export const DEFAULT_CONNECTION_TIMEOUT_MS = 10_000;
+
+/** Foreground ping must be answered within this window before reconnecting. */
+export const DEFAULT_CONNECTION_PROBE_TIMEOUT_MS = 5_000;
+
 /** C2 default invoke timeout when the channel is not in the map. */
 export const DEFAULT_INVOKE_TIMEOUT_MS = 120_000;
 
@@ -158,6 +164,7 @@ export interface WebSocketLike {
 
 export type WebSocketLikeConstructor = new (url: string) => WebSocketLike;
 
+const WS_CONNECTING = 0;
 const WS_OPEN = 1;
 const WS_CLOSED = 3;
 
@@ -258,6 +265,10 @@ export interface GatewayClientOptions {
   offlineTimeoutMs?: number;
   /** App-level ping interval. Default 25 s; 0 disables. */
   keepaliveIntervalMs?: number;
+  /** Transport open plus welcome deadline. Default 10 s. */
+  connectionTimeoutMs?: number;
+  /** Foreground health probe deadline. Default 5 s. */
+  connectionProbeTimeoutMs?: number;
   /** In-flight cap. Default 32 (C2). */
   maxInFlight?: number;
   /** Expected contract major. Default 1. */
@@ -290,6 +301,8 @@ export class GatewayClient {
   private readonly timeoutGraceMs: number;
   private readonly offlineTimeoutMs: number;
   private readonly keepaliveIntervalMs: number;
+  private readonly connectionTimeoutMs: number;
+  private readonly connectionProbeTimeoutMs: number;
   private readonly maxInFlight: number;
   private readonly expectedMajor: number;
 
@@ -302,8 +315,9 @@ export class GatewayClient {
   private reconnectAttempts = 0;
   private reconnectHandle: unknown;
   private keepaliveHandle: unknown;
+  private connectionHandle: unknown;
+  private connectionProbeHandle: unknown;
   private closed = false;
-  private suppressNextClose = false;
   private invokeCounter = 0;
 
   private readonly inFlight = new Map<string, PendingInvoke>();
@@ -329,6 +343,8 @@ export class GatewayClient {
     this.timeoutGraceMs = options.timeoutGraceMs ?? DEFAULT_TIMEOUT_GRACE_MS;
     this.offlineTimeoutMs = options.offlineTimeoutMs ?? DEFAULT_OFFLINE_TIMEOUT_MS;
     this.keepaliveIntervalMs = options.keepaliveIntervalMs ?? DEFAULT_KEEPALIVE_INTERVAL_MS;
+    this.connectionTimeoutMs = options.connectionTimeoutMs ?? DEFAULT_CONNECTION_TIMEOUT_MS;
+    this.connectionProbeTimeoutMs = options.connectionProbeTimeoutMs ?? DEFAULT_CONNECTION_PROBE_TIMEOUT_MS;
     this.maxInFlight = options.maxInFlight ?? DEFAULT_MAX_IN_FLIGHT;
     this.expectedMajor = options.expectedContractMajor ?? GATEWAY_CONTRACT_MAJOR;
     this.registerDomHooks();
@@ -464,24 +480,29 @@ export class GatewayClient {
   // -- connection control -------------------------------------------------------
 
   /**
-   * Immediate reconnect attempt: cancels any pending backoff timer and opens
-   * a fresh socket. No-op when online, closed, or in a terminal state. Called
-   * by the DOM 'online' and 'visibilitychange' hooks; safe to call directly.
+   * Immediate foreground recovery: coalesces an in-flight attempt, probes an
+   * apparently online socket and replaces it only when unanswered. Otherwise
+   * cancels pending backoff and opens a fresh socket. No-op when closed or in
+   * a terminal state. Called by DOM and native lifecycle hooks.
    */
   reconnectNow(): void {
-    if (this.closed || this.state === 'online' || this.isTerminalState(this.state)) {
+    if (this.closed || this.isTerminalState(this.state)) {
       return;
     }
-    this.cancelReconnect();
-    if (this.ws && this.ws.readyState !== WS_CLOSED) {
-      this.suppressNextClose = true;
-      try {
-        this.ws.close(1000, 'reconnectNow');
-      } catch {
-        // Ignore transport errors while replacing the socket.
+    if (this.state === 'online') {
+      if (this.connectionProbeHandle !== undefined) return;
+      if (this.ws?.readyState === WS_OPEN && this.sendJson({ v: 1, type: 'ping', ts: this.now() } satisfies PingFrame)) {
+        this.connectionProbeHandle = this.scheduleFn(() => {
+          this.connectionProbeHandle = undefined;
+          this.replaceSocket('foreground health probe timed out');
+        }, this.connectionProbeTimeoutMs);
+        return;
       }
     }
-    this.openSocket();
+    if (this.ws?.readyState === WS_CONNECTING) {
+      return;
+    }
+    this.replaceSocket('reconnectNow');
   }
 
   /** Tears down timers, listeners, and the socket. Terminal: state 'offline'. */
@@ -491,6 +512,8 @@ export class GatewayClient {
     }
     this.closed = true;
     this.cancelReconnect();
+    this.cancelConnectionTimeout();
+    this.cancelConnectionProbe();
     this.stopKeepalive();
     for (const unsubscribe of this.domUnsubscribers.splice(0)) {
       try {
@@ -499,14 +522,14 @@ export class GatewayClient {
         // Listener teardown must never throw.
       }
     }
-    if (this.ws) {
-      this.suppressNextClose = true;
+    const socket = this.ws;
+    this.ws = null;
+    if (socket) {
       try {
-        this.ws.close(1000, 'client closed');
+        socket.close(1000, 'client closed');
       } catch {
         // Ignore transport errors during teardown.
       }
-      this.ws = null;
     }
     this.rejectInFlight('CONNECTION_LOST', true, 'gateway client closed');
     this.rejectQueued('OFFLINE', false, 'gateway client closed');
@@ -514,6 +537,27 @@ export class GatewayClient {
   }
 
   // -- internals ----------------------------------------------------------------
+
+  private replaceSocket(reason: string): void {
+    this.cancelReconnect();
+    this.cancelConnectionTimeout();
+    this.cancelConnectionProbe();
+    this.stopKeepalive();
+    const previous = this.ws;
+    this.ws = null;
+    this.setState(this.hasConnected ? 'reconnecting' : 'connecting');
+    if (previous) {
+      this.rejectInFlight('CONNECTION_LOST', true, reason);
+      if (previous.readyState !== WS_CLOSED) {
+        try {
+          previous.close(1000, reason);
+        } catch {
+          // Ignore transport errors while replacing the socket.
+        }
+      }
+    }
+    this.openSocket();
+  }
 
   private isTerminalState(state: GatewayConnectionState): boolean {
     return TERMINAL_STATES.includes(state);
@@ -623,27 +667,34 @@ export class GatewayClient {
     }
   }
 
-  private sendJson(frame: unknown): void {
+  private sendJson(frame: unknown): boolean {
     const ws = this.ws;
     if (!ws || ws.readyState !== WS_OPEN) {
-      return;
+      return false;
     }
     let payload: string;
     try {
       payload = JSON.stringify(frame);
     } catch {
-      return;
+      return false;
     }
     try {
       ws.send(payload);
+      return true;
     } catch (err) {
       this.logWarn('gateway send failed', err);
+      return false;
     }
   }
 
   // -- socket lifecycle ---------------------------------------------------------
 
   private openSocket(): void {
+    if (this.closed || this.isTerminalState(this.state) || (this.ws && this.ws.readyState !== WS_CLOSED)) {
+      return;
+    }
+    this.cancelReconnect();
+    this.cancelConnectionTimeout();
     let ws: WebSocketLike;
     try {
       ws = new this.WS(this.url);
@@ -659,24 +710,36 @@ export class GatewayClient {
       // version guard gates everything until then.
     };
     ws.onmessage = (event) => {
-      this.handleRawMessage(event ? event.data : undefined);
+      this.handleRawMessage(ws, event ? event.data : undefined);
     };
     ws.onclose = (event) => {
       const code = event && typeof event.code === 'number' ? event.code : 1001;
       const reason = event && typeof event.reason === 'string' ? event.reason : '';
-      this.handleClose(code, reason);
+      this.handleClose(ws, code, reason);
     };
     ws.onerror = () => {
       // The close event that follows drives the reconnect path.
     };
+    if (this.connectionTimeoutMs > 0) {
+      this.connectionHandle = this.scheduleFn(() => {
+        this.connectionHandle = undefined;
+        if (this.ws !== ws) return;
+        try {
+          ws.close(1000, 'connection timeout');
+        } catch {
+          // The explicit close below still drives recovery.
+        }
+        this.handleClose(ws, 1006, 'connection timeout');
+      }, this.connectionTimeoutMs);
+    }
   }
 
-  private handleClose(code: number, reason: string): void {
+  private handleClose(ws: WebSocketLike, code: number, reason: string): void {
+    if (this.ws !== ws) return;
     this.ws = null;
-    if (this.suppressNextClose) {
-      this.suppressNextClose = false;
-      return;
-    }
+    this.cancelConnectionTimeout();
+    this.cancelConnectionProbe();
+    this.stopKeepalive();
     if (this.closed) {
       return;
     }
@@ -707,11 +770,13 @@ export class GatewayClient {
     this.setState(state);
     this.rejectQueued('OFFLINE', false, `gateway client entered "${state}"`);
     this.cancelReconnect();
+    this.cancelConnectionTimeout();
+    this.cancelConnectionProbe();
     this.stopKeepalive();
   }
 
   private scheduleReconnect(): void {
-    if (this.closed) {
+    if (this.closed || this.isTerminalState(this.state) || this.ws) {
       return;
     }
     this.cancelReconnect();
@@ -731,9 +796,24 @@ export class GatewayClient {
     }
   }
 
+  private cancelConnectionTimeout(): void {
+    if (this.connectionHandle !== undefined) {
+      this.cancelFn(this.connectionHandle);
+      this.connectionHandle = undefined;
+    }
+  }
+
+  private cancelConnectionProbe(): void {
+    if (this.connectionProbeHandle !== undefined) {
+      this.cancelFn(this.connectionProbeHandle);
+      this.connectionProbeHandle = undefined;
+    }
+  }
+
   // -- inbound frames -------------------------------------------------------------
 
-  private handleRawMessage(data: unknown): void {
+  private handleRawMessage(ws: WebSocketLike, data: unknown): void {
+    if (this.ws !== ws) return;
     const text = typeof data === 'string' ? data : String(data);
     let frame: unknown;
     try {
@@ -761,6 +841,7 @@ export class GatewayClient {
         this.handlePing(record);
         break;
       case 'pong':
+        this.cancelConnectionProbe();
         break;
       default:
         break;
@@ -782,13 +863,16 @@ export class GatewayClient {
       this.versionMismatch = { expected: this.expectedMajor, actual: frame.contractVersion };
       this.setState('version-mismatch');
       this.rejectQueued('OFFLINE', false, 'gateway contract version mismatch');
-      this.suppressNextClose = true;
+      const socket = this.ws;
+      this.ws = null;
+      this.cancelConnectionTimeout();
+      this.cancelConnectionProbe();
+      this.stopKeepalive();
       try {
-        this.ws?.close(1000, 'version mismatch');
+        socket?.close(1000, 'version mismatch');
       } catch {
         // Ignore transport errors during teardown.
       }
-      this.ws = null;
       return;
     }
     this.serverInfo = {
@@ -801,6 +885,9 @@ export class GatewayClient {
     };
     this.hasConnected = true;
     this.reconnectAttempts = 0;
+    this.cancelReconnect();
+    this.cancelConnectionTimeout();
+    this.cancelConnectionProbe();
     this.setState('online');
     this.startKeepalive();
     const info = this.getServerInfo() as GatewayServerInfo;

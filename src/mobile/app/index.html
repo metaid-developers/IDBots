@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#F2F3F5" />
+    <meta name="theme-color" content="#FEB338" />
     <!-- Relative hrefs: the app build base is /app/, so these resolve to
          /app/manifest.webmanifest and /app/apple-touch-icon.png, and the dev
          server rewrites the same paths to src/mobile/app/public/. -->
@@ -13,9 +13,42 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="IDBots" />
     <title>IDBots</title>
+    <style>
+      .idbots-launch { position: fixed; inset: 0; z-index: 2147483647; overflow: hidden; background: #FEB338; color: #303133; font-family: "Arial Rounded MT Bold", "SF Pro Rounded", ui-rounded, system-ui, sans-serif; }
+      .idbots-launch__hero { position: absolute; left: 50%; top: 50%; width: min(296px, 76vw); aspect-ratio: 1; transform: translate(-50%, calc(-50% - 120px)); }
+      .idbots-launch__tile { position: absolute; inset: 0; border-radius: 24.3%; background: #FFDBA0; }
+      .idbots-launch__robot { position: absolute; inset: 5.405%; width: 89.19%; height: 89.19%; object-fit: contain; }
+      .idbots-launch__wordmark { position: absolute; top: calc(100% + 36px); left: 0; width: 100%; text-align: center; font-size: 46px; font-weight: 700; letter-spacing: 1px; }
+      .idbots-launch__loader { position: absolute; left: 50%; bottom: 86px; display: flex; gap: 16px; transform: translateX(-50%); }
+      .idbots-launch__loader i { width: 10px; height: 10px; background: #FFDBA0; }
+      .idbots-launch__loader i:nth-child(1) { opacity: .55; }
+      .idbots-launch__loader i:nth-child(2) { opacity: .8; }
+      .idbots-launch__loader i:nth-child(3) { background: #F46A21; }
+      .idbots-launch__px { position: absolute; width: 8px; height: 8px; background: #FFDBA0; }
+      .idbots-launch__px--1 { left: 10.25%; top: 12.8%; width: 10px; height: 10px; opacity: .9; }
+      .idbots-launch__px--2 { right: 12.8%; top: 10.4%; background: #F46A21; opacity: .85; }
+      .idbots-launch__px--3 { right: 6.7%; top: 55.7%; opacity: .6; }
+      .idbots-launch__px--4 { left: 11.3%; top: 60.7%; background: #303133; opacity: .28; }
+      .idbots-launch__px--5 { right: 16.9%; top: 70.6%; width: 6px; height: 6px; background: #F46A21; opacity: .5; }
+      .idbots-launch__px--6 { right: 21%; top: 16.1%; width: 6px; height: 6px; opacity: .7; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <div id="idbots-launch-splash" class="idbots-launch" role="status" aria-label="IDBots">
+      <div class="idbots-launch__hero">
+        <div class="idbots-launch__tile"></div>
+        <img class="idbots-launch__robot" src="icon-512.png" width="264" height="264" alt="" />
+        <div class="idbots-launch__wordmark">IDBots</div>
+      </div>
+      <div class="idbots-launch__loader" aria-hidden="true"><i></i><i></i><i></i></div>
+      <i class="idbots-launch__px idbots-launch__px--1" aria-hidden="true"></i>
+      <i class="idbots-launch__px idbots-launch__px--2" aria-hidden="true"></i>
+      <i class="idbots-launch__px idbots-launch__px--3" aria-hidden="true"></i>
+      <i class="idbots-launch__px idbots-launch__px--4" aria-hidden="true"></i>
+      <i class="idbots-launch__px idbots-launch__px--5" aria-hidden="true"></i>
+      <i class="idbots-launch__px idbots-launch__px--6" aria-hidden="true"></i>
+    </div>
     <script type="module" src="./main.tsx"></script>
   </body>
 </html>

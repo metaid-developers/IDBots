@@ -164,3 +164,99 @@ test('materializePrivateChatFileMessage refuses an attachment with no usable pin
   assert.equal(result, null);
   assert.equal(logs.length, 1);
 });
+
+test('isPeerAttachmentReadablePath scopes peer thumbnails to the private-chat inbound directory', async () => {
+  const { isPeerAttachmentReadablePath, PRIVATE_CHAT_INBOUND_DIR_NAME } = await import(
+    '../dist-electron/main/services/privateChatFileMessage.js'
+  );
+  const path = (await import('node:path')).default;
+  const os = (await import('node:os')).default;
+  const userData = path.join(os.tmpdir(), 'idbots-peer-scope-test');
+  const inbound = path.join(userData, PRIVATE_CHAT_INBOUND_DIR_NAME);
+
+  // A daemon-written marker (materializePrivateChatFileMessage writes only
+  // here): always readable. Prefix semantics — anything whose resolved form
+  // stays inside the root passes; only the file existing on disk could make
+  // it readable anyway, and the daemon never writes subdirectories.
+  assert.equal(isPeerAttachmentReadablePath(path.join(inbound, 'abc.png'), userData), true);
+  assert.equal(isPeerAttachmentReadablePath(path.join(inbound, 'sub', 'x.png'), userData), true);
+
+  // Attacker-crafted markers naming arbitrary local files refuse.
+  assert.equal(isPeerAttachmentReadablePath(path.join(userData, 'secret.png'), userData), false);
+  assert.equal(isPeerAttachmentReadablePath(path.join(userData, 'private-chat-inbound-evil', 'x.png'), userData), false,
+    'sibling directory whose name shares the prefix must not pass');
+  assert.equal(isPeerAttachmentReadablePath(path.join(inbound, '..', '..', 'etc', 'passwd'), userData), false,
+    '.. escape resolves outside the root and must not pass');
+  assert.equal(isPeerAttachmentReadablePath('', userData), false);
+  assert.equal(isPeerAttachmentReadablePath('/etc/passwd', userData), false);
+
+  // The tmpdir fallback is the headless shape: same rules, different base.
+  const tmpBase = '';
+  assert.equal(isPeerAttachmentReadablePath(path.join(os.tmpdir(), PRIVATE_CHAT_INBOUND_DIR_NAME, 'abc.png'), tmpBase), true);
+});
+
+test('attachment download streams with a cap: refuses oversize without buffering the whole body', async () => {
+  // The peer names the pin, so the body size is the peer's choice. The old
+  // arrayBuffer() path buffered the WHOLE body (twice) before the cap check;
+  // the streaming path must refuse at the cap and never materialize.
+  const oversized = Buffer.alloc(33 * 1024 * 1024, 7);
+  const originalFetch = global.fetch;
+  let bufferedPeak = 0;
+  global.fetch = async () => ({
+    ok: true,
+    headers: { get: () => null },
+    body: new ReadableStream({
+      start(controller) {
+        // Serve in 1MB chunks; track the largest single allocation the
+        // reader side could observe (the old path would hold everything).
+        for (let i = 0; i < oversized.length; i += 1024 * 1024) {
+          controller.enqueue(oversized.subarray(i, Math.min(i + 1024 * 1024, oversized.length)));
+        }
+        controller.close();
+      },
+    }),
+    arrayBuffer: async () => { bufferedPeak = oversized.length; return oversized.buffer; },
+  });
+  try {
+    const logs = [];
+    const result = await materializePrivateChatFileMessage({
+      payload: { attachment: ATTACHMENT_URI, fileType: 'jpeg', encrypt: 'aes' },
+      sharedSecretCandidates: [SHARED_SECRET_HEX],
+      emitLog: (message) => logs.push(message),
+    });
+    assert.equal(result, null, 'oversize body must be refused');
+    assert.ok(logs.some((line) => /exceeds the .* chat limit mid-stream/.test(line)), `expected a mid-stream cap log, got: ${logs.join(' | ')}`);
+    assert.equal(bufferedPeak, 0, 'the arrayBuffer fallback must never run when a streamable body exists');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('attachment download refuses an oversized Content-Length before reading the body', async () => {
+  const originalFetch = global.fetch;
+  let bodyRead = false;
+  global.fetch = async () => ({
+    ok: true,
+    headers: { get: (name) => (String(name).toLowerCase() === 'content-length' ? String(40 * 1024 * 1024) : null) },
+    body: new ReadableStream({
+      start(controller) {
+        bodyRead = true;
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.close();
+      },
+    }),
+    arrayBuffer: async () => new ArrayBuffer(0),
+  });
+  try {
+    const logs = [];
+    const result = await materializePrivateChatFileMessage({
+      payload: { attachment: ATTACHMENT_URI, fileType: 'jpeg', encrypt: 'aes' },
+      sharedSecretCandidates: [SHARED_SECRET_HEX],
+      emitLog: (message) => logs.push(message),
+    });
+    assert.equal(result, null, 'a declared-oversize attachment must be refused');
+    assert.ok(logs.some((line) => /declares \d+ bytes/.test(line)), `expected a declared-size refusal log, got: ${logs.join(' | ')}`);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

@@ -148,6 +148,38 @@ test('capture refuses when the hold pays a different address than expected', asy
   assert.equal(calls.filter((call) => call.name === 'capture').length, 0);
 });
 
+test('capture refuses a blind confirmation when the hold read fails and no expectations were supplied', async () => {
+  // Server read failure (listFreezes throws) + no expected_amount_me /
+  // expected_payee: the owner would have been shown "amount unknown /
+  // payee (unknown)" and asked to approve. Now refused before any gate or
+  // settlement.
+  const { invoke, calls } = buildHarness({
+    listFreezes: async () => { throw new Error('server read failed'); },
+  });
+  const result = await invoke({ action: 'capture', order_id: 'o-1' });
+  assert.equal(result.isError, true);
+  assert.match(textOf(result), /UNKNOWN amount/);
+  assert.match(textOf(result), /Nothing was charged/);
+  assert.equal(calls.filter((call) => call.name === 'capture').length, 0);
+
+  // Amount known but payee unknown is still a blind capture: refused too.
+  const half = await invoke({ action: 'capture', order_id: 'o-1', expected_amount_me: 120 });
+  assert.equal(half.isError, true);
+  assert.match(textOf(half), /UNKNOWN amount/);
+  assert.equal(calls.filter((call) => call.name === 'capture').length, 0);
+});
+
+test('capture proceeds when the hold read fails but the caller supplies amount and payee', async () => {
+  const { invoke, calls } = buildHarness({
+    listFreezes: async () => { throw new Error('server read failed'); },
+  });
+  const result = await invoke({
+    action: 'capture', order_id: 'o-1', expected_amount_me: 120, expected_payee: PAYEE,
+  });
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.filter((call) => call.name === 'capture').length, 1);
+});
+
 test('capture refuses a hold that is no longer frozen (released/expired/captured)', async () => {
   for (const [status, label] of [[3, 'released'], [4, 'expired'], [2, 'captured']]) {
     const { invoke, calls } = buildHarness({

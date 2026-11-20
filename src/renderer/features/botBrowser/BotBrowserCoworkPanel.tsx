@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { ChevronDownIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { BookOpenIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '../../components/MarkdownContent';
 import CoworkPromptInput, { type CoworkPromptInputRef } from '../../components/cowork/CoworkPromptInput';
 import { UserMessageBody } from '../../components/cowork/UserAttachmentBody';
@@ -9,7 +10,6 @@ import { resolveLocalPathAgainstCwd, type LocalFilePathResolver } from '../../ut
 import { buildLocalPreviewUri } from './localPreviewUri';
 import { buildSessionComposerCommands } from '../../components/cowork/composerCommandCatalog';
 import FolderSelectorPopover from '../../components/cowork/FolderSelectorPopover';
-import StudioChapterCloseButton from './StudioChapterCloseButton';
 import type { MetaBotForSelector } from '../../components/cowork/MetaBotSelector';
 import ModelEffortPicker, { type ModelEffortValue } from '../../components/ModelEffortPicker';
 import {
@@ -88,9 +88,13 @@ export function filterVisiblePanelMessages(messages: CoworkMessage[]): CoworkMes
     }
     if (message.type === 'assistant') return !message.metadata?.isThinking;
     // Turn-level failures (final turn error + the three turn-death flags)
-    // render as an assistant-side card; every other system row — compaction
-    // checkpoints, SDK notices, fallback banners — stays hidden.
-    if (message.type === 'system') return isPanelTurnFailureMessage(message);
+    // render as an assistant-side card; Studio chapter dividers render as
+    // their own centered card (Phase 2 slice 5); every other system row —
+    // compaction checkpoints, SDK notices, fallback banners — stays hidden.
+    if (message.type === 'system') {
+      return isPanelTurnFailureMessage(message)
+        || Boolean((message.metadata as Record<string, unknown> | undefined)?.sessionChapterDivider);
+    }
     return false;
   });
 }
@@ -244,6 +248,44 @@ export const PanelMessage: React.FC<{
               its own bubble chrome. */}
           <UserMessageBody content={displayContent} resolveLocalFilePath={resolveLocalFilePath} />
           {bubbleFooter}
+        </div>
+      </div>
+    );
+  }
+  // Studio chapter divider (Phase 2 slice 5): a centered full-width strip —
+  // book icon, 第 N 章 + title, close-reason chip, and the stored bilingual
+  // close note as the body. It is a boundary marker, not quotable
+  // conversation: no context menu, no reaction chip, no bubble chrome.
+  const chapterDivider = message.type === 'system'
+    ? (message.metadata as Record<string, unknown> | undefined)?.sessionChapterDivider as
+      | { index?: number; title?: string; closeReason?: string }
+      | undefined
+    : undefined;
+  if (message.type === 'system' && chapterDivider && typeof chapterDivider === 'object') {
+    const reasonKey = chapterDivider.closeReason === 'task_boundary'
+      ? 'studioChapterReasonTaskBoundary'
+      : chapterDivider.closeReason === 'budget'
+        ? 'studioChapterReasonBudget'
+        : 'studioChapterReasonManual';
+    return (
+      <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-stretch py-1">
+        <div className="flex items-center gap-3">
+          <div className="h-px flex-1 dark:bg-claude-darkBorder bg-claude-border" />
+          <div className="flex shrink-0 items-center gap-1.5 rounded-full border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-3 py-1 text-[11px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            <BookOpenIcon className="h-3.5 w-3.5" />
+            <span>
+              {i18nService.t('studioChapterDividerLabel')
+                .replace('{index}', String(chapterDivider.index ?? ''))
+                .replace('{title}', chapterDivider.title || i18nService.t('studioChapterUntitled'))}
+            </span>
+            <span className="rounded-full px-1.5 py-px text-[10px] dark:bg-claude-darkBg bg-white/70">
+              {i18nService.t(reasonKey)}
+            </span>
+          </div>
+          <div className="h-px flex-1 dark:bg-claude-darkBorder bg-claude-border" />
+        </div>
+        <div className="mt-1 px-6 text-center text-[11px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          {message.content}
         </div>
       </div>
     );
@@ -1302,9 +1344,11 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           identity anymore. */}
       <div className="flex items-center justify-end gap-0.5 pb-1.5">
         <div className="flex shrink-0 items-center gap-0.5">
-          {currentSession && !currentSession.id.startsWith('optimistic-browser-') && (
-            <StudioChapterCloseButton sessionId={currentSession.id} disabled={isStreaming} />
-          )}
+          {/* Manual chapter close is gone from the composer (owner ruling
+              2026-11-19): chapters close automatically at the turn-end
+              evaluation (budget / task boundary), and a user-facing button
+              read as a required chore. The IPC channel stays for the system
+              path and the mobile contract. */}
           <ModelEffortPicker
             dropdownDirection="up"
             compact

@@ -25,6 +25,13 @@ const MAX_STAGE_SELF_HEALS = 2;
 const DELEGATION_RECHECK_MS = 60_000;
 /** Minimum gap between speech-streaming patches. */
 const SPEECH_PATCH_THROTTLE_MS = 600;
+/** Disk-snapshot flush debounce. Speech streaming commits a stage state
+ *  every ~600ms; writing the whole multi-session snapshot synchronously on
+ *  the main process at that rate (writeFileSync + rename of a multi-hundred-
+ *  KB file) is a real jank source on slow/AV-scanned disks. The in-memory
+ *  map is always current — only the DISK write is debounced: at most one
+ *  write per window, flushed synchronously on dispose. */
+const STAGE_SNAPSHOT_FLUSH_DEBOUNCE_MS = 2_000;
 /** Failure reasons worth retrying against the same tab before self-healing. */
 const RETRYABLE_PATCH_REASONS = new Set(['not-ready', 'frame-not-found', 'tab-not-found']);
 /** Backoff between stage-tab lookup attempts and projection retries. */
@@ -254,6 +261,31 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     }
   };
 
+  /** Debounced flush: fires at most once per debounce window after the first
+   *  dirty mark (not reset by later marks — max latency is bounded, and the
+   *  write always serializes the CURRENT map, so intermediate states are
+   *  simply skipped). dispose() flushes synchronously. */
+  let snapshotFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  const scheduleSnapshotFlush = (): void => {
+    if (snapshotFlushTimer) return;
+    snapshotFlushTimer = setTimeout(() => {
+      snapshotFlushTimer = null;
+      flushDiskSnapshots();
+    }, STAGE_SNAPSHOT_FLUSH_DEBOUNCE_MS);
+    snapshotFlushTimer.unref?.();
+  };
+  const cancelSnapshotFlush = (): void => {
+    if (snapshotFlushTimer) {
+      clearTimeout(snapshotFlushTimer);
+      snapshotFlushTimer = null;
+    }
+  };
+  /** Cancel any pending debounce and write NOW (removal / dispose paths). */
+  const flushDiskSnapshotsNow = (): void => {
+    cancelSnapshotFlush();
+    flushDiskSnapshots();
+  };
+
   const sanitizeSnapshotForStorage = (state: LiveStageState): LiveStageState => ({
     ...state,
     interaction: null,
@@ -278,7 +310,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       if (oldest.done) break;
       map.delete(oldest.value);
     }
-    flushDiskSnapshots();
+    scheduleSnapshotFlush();
   };
 
   const loadPersistedSessionStageState = (sessionId: string): LiveStageState | null => {
@@ -301,7 +333,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     if (!deps.stageRoot) return;
     const map = ensureDiskSnapshotsLoaded();
     if (map.delete(sid)) {
-      flushDiskSnapshots();
+      flushDiskSnapshotsNow();
     }
   };
 
@@ -2018,6 +2050,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
         teardownRun(run);
       }
       runs.clear();
+      // Last-chance synchronous write: the debounced flush may never have
+      // fired, and nothing follows dispose.
+      flushDiskSnapshotsNow();
     },
   };
 }

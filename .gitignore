@@ -121,6 +121,7 @@ tests/*
 !tests/mobileNativeBootstrap.test.ts
 !tests/mobileNativeAdapter.test.ts
 !tests/mobileNativeBack.test.ts
+!tests/mobileModePrompt.test.ts
 !tests/mobileRechargePolicy.test.tsx
 !tests/mobileSessionRecovery.test.ts
 !tests/quotaExhaustedStreamError.test.mjs
@@ -260,6 +261,11 @@ tests/*
 !tests/groupTasksI18nKeys.test.mjs
 !tests/metabotWalletService.test.mjs
 !tests/metabotWallet236CoinType.test.mjs
+!tests/mvcFtTokenBalanceSource.test.mjs
+!tests/walletTokenSend.test.mjs
+!tests/walletTxStatus.test.mjs
+!tests/walletBtcCarrierBalance.test.mjs
+!tests/walletMrc20BalanceTool.test.mjs
 !tests/mvcSubsidyService.test.mjs
 !tests/imGatewayConnectivity.test.mjs
 !tests/groupTaskService.test.mjs
@@ -1101,3 +1107,12 @@ blob-report/
 !tests/studioChapterStore.test.mjs
 !tests/studioChapterClose.test.ts
 !tests/studioChapterTriggers.test.ts
+!tests/contextBudgetReport.test.mjs
+!tests/studioToolSlimming.test.ts
+!tests/studioMemoryDedup.test.ts
+!tests/studioChapterDream.test.mjs
+!tests/studioChapterDividerUi.test.ts
+!tests/studioExperimentalAutomationDemote.test.ts
+!tests/dshSessionRetention.test.ts
+!tests/chainWriteAttribution.test.mjs
+!tests/rpcCreatePinCallerSession.test.mjs

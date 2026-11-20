@@ -205,7 +205,7 @@ test('major contract mismatch -> version-mismatch state, no reconnect, invokes r
   assert.equal(client.getState(), 'version-mismatch');
   assert.deepEqual(client.getVersionMismatch(), { expected: 1, actual: '2.0.0' });
   assert.ok(socket().closedWith, 'client must close the mismatched socket');
-  assert.equal(scheduler.tasks.length, 0, 'no reconnect timer may be scheduled');
+  assert.ok(scheduler.tasks.every((task) => task.canceled), 'no reconnect timer may be scheduled');
 
   await assert.rejects(client.invoke('cowork:session:list'), (error: Error & { code?: string; retryable?: boolean }) => {
     assert.equal(error.code, 'OFFLINE');
@@ -388,7 +388,7 @@ test('invoke made in a terminal state rejects OFFLINE immediately (no 15 s wait)
     assert.equal(error.retryable, false);
     return true;
   });
-  assert.equal(scheduler.tasks.length, 0, 'no timers may be pending in a terminal state');
+  assert.ok(scheduler.tasks.every((task) => task.canceled), 'no timers may be pending in a terminal state');
 });
 
 // ---------------------------------------------------------------------------
@@ -597,7 +597,7 @@ test('close 4001 and 4003 -> unauthorized (terminal, no reconnect, close info ex
       ws.doClose(code, code === 4001 ? 'session expired' : 'bad origin');
       assert.equal(client.getState(), 'unauthorized');
       assert.deepEqual(client.getLastClose(), { code, reason: code === 4001 ? 'session expired' : 'bad origin' });
-      assert.equal(scheduler.tasks.length, 0, 'unauthorized must not schedule reconnects');
+      assert.ok(scheduler.tasks.every((task) => task.canceled), 'unauthorized must not schedule reconnects');
     } finally {
       client.close();
     }
@@ -611,7 +611,7 @@ test('close 4013 -> tenant-unavailable (terminal, UI polls /api/v1/me)', (t) => 
   socket().doClose(GATEWAY_CLOSE_CODES.TENANT_UNAVAILABLE, 'tenant suspended');
   assert.equal(client.getState(), 'tenant-unavailable');
   assert.equal(client.getLastClose()?.code, 4013);
-  assert.equal(scheduler.tasks.length, 0, 'tenant-unavailable must not schedule reconnects');
+  assert.ok(scheduler.tasks.every((task) => task.canceled), 'tenant-unavailable must not schedule reconnects');
 });
 
 test('close 4009 -> too-many-devices (terminal, no auto-reconnect)', (t) => {
@@ -621,7 +621,7 @@ test('close 4009 -> too-many-devices (terminal, no auto-reconnect)', (t) => {
   socket().doClose(GATEWAY_CLOSE_CODES.TOO_MANY_DEVICES, 'max 3 sockets');
   assert.equal(client.getState(), 'too-many-devices');
   assert.equal(client.getLastClose()?.code, 4009);
-  assert.equal(scheduler.tasks.length, 0, 'too-many-devices must not schedule reconnects');
+  assert.ok(scheduler.tasks.every((task) => task.canceled), 'too-many-devices must not schedule reconnects');
   assert.equal(FakeWebSocket.instances.length, 1, 'no new socket may be opened');
 });
 
@@ -721,7 +721,7 @@ test('window "online" and visibilitychange->visible trigger an immediate reconne
     connect();
     assert.equal(client.getState(), 'online');
 
-    // While online the hooks are no-ops.
+    // While online the hooks probe without replacing the socket.
     handlers['window:online']();
     assert.equal(FakeWebSocket.instances.length, 1);
 
@@ -744,7 +744,7 @@ test('window "online" and visibilitychange->visible trigger an immediate reconne
     handlers['document:visibilitychange']();
     assert.equal(FakeWebSocket.instances.length, 3, 'visible must trigger an immediate reconnect');
 
-    // reconnectNow() directly does the same and is a no-op while online.
+    // Direct foreground recovery also leaves a healthy socket in place.
     connect();
     client.reconnectNow();
     assert.equal(FakeWebSocket.instances.length, 3);
@@ -780,6 +780,92 @@ test('window "offline" shows the offline banner immediately and "online" reconne
   } finally {
     delete g.window;
   }
+});
+
+test('a stale close cannot clear the replacement socket after immediate reconnect', async (t) => {
+  const handlers: Record<string, () => void> = {};
+  const g = globalThis as Record<string, unknown>;
+  g.window = {
+    addEventListener: (type: string, cb: () => void) => { handlers[type] = cb; },
+    removeEventListener: () => {},
+  };
+  try {
+    const { client, connect, socket } = setup();
+    t.after(() => client.close());
+    const first = connect();
+    handlers.offline();
+    client.reconnectNow();
+    const second = connect();
+    await Promise.resolve();
+    assert.equal(first.closedWith?.reason, 'reconnectNow');
+
+    const promise = client.invoke('cowork:session:list');
+    void promise.catch(() => {});
+    assert.equal(second.invokeFrames().length, 1, 'the replacement socket must remain usable');
+    assert.equal(socket(), second);
+    second.doMessage({ v: 1, type: 'result', id: second.invokeFrames()[0].id, ok: true, value: [] });
+    assert.deepEqual(await promise, []);
+  } finally {
+    delete g.window;
+  }
+});
+
+test('duplicate foreground reconnect signals do not replace an in-flight connection attempt', (t) => {
+  const handlers: Record<string, () => void> = {};
+  const g = globalThis as Record<string, unknown>;
+  g.window = {
+    addEventListener: (type: string, cb: () => void) => { handlers[type] = cb; },
+    removeEventListener: () => {},
+  };
+  try {
+    const { client, connect } = setup();
+    t.after(() => client.close());
+    connect();
+    handlers.offline();
+    client.reconnectNow();
+    client.reconnectNow();
+    assert.equal(FakeWebSocket.instances.length, 2, 'native and DOM foreground events must coalesce');
+  } finally {
+    delete g.window;
+  }
+});
+
+test('a pong keeps the healthy online socket connected after a foreground probe', (t) => {
+  const { client, connect, socket, scheduler } = setup();
+  t.after(() => client.close());
+  const first = connect();
+  client.reconnectNow();
+  client.reconnectNow();
+  assert.equal(FakeWebSocket.instances.length, 1, 'duplicate probes must coalesce');
+  first.doMessage({ v: 1, type: 'pong', ts: Date.now() });
+  assert.equal(client.getState(), 'online');
+  assert.ok(scheduler.tasks.every((task) => task.canceled), 'pong cancels the probe deadline');
+  assert.equal(socket(), first);
+});
+
+test('an unresponsive online socket is replaced after the foreground probe expires', (t) => {
+  const { client, connect, scheduler } = setup();
+  t.after(() => client.close());
+  connect();
+  client.reconnectNow();
+  assert.equal(FakeWebSocket.instances.length, 1, 'a healthy socket is not replaced eagerly');
+  scheduler.runLast();
+  assert.equal(FakeWebSocket.instances.length, 2, 'a missing pong must force a fresh socket');
+  assert.equal(client.getState(), 'reconnecting');
+  connect();
+  assert.equal(client.getState(), 'online');
+});
+
+test('a socket that never receives welcome times out and retries', (t) => {
+  const { client, connect, scheduler } = setup({ connectionTimeoutMs: 10_000 });
+  t.after(() => client.close());
+  assert.ok(scheduler.tasks.some((task) => task.ms === 10_000), 'welcome must have a deadline');
+  scheduler.runLast();
+  scheduler.runLast();
+  assert.equal(FakeWebSocket.instances.length, 2);
+  assert.equal(client.getState(), 'connecting');
+  connect();
+  assert.equal(client.getState(), 'online');
 });
 
 // ---------------------------------------------------------------------------

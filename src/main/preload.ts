@@ -526,7 +526,7 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:getSummary', sessionId),
     processServiceRefund: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:processServiceRefund', sessionId),
-    readLocalImage: (options: { path: string; maxBytes?: number }) =>
+    readLocalImage: (options: { path: string; maxBytes?: number; scope?: 'peer-attachment' }) =>
       ipcRenderer.invoke('cowork:session:readLocalImage', options),
     exportResultImage: (options: { rect: { x: number; y: number; width: number; height: number }; defaultFileName?: string }) =>
       ipcRenderer.invoke('cowork:session:exportResultImage', options),

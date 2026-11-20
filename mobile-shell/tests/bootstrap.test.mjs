@@ -213,3 +213,50 @@ test('NS2 capabilities convert native files in order and preserve share and secu
   assert.deepEqual({ ...calls.at(-1) }, { enabled: true });
   await assert.rejects(window.idbotsNative.shareArtifact({ url: 'file:///private', filename: 'private' }));
 });
+
+test('NS2 native files use bounded chunks with legacy fallback and preserve exact bytes', async () => {
+  const window = bootstrap('https://staging.idbots.world');
+  const content = Buffer.alloc(700_000);
+  for (let index = 0; index < content.length; index++) content[index] = index % 251;
+  const calls = [];
+  window.Capacitor.Plugins.NativeCapabilities = {
+    async pickPhoto() {
+      return { file: { uri: 'content://photo', name: 'photo.jpg', mime: 'image/jpeg', size: content.length, temporary: true } };
+    },
+    async readFile({ uri, offset, length, temporary }) {
+      calls.push({ uri, offset, length, temporary });
+      const endOffset = Math.min(content.length, offset + length);
+      return {
+        name: 'photo.jpg',
+        mime: 'image/jpeg',
+        size: content.length,
+        offset,
+        chunked: true,
+        end: endOffset === content.length,
+        data: content.subarray(offset, endOffset).toString('base64'),
+      };
+    },
+  };
+  const file = await window.idbotsNative.pickPhoto('photos');
+  assert.equal(file.size, content.length);
+  assert.equal(file.type, 'image/jpeg');
+  assert.ok(Buffer.from(await file.arrayBuffer()).equals(content));
+  assert.deepEqual(calls.map((call) => call.offset), [0, 256 * 1024, 512 * 1024]);
+  assert.ok(calls.every((call) => call.length === 256 * 1024 && call.temporary === true));
+});
+
+test('NS2 rejects an oversized native file before reading any bytes', async () => {
+  const window = bootstrap('https://staging.idbots.world');
+  let reads = 0;
+  window.Capacitor.Plugins.NativeCapabilities = {
+    async pickPhoto() {
+      return { file: { uri: 'content://large', size: 25 * 1024 * 1024 + 1 } };
+    },
+    async readFile() {
+      reads += 1;
+      return {};
+    },
+  };
+  await assert.rejects(window.idbotsNative.pickPhoto('photos'), (error) => error.code === 'TOO_LARGE');
+  assert.equal(reads, 0);
+});

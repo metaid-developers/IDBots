@@ -1,3 +1,12 @@
+; Declared ONLY for the installer pass, and every reference stays inside
+; that same guard: the BUILD_UNINSTALLER pass instantiates the install-mode
+; page function with the un. prefix (assistedInstaller's !else branch) and
+; compiles customInstallMode there, but customInit — the only writer of
+; these snapshots — is installer-pass-only, so in the uninstaller pass the
+; force logic could only ever read empty strings. Guarding the body keeps
+; the uninstaller pass at its v1.1.1 shape (no references, no warnings
+; under -WX on any NSIS version) while the installer-side force logic from
+; 791fc96c4 is untouched (run 44502506341's packaging failure).
 !ifndef BUILD_UNINSTALLER
   Var IdbotsPrevUserDir
   Var IdbotsPrevMachineDir
@@ -48,7 +57,24 @@
 !macro _IDBOTS_STOP_RUNNING_PROCESSES
   ; Do not pass /T to taskkill /IM IDBots.exe: the updater launches this
   ; installer directly, and killing the process tree would kill the installer.
-  nsExec::Exec `"$SYSDIR\taskkill.exe" /F /IM "${APP_EXECUTABLE_FILENAME}" /FI "PID ne $R8"`
+  ;
+  ; Session-scoped kill (2026-11-19 review P2): a bare /IM is machine-wide —
+  ; under fast user switching (same account in a second session) or an
+  ; elevated all-users run it force-killed ANOTHER session's instance,
+  ; losing that session's in-flight bot work. ProcessIdToSessionId + the
+  ; SESSION filter keep the fast native path while touching only this
+  ; installer's own session. A foreign-session instance on a machine-scope
+  ; install is left running: the loop below then degrades to the
+  ; "$(appCannotBeClosed)" prompt instead of silently destroying another
+  ; session's work. Failure to resolve our session id kills NOTHING here
+  ; (fail closed); the UAC-elevated retry below keeps its machine-wide
+  ; form because it exists precisely to reach the other ELEVATION of our
+  ; own user's app.
+  System::Call 'kernel32::ProcessIdToSessionId(i $R8, *i .R9) i .R7'
+  ${If} $R7 == 0
+    StrCpy $R9 "-1"
+  ${EndIf}
+  nsExec::Exec `"$SYSDIR\taskkill.exe" /F /IM "${APP_EXECUTABLE_FILENAME}" /FI "PID ne $R8" /FI "SESSION eq $R9"`
   Pop $0
   !insertmacro _IDBOTS_FIND_BUNDLED_CANDIDATES $0
   ${If} $0 == 0
@@ -65,8 +91,11 @@
   ${If} $R0 == 0
     ${If} ${isUpdated}
       ; Auto-update launches the installer while calling app.quit(). Poll the
-      ; fast native tasklist check for up to ~5s so SQLite flushes cleanly
-      ; without spawning PowerShell on every 250ms tick.
+      ; fast native tasklist check for up to ~30s: the app's own cleanup
+      ; watchdog gives an updater-driven quit 15s (big sql.js saves and the
+      ; session-log flush need it), and the force-kill below must never land
+      ; inside that window. The fast tasklist check exits the loop the moment
+      ; the app is really gone; PowerShell is never spawned on the hot path.
       StrCpy $R1 0
       _idbots_grace_loop_${_IDBOTS_CHK_ID}:
         Sleep 250
@@ -79,7 +108,7 @@
           Goto _idbots_stop_process_${_IDBOTS_CHK_ID}
         ${EndIf}
         IntOp $R1 $R1 + 1
-        ${If} $R1 < 20
+        ${If} $R1 < 120
           Goto _idbots_grace_loop_${_IDBOTS_CHK_ID}
         ${EndIf}
       Goto _idbots_stop_process_${_IDBOTS_CHK_ID}
@@ -142,6 +171,45 @@
 !macroend
 
 !macro customInit
+  ; Electron 41 (Chromium 142) cannot run on Windows 7/8/8.1, and our payload
+  ; is x64-only. On those machines the NSIS install itself completes fine and
+  ; the app then never opens (the x64 process cannot start), which users report
+  ; as "the installer is broken". Refuse the install with an explicit message
+  ; instead. The uninstaller build is exempt so an existing install can still
+  ; be removed from an unsupported machine.
+  !ifndef BUILD_UNINSTALLER
+    ; Windows 10+ detection. WARNING: HKLM\...\CurrentVersion\CurrentVersion
+    ; has been FROZEN at "6.3" since Windows 8.1 — Windows 10/11 still report
+    ; 6.3 in that value (an app-compatibility decision), so comparing it
+    ; against the legacy list blocks EVERY Windows 10/11 machine (run
+    ; 44530032518's test build did exactly that on a Windows 11 ARM64
+    ; machine, build 26200). CurrentMajorVersionNumber (DWORD, 10) exists
+    ; only on Windows 10+ and keeps tracking real versions: block when it is
+    ; absent (pre-Win10, or a machine that hides its version cannot be
+    ; verified) or below 10. A hypothetical future Windows raising the major
+    ; version still passes.
+    ReadRegDWORD $R1 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion" CurrentMajorVersionNumber
+    ${If} ${Errors}
+    ${OrIf} $R1 < 10
+      MessageBox MB_OK|MB_ICONSTOP "IDBots requires Windows 10 (64-bit) or later. This computer is running an older version of Windows that IDBots cannot support. Please upgrade Windows and run this installer again." /SD IDOK
+      Quit
+    ${EndIf}
+    ClearErrors
+    ; 32-bit Windows: a 32-bit installer process reports PROCESSOR_ARCHITECTURE
+    ; =x86 with NO PROCESSOR_ARCHITEW6432 override (on 64-bit Windows the
+    ; override is always set, so both conditions are required). An x64
+    ; installer process on Windows-on-ARM reports AMD64 under WOW64 emulation
+    ; and passes here, as it should.
+    ReadEnvStr $R2 "PROCESSOR_ARCHITEW6432"
+    ${If} $R2 == ""
+      ReadEnvStr $R2 "PROCESSOR_ARCHITECTURE"
+      ${If} $R2 == "x86"
+        MessageBox MB_OK|MB_ICONSTOP "IDBots requires a 64-bit edition of Windows. This computer is running a 32-bit edition of Windows, which IDBots cannot support." /SD IDOK
+        Quit
+      ${EndIf}
+    ${EndIf}
+  !endif
+
   ; Snapshot previous install directories before registryAddInstallInfo updates
   ; them so customInstall only runs PowerShell shortcut retargeting when an
   ; install path actually changed.
@@ -173,6 +241,32 @@
 _idbots_data_check_done:
 !macroend
 
+; electron-builder's install-mode page (per-user vs per-machine) has no
+; skipPageIfUpdated, so every "auto" update asked the user a question whose
+; answer could fork a second install into a different directory. This hook
+; runs inside the page's pre function: force the previous install's scope and
+; electron-builder aborts the page itself. customInit snapshotted the
+; pre-upgrade registry values into $IdbotsPrevUserDir/$IdbotsPrevMachineDir
+; BEFORE registryAddInstallInfo touched them, so they are authoritative here.
+; A fresh install (both snapshots empty) keeps the interactive page.
+!macro customInstallMode
+  ; The BUILD_UNINSTALLER pass compiles this body too (the un.-prefixed
+  ; install-mode page function instantiates it), but $IdbotsPrevUserDir /
+  ; $IdbotsPrevMachineDir are snapshot by customInit — installer-pass-only —
+  ; so in the uninstaller pass the force logic could only read empty strings
+  ; and skip a page the user is entitled to see. Compile it installer-side
+  ; only; the uninstall-mode page keeps its v1.1.1 interactive behavior.
+  !ifndef BUILD_UNINSTALLER
+    ${If} ${isUpdated}
+      ${If} $IdbotsPrevUserDir != ""
+        StrCpy $isForceCurrentInstall "1"
+      ${ElseIf} $IdbotsPrevMachineDir != ""
+        StrCpy $isForceMachineInstall "1"
+      ${EndIf}
+    ${EndIf}
+  !endif
+!macroend
+
 !macro customInstall
   ; electron-builder preserves shortcuts on upgrade and therefore does not
   ; recreate one the user previously deleted. Restore only a missing link;
@@ -181,7 +275,16 @@ _idbots_data_check_done:
   IfFileExists "$newDesktopLink" _idbots_desktop_shortcut_exists 0
   CreateShortCut "$newDesktopLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
   ClearErrors
+  ; WinShell is an NSIS PLUGIN, not a macro: `Name::Call` syntax always
+  ; resolves as a plugin invocation (a same-named !define or !macro is never
+  ; reached). The syntax harness's brew/CI NSIS distributions do not carry the
+  ; WinShell.dll that electron-builder's NSIS bundle ships, so the harness
+  ; build compiles with IDBOTS_NSIS_SYNTAX_HARNESS defined and skips exactly
+  ; these three fixed-string plugin one-liners. The real install defines no
+  ; such flag and keeps them all.
+  !ifndef IDBOTS_NSIS_SYNTAX_HARNESS
   WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
+  !endif
 
 _idbots_desktop_shortcut_exists:
   StrCpy $R9 "0"
@@ -206,10 +309,14 @@ _idbots_desktop_shortcut_exists:
   ${EndIf}
   ClearErrors
   IfFileExists "$newStartMenuLink" 0 +2
+  !ifndef IDBOTS_NSIS_SYNTAX_HARNESS
   WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
+  !endif
   ClearErrors
   IfFileExists "$newDesktopLink" 0 _idbots_desktop_shortcut_done
+  !ifndef IDBOTS_NSIS_SYNTAX_HARNESS
   WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
+  !endif
   System::Call 'Shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
 
 _idbots_desktop_shortcut_done:
@@ -268,27 +375,43 @@ _idbots_desktop_shortcut_done:
 
       ; 3. Directly elevated admin installer (e.g. Run as administrator or UAC
       ;    disabled on older Windows): de-elevate via Explorer on $appExe, then
-      ;    verify IDBots.exe actually entered the process table and fall back
-      ;    to direct CreateProcess if Explorer COM silently ignored the call.
+      ;    verify IDBots.exe actually entered the process table across ~5x250ms
+      ;    before retrying the DE-ELEVATED shell launch once. The old direct
+      ;    elevated Exec fallback is deliberately gone (2026-11-19 review P2):
+      ;    on a slow shell it spawned a second, admin-elevated IDBots.exe; the
+      ;    single-instance lock absorbed the duplicate but the surviving
+      ;    process kept an admin token. A missed auto-launch (the user clicks
+      ;    the icon) beats an accidental admin process.
       System::Call 'kernel32::GetCurrentProcessId() i .R8'
       ${StdUtils.ExecShellAsUser} $0 "$appExe" "open" "$1"
+      ; ${__LINE__} expands to the CURRENT line, so the label and its Goto
+      ; must share ONE define (mirroring _IDBOTS_CHK_ID above) or they never
+      ; resolve to the same name. (Caught by the makensis harness on its very
+      ; first compile — the exact class of bug the harness exists for.)
+      !define _IDBOTS_FV_ID ${__LINE__}
       ${If} $0 == "ok"
-        Sleep 250
-        !insertmacro _IDBOTS_FIND_MAIN_EXE $R0
-        ${If} $R0 == 0
-          Return
-        ${EndIf}
-        Sleep 350
+        StrCpy $R2 "0"
+        _idbots_finish_verify_${_IDBOTS_FV_ID}:
+          Sleep 250
+          !insertmacro _IDBOTS_FIND_MAIN_EXE $R0
+          ${If} $R0 == 0
+            Return
+          ${EndIf}
+          IntOp $R2 $R2 + 1
+          ${If} $R2 < 5
+            Goto _idbots_finish_verify_${_IDBOTS_FV_ID}
+          ${EndIf}
+        ; Explorer COM occasionally swallows the first ShellDispatch call on a
+        ; cold session — retry the de-elevated launch once, wait, re-check.
+        ${StdUtils.ExecShellAsUser} $0 "$appExe" "open" "$1"
+        Sleep 400
         !insertmacro _IDBOTS_FIND_MAIN_EXE $R0
         ${If} $R0 == 0
           Return
         ${EndIf}
       ${EndIf}
-      ClearErrors
-      Exec '"$appExe" $1'
-      ${If} ${Errors}
-        ExecShell "" "$appExe" "$1" SW_SHOWNORMAL
-      ${EndIf}
+      ; Still not running: leave the launch to the user. No elevated spawn.
+      !undef _IDBOTS_FV_ID
     FunctionEnd
 
     !define MUI_FINISHPAGE_RUN

@@ -56,7 +56,7 @@ test('coworkRunner holds the primary attempt effort as the in-turn fallback floo
     coworkRunnerSource.includes('maxLlmEffortLevel(fallbackEffortLevel, primaryEffortLevel)'),
     'coworkRunner: the fallback attempt effort must be clamped to the in-turn floor',
   );
-  // …but ONLY for assistant-mode owner chat: bot-automation turns keep the
+  // …but ONLY for assistant/mobile owner chat: bot-automation turns keep the
   // fallback brain's own configured effort (deliberate bot config), and an
   // explicit session pick already pins both attempts identically.
   const gate = coworkRunnerSource.match(
@@ -64,7 +64,7 @@ test('coworkRunner holds the primary attempt effort as the in-turn fallback floo
   );
   assert.ok(gate, 'coworkRunner: the floor clamp must be a named, greppable statement');
   assert.ok(
-    gate[1].includes('assistantMode && !unattendedTurn && !sessionEffortPicked'),
-    `coworkRunner: the floor gate must be assistant-mode owner chat only (got: ${gate[1]})`,
+    gate[1].includes('fastOwnerChatMode && !unattendedTurn && !sessionEffortPicked'),
+    `coworkRunner: the floor gate must be assistant/mobile owner chat only (got: ${gate[1]})`,
   );
 });

@@ -350,6 +350,24 @@ test('WebGPU orb compiles pipelines asynchronously and tears down late timed-out
   assert.match(stage, /fixedStyle: style/);
   assert.match(stage, /const ORB_START_TIMEOUT_MS = 20000;/);
   assert.match(stage, /console\.warn\('\[LiveStage\] WebGPU fallback:', message\)/);
+  // A hung requestAdapter()/requestDevice() must still hit the 4.5s budget:
+  // the GPU calls are raced against the budget signal so the WebGL2 tier runs
+  // (a never-settling promise used to bypass the budget entirely).
+  assert.match(orb, /function raceWithAbort\(/);
+  assert.match(orb, /acquireHardwareDevice\(abortIfSignaled, budgetAbort\?\.signal\)/);
+  // Terminal fallback is recoverable: bounded retry + re-show retry, and a
+  // mid-session WebGL2 loss remounts instead of parking on the CSS membrane.
+  assert.match(stage, /scheduleOrbRecovery\(\)/);
+  assert.match(stage, /WebGL2 orb lost mid-session, remounting/);
+  assert.match(stage, /orbFailed = false/);
+  assert.match(stage, /clearOrbRecoveryTimer\(\)/);
+  // Field triage: when both tiers fail, the real WebGL2 reason (software
+  // renderer, RDP basic display) must reach diagnostics, not just
+  // "No WebGPU adapter".
+  assert.match(orb, /WebGL2 fallback also failed/);
+  // The lenient WebGL2 attempt falls to the integrated GPU instead of
+  // re-requesting the (possibly blocklisted) discrete one.
+  assert.match(orb, /canvas\.getContext\('webgl2', \{ \.\.\.baseAttrs, powerPreference: 'low-power' \}\)/);
 });
 
 test('WebGPU orb specializes and dead-code strips WGSL and provides a pixel-equivalent WebGL2 fallback', () => {

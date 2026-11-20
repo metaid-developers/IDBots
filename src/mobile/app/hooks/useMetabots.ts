@@ -4,6 +4,7 @@ import { getMobileElectron, hasAppBridge } from '../appBridge';
 import { getMetabotRoster, setMetabotRoster, subscribeMetabotRoster } from '../metabotRosterStore';
 import { t } from '../../i18n';
 import { buildModelGroupsFromConfig, type CatalogProviderGroup } from '../../../renderer/services/modelCatalog';
+import { resolveNewBotAvatar } from '../botAvatarSelection';
 
 export interface MobileBotInput {
   name: string;
@@ -99,6 +100,7 @@ export function useMetabots(): {
       const result = await getMobileElectron().idbots.createMetaBotOnChain({
         name: input.name,
         metabot_type: 'worker',
+        avatar: resolveNewBotAvatar(input.avatar),
         role: input.role,
         soul: input.soul,
         goal: input.goal || null,
