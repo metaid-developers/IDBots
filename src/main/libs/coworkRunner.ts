@@ -362,6 +362,11 @@ import {
   type Mrc721ToolsControl,
 } from './mrc721AgentTools';
 import {
+  buildNftSwapAgentTools,
+  type NftSwapBatchConfirmationInfo,
+  type NftSwapToolsControl,
+} from './nftSwapAgentTools';
+import {
   buildEscrowAgentTools,
   type EscrowAgentToolsControl,
 } from './escrowAgentTools';
@@ -2621,6 +2626,11 @@ export interface CoworkRunnerOptions {
    */
   mrc721Tools?: Mrc721ToolsControl;
   /**
+   * WS-A: CA-verified legacy MetaContract -> MRC-721 batch swap tools
+   * (nft_swap_verify_official_station, nft_swap_submit_batch, nft_swap_order_status).
+   */
+  nftSwapTools?: NftSwapToolsControl;
+  /**
    * When set, every cowork session gets the escrow_* tools (S3 generalized
    * escrow, first-round slice): escrow_order_create / act / list / info /
    * tick drive the pure escrowOrderStateMachine over the escrow_orders table.
@@ -3028,6 +3038,7 @@ export class CoworkRunner extends EventEmitter {
   private walletTools?: WalletToolsControl;
   private btcMultisigTools?: BtcMultisigToolsControl;
   private mrc721Tools?: Mrc721ToolsControl;
+  private nftSwapTools?: NftSwapToolsControl;
   private escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
   private meChargeTools?: MeChargeToolsControl;
   private paymentCards?: PaymentCardAgentToolsControl;
@@ -3259,6 +3270,7 @@ export class CoworkRunner extends EventEmitter {
     this.walletTools = options?.walletTools;
     this.btcMultisigTools = options?.btcMultisigTools;
     this.mrc721Tools = options?.mrc721Tools;
+    this.nftSwapTools = options?.nftSwapTools;
     this.escrowTools = options?.escrowTools;
     this.meChargeTools = options?.meChargeTools;
     this.paymentCards = options?.paymentCards;
@@ -9116,6 +9128,51 @@ export class CoworkRunner extends EventEmitter {
         order_id: info.orderId,
         amount_cents: info.amountCents,
         payee,
+      } as Record<string, unknown>,
+      'deny',
+      { ownerOnly: true },
+    );
+    return outcome === 'approved';
+  }
+
+  private async confirmBatchSwap(
+    sessionId: string,
+    info: NftSwapBatchConfirmationInfo,
+  ): Promise<boolean> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (!activeSession) {
+      return false;
+    }
+    const previewTokens = info.tokenIndexes.slice(0, 10).map((t) => `#${t}`).join(', ');
+    const moreCount = info.tokenIndexes.length > 10 ? ` (+${info.tokenIndexes.length - 10})` : '';
+    const question = tApp(
+      `Agent 准备向官方 CA 认证置换站提交一笔旧版藏品（MetaContract）批量置换（不可撤销）：\n` +
+      `- 系列: ${info.collectionName || info.collectionSlug}\n` +
+      `- 认证站点: ${info.badgeLabel} (${info.stationGlobalMetaId})\n` +
+      `- 托管金库地址: ${info.vaultAddress}\n` +
+      `- 置换数量: ${info.tokenIndexes.length} 枚 (${previewTokens}${moreCount})\n` +
+      `是否允许一键转出旧藏品并向置换站发起自动置换？（需要你本人确认；60 秒内未回答视为拒绝）`,
+      `The agent is about to submit a batch legacy collectible (MetaContract) swap to a CA-certified official station (irreversible):\n` +
+      `- Series: ${info.collectionName || info.collectionSlug}\n` +
+      `- Verified Station: ${info.badgeLabel} (${info.stationGlobalMetaId})\n` +
+      `- Vault Address: ${info.vaultAddress}\n` +
+      `- Quantity: ${info.tokenIndexes.length} item(s) (${previewTokens}${moreCount})\n` +
+      `Allow transferring these legacy items and submitting the swap claim? (owner confirmation required; unanswered after 60s = denied)`,
+    );
+    const outcome = await this.requestSafetyApproval(
+      sessionId,
+      activeSession.abortController.signal,
+      activeSession,
+      question,
+      'nft_swap_batch',
+      {
+        collection_slug: info.collectionSlug,
+        station_global_metaid: info.stationGlobalMetaId,
+        vault_address: info.vaultAddress,
+        codehash: info.codehash,
+        genesis: info.genesis,
+        token_indexes: info.tokenIndexes,
+        count: info.tokenIndexes.length,
       } as Record<string, unknown>,
       'deny',
       { ownerOnly: true },
@@ -15994,6 +16051,17 @@ export class CoworkRunner extends EventEmitter {
           control: this.mrc721Tools,
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+        })
+      );
+    }
+    if (this.nftSwapTools && mountFinancialTools) {
+      memoryTools.push(
+        ...buildNftSwapAgentTools({
+          tool,
+          control: this.nftSwapTools,
+          sessionId,
+          resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+          confirmBatchSwap: (info) => this.confirmBatchSwap(sessionId, info),
         })
       );
     }

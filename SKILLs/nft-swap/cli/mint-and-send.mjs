@@ -40,6 +40,7 @@ const HELP = `mint-and-send — 按需铸造 + 发货（PRD §5.5–§5.7，崩�
   node cli/mint-and-send.mjs --token-index <n> [选项]
 
 选项:
+  --collection <slug>            目标系列 slug（默认 metabot-avatar）
   --token-index <n>              旧 token 编号（必须已在台账 claimed 或更后）
   --recipient <MVC地址>          收货地址（台账已有 claimant 时可省）
   --cover <metafile://…>         封面（可选；缺省时自动从金库行 imgUrl 取图：
@@ -68,6 +69,7 @@ const HELP = `mint-and-send — 按需铸造 + 发货（PRD §5.5–§5.7，崩�
 async function main(argv) {
   const args = parseCliArgs(argv, {
     values: [
+      'collection',
       'token-index',
       'recipient',
       'cover',
@@ -89,8 +91,8 @@ async function main(argv) {
     throw new CliError('BAD_ARGS', '--token-index must be a positive integer');
   }
   const userDataPath = resolveUserData(args);
-  const config = resolvedPilotConfig(userDataPath);
-  const album = albumFromConfig(config);
+  const config = resolvedPilotConfig(userDataPath, args.collection || null);
+  const album = albumFromConfig(config, { collectionSlug: args.collection || null });
   const ledgerPath = resolveLedgerPath(userDataPath, args);
   const ledger = openLedger(ledgerPath);
   const readers = createIndexReaders();
@@ -98,7 +100,9 @@ async function main(argv) {
 
   let host = null;
   try {
-    const row = ledger.activeRowByToken(album.genesis, tokenIndex) ?? ledger.latestRowByToken(album.genesis, tokenIndex);
+    const row =
+      ledger.activeRowByToken(album.collectionSlug, tokenIndex) ??
+      ledger.latestRowByToken(album.collectionSlug, tokenIndex);
     if (!row) {
       throw new CliError(
         'LEDGER_ROW_MISSING',

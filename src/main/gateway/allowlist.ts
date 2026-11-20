@@ -491,6 +491,7 @@ export const EVENT_ALLOWLIST: Record<string, AllowlistEntry> = {
   'skills:changed': { tier: 'P1' },
   'metabot:dreamStatusChanged': { tier: 'P1' },
   'metabot:surfStatusChanged': { tier: 'P1' },
+  'nftSwap:orderCompleted': { tier: 'P1', note: 'WS-A swap order completion notification.' },
   'store:changed': { tier: 'P1', restrictions: ['R-store'], note: '`02`: P1-R — only key `app_config`, redacted like R-store.' },
   'groupTask:statusChanged': { tier: 'P2' },
   'groupTask:checkpointChanged': { tier: 'P2' },

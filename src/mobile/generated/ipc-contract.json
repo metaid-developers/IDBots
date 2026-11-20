@@ -2706,6 +2706,11 @@
       ]
     },
     {
+      "path": "nftSwap.onOrderCompleted",
+      "kind": "on",
+      "channel": "nftSwap:orderCompleted"
+    },
+    {
       "path": "notification.get",
       "kind": "invoke",
       "channel": "notification:get",

@@ -38,13 +38,14 @@ const HELP = `verify-claim — 验真 + 台账占位（PRD §5.4 / §5.5）
   node cli/verify-claim.mjs --token-index <n> --claimant <MVC地址> [选项]
 
 选项:
-  --token-index <n>         旧 token 编号（1..9560）
+  --collection <slug>       目标系列 slug（默认 metabot-avatar）
+  --token-index <n>         旧 token 编号
   --claimant <MVC地址>      收货方 bot 钱包地址（claim 主键的一部分）
   --outpoint <txid:vout>    直接指定入账 outpoint（优先于 --token-index）
   --claim-channel <渠道>    claim 来源渠道（默认 cli）
   --claim-message-id <id>   claim 消息 id（可选）
   --dry-run                 只验真+双检并报告，不写台账
-  --min-confirmations <n>   确认门槛（默认 6）
+  --min-confirmations <n>   确认门槛（默认 1）
   --ledger <路径>           台账 sqlite 路径
   --user-data <目录>        IDBots userData 目录
   --help                    显示本帮助
@@ -54,7 +55,7 @@ const HELP = `verify-claim — 验真 + 台账占位（PRD §5.4 / §5.5）
 
 const MVC_ADDRESS = /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/;
 
-function resolveRow(ledger, genesis, args) {
+function resolveRow(ledger, collectionSlug, args) {
   if (args.outpoint) {
     const row = ledger.rowByOutpoint(args.outpoint);
     if (!row) throw new CliError('LEDGER_ROW_MISSING', `no ledger row for outpoint ${args.outpoint} — run vault-poll first`);
@@ -64,12 +65,12 @@ function resolveRow(ledger, genesis, args) {
   if (!Number.isInteger(tokenIndex) || tokenIndex <= 0) {
     throw new CliError('BAD_ARGS', '--token-index must be a positive integer');
   }
-  return ledger.activeRowByToken(genesis, tokenIndex) ?? ledger.latestRowByToken(genesis, tokenIndex);
+  return ledger.activeRowByToken(collectionSlug, tokenIndex) ?? ledger.latestRowByToken(collectionSlug, tokenIndex);
 }
 
 async function main(argv) {
   const args = parseCliArgs(argv, {
-    values: ['token-index', 'claimant', 'outpoint', 'claim-channel', 'claim-message-id', 'min-confirmations', 'ledger', 'user-data'],
+    values: ['collection', 'token-index', 'claimant', 'outpoint', 'claim-channel', 'claim-message-id', 'min-confirmations', 'ledger', 'user-data'],
     booleans: ['dry-run'],
   });
   if (!args.claimant) throw new CliError('BAD_ARGS', '--claimant is required (the recipient bot MVC address)');
@@ -77,8 +78,8 @@ async function main(argv) {
     throw new CliError('BAD_ARGS', `--claimant is not an MVC base58 address: ${args.claimant}`);
   }
   const userDataPath = resolveUserData(args);
-  const config = resolvedPilotConfig(userDataPath);
-  const album = albumFromConfig(config);
+  const config = resolvedPilotConfig(userDataPath, args.collection || null);
+  const album = albumFromConfig(config, { collectionSlug: args.collection || null });
   if (!config.vaultAddress) throw new CliError('VAULT_ADDRESS_MISSING', 'pilot config has no vault address');
 
   const minConfirmations = args['min-confirmations'] != null ? Number(args['min-confirmations']) : MVP_CONFIRMATIONS;
@@ -87,7 +88,7 @@ async function main(argv) {
   const ledger = openLedger(ledgerPath);
 
   try {
-    let row = resolveRow(ledger, album.genesis, args);
+    let row = resolveRow(ledger, album.collectionSlug, args);
     let detected = false;
     if (!row && !args['dry-run']) {
       // PRD §4b fallback: deposit first, install later. One poll records it.
@@ -98,7 +99,7 @@ async function main(argv) {
         minConfirmations,
         confirmationsResolver: (txid) => readers.fetchConfirmations(txid),
       });
-      row = resolveRow(ledger, album.genesis, args);
+      row = resolveRow(ledger, album.collectionSlug, args);
       detected = Boolean(row);
     }
     if (!row) {
@@ -106,7 +107,7 @@ async function main(argv) {
         'LEDGER_ROW_MISSING',
         args['dry-run']
           ? 'no ledger row for this deposit; run vault-poll first (dry-run never writes)'
-          : 'deposit not found in the vault (or still under 6 confirmations)',
+          : `deposit not found in the vault (or still under ${minConfirmations} confirmation(s))`,
       );
     }
 

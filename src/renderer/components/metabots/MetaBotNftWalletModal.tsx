@@ -35,6 +35,7 @@ import {
   validateNftTransferDraft,
 } from './metabotNftPresentation.js';
 import { NftArtworkImage } from './NftArtworkImage';
+import LegacyNftDepositGuideModal from './LegacyNftDepositGuideModal';
 
 type NftKind = 'mrc721' | 'metacontract';
 
@@ -139,6 +140,7 @@ const MetaBotNftWalletModal: React.FC<MetaBotNftWalletModalProps> = ({ metabot, 
   const [myListingsOpen, setMyListingsOpen] = useState(false);
   // Bumped after a successful sell so "My Listings" re-fetches on next open.
   const [sellOrdersVersion, setSellOrdersVersion] = useState(0);
+  const [legacyDepositOpen, setLegacyDepositOpen] = useState(false);
 
   const loadTab = useCallback(
     (kind: NftKind, force = false) => {
@@ -330,6 +332,26 @@ const MetaBotNftWalletModal: React.FC<MetaBotNftWalletModalProps> = ({ metabot, 
                   >
                     {i18nService.t('metabotNftMyListings')}
                   </button>
+                  <button
+                    type="button"
+                    data-slot="metabot-nft-legacy-deposit-guide"
+                    onClick={() => setLegacyDepositOpen(true)}
+                    className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-sm font-medium text-sky-600 dark:text-sky-400 hover:bg-sky-500/15"
+                  >
+                    {i18nService.t('legacyDepositGuideEntry')}
+                  </button>
+                </div>
+              )}
+              {activeTab === 'metacontract' && (
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    data-slot="metabot-nft-legacy-deposit-guide"
+                    onClick={() => setLegacyDepositOpen(true)}
+                    className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-sm font-medium text-sky-600 dark:text-sky-400 hover:bg-sky-500/15"
+                  >
+                    {i18nService.t('legacyDepositGuideEntry')}
+                  </button>
                 </div>
               )}
               {tabState.loading && tabState.items.length === 0 && (
@@ -490,6 +512,12 @@ const MetaBotNftWalletModal: React.FC<MetaBotNftWalletModalProps> = ({ metabot, 
           <Mrc721MyListingsPanel metabot={metabot} version={sellOrdersVersion} />
         )}
       </div>
+      <LegacyNftDepositGuideModal
+        isOpen={legacyDepositOpen}
+        metabot={metabot}
+        onClose={() => setLegacyDepositOpen(false)}
+        onStartUpgradeChat={onClose}
+      />
     </div>
   );
 };

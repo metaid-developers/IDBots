@@ -271,7 +271,7 @@ const MOBILE_CORE_TOOLS: ReadonlySet<string> = new Set([
 
 const MOBILE_EXPANSION_TOOL_PATTERNS: Record<Exclude<MobileToolExpansion, 'automation'>, RegExp> = {
   workerEconomy: /^(?:metatask_|agentpedia_|prediction_record$|post_metaprotocol$|escrow_)/,
-  financial: /^(?:wallet_|mrc721_|me_charge$|payment_card_emit$)/,
+  financial: /^(?:wallet_|mrc721_|nft_swap_|me_charge$|payment_card_emit$)/,
   social: /^(?:post_buzz$|post_simplenote$|post_simpleqa$|post_simplelog$|omni_cast$|like_pin$|comment_pin$|group_chat$|private_chat$|im_send_message$)/,
   metaweb: /^(?:omni_read$|search_metaapps$|search_qa$|list_latest_questions$|get_question_answers$|search_metaweb$|read_metaweb_pins_batch$|read_metaweb_pin$|metaweb_surf_start$|metaweb_surf_status$|metaweb_study_enqueue$|metaweb_study_status$|metaweb_qa_surf_enqueue$|metaweb_qa_surf_disable$|search_social_posts$|search_metaids$|list_social_connections$|list_online_bots$|list_online_services$|social_post_detail$|social_post_comments$|metaid_profile$|check_peer_relationship$|metaweb_pin_versions$|metaprotocol_registry$)/,
   orchestration: /^(?:task_|longterm_|preference_|subagent$|send_message$|list_subagent_models$|local_workers_list$|local_worker_delegate$|twin_task_|worker_session_stop$|idbots_session_)/,

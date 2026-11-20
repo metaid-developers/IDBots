@@ -1126,3 +1126,9 @@ blob-report/
 !tests/dshSessionRetention.test.ts
 !tests/chainWriteAttribution.test.mjs
 !tests/rpcCreatePinCallerSession.test.mjs
+
+# WS-A legacy MetaContract auto swap + official Bot CA verification + nft-swap v0.5
+!tests/nftCaOfficialBots.test.ts
+!tests/officialSwapStationVerify.test.ts
+!tests/swapOrderTracker.test.ts
+!tests/nftSwapV05MultiSeries.test.mjs

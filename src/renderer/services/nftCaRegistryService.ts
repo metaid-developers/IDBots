@@ -11,6 +11,35 @@
 import { isCollectionCertified } from '../components/metabots/nftAvatarPresentation';
 
 /** Mirrors the ElectronNftCaRegistry shape declared in types/electron.d.ts. */
+export type NftCaOfficialBotRole = 'swap_station' | 'escrow_guarantor' | 'official_announcer';
+
+export interface NftCaOfficialBotEntry {
+  globalMetaId: string;
+  metaId?: string;
+  mvcAddress: string;
+  role: NftCaOfficialBotRole;
+  badgeType: string;
+  badgeLabel: string;
+  swapConfig?: {
+    vaultAddress: string;
+    supportedSeries: Array<{
+      collectionSlug: string;
+      targetCollectionPinId: string;
+      codehash: string;
+      genesis: string;
+      maxTokenIndex?: number;
+      minConfirmations?: number;
+    }>;
+  };
+  escrowConfig?: {
+    custodyAddress: string;
+    supportedCurrencies?: string[];
+    maxOrderCnyCents?: number;
+  };
+  active: boolean;
+  certifiedAt?: number;
+}
+
 export interface NftCaRegistry {
   protocol: 'idbots-nft-ca';
   version: number;
@@ -23,9 +52,16 @@ export interface NftCaRegistry {
   collections: Array<{
     collectionPinId: string;
     collectionName?: string;
+    displayTitle?: string;
+    legacySeries?: {
+      codehash: string;
+      genesis: string;
+      swapStationGlobalMetaId?: string;
+    };
     note?: string;
     certifiedAt?: number;
   }>;
+  officialBots?: NftCaOfficialBotEntry[];
   fetchedAt: number;
 }
 
@@ -38,6 +74,7 @@ export const EMPTY_NFT_CA_REGISTRY: NftCaRegistry = {
   creatorMetaId: null,
   officialMetaId: '',
   collections: [],
+  officialBots: [],
   fetchedAt: 0,
 };
 
