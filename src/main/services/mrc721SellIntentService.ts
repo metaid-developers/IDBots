@@ -34,6 +34,19 @@ import type { MetabotStore } from '../metabotStore';
  */
 
 export const MRC721_SELL_INTENT_PATH = '/protocols/mrc721sell';
+export const MRC721_TRADE_RECEIPT_PATH = '/protocols/mrc721trade';
+export const MRC721_SELL_MIN_ME_MILLI = 1000;
+export const MRC721_SELL_MIN_CNY_CENTS = 100;
+
+export interface Mrc721SellIntentPrices {
+  me?: {
+    amountMilli: number;
+  };
+  fiat?: {
+    currency: 'CNY';
+    amountCents: number;
+  };
+}
 
 export interface Mrc721SellIntentContent {
   active: boolean;
@@ -43,6 +56,10 @@ export interface Mrc721SellIntentContent {
   itemOutpoint?: { txid: string; vout: number; satoshis: number };
   sellerAddress: string;
   sellerMetaId?: string;
+  prices?: Mrc721SellIntentPrices;
+  autoFulfillMe?: boolean;
+  negotiable?: boolean;
+  shopMetaAppPinId?: string;
   priceHintSats?: number;
   acceptedCurrencies: string[];
   settlement: string[];
@@ -58,12 +75,17 @@ export interface Mrc721SellIntentRecord {
   metabotId: number;
   intent: Mrc721SellIntentContent;
   sellPinId?: string;
-  status: 'active' | 'cancelled';
+  status: 'active' | 'cancelled' | 'sold';
+  /** Local authorization mirror for SellerAutoFulfillDaemon. */
+  autoFulfillMe?: boolean;
+  soldOrderId?: string;
+  soldTxId?: string;
+  soldAt?: number;
   updatedAt: number;
 }
 
 /** Listed-view status: local record status joined with the live holder view. */
-export type Mrc721SellIntentStatus = 'active' | 'cancelled' | 'stale';
+export type Mrc721SellIntentStatus = 'active' | 'cancelled' | 'sold' | 'stale';
 
 export interface Mrc721SellIntentView {
   id: string;
@@ -74,13 +96,32 @@ export interface Mrc721SellIntentView {
   sellPinId?: string;
 }
 
-type SellIntentKv = {
+export type SellIntentKv = {
   get<T>(key: string): T | undefined;
   set<T>(key: string, value: T): void;
 };
 
 function intentsKey(metabotId: number): string {
   return `mrc721_sell_intents:${metabotId}`;
+}
+
+function acceptedQuotesKey(metabotId: number): string {
+  return `goods_accepted_quotes:${metabotId}`;
+}
+
+export interface GoodsAcceptedQuoteRecord {
+  inquiryId: string;
+  itemPinId: string;
+  agreedCurrency: 'me';
+  agreedAmountMilli: number;
+  sellerBotAddress: string;
+  sellerPayeeAddress?: string;
+  buyerGlobalMetaId?: string;
+  validUntil: number;
+  status: 'active' | 'used' | 'expired';
+  orderId?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export function mrc721SellIntentsFromSqlite(store: { get(key: string): unknown; set(key: string, value: unknown): void }): SellIntentKv {
@@ -98,6 +139,61 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};
 }
 
+function parsePricesInput(raw: unknown): Mrc721SellIntentPrices | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const prices: Mrc721SellIntentPrices = {};
+  if (obj.me && typeof obj.me === 'object' && !Array.isArray(obj.me)) {
+    const amountMilli = Number((obj.me as Record<string, unknown>).amountMilli);
+    if (!Number.isInteger(amountMilli) || amountMilli < MRC721_SELL_MIN_ME_MILLI) {
+      throw new Error(`prices.me.amountMilli must be an integer >= ${MRC721_SELL_MIN_ME_MILLI} (1 ME)`);
+    }
+    prices.me = { amountMilli };
+  }
+  if (obj.fiat && typeof obj.fiat === 'object' && !Array.isArray(obj.fiat)) {
+    const fiatObj = obj.fiat as Record<string, unknown>;
+    const currency = String(fiatObj.currency ?? 'CNY').trim().toUpperCase();
+    if (currency !== 'CNY') {
+      throw new Error('prices.fiat.currency currently only supports "CNY"');
+    }
+    const amountCents = Number(fiatObj.amountCents);
+    if (!Number.isInteger(amountCents) || amountCents < MRC721_SELL_MIN_CNY_CENTS) {
+      throw new Error(`prices.fiat.amountCents must be an integer >= ${MRC721_SELL_MIN_CNY_CENTS} (¥1.00)`);
+    }
+    prices.fiat = { currency: 'CNY', amountCents };
+  }
+  return prices.me || prices.fiat ? prices : undefined;
+}
+
+function mergeTermsWithPrices(
+  prices: Mrc721SellIntentPrices | undefined,
+  rawCurrencies: string[],
+  rawSettlement: string[],
+  hasPriceHintSats: boolean,
+): { acceptedCurrencies: string[]; settlement: string[] } {
+  const currencies = new Set(rawCurrencies.map((s) => s.trim()).filter(Boolean));
+  const settlement = new Set(rawSettlement.map((s) => s.trim()).filter(Boolean));
+  if (prices?.me) {
+    currencies.add('me');
+    settlement.add('me-escrow');
+  }
+  if (prices?.fiat) {
+    currencies.add(`fiat:${prices.fiat.currency}`);
+    settlement.add('fiat-escrow');
+  }
+  if (hasPriceHintSats) {
+    if (!currencies.size) currencies.add('space');
+    if (!settlement.size) {
+      settlement.add('atomic-swap');
+      settlement.add('escrow');
+    }
+  }
+  return {
+    acceptedCurrencies: currencies.size ? [...currencies] : ['space'],
+    settlement: settlement.size ? [...settlement] : ['atomic-swap', 'escrow'],
+  };
+}
+
 /** Validate + normalize a sell-intent content object (tolerant on optional fields). */
 export function parseMrc721SellIntent(input: unknown): Mrc721SellIntentContent {
   const record = asRecord(input);
@@ -113,10 +209,17 @@ export function parseMrc721SellIntent(input: unknown): Mrc721SellIntentContent {
   if (priceHintSats != null && (!Number.isInteger(priceHintSats) || priceHintSats <= 0)) {
     throw new Error('priceHintSats must be a positive integer (it is a display hint, not an on-chain ask)');
   }
+  const prices = parsePricesInput(record.prices);
+  const shopMetaAppPinIdRaw = typeof record.shopMetaAppPinId === 'string' ? record.shopMetaAppPinId.trim().toLowerCase() : '';
+  const shopMetaAppPinId = shopMetaAppPinIdRaw && isMrc721PinId(shopMetaAppPinIdRaw) ? shopMetaAppPinIdRaw : undefined;
   const asStringArray = (value: unknown): string[] =>
     Array.isArray(value) ? value.map((entry) => String(entry).trim()).filter(Boolean) : [];
-  const acceptedCurrencies = asStringArray(record.acceptedCurrencies);
-  const settlement = asStringArray(record.settlement);
+  const mergedTerms = mergeTermsWithPrices(
+    prices,
+    asStringArray(record.acceptedCurrencies),
+    asStringArray(record.settlement),
+    priceHintSats != null,
+  );
   return {
     active: record.active !== false,
     itemPinId,
@@ -131,9 +234,13 @@ export function parseMrc721SellIntent(input: unknown): Mrc721SellIntentContent {
       : undefined,
     sellerAddress,
     sellerMetaId: typeof record.sellerMetaId === 'string' && record.sellerMetaId.trim() ? record.sellerMetaId.trim() : undefined,
+    ...(prices ? { prices } : {}),
+    ...(typeof record.autoFulfillMe === 'boolean' ? { autoFulfillMe: record.autoFulfillMe } : {}),
+    ...(typeof record.negotiable === 'boolean' ? { negotiable: record.negotiable } : {}),
+    ...(shopMetaAppPinId ? { shopMetaAppPinId } : {}),
     priceHintSats,
-    acceptedCurrencies: acceptedCurrencies.length ? acceptedCurrencies : ['space'],
-    settlement: settlement.length ? settlement : ['atomic-swap', 'escrow'],
+    acceptedCurrencies: mergedTerms.acceptedCurrencies,
+    settlement: mergedTerms.settlement,
     note: typeof record.note === 'string' && record.note.trim() ? record.note.trim() : undefined,
     createdAt: Number(record.createdAt) || Math.floor(Date.now() / 1000),
     expiresAt: Number(record.expiresAt) || undefined,
@@ -158,6 +265,13 @@ function writeIntents(kv: SellIntentKv, metabotId: number, records: Mrc721SellIn
 export interface Mrc721SellIntentDeclareInput {
   metabotId: number;
   itemPinId: string;
+  priceMe?: number;
+  priceMeMilli?: number;
+  priceCnyYuan?: number;
+  priceCnyCents?: number;
+  autoFulfillMe?: boolean;
+  negotiable?: boolean;
+  shopMetaAppPinId?: string;
   priceHintSats?: number;
   acceptedCurrencies?: string[];
   settlement?: string[];
@@ -175,6 +289,57 @@ export interface Mrc721SellIntentWriteResult {
   intent: Mrc721SellIntentContent;
 }
 
+function resolveDeclarePrices(input: Mrc721SellIntentDeclareInput): Mrc721SellIntentPrices | undefined {
+  const prices: Mrc721SellIntentPrices = {};
+  if (input.priceMeMilli != null || input.priceMe != null) {
+    let amountMilli: number;
+    if (input.priceMeMilli != null) {
+      amountMilli = Number(input.priceMeMilli);
+      if (!Number.isInteger(amountMilli) || amountMilli < MRC721_SELL_MIN_ME_MILLI) {
+        throw new Error(`priceMeMilli must be an integer >= ${MRC721_SELL_MIN_ME_MILLI} (1 ME)`);
+      }
+    } else {
+      const meVal = Number(input.priceMe);
+      if (!Number.isFinite(meVal) || meVal <= 0) {
+        throw new Error('price_me must be a positive number (minimum 1 ME)');
+      }
+      amountMilli = Math.round(meVal * 1000);
+      if (Math.abs(amountMilli - meVal * 1000) > 1e-6) {
+        throw new Error('price_me supports at most 3 decimal places (1 milli-ME = 0.001 ME)');
+      }
+      if (amountMilli < MRC721_SELL_MIN_ME_MILLI) {
+        throw new Error(`price_me must be at least 1 ME (${MRC721_SELL_MIN_ME_MILLI} milli-ME)`);
+      }
+    }
+    prices.me = { amountMilli };
+  }
+
+  if (input.priceCnyCents != null || input.priceCnyYuan != null) {
+    let amountCents: number;
+    if (input.priceCnyCents != null) {
+      amountCents = Number(input.priceCnyCents);
+      if (!Number.isInteger(amountCents) || amountCents < MRC721_SELL_MIN_CNY_CENTS) {
+        throw new Error(`priceCnyCents must be an integer >= ${MRC721_SELL_MIN_CNY_CENTS} (¥1.00)`);
+      }
+    } else {
+      const yuanVal = Number(input.priceCnyYuan);
+      if (!Number.isFinite(yuanVal) || yuanVal <= 0) {
+        throw new Error('price_cny_yuan must be a positive number (minimum ¥1.00)');
+      }
+      amountCents = Math.round(yuanVal * 100);
+      if (Math.abs(amountCents - yuanVal * 100) > 1e-6) {
+        throw new Error('price_cny_yuan supports at most 2 decimal places (1 cent = ¥0.01)');
+      }
+      if (amountCents < MRC721_SELL_MIN_CNY_CENTS) {
+        throw new Error(`price_cny_yuan must be at least ¥1.00 (${MRC721_SELL_MIN_CNY_CENTS} cents)`);
+      }
+    }
+    prices.fiat = { currency: 'CNY', amountCents };
+  }
+
+  return prices.me || prices.fiat ? prices : undefined;
+}
+
 /**
  * Broadcast the sell-intent declaration pin and record it locally. The item
  * must currently be held by the declaring bot (live holder view) — a sell
@@ -190,6 +355,11 @@ export async function declareMrc721SellIntent(
   }
   if (input.priceHintSats != null && (!Number.isInteger(input.priceHintSats) || input.priceHintSats <= 0)) {
     throw new Error('priceHintSats must be a positive integer');
+  }
+  const prices = resolveDeclarePrices(input);
+  const shopMetaAppPinIdRaw = typeof input.shopMetaAppPinId === 'string' ? input.shopMetaAppPinId.trim().toLowerCase() : '';
+  if (shopMetaAppPinIdRaw && !isMrc721PinId(shopMetaAppPinIdRaw)) {
+    throw new Error('shopMetaAppPinId must be a valid pinId (<64hex>i<index>)');
   }
   const metabot = input.store.getMetabotById(input.metabotId);
   if (!metabot?.mvc_address) {
@@ -210,6 +380,14 @@ export async function declareMrc721SellIntent(
   // Pin content timestamps are epoch SECONDS (doc schema §2.2, manapi
   // convention); the local book's updatedAt stays ms (local bookkeeping only).
   const nowSeconds = Math.floor(nowMs / 1000);
+  const autoFulfillMe = input.autoFulfillMe ?? true;
+  const negotiable = input.negotiable ?? true;
+  const mergedTerms = mergeTermsWithPrices(
+    prices,
+    input.acceptedCurrencies ?? [],
+    input.settlement ?? [],
+    input.priceHintSats != null,
+  );
   const intent: Mrc721SellIntentContent = {
     active: true,
     itemPinId,
@@ -224,13 +402,13 @@ export async function declareMrc721SellIntent(
       : undefined,
     sellerAddress: metabot.mvc_address,
     sellerMetaId: metabot.globalmetaid ?? undefined,
+    ...(prices ? { prices } : {}),
+    autoFulfillMe,
+    negotiable,
+    ...(shopMetaAppPinIdRaw ? { shopMetaAppPinId: shopMetaAppPinIdRaw } : {}),
     priceHintSats: input.priceHintSats,
-    acceptedCurrencies: input.acceptedCurrencies?.map((entry) => String(entry).trim()).filter(Boolean).length
-      ? input.acceptedCurrencies.map((entry) => String(entry).trim()).filter(Boolean)
-      : ['space'],
-    settlement: input.settlement?.map((entry) => String(entry).trim()).filter(Boolean).length
-      ? input.settlement.map((entry) => String(entry).trim()).filter(Boolean)
-      : ['atomic-swap', 'escrow'],
+    acceptedCurrencies: mergedTerms.acceptedCurrencies,
+    settlement: mergedTerms.settlement,
     note: input.note?.trim() || undefined,
     createdAt: nowSeconds,
     expiresAt: input.expiresInHours && input.expiresInHours > 0 ? nowSeconds + input.expiresInHours * 3_600 : undefined,
@@ -260,6 +438,7 @@ export async function declareMrc721SellIntent(
     intent,
     sellPinId: broadcast.pinId,
     status: 'active',
+    autoFulfillMe,
     updatedAt: nowMs,
   };
   // Re-read AFTER the await: a concurrent tool call may have written the book
@@ -326,6 +505,184 @@ export function listMrc721SellIntentRecords(kv: SellIntentKv, metabotId: number)
 }
 
 /**
+ * Find an active, non-expired local sell-intent record for an item.
+ * Used by SellerAutoFulfillDaemon check #1.
+ */
+export function findLocalActiveSellIntentForItem(
+  kv: SellIntentKv,
+  metabotId: number,
+  itemPinId: string,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+): Mrc721SellIntentRecord | null {
+  const normalizedPinId = String(itemPinId ?? '').trim().toLowerCase();
+  if (!normalizedPinId) return null;
+  const records = readIntents(kv, metabotId);
+  const found = records.find((r) => r.intent?.itemPinId?.toLowerCase() === normalizedPinId);
+  if (!found) return null;
+  if (found.status !== 'active' || found.intent.active !== true) return null;
+  if (found.intent.expiresAt && found.intent.expiresAt > 0 && found.intent.expiresAt <= nowSeconds) {
+    return null;
+  }
+  return found;
+}
+
+/**
+ * Mark a local sell-intent record as sold after SellerAutoFulfillDaemon
+ * completes delivery & settlement. Synchronous read->modify->write.
+ */
+export function markMrc721SellIntentSold(
+  kv: SellIntentKv,
+  metabotId: number,
+  itemPinId: string,
+  meta?: { orderId?: string; txId?: string },
+): boolean {
+  const normalizedPinId = String(itemPinId ?? '').trim().toLowerCase();
+  const records = readIntents(kv, metabotId);
+  const index = records.findIndex((r) => r.intent?.itemPinId?.toLowerCase() === normalizedPinId);
+  if (index < 0) return false;
+  const nowMs = Date.now();
+  records[index] = {
+    ...records[index],
+    status: 'sold',
+    intent: {
+      ...records[index].intent,
+      active: false,
+    },
+    ...(meta?.orderId ? { soldOrderId: meta.orderId } : {}),
+    ...(meta?.txId ? { soldTxId: meta.txId } : {}),
+    soldAt: Math.floor(nowMs / 1000),
+    updatedAt: nowMs,
+  };
+  writeIntents(kv, metabotId, records);
+  return true;
+}
+
+function readAcceptedQuotes(kv: SellIntentKv, metabotId: number): GoodsAcceptedQuoteRecord[] {
+  const stored = kv.get<GoodsAcceptedQuoteRecord[]>(acceptedQuotesKey(metabotId));
+  return Array.isArray(stored) ? stored : [];
+}
+
+function writeAcceptedQuotes(kv: SellIntentKv, metabotId: number, records: GoodsAcceptedQuoteRecord[]): void {
+  kv.set(acceptedQuotesKey(metabotId), records);
+}
+
+export function recordAcceptedGoodsQuote(
+  kv: SellIntentKv,
+  metabotId: number,
+  quote: Omit<GoodsAcceptedQuoteRecord, 'status' | 'createdAt' | 'updatedAt'>,
+): GoodsAcceptedQuoteRecord {
+  const nowMs = Date.now();
+  const normalizedPinId = quote.itemPinId.trim().toLowerCase();
+  const entry: GoodsAcceptedQuoteRecord = {
+    ...quote,
+    itemPinId: normalizedPinId,
+    status: 'active',
+    createdAt: Math.floor(nowMs / 1000),
+    updatedAt: nowMs,
+  };
+  const records = readAcceptedQuotes(kv, metabotId);
+  const idx = records.findIndex((r) => r.inquiryId === entry.inquiryId || (r.itemPinId === normalizedPinId && r.status === 'active'));
+  if (idx >= 0) records[idx] = entry;
+  else records.push(entry);
+  writeAcceptedQuotes(kv, metabotId, records);
+  return entry;
+}
+
+export function findAcceptedGoodsQuoteForItem(
+  kv: SellIntentKv,
+  metabotId: number,
+  itemPinId: string,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+): GoodsAcceptedQuoteRecord | null {
+  const normalizedPinId = String(itemPinId ?? '').trim().toLowerCase();
+  const records = readAcceptedQuotes(kv, metabotId);
+  const found = records.find(
+    (r) =>
+      r.itemPinId.toLowerCase() === normalizedPinId
+      && r.status === 'active'
+      && (!r.validUntil || r.validUntil > nowSeconds),
+  );
+  return found ?? null;
+}
+
+export function markAcceptedGoodsQuoteUsed(
+  kv: SellIntentKv,
+  metabotId: number,
+  itemPinId: string,
+  orderId?: string,
+): boolean {
+  const normalizedPinId = String(itemPinId ?? '').trim().toLowerCase();
+  const records = readAcceptedQuotes(kv, metabotId);
+  let changed = false;
+  const nowMs = Date.now();
+  for (let i = 0; i < records.length; i += 1) {
+    if (records[i].itemPinId.toLowerCase() === normalizedPinId && records[i].status === 'active') {
+      records[i] = {
+        ...records[i],
+        status: 'used',
+        ...(orderId ? { orderId } : {}),
+        updatedAt: nowMs,
+      };
+      changed = true;
+    }
+  }
+  if (changed) writeAcceptedQuotes(kv, metabotId, records);
+  return changed;
+}
+
+/**
+ * Best-effort lightweight trade receipt broadcast on `/protocols/mrc721trade`
+ * after ABS escrow delivery/settlement so MetaSo market trade feeds index it.
+ */
+export async function broadcastMrc721TradeReceipt(
+  deps: { createPin: Mrc721CreatePinFn },
+  input: {
+    metabotId: number;
+    txId: string;
+    orderId: string;
+    itemPinId: string;
+    collectionPinId?: string;
+    sellerAddress: string;
+    sellerMetaId?: string;
+    buyerAddress: string;
+    buyerMetaId?: string;
+    currency: 'me' | 'fiat:CNY' | 'space';
+    amountMilli?: number;
+    amountCents?: number;
+    priceSats?: number;
+    settledAt?: number;
+    verifiedSource?: 'abs_escrow' | 'chain_offer' | 'escrow_bot';
+    network?: 'mvc' | 'btc';
+  },
+): Promise<{ pinId: string; txids: string[] }> {
+  const payload = {
+    txId: input.txId,
+    orderId: input.orderId,
+    itemPinId: input.itemPinId,
+    ...(input.collectionPinId ? { collectionPinId: input.collectionPinId } : {}),
+    sellerAddress: input.sellerAddress,
+    ...(input.sellerMetaId ? { sellerMetaId: input.sellerMetaId } : {}),
+    buyerAddress: input.buyerAddress,
+    ...(input.buyerMetaId ? { buyerMetaId: input.buyerMetaId } : {}),
+    currency: input.currency,
+    ...(input.amountMilli != null ? { amountMilli: input.amountMilli } : {}),
+    ...(input.amountCents != null ? { amountCents: input.amountCents } : {}),
+    ...(input.priceSats != null ? { priceSats: input.priceSats } : {}),
+    settledAt: input.settledAt ?? Math.floor(Date.now() / 1000),
+    verifiedSource: input.verifiedSource ?? 'abs_escrow',
+  };
+  const broadcast = await broadcastMrc721Pin(deps.createPin, input.metabotId, {
+    operation: 'create',
+    path: MRC721_TRADE_RECEIPT_PATH,
+    encryption: '0',
+    version: '1.0.0',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+  }, { network: input.network ?? 'mvc', origin: 'daemon:seller_auto_fulfill' });
+  return { pinId: broadcast.pinId, txids: broadcast.txids };
+}
+
+/**
  * Listed view: local records joined with the live holder view. `stale` = the
  * item is no longer held by the seller (transferred away, or the holder view
  * cannot confirm it) — displayed honestly instead of silently dropped.
@@ -340,8 +697,8 @@ export async function listMrc721MySellIntents(
   for (const record of records) {
     if (filter?.collectionName && record.intent.collectionName !== filter.collectionName) continue;
     if (filter?.collectionPinId && record.intent.collectionPinId !== filter.collectionPinId) continue;
-    if (record.status === 'cancelled') {
-      views.push({ id: record.id, itemPinId: record.intent.itemPinId, status: 'cancelled', intent: record.intent, sellPinId: record.sellPinId });
+    if (record.status === 'cancelled' || record.status === 'sold') {
+      views.push({ id: record.id, itemPinId: record.intent.itemPinId, status: record.status, intent: record.intent, sellPinId: record.sellPinId });
       continue;
     }
     let status: Mrc721SellIntentStatus = 'active';
@@ -384,6 +741,10 @@ export interface Mrc721SellIntentRow {
   collectionPinId?: string;
   sellerAddress?: string;
   sellerMetaId?: string;
+  prices?: Mrc721SellIntentPrices;
+  autoFulfillMe?: boolean;
+  negotiable?: boolean;
+  shopMetaAppPinId?: string;
   priceHintSats?: number;
   acceptedCurrencies?: string[];
   settlement?: string[];
@@ -415,9 +776,18 @@ function sellIntentRowFrom(raw: unknown): Mrc721SellIntentRow {
   row.collectionPinId = pickString('collectionPinId', 'collectionpinid');
   row.sellerAddress = pickString('sellerAddress', 'selleraddress');
   row.sellerMetaId = pickString('sellerMetaId', 'sellermetaid');
+  row.shopMetaAppPinId = pickString('shopMetaAppPinId', 'shopmetaapppinid');
   row.note = pickString('note');
   row.chainName = pickString('chainName', 'chainname');
   row.txId = pickString('txId', 'txid');
+  if (typeof record.autoFulfillMe === 'boolean') row.autoFulfillMe = record.autoFulfillMe;
+  if (typeof record.negotiable === 'boolean') row.negotiable = record.negotiable;
+  try {
+    const parsedPrices = parsePricesInput(record.prices);
+    if (parsedPrices) row.prices = parsedPrices;
+  } catch {
+    // Ignore malformed remote price blocks on read
+  }
   if (Number.isFinite(Number(record.priceHintSats ?? record.pricehintsats))) {
     row.priceHintSats = Number(record.priceHintSats ?? record.pricehintsats) || undefined;
   }

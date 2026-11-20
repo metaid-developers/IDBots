@@ -367,6 +367,11 @@ import {
   type NftSwapToolsControl,
 } from './nftSwapAgentTools';
 import {
+  buildGoodsTradeAgentTools,
+  type GoodsPurchaseConfirmationInfo,
+  type GoodsTradeToolsControl,
+} from './goodsTradeAgentTools';
+import {
   buildEscrowAgentTools,
   type EscrowAgentToolsControl,
 } from './escrowAgentTools';
@@ -2631,6 +2636,12 @@ export interface CoworkRunnerOptions {
    */
   nftSwapTools?: NftSwapToolsControl;
   /**
+   * WS-D: Digital goods discovery & ME Points Escrow buyer tools
+   * (goods_market_summary, goods_market_search, goods_holder_lookup,
+   * goods_buy_with_me, goods_send_inquiry).
+   */
+  goodsTradeTools?: GoodsTradeToolsControl;
+  /**
    * When set, every cowork session gets the escrow_* tools (S3 generalized
    * escrow, first-round slice): escrow_order_create / act / list / info /
    * tick drive the pure escrowOrderStateMachine over the escrow_orders table.
@@ -3039,6 +3050,7 @@ export class CoworkRunner extends EventEmitter {
   private btcMultisigTools?: BtcMultisigToolsControl;
   private mrc721Tools?: Mrc721ToolsControl;
   private nftSwapTools?: NftSwapToolsControl;
+  private goodsTradeTools?: GoodsTradeToolsControl;
   private escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
   private meChargeTools?: MeChargeToolsControl;
   private paymentCards?: PaymentCardAgentToolsControl;
@@ -3271,6 +3283,7 @@ export class CoworkRunner extends EventEmitter {
     this.btcMultisigTools = options?.btcMultisigTools;
     this.mrc721Tools = options?.mrc721Tools;
     this.nftSwapTools = options?.nftSwapTools;
+    this.goodsTradeTools = options?.goodsTradeTools;
     this.escrowTools = options?.escrowTools;
     this.meChargeTools = options?.meChargeTools;
     this.paymentCards = options?.paymentCards;
@@ -9173,6 +9186,47 @@ export class CoworkRunner extends EventEmitter {
         genesis: info.genesis,
         token_indexes: info.tokenIndexes,
         count: info.tokenIndexes.length,
+      } as Record<string, unknown>,
+      'deny',
+      { ownerOnly: true },
+    );
+    return outcome === 'approved';
+  }
+
+  private async confirmGoodsPurchase(
+    sessionId: string,
+    info: GoodsPurchaseConfirmationInfo,
+  ): Promise<boolean> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (!activeSession) {
+      return false;
+    }
+    const meAmount = `${(info.amountMilli / 1000).toFixed(3).replace(/\.?0+$/, '')} ME`;
+    const question = tApp(
+      `Agent 准备使用 ME 积分担保交易购买数字商品：\n` +
+      `- 商品: ${info.itemName || info.itemPinId} (${info.itemPinId})\n` +
+      `- 托管金额: ${meAmount}\n` +
+      `- 卖方地址: ${info.sellerAddress}${info.sellerName ? ` (${info.sellerName})` : ''}\n` +
+      `- 订单号: ${info.orderId}\n` +
+      `确认锁定 ME 积分并通知卖方自动发货吗？（需要你本人确认；60 秒内未回答视为拒绝）`,
+      `The agent is about to buy a digital item via ME Points Escrow:\n` +
+      `- Item: ${info.itemName || info.itemPinId} (${info.itemPinId})\n` +
+      `- Escrow Amount: ${meAmount}\n` +
+      `- Seller Address: ${info.sellerAddress}${info.sellerName ? ` (${info.sellerName})` : ''}\n` +
+      `- Order ID: ${info.orderId}\n` +
+      `Confirm locking ME points in escrow and notifying the seller? (owner confirmation required; unanswered after 60s = denied)`,
+    );
+    const outcome = await this.requestSafetyApproval(
+      sessionId,
+      activeSession.abortController.signal,
+      activeSession,
+      question,
+      'goods_purchase_me_escrow',
+      {
+        order_id: info.orderId,
+        item_pin_id: info.itemPinId,
+        amount_milli: info.amountMilli,
+        seller_address: info.sellerAddress,
       } as Record<string, unknown>,
       'deny',
       { ownerOnly: true },
@@ -16063,6 +16117,17 @@ export class CoworkRunner extends EventEmitter {
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
           confirmBatchSwap: (info) => this.confirmBatchSwap(sessionId, info),
+        })
+      );
+    }
+    if (this.goodsTradeTools && mountFinancialTools) {
+      memoryTools.push(
+        ...buildGoodsTradeAgentTools({
+          tool,
+          control: this.goodsTradeTools,
+          sessionId,
+          resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+          confirmGoodsPurchase: (info) => this.confirmGoodsPurchase(sessionId, info),
         })
       );
     }

@@ -430,6 +430,8 @@ const POST_FREEZE_INVOKE: Record<string, AllowlistEntry> = {
   'traffic:getSponsorOrders': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop per-order traffic history for ME credits billing, 2026-11-09); denied by `02` default-deny pending a change request.' },
   'cowork:session:listPeerAvatars': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop peer-avatar deduplication channel, 2026-11-14); mobile gateway receives peerAvatar inline via cowork:session:list.' },
   'cowork:session:getSummary': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop single-session summary delta channel, 2026-11-14); mobile gateway uses cowork:session:list.' },
+  'goodsTrade:getBuyerBalance': { tier: 'P1', note: 'WS-D digital goods ME trade balance read.' },
+  'goodsTrade:buyWithMe': { tier: 'P1', note: 'WS-D digital goods ME escrow order submission from confirmation modal.' },
 };
 
 export const INVOKE_ALLOWLIST: Record<string, AllowlistEntry> = {
@@ -492,6 +494,9 @@ export const EVENT_ALLOWLIST: Record<string, AllowlistEntry> = {
   'metabot:dreamStatusChanged': { tier: 'P1' },
   'metabot:surfStatusChanged': { tier: 'P1' },
   'nftSwap:orderCompleted': { tier: 'P1', note: 'WS-A swap order completion notification.' },
+  'goodsTrade:purchaseSettled': { tier: 'P1', note: 'WS-D buyer ME escrow delivery settled notification.' },
+  'goodsTrade:autoSold': { tier: 'P1', note: 'WS-D seller auto-fulfill sold notification.' },
+  'goodsTrade:orderRejected': { tier: 'P1', note: 'WS-D seller escrow rejection notification.' },
   'store:changed': { tier: 'P1', restrictions: ['R-store'], note: '`02`: P1-R — only key `app_config`, redacted like R-store.' },
   'groupTask:statusChanged': { tier: 'P2' },
   'groupTask:checkpointChanged': { tier: 'P2' },

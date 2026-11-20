@@ -1132,3 +1132,9 @@ blob-report/
 !tests/officialSwapStationVerify.test.ts
 !tests/swapOrderTracker.test.ts
 !tests/nftSwapV05MultiSeries.test.mjs
+
+# WS-D digital goods commerce loop (sell v2.1, ME escrow, seller auto-fulfill, NftCard & commerce UI)
+!tests/mrc721SellIntentV21.test.ts
+!tests/meNftEscrowClient.test.ts
+!tests/sellerAutoFulfillDaemon.test.ts
+!tests/nftCardCommerceRender.test.tsx

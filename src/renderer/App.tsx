@@ -11,6 +11,7 @@ import {
 } from './components/layout/workspaceDestinations.js';
 import Toast from './components/Toast';
 import MePurchaseFlow from './components/me/MePurchaseFlow';
+import CommerceTradeCoordinator from './components/commerce/CommerceTradeCoordinator';
 import {
   onRequestOpenMePurchase,
   onRequestOpenUsagePage,
@@ -2056,6 +2057,7 @@ const App: React.FC = () => {
         onSectionChange={(section) => setMePurchase((prev) => ({ ...prev, section }))}
         onClose={() => setMePurchase((prev) => ({ ...prev, open: false }))}
       />
+      <CommerceTradeCoordinator />
       <CoworkPermissionOverlay
         inlineSessionId={mainView === 'cowork' && showHomeSurface ? currentSessionId : null}
         stageSessionId={botBrowserShell.isBrowserPaneVisible ? browserSessionId : null}

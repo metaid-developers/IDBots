@@ -39,6 +39,7 @@ import { isDshShutdownError } from '../libs/dshShutdownError';
 import { PrivateChatOrderCowork, type OrderCoworkRequest } from './privateChatOrderCowork';
 import { appendA2AGuidanceToSystemPrompt } from './a2aGuidance';
 import type { SwapOrderTrackerService } from './swapOrderTrackerService';
+import type { SellerAutoFulfillDaemon } from './sellerAutoFulfillDaemon';
 import { buildOrderPrompts } from './orderPromptBuilder';
 import { buildMetabotPersonaPrompt } from '../libs/metabotPersonaPrompt';
 import {
@@ -4482,6 +4483,7 @@ async function processOne(
   /** Best-effort relationship gate for invites (S4 provider); optional. */
   resolveFriendPairState?: ResolveFriendPairStateFn,
   swapOrderTracker?: SwapOrderTrackerService,
+  sellerAutoFulfillDaemon?: SellerAutoFulfillDaemon,
 ): Promise<void> {
   const taskKey = row.pin_id;
   if (thinkingTasks.has(taskKey)) return;
@@ -4797,6 +4799,21 @@ async function processOne(
       if (swapHandled.handled) {
         emitLog(
           `[PrivateChat] Handled ${swapHandled.type || 'swap'} message ${row.id} (requestId=${swapHandled.requestId ?? 'unknown'}, matched=${String(swapHandled.matched ?? false)})`,
+        );
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
+    }
+
+    if (plaintext.trim() && sellerAutoFulfillDaemon) {
+      const tradeHandled = await sellerAutoFulfillDaemon.handleIncomingTradeMessage({
+        metabotId: metabot.id,
+        fromGlobalMetaId,
+        plaintext,
+      });
+      if (tradeHandled.handled) {
+        emitLog(
+          `[PrivateChat] Handled ${tradeHandled.type || 'trade'} message ${row.id} (orderId=${tradeHandled.orderId ?? 'unknown'})`,
         );
         markProcessed(db, row.id, saveDb);
         return;
@@ -7196,6 +7213,7 @@ export function startPrivateChatDaemon(
   /** Best-effort relationship gate for invites (S4 provider); optional. */
   resolveFriendPairState?: ResolveFriendPairStateFn,
   swapOrderTracker?: SwapOrderTrackerService,
+  sellerAutoFulfillDaemon?: SellerAutoFulfillDaemon,
 ): void {
   void stopPrivateChatDaemon();
   const daemonGeneration = ++privateChatDaemonGeneration;
@@ -7305,6 +7323,7 @@ export function startPrivateChatDaemon(
               requestFriendActionApproval,
               resolveFriendPairState,
               swapOrderTracker,
+              sellerAutoFulfillDaemon,
             );
           })();
           trackPrivateChatDetachedWork(work);

@@ -314,6 +314,8 @@ interface MeBalanceInfo {
   autoDeductFromPersistent?: boolean;
   /** What a new ME spend can draw now (grant + packs when auto-deduct is on); absent on older servers. */
   spendableMilli?: number;
+  /** Persistent spendable balance eligible for digital goods / NFT escrow trades. */
+  tradeSpendableMilli?: number;
 }
 
 /**
@@ -2745,6 +2747,44 @@ interface IElectronAPI {
   nftSwap: {
     onOrderCompleted: (callback: (payload: ElectronNftSwapOrderCompletedEvent) => void) => () => void;
   };
+  goodsTrade: {
+    getBuyerBalance: (input?: { metabotId?: number }) => Promise<{
+      success: boolean;
+      metabotId?: number;
+      balance?: {
+        botAddress: string;
+        tradeSpendableMilli: number;
+        weeklyRemainingMilli: number;
+        earnedMilli: number;
+        topupMilli: number;
+        bonusMilli: number;
+        frozenMilli: number;
+      };
+      error?: string;
+    }>;
+    buyWithMe: (input: {
+      metabotId?: number;
+      itemPinId: string;
+      amountMilli: number;
+      sellerAddress: string;
+      sellerGlobalMetaId?: string;
+      note?: string;
+    }) => Promise<{
+      success: boolean;
+      order?: {
+        orderId: string;
+        itemPinId: string;
+        status: string;
+        amountMilli: number;
+        sellerAddress: string;
+        deliveryTxId?: string;
+      };
+      error?: string;
+    }>;
+    onPurchaseSettled: (callback: (payload: GoodsTradePurchaseSettledEvent) => void) => () => void;
+    onAutoSold: (callback: (payload: GoodsTradeAutoSoldEvent) => void) => () => void;
+    onOrderRejected: (callback: (payload: GoodsTradeOrderRejectedEvent) => void) => () => void;
+  };
   permissions: {
     checkCalendar: () => Promise<{ success: boolean; status?: string; error?: string; autoRequested?: boolean }>;
     requestCalendar: () => Promise<{ success: boolean; granted?: boolean; status?: string; error?: string }>;
@@ -3066,6 +3106,41 @@ interface ElectronNftSwapOrderCompletedEvent {
   completedAt: number;
 }
 
+interface GoodsTradePurchaseSettledEvent {
+  metabotId: number;
+  sessionId?: string;
+  orderId: string;
+  itemPinId: string;
+  deliveryTxId?: string;
+  amountMilli?: number;
+  sellerAddress?: string;
+  sellerGlobalMetaId?: string;
+  buyerAddress?: string;
+  itemName?: string;
+  collectionName?: string;
+  shopMetaAppPinId?: string;
+  source?: string;
+}
+
+interface GoodsTradeAutoSoldEvent {
+  orderId: string;
+  sellerMetabotId: number;
+  itemPinId: string;
+  buyerAddress: string;
+  amountMilli: number;
+  deliveryTxId: string;
+  tradePinId?: string;
+  settledAt: number;
+}
+
+interface GoodsTradeOrderRejectedEvent {
+  metabotId: number;
+  orderId: string;
+  itemPinId: string;
+  reason: string;
+  sellerGlobalMetaId?: string;
+}
+
 /** One certified collection in the IDBots NFT CA registry pin content. */
 interface ElectronNftCaCollectionEntry {
   collectionPinId: string;
@@ -3226,6 +3301,10 @@ declare global {
 }
 
 export type {
+  ElectronNftSwapOrderCompletedEvent,
+  GoodsTradePurchaseSettledEvent,
+  GoodsTradeAutoSoldEvent,
+  GoodsTradeOrderRejectedEvent,
   MePlanInfo,
   MeRateInfo,
   MeTopupPackageInfo,

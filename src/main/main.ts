@@ -252,11 +252,21 @@ import {
   type Mrc721CreatePinFn,
 } from './services/mrc721Service';
 import {
+  broadcastMrc721TradeReceipt,
   cancelMrc721SellIntent,
   declareMrc721SellIntent,
+  findAcceptedGoodsQuoteForItem,
   listMrc721MySellIntents,
+  markAcceptedGoodsQuoteUsed,
   mrc721SellIntentsFromSqlite,
 } from './services/mrc721SellIntentService';
+import {
+  createNftEscrowOrder,
+  getBotTradeSpendableBalance,
+  getNftEscrowOrder,
+} from './services/meNftEscrowService';
+import { formatGoodsTradeWireMessage } from './services/goodsTradeWireProtocol';
+import { SellerAutoFulfillDaemon } from './services/sellerAutoFulfillDaemon';
 import {
   cancelMrc721OpenOffer,
   listMrc721MyOpenOffers,
@@ -4383,6 +4393,63 @@ function getSwapOrderTrackerService(): SwapOrderTrackerService {
   return swapOrderTrackerService;
 }
 
+let sellerAutoFulfillDaemon: SellerAutoFulfillDaemon | null = null;
+function getSellerAutoFulfillDaemon(): SellerAutoFulfillDaemon {
+  if (!sellerAutoFulfillDaemon) {
+    sellerAutoFulfillDaemon = new SellerAutoFulfillDaemon(
+      getStore().getDatabase(),
+      getStore().getSaveFunction(),
+      {
+        getMetabotStore: () => getMetabotStore(),
+        getSellIntentKv: () => mrc721SellIntentsFromSqlite(getStore()),
+        transferMrc721Item: ({ metabotId, pinId, toAddress }) => withChainWriteBudget(
+          'seller_auto_fulfill_transfer',
+          () => transferMetabotMrc721(getMetabotStore(), {
+            metabotId,
+            pinId,
+            toAddress,
+            feeRate: getGlobalFeeRate('mvc'),
+          }),
+        ),
+        broadcastTradeReceipt: async (input) => {
+          const res = await broadcastMrc721TradeReceipt(
+            { createPin: mrc721CreatePinBackend },
+            {
+              ...input,
+              currency: 'me',
+              verifiedSource: 'abs_escrow',
+              network: 'mvc',
+            },
+          );
+          return res;
+        },
+        sendTradeMessage: async ({ metabotId, toGlobalMetaId, content }) => {
+          const mStore = getMetabotStore();
+          const wallet = mStore.getMetabotWalletByMetabotId(metabotId);
+          if (!wallet?.mnemonic?.trim()) {
+            throw new Error('the seller MetaBot wallet is unavailable');
+          }
+          const peerChatPubkey = await resolveChatPubkeyForProvider(toGlobalMetaId);
+          if (!peerChatPubkey) {
+            throw new Error('buyer has no chatPublicKey on chain');
+          }
+          return withChainWriteBudget('seller_auto_fulfill_dm', () => sendEncryptedSimplemsg({
+            metabotId,
+            wallet,
+            peerGlobalMetaId: toGlobalMetaId,
+            peerChatPubkey,
+            plaintext: content,
+            contentType: 'text/plain',
+            createPin: (id, payload) => createPin(mStore, id, payload, { feeRate: getGlobalFeeRate('mvc') }),
+          }));
+        },
+        emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+      },
+    );
+  }
+  return sellerAutoFulfillDaemon;
+}
+
 interface SqliteBackedRestartState {
   restartScheduler: boolean;
   restartListener: boolean;
@@ -4416,6 +4483,10 @@ const resetSqliteBackedSingletons = async (): Promise<void> => {
   if (swapOrderTrackerService) {
     swapOrderTrackerService.stopPolling();
     swapOrderTrackerService = null;
+  }
+  if (sellerAutoFulfillDaemon) {
+    sellerAutoFulfillDaemon.stopPolling();
+    sellerAutoFulfillDaemon = null;
   }
   if (providerDiscoveryService) {
     providerDiscoveryService.dispose();
@@ -5093,8 +5164,10 @@ const startStartupMessageTier = (): void => {
     requestDaemonFriendActionApproval,
     resolveDaemonFriendPairState,
     getSwapOrderTrackerService(),
+    getSellerAutoFulfillDaemon(),
   );
   getSwapOrderTrackerService().startPolling();
+  getSellerAutoFulfillDaemon().startPolling();
 
   // Periodically reconcile private chat history with the MetaSO API so
   // messages missed by the socket push are recovered and processed.
@@ -9045,6 +9118,47 @@ const getCoworkRunner = () => {
         registerOrder: (input) => getSwapOrderTrackerService().registerOrder(input),
         getOrder: (requestId) => getSwapOrderTrackerService().getOrder(requestId),
         listOrders: (metabotId) => getSwapOrderTrackerService().listOrders(metabotId),
+      },
+      goodsTradeTools: {
+        getMetabotIdentity: (metabotId) => {
+          const bot = getMetabotStore().getMetabotById(metabotId);
+          if (!bot) return null;
+          return {
+            name: String(bot.name || '').trim() || `MetaBot #${metabotId}`,
+            mvcAddress: String(bot.mvc_address || '').trim(),
+            globalMetaId: String(bot.globalmetaid || '').trim(),
+          };
+        },
+        getTradeBalance: (metabotId) => getBotTradeSpendableBalance(meChargeSigner(metabotId)),
+        createEscrowOrder: ({ metabotId, ...rest }) => createNftEscrowOrder(meChargeSigner(metabotId), rest),
+        getEscrowOrder: ({ metabotId, orderId }) => getNftEscrowOrder(meChargeSigner(metabotId), orderId),
+        sendTradeMessage: async ({ metabotId, toGlobalMetaId, content }) => {
+          const mStore = getMetabotStore();
+          const wallet = mStore.getMetabotWalletByMetabotId(metabotId);
+          if (!wallet?.mnemonic?.trim()) {
+            throw new Error('the session MetaBot wallet is unavailable');
+          }
+          const peerChatPubkey = await resolveChatPubkeyForProvider(toGlobalMetaId);
+          if (!peerChatPubkey) {
+            throw new Error('target bot has no chatPublicKey on chain');
+          }
+          return withChainWriteBudget('goods_trade_dm', () => sendEncryptedSimplemsg({
+            metabotId,
+            wallet,
+            peerGlobalMetaId: toGlobalMetaId,
+            peerChatPubkey,
+            plaintext: content,
+            contentType: 'text/plain',
+            createPin: (id, payload) => createPin(mStore, id, payload, { feeRate: getGlobalFeeRate('mvc') }),
+          }));
+        },
+        findAcceptedQuote: (metabotId, itemPinId) =>
+          findAcceptedGoodsQuoteForItem(mrc721SellIntentsFromSqlite(getStore()), metabotId, itemPinId),
+        markAcceptedQuoteUsed: (metabotId, itemPinId, orderId) =>
+          markAcceptedGoodsQuoteUsed(mrc721SellIntentsFromSqlite(getStore()), metabotId, itemPinId, orderId),
+        onPurchaseSettled: (event) => {
+          broadcastToRenderers('goodsTrade:purchaseSettled', event);
+        },
       },
       // group_chat tool backend (replacing metabot-chat-groupchat). assignTask
       // shares the RPC endpoint's service + SqliteStore; joinGroup /
@@ -21142,6 +21256,87 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         return {};
       }
     },
+  });
+
+  // WS-D digital goods ME trade IPC channels for renderer confirmation modal
+  const resolveBuyerMetabotId = (explicit?: unknown): number => {
+    if (typeof explicit === 'number' && Number.isInteger(explicit) && explicit > 0) {
+      return explicit;
+    }
+    const bots = getMetabotStore().listMetabots?.() ?? [];
+    const twin = bots.find((b) => b.enabled !== false && b.metabot_type === 'twin' && b.mvc_address);
+    const active = twin ?? bots.find((b) => b.enabled !== false && b.mvc_address);
+    if (!active) throw new Error('No enabled MetaBot wallet available');
+    return active.id;
+  };
+
+  registerIpcHandler('goodsTrade:getBuyerBalance', async (_event, rawInput: unknown) => {
+    try {
+      const input = (rawInput && typeof rawInput === 'object' ? rawInput : {}) as Record<string, unknown>;
+      const botId = resolveBuyerMetabotId(input.metabotId);
+      const balance = await getBotTradeSpendableBalance(meChargeSigner(botId));
+      return { success: true, metabotId: botId, balance };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerIpcHandler('goodsTrade:buyWithMe', async (_event, rawInput: unknown) => {
+    try {
+      const input = (rawInput && typeof rawInput === 'object' ? rawInput : {}) as Record<string, unknown>;
+      const botId = resolveBuyerMetabotId(input.metabotId);
+      const bot = getMetabotStore().getMetabotById(botId);
+      if (!bot?.mvc_address) throw new Error('Buyer MetaBot has no MVC address');
+      const itemPinId = String(input.itemPinId ?? '').trim().toLowerCase();
+      const amountMilli = Math.round(Number(input.amountMilli ?? 0));
+      const sellerAddress = String(input.sellerAddress ?? '').trim();
+      const sellerMetaId = typeof input.sellerGlobalMetaId === 'string' ? input.sellerGlobalMetaId.trim() : undefined;
+      const note = typeof input.note === 'string' ? input.note.trim() : undefined;
+      const orderId = `goods_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+      const order = await createNftEscrowOrder(meChargeSigner(botId), {
+        orderId,
+        itemPinId,
+        sellerAddress,
+        amountMilli,
+        buyerMetaId: bot.globalmetaid || undefined,
+        sellerMetaId,
+        note,
+      });
+
+      if (sellerMetaId) {
+        try {
+          const wallet = getMetabotStore().getMetabotWalletByMetabotId(botId);
+          const peerChatPubkey = await resolveChatPubkeyForProvider(sellerMetaId);
+          if (wallet?.mnemonic?.trim() && peerChatPubkey) {
+            const wire = formatGoodsTradeWireMessage({
+              type: 'ME_ESCROW_LOCKED_V1',
+              orderId: order.orderId,
+              itemPinId,
+              amountMilli,
+              buyerAddress: bot.mvc_address,
+              buyerMetaId: bot.globalmetaid || undefined,
+              sellerAddress,
+            });
+            await withChainWriteBudget('goods_trade_dm', () => sendEncryptedSimplemsg({
+              metabotId: botId,
+              wallet,
+              peerGlobalMetaId: sellerMetaId,
+              peerChatPubkey,
+              plaintext: `${wire}\n\n[ME Escrow Locked] Order ${order.orderId} for item ${itemPinId}.`,
+              contentType: 'text/plain',
+              createPin: (id, payload) => createPin(getMetabotStore(), id, payload, { feeRate: getGlobalFeeRate('mvc') }),
+            }));
+          }
+        } catch (dmErr) {
+          console.warn('[goodsTrade:buyWithMe] best-effort seller DM failed:', dmErr);
+        }
+      }
+
+      return { success: true, order };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   // Free LLM quota relay: identity-signed bootstrap issues the relay key for

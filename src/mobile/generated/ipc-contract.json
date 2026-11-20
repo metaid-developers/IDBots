@@ -1548,6 +1548,37 @@
       "args": []
     },
     {
+      "path": "goodsTrade.buyWithMe",
+      "kind": "invoke",
+      "channel": "goodsTrade:buyWithMe",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "goodsTrade.getBuyerBalance",
+      "kind": "invoke",
+      "channel": "goodsTrade:getBuyerBalance",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "goodsTrade.onAutoSold",
+      "kind": "on",
+      "channel": "goodsTrade:autoSold"
+    },
+    {
+      "path": "goodsTrade.onOrderRejected",
+      "kind": "on",
+      "channel": "goodsTrade:orderRejected"
+    },
+    {
+      "path": "goodsTrade.onPurchaseSettled",
+      "kind": "on",
+      "channel": "goodsTrade:purchaseSettled"
+    },
+    {
       "path": "groupTask.archive",
       "kind": "invoke",
       "channel": "groupTask:archive",
