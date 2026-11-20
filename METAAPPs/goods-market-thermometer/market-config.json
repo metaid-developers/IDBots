@@ -1,0 +1,94 @@
+{
+  "apiBaseUrl": "https://so.metaid.io",
+  "lang": "zh",
+  "mockSnapshot": {
+    "collections": [
+      {
+        "collectionPinId": "77da77280b9b218cf1edd62f658ca2be561dd7e377f3980182e280487ec38c56i0",
+        "collectionName": "metabot-avatar",
+        "displayTitle": "MetaBot 官方初代头像",
+        "cover": "",
+        "caVerified": true,
+        "totalSupply": 9560,
+        "mintedCount": 312,
+        "burnedCount": 0,
+        "holderCount": 148,
+        "listedCount": 42,
+        "floorPriceMeMilli": 9900,
+        "medianPriceMeMilli": 18000,
+        "floorPriceCnyCents": 660,
+        "tradeStats": {
+          "totalTrades": 27,
+          "trades24h": 6,
+          "volumeMeMilli24h": 92000,
+          "lastSalePriceMeMilli": 15000,
+          "lastSaleAt": 1795198000
+        }
+      }
+    ],
+    "listings": [
+      {
+        "itemPinId": "1e288800fdec1a5911a169e0cb499a3bc63e6083e5f035f5d552f73c601f2cf2i0",
+        "collectionPinId": "77da77280b9b218cf1edd62f658ca2be561dd7e377f3980182e280487ec38c56i0",
+        "collectionName": "metabot-avatar",
+        "caVerified": true,
+        "itemName": "MetaBot Avatar - 金框墨镜 #1310",
+        "prices": { "me": { "amountMilli": 9900 }, "fiat": { "currency": "CNY", "amountCents": 660 } },
+        "autoFulfillMe": true,
+        "shopMetaAppPinId": "",
+        "seller": {
+          "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+          "name": "小林的Twin",
+          "isOnline": true
+        },
+        "listedAt": 1795200000,
+        "confirmed": true
+      },
+      {
+        "itemPinId": "a84159688af3ca37a4be05a0d422b94451b2e24e000000000000000000000000i0",
+        "collectionPinId": "77da77280b9b218cf1edd62f658ca2be561dd7e377f3980182e280487ec38c56i0",
+        "collectionName": "metabot-avatar",
+        "caVerified": true,
+        "itemName": "MetaBot Avatar - 星空斗篷 #0721",
+        "prices": { "me": { "amountMilli": 15000 } },
+        "autoFulfillMe": false,
+        "shopMetaAppPinId": "",
+        "seller": {
+          "globalMetaId": "idq1d5m392ahkhp79wsy9ur79e3vhak7tg729dwdr5",
+          "name": "Builder阿码",
+          "isOnline": false
+        },
+        "listedAt": 1795100000,
+        "confirmed": true
+      }
+    ],
+    "trades": [
+      {
+        "txId": "813c8c54aabbccddeeff00112233445566778899aabbccddeeff001122334455",
+        "itemPinId": "a84159688af3ca37a4be05a0d422b94451b2e24e000000000000000000000000i0",
+        "itemName": "MetaBot Avatar - 星空斗篷 #0721",
+        "collectionPinId": "77da77280b9b218cf1edd62f658ca2be561dd7e377f3980182e280487ec38c56i0",
+        "currency": "me",
+        "amountMilli": 15000,
+        "settledAt": 1795198000,
+        "verifiedSource": "abs_escrow"
+      }
+    ],
+    "holders": [
+      {
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "name": "小林的Twin",
+        "isOnline": true,
+        "itemCount": 12,
+        "listedItemCount": 2
+      },
+      {
+        "globalMetaId": "idq1d5m392ahkhp79wsy9ur79e3vhak7tg729dwdr5",
+        "name": "Builder阿码",
+        "isOnline": false,
+        "itemCount": 7,
+        "listedItemCount": 1
+      }
+    ]
+  }
+}

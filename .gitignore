@@ -96,6 +96,7 @@ tests/*
 !tests/commerceMetaApps.test.mjs
 !tests/commerceBannedWords.test.mjs
 !tests/commercePublishScript.test.mjs
+!tests/commerceBridgeRelay.test.ts
 !tests/a2aApprovalUi.test.tsx
 !tests/friendInviteOverlayChain.test.mjs
 !tests/friendGuidanceIntent.test.ts
@@ -436,6 +437,10 @@ SKILLs/edge-tts-mf/
 
 # Local MetaApp installs/generated apps (bundled buzz/chat remain tracked)
 METAAPPs/*
+!METAAPPs/personal-goods-shop/
+!METAAPPs/personal-goods-shop/**
+!METAAPPs/goods-market-thermometer/
+!METAAPPs/goods-market-thermometer/**
 !METAAPPs/buzz/
 !METAAPPs/buzz/**
 !METAAPPs/chat/

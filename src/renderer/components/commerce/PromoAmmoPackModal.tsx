@@ -5,12 +5,13 @@
  * the three compliant promo templates with one-click copy.
  *
  * Compliance red line: neither the poster nor any template here may promise
- * financial returns (会涨/暴涨/早买早赚/稳赚/翻倍/保本/升值空间/投资回报 are
- * all banned and scanned by tests). The angle is: free 1:1 legacy upgrade,
- * my AI runs the shop 24h, on-chain provenance. The QR is hand-drawn with
- * the zero-dependency qrEncoder; the poster never loads remote images (the
- * export canvas must stay untainted and work offline) — item covers are
- * drawn as deterministic gradient tiles with the item's initials.
+ * financial returns — the banned word list lives in
+ * tests/commerceBannedWords.test.mjs, which scans this file. The angle is:
+ * free 1:1 legacy upgrade, my AI runs the shop 24h, on-chain provenance. The
+ * QR is hand-drawn with the zero-dependency qrEncoder; the poster never loads
+ * remote images (the export canvas must stay untainted and work offline) —
+ * item covers are drawn as deterministic gradient tiles with the item's
+ * initials.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
