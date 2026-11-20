@@ -1,21 +1,21 @@
 {
-  "date": "2026-11-20",
+  "date": "2026-11-21",
   "minVersionCode": 0,
   "changeLog": {
     "ch": {
       "title": "更新说明",
       "content": [
-        "关于页面新增 App 版本与构建号，并说明云端版本和通信协议版本的含义。",
-        "已验证 0.1.4 及以上版本可自动检测、下载并安装更新。",
-        "包含完整图标、黄底启动页及后台恢复卡死修复。"
+        "修复后台恢复时的 WebView 卡死，底部四个栏目保持可点。",
+        "兼容 0.1.6 及更早的原生壳，避免升级后停在启动页。",
+        "新增 Android 推送通知与通知点击跳转支持。"
       ]
     },
     "en": {
       "title": "Release Notes",
       "content": [
-        "Adds the native app version and build number to About, with clear cloud and gateway protocol versions.",
-        "Verifies automatic update discovery, download, and installation on Android 0.1.4 and newer.",
-        "Includes the complete launcher artwork, amber splash, and foreground recovery fixes."
+        "Fixes the WebView freeze after foreground recovery; all four bottom tabs stay responsive.",
+        "Keeps older 0.1.6 native shells booting instead of freezing on the launch splash.",
+        "Adds Android push notifications and notification tap routing."
       ]
     }
   }
