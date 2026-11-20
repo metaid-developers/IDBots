@@ -8,7 +8,9 @@ let buildPrivateChatA2AWakeNotice;
 let buildPrivateChatA2ASystemPrompt;
 let nextPrivateChatA2AWakeAt;
 let setPrivateChatA2AWakeDelaysForTests;
+let setPrivateChatA2APromiseWakeDelaysForTests;
 let PRIVATE_CHAT_A2A_DEFAULT_WAKE_DELAYS_MS;
+let PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS;
 try {
   ({
     startPrivateChatDaemon,
@@ -17,7 +19,9 @@ try {
     buildPrivateChatA2ASystemPrompt,
     nextPrivateChatA2AWakeAt,
     setPrivateChatA2AWakeDelaysForTests,
+    setPrivateChatA2APromiseWakeDelaysForTests,
     PRIVATE_CHAT_A2A_DEFAULT_WAKE_DELAYS_MS,
+    PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS,
   } = await import('../dist-electron/main/services/privateChatDaemon.js'));
 } catch {
   ({
@@ -27,7 +31,9 @@ try {
     buildPrivateChatA2ASystemPrompt,
     nextPrivateChatA2AWakeAt,
     setPrivateChatA2AWakeDelaysForTests,
+    setPrivateChatA2APromiseWakeDelaysForTests,
     PRIVATE_CHAT_A2A_DEFAULT_WAKE_DELAYS_MS,
+    PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS,
   } = await import('../dist-electron/main/services/privateChatDaemon.js'));
 }
 
@@ -67,6 +73,16 @@ test('wake schedule is bounded by its delay ladder', () => {
     null,
     'budget exhausted after one fire per ladder step'
   );
+  // D3: rows carrying an outstanding wait-notice promise use the denser
+  // owed-reply ladder — every observed dangling promise died inside the
+  // generic +2h gap.
+  assert.equal(nextPrivateChatA2AWakeAt(0, now, PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS), now + PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS[0]);
+  assert.equal(nextPrivateChatA2AWakeAt(2, now, PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS), now + PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS[2]);
+  assert.equal(
+    nextPrivateChatA2AWakeAt(PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS.length, now, PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS),
+    null,
+    'the promise ladder exhausts too'
+  );
   try {
     setPrivateChatA2AWakeDelaysForTests([100, 200]);
     assert.equal(nextPrivateChatA2AWakeAt(1, now), now + 200);
@@ -74,8 +90,11 @@ test('wake schedule is bounded by its delay ladder', () => {
     // Non-positive entries are dropped from the test override.
     setPrivateChatA2AWakeDelaysForTests([100, -5]);
     assert.equal(nextPrivateChatA2AWakeAt(1, now), null);
+    setPrivateChatA2APromiseWakeDelaysForTests([150]);
+    assert.equal(nextPrivateChatA2AWakeAt(1, now, [150]), null);
   } finally {
     setPrivateChatA2AWakeDelaysForTests(PRIVATE_CHAT_A2A_DEFAULT_WAKE_DELAYS_MS);
+    setPrivateChatA2APromiseWakeDelaysForTests(PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS);
   }
 });
 
@@ -150,11 +169,27 @@ function createWakeDaemonHarness() {
     allow_chat_skills: ['metaid-master-wiki'],
   };
   const db = {
-    exec(sql) {
+    exec(sql, params = []) {
       if (/FROM private_chat_messages WHERE is_processed = 0/i.test(sql)) {
         return row.is_processed
           ? []
           : [{ columns, values: [columns.map((column) => row[column])] }];
+      }
+      // Parameterized single-row lookups (owed-reply boot restore).
+      if (/FROM private_chat_messages WHERE/i.test(sql)) {
+        let match = true;
+        let paramIndex = 0;
+        if (/\bid = \?/i.test(sql)) {
+          match = match && Number(params[paramIndex]) === row.id;
+          paramIndex += 1;
+        }
+        if (/pin_id = \?/i.test(sql)) {
+          match = match && String(params[paramIndex]) === row.pin_id;
+          paramIndex += 1;
+        }
+        return match && row.id != null
+          ? [{ columns, values: [columns.map((column) => row[column])] }]
+          : [{ columns: ['id'], values: [] }];
       }
       return [{ columns: ['found'], values: [] }];
     },
@@ -169,6 +204,53 @@ function createWakeDaemonHarness() {
     },
   };
   const coworkStore = {
+    // kv ledger backing (owed-reply promise records) — mirrors the real
+    // CoworkStore's string-oriented kv contract.
+    kvData: new Map(),
+    getKvString(key) {
+      return this.kvData.get(key) ?? null;
+    },
+    setKvString(key, value) {
+      this.kvData.set(key, value);
+    },
+    deleteKvKey(key) {
+      this.kvData.delete(key);
+    },
+    listKvKeysWithPrefix(prefix) {
+      return [...this.kvData.keys()].filter((key) => key.startsWith(prefix)).sort();
+    },
+    listRecentUnfulfilledPrivateChatWaitNotices(sinceMs, limit = 200) {
+      const notices = [];
+      for (const message of session.messages) {
+        const meta = message.metadata ?? {};
+        if (message.type !== 'assistant' || meta.privateChatSkillWaitNotice !== true) continue;
+        const pin = typeof meta.privateChatSkillWaitNoticeForPinId === 'string'
+          ? meta.privateChatSkillWaitNoticeForPinId
+          : '';
+        if (!pin) continue;
+        const hasReply = session.messages.some((item) => (
+          item.metadata?.privateChatReplyForPinId === pin
+          && item.metadata?.privateChatDeliveryStatus === 'sent'
+        ));
+        const hasRetraction = session.messages.some((item) => (
+          item.metadata?.privateChatWaitNoticeRetractionForPinId === pin
+        ));
+        if (hasReply || hasRetraction) continue;
+        const promisedAt = message.timestamp ?? 0;
+        if (promisedAt <= sinceMs) continue;
+        notices.push({
+          sessionId: session.id,
+          messageId: message.id,
+          pinId: pin,
+          externalConversationId: typeof meta.externalConversationId === 'string'
+            ? meta.externalConversationId
+            : null,
+          promisedAt,
+        });
+        if (notices.length >= limit) break;
+      }
+      return notices;
+    },
     getConversationMapping(channel, conversationId, metabotId) {
       return channel === 'metaweb_private' && conversationId === externalConversationId && metabotId === 1
         ? mapping
@@ -300,7 +382,7 @@ async function waitFor(predicate, timeoutMs = 15_000) {
   assert.fail('timed out waiting for private chat daemon test condition');
 }
 
-function startWakeHarnessDaemon(harness, logs, skillTurnImpl) {
+function startWakeHarnessDaemon(harness, logs, skillTurnImpl, notifyOwner) {
   let createPinCount = 0;
   const skillTurnCalls = [];
   startPrivateChatDaemon(
@@ -329,7 +411,19 @@ function startWakeHarnessDaemon(harness, logs, skillTurnImpl) {
       skillTurnCalls.push(params);
       return skillTurnImpl(params, skillTurnCalls.length, harness.coworkStore);
     },
-    async () => '我需要查询一下，请稍等。'
+    async () => '我需要查询一下，请稍等。',
+    // consumeA2AGuidance, getRecentDailySummaries, refreshA2APeerProfile,
+    // getMetaIDCognitionPromptBlock, cerebellumMemoryRanker,
+    // getKnowledgeStore, requestFriendActionApproval, resolveFriendPairState:
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    notifyOwner
   );
   return {
     get createPinCount() {
@@ -422,14 +516,17 @@ test('wake budget is exhausted after the configured fires', async () => {
   assert.equal(wakeTurns.length, 3);
 });
 
-// 2026-11-21 02:10 incident: the wait notice promised "稍后给你确认", the turn
-// settled [NO_REPLY], and the promise dangled forever. The silent settlement
-// must close it with exactly one retraction in the notice's own language —
-// and never repeat it across wake re-drives that stay silent too.
-test('silent turn after a broadcast wait notice sends exactly one wake-compatible retraction', async () => {
-  setPrivateChatA2AWakeDelaysForTests([300]);
+// 2026-11-21 02:10 incident (full shape): the wait notice promised "稍后给你
+// 确认", the turn settled [NO_REPLY], and the wake chain silently died. The
+// fixed lifecycle: ordinary silent settlements keep the promise alive for the
+// promise-aware wakes (the wake prompt carries the exact promise text and
+// forbids [NO_REPLY]); the peer-facing retraction, the owner system row, the
+// desktop push and the ledger clear all fire together ONLY at final death.
+test('owed-reply promise: wake chain retracts only at final death and notifies the owner', async () => {
+  setPrivateChatA2APromiseWakeDelaysForTests([300, 300]);
   const harness = createWakeDaemonHarness();
   const logs = [];
+  const ownerNotifications = [];
   const handle = startWakeHarnessDaemon(harness, logs, async (params, call, coworkStore) => {
     if (call === 1) {
       // Skill execution starts: the wait-notice pipeline broadcasts the ack.
@@ -441,42 +538,72 @@ test('silent turn after a broadcast wait notice sends exactly one wake-compatibl
       metadata: { isStreaming: false, isFinal: true },
     });
     return { replyText: '[NO_REPLY]', assistantMessageId: persisted.id };
-  });
+  }, (notification) => ownerNotifications.push(notification));
 
   try {
     await waitFor(() => logs.some((message) => message.includes('Sent wait-notice retraction')), 20_000);
-    await waitFor(() => logs.some((message) => message.includes('Wake budget exhausted')), 60_000);
-    // No further retraction may appear after exhaustion.
-    await new Promise((resolve) => setTimeout(resolve, 7_000));
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
   } finally {
     await stopPrivateChatDaemon({ waitForTick: true });
-    setPrivateChatA2AWakeDelaysForTests(PRIVATE_CHAT_A2A_DEFAULT_WAKE_DELAYS_MS);
+    setPrivateChatA2APromiseWakeDelaysForTests(PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS);
   }
 
   const retractions = harness.session.messages.filter(
     (message) => message.metadata?.privateChatWaitNoticeRetraction === true,
   );
-  assert.equal(retractions.length, 1, 'the retraction is sent once, never repeated across wake re-drives');
+  assert.equal(retractions.length, 1, 'exactly one retraction, at final death only');
   assert.equal(retractions[0].metadata.privateChatWaitNoticeRetractionForPinId, harness.row.pin_id);
   assert.equal(retractions[0].metadata.privateChatDeliveryStatus, 'sent');
-  assert.ok(
-    retractions[0].content.includes('不用专门等'),
-    'the retraction mirrors the CJK notice language and retracts the wait',
+
+  // Fulfillment first: two wake turns ran BEFORE the retraction, and each of
+  // them saw the promise text with the forbidden-silence instruction (D1).
+  assert.equal(handle.skillTurnCalls.length, 3, 'original turn + two promise-ladder wakes');
+  for (const wakeCall of handle.skillTurnCalls.slice(1)) {
+    assert.ok(wakeCall.systemPrompt.includes('Host Wake Check'), 'wake turns carry the wake notice');
+    assert.ok(
+      wakeCall.systemPrompt.includes('我需要查询一下，请稍等。'),
+      'the wake prompt carries the exact promise text (D1)',
+    );
+    assert.ok(
+      wakeCall.systemPrompt.includes('must NOT answer `[NO_REPLY]`'),
+      'the wake prompt forbids silence while the promise stands (D1)',
+    );
+  }
+  const firstRetractionIndex = harness.session.messages.findIndex(
+    (message) => message.metadata?.privateChatWaitNoticeRetraction === true,
   );
+  const lastWakeBubbleIndex = harness.session.messages.reduce((last, message, index) => (
+    message.metadata?.privateChatWakeNotice === true ? index : last
+  ), -1);
   assert.ok(
-    harness.session.messages.some((message) => message.metadata?.privateChatSkillWaitNotice === true),
-    'the triggering wait notice is still on the transcript',
+    lastWakeBubbleIndex >= 0 && lastWakeBubbleIndex < firstRetractionIndex,
+    'the retraction fires only after the wake chain ran out',
   );
-  assert.equal(handle.skillTurnCalls.length, 2, 'original turn + one wake fire, then budget exhausted');
+
+  // D4: the human learns about the give-up via a session system row + push.
+  const gaveUpRows = harness.session.messages.filter(
+    (message) => message.metadata?.privateChatOwedReplyGaveUp === true,
+  );
+  assert.equal(gaveUpRows.length, 1, 'one give-up system row for the owner');
+  assert.equal(ownerNotifications.length, 1, 'one desktop notification for the owner');
+  assert.equal(ownerNotifications[0].sessionId, harness.session.id);
+
+  // D2: the promise ledger is settled once the give-up ran.
+  assert.equal(
+    harness.coworkStore.kvData.has(`privateChatOwedReply/${harness.row.pin_id}`),
+    false,
+    'the promise ledger record is cleared at final death',
+  );
   assert.equal(harness.row.is_processed, 1);
 });
 
-// A delivered reply already closes the wait-notice promise — the settlement
-// must not add a retraction on top of it.
-test('delivered reply after a wait notice sends no retraction', async () => {
-  setPrivateChatA2AWakeDelaysForTests([300]);
+// A delivered reply fulfills the promise: no retraction, and the ledger
+// record is settled at delivery time (not only at final death).
+test('delivered reply after a wait notice sends no retraction and settles the ledger', async () => {
+  setPrivateChatA2APromiseWakeDelaysForTests([300, 300]);
   const harness = createWakeDaemonHarness();
   const logs = [];
+  const ownerNotifications = [];
   const replyText = '更正已递。回你三处：①紧迫度认账 ②充值闸三层 ③读数必带时刻';
   const handle = startWakeHarnessDaemon(harness, logs, async (params, call, coworkStore) => {
     if (call === 1) {
@@ -488,14 +615,18 @@ test('delivered reply after a wait notice sends no retraction', async () => {
       metadata: { isStreaming: false, isFinal: true },
     });
     return { replyText, assistantMessageId: persisted.id };
-  });
+  }, (notification) => ownerNotifications.push(notification));
 
   try {
+    // The whole turn (notice + record + reply + settle) completes within one
+    // poll window; the recorded log proves the D2 write happened, and the
+    // post-delivery assert below proves the ledger settled.
+    await waitFor(() => logs.some((message) => message.includes('Owed-reply promise recorded')), 20_000);
     await waitFor(() => logs.some((message) => message.includes('Replied to')), 20_000);
-    await new Promise((resolve) => setTimeout(resolve, 7_000));
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
   } finally {
     await stopPrivateChatDaemon({ waitForTick: true });
-    setPrivateChatA2AWakeDelaysForTests(PRIVATE_CHAT_A2A_DEFAULT_WAKE_DELAYS_MS);
+    setPrivateChatA2APromiseWakeDelaysForTests(PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS);
   }
 
   assert.equal(handle.skillTurnCalls.length, 1, 'the delivered reply cancels the wake — no second turn');
@@ -509,4 +640,181 @@ test('delivered reply after a wait notice sends no retraction', async () => {
     false,
     'a delivered reply needs no retraction',
   );
+  assert.equal(
+    harness.coworkStore.kvData.has(`privateChatOwedReply/${harness.row.pin_id}`),
+    false,
+    'the promise ledger is settled on delivery (D2)',
+  );
+  assert.equal(ownerNotifications.length, 0, 'no owner push when the promise was fulfilled');
+});
+
+// D2 boot restore: a restart must resurrect the owed-reply wake chain from
+// the kv ledger instead of letting the promise die with the old process
+// (the exact 2026-11-21 03:10 failure).
+test('boot restore re-arms the owed-reply wake from the ledger after a restart', async () => {
+  setPrivateChatA2APromiseWakeDelaysForTests([300]);
+  const harness = createWakeDaemonHarness();
+  // The previous process already broadcast the promise and went silent.
+  harness.row.is_processed = 1;
+  harness.session.messages.push({
+    id: 'msg-seeded-notice',
+    timestamp: Date.now(),
+    type: 'assistant',
+    content: '我需要查询一下，请稍等。',
+    metadata: {
+      sourceChannel: 'metaweb_private',
+      externalConversationId: harness.externalConversationId,
+      direction: 'outgoing',
+      privateChatSkillWaitNotice: true,
+      privateChatSkillWaitNoticeForPinId: harness.row.pin_id,
+      privateChatDeliveryStatus: 'sent',
+      suppressRunningStatus: true,
+    },
+  });
+  harness.coworkStore.setKvString(
+    `privateChatOwedReply/${harness.row.pin_id}`,
+    JSON.stringify({
+      version: 1,
+      pinId: harness.row.pin_id,
+      sessionId: harness.session.id,
+      metabotId: 1,
+      externalConversationId: harness.externalConversationId,
+      rowId: harness.row.id,
+      fromGlobalMetaId: 'peer-global',
+      fromMetaId: 'peer-metaid',
+      toGlobalMetaId: 'local-global',
+      toMetaId: 'local-metaid',
+      promisedAt: Date.now(),
+      fires: 0,
+    }),
+  );
+  const logs = [];
+  const handle = startWakeHarnessDaemon(harness, logs, async (params, call, coworkStore) => {
+    const persisted = coworkStore.addMessage(params.sessionId, {
+      type: 'assistant',
+      content: '核对完成：更新口径后的算式余量 ≈93,700 条，与你的复帧一致。',
+      metadata: { isStreaming: false, isFinal: true },
+    });
+    return { replyText: '核对完成：更新口径后的算式余量 ≈93,700 条，与你的复帧一致。', assistantMessageId: persisted.id };
+  });
+
+  try {
+    await waitFor(() => logs.some((message) => message.includes('Wake 1 scheduled') && message.includes('owed-reply promise ladder')), 20_000);
+    await waitFor(() => logs.some((message) => message.includes('Replied to')), 20_000);
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  } finally {
+    await stopPrivateChatDaemon({ waitForTick: true });
+    setPrivateChatA2APromiseWakeDelaysForTests(PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS);
+  }
+
+  assert.equal(handle.skillTurnCalls.length, 1, 'the restored wake delivered the promised reply');
+  assert.ok(
+    handle.skillTurnCalls[0].systemPrompt.includes('Host Wake Check'),
+    'the restored turn runs as a wake turn',
+  );
+  assert.ok(
+    handle.skillTurnCalls[0].systemPrompt.includes('我需要查询一下，请稍等。'),
+    'the restored wake sees the promise text (D1)',
+  );
+  assert.equal(
+    harness.coworkStore.kvData.has(`privateChatOwedReply/${harness.row.pin_id}`),
+    false,
+    'the fulfilled promise settles the ledger',
+  );
+  assert.equal(harness.row.is_processed, 1);
+});
+
+// D2 boot sweep: promises that predate the ledger (transcript-only, the
+// shipped-code dangling shape) are seeded from the transcript within the TTL
+// and re-armed; promises past the TTL are retired with a log line.
+test('boot sweep seeds transcript-only promises and retires expired ones', async () => {
+  setPrivateChatA2APromiseWakeDelaysForTests([300]);
+  const harness = createWakeDaemonHarness();
+  harness.row.is_processed = 1;
+  harness.session.messages.push({
+    id: 'msg-seeded-notice',
+    timestamp: Date.now(),
+    type: 'assistant',
+    content: '收到，信息量不小，我需要一点时间核对这几项账目，稍等片刻再给你回执。',
+    metadata: {
+      sourceChannel: 'metaweb_private',
+      externalConversationId: harness.externalConversationId,
+      direction: 'outgoing',
+      privateChatSkillWaitNotice: true,
+      privateChatSkillWaitNoticeForPinId: harness.row.pin_id,
+      privateChatDeliveryStatus: 'sent',
+      suppressRunningStatus: true,
+    },
+  });
+  const logs = [];
+  const handle = startWakeHarnessDaemon(harness, logs, async (params, call, coworkStore) => {
+    const persisted = coworkStore.addMessage(params.sessionId, {
+      type: 'assistant',
+      content: '核对完毕：三项账目都对上了。',
+      metadata: { isStreaming: false, isFinal: true },
+    });
+    return { replyText: '核对完毕：三项账目都对上了。', assistantMessageId: persisted.id };
+  });
+
+  try {
+    await waitFor(() => logs.some((message) => message.includes('Wake 1 scheduled') && message.includes('owed-reply promise ladder')), 20_000);
+    assert.equal(
+      harness.coworkStore.kvData.has(`privateChatOwedReply/${harness.row.pin_id}`),
+      true,
+      'the sweep seeds the ledger so the next restart resumes from it',
+    );
+    await waitFor(() => logs.some((message) => message.includes('Replied to')), 20_000);
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+  } finally {
+    await stopPrivateChatDaemon({ waitForTick: true });
+    setPrivateChatA2APromiseWakeDelaysForTests(PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS);
+  }
+
+  assert.equal(handle.skillTurnCalls.length, 1, 'the swept promise delivered the promised reply');
+});
+
+test('boot restore retires promises older than the TTL without arming a wake', async () => {
+  setPrivateChatA2APromiseWakeDelaysForTests([300]);
+  const harness = createWakeDaemonHarness();
+  harness.row.is_processed = 1;
+  harness.session.messages.push({
+    id: 'msg-seeded-notice',
+    timestamp: Date.now() - 26 * 60 * 60_000,
+    type: 'assistant',
+    content: '收到，先核对。',
+    metadata: {
+      sourceChannel: 'metaweb_private',
+      externalConversationId: harness.externalConversationId,
+      direction: 'outgoing',
+      privateChatSkillWaitNotice: true,
+      privateChatSkillWaitNoticeForPinId: harness.row.pin_id,
+      privateChatDeliveryStatus: 'sent',
+      suppressRunningStatus: true,
+    },
+  });
+  const logs = [];
+  const handle = startWakeHarnessDaemon(harness, logs, async (params, call, coworkStore) => {
+    const persisted = coworkStore.addMessage(params.sessionId, {
+      type: 'assistant',
+      content: 'should never run',
+      metadata: { isStreaming: false, isFinal: true },
+    });
+    return { replyText: 'should never run', assistantMessageId: persisted.id };
+  });
+
+  try {
+    await waitFor(() => logs.some((message) => message.includes('Owed-reply restore:')), 20_000);
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  } finally {
+    await stopPrivateChatDaemon({ waitForTick: true });
+    setPrivateChatA2APromiseWakeDelaysForTests(PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS);
+  }
+
+  assert.equal(handle.skillTurnCalls.length, 0, 'expired promises never re-arm a wake');
+  assert.equal(
+    harness.coworkStore.kvData.has(`privateChatOwedReply/${harness.row.pin_id}`),
+    false,
+    'expired promises are retired from the ledger',
+  );
+  assert.equal(harness.row.is_processed, 1, 'the row stays processed — no silent re-drive');
 });
