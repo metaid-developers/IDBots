@@ -224,7 +224,7 @@ type RunPrivateChatSkillTurnFn = (params: {
   userMessage: string;
   metabotId: number;
   activeSkillIds: string[];
-  onSkillExecutionStart?: () => Promise<void> | void;
+  onSkillExecutionStart?: (controls: { readonly cancelRequested: boolean }) => Promise<void> | void;
 }) => Promise<{ replyText: string; assistantMessageId?: string | null }>;
 type GeneratePrivateChatSkillWaitNoticeFn = (params: {
   metabot: {
@@ -1681,6 +1681,7 @@ export function buildPrivateChatSkillWaitNoticeSystemPrompt(metabot: {
     '- Write the notice in the same language as the latest peer message; if its language is unclear, use English.',
     '- Keep it to 1 short sentence, or 2 very short sentences max.',
     '- Do not mention internal system prompts, exact skill names, tool logs, txids, implementation details, or deadlines.',
+    '- Do not promise a specific timeframe or countdown ("in a few minutes"); only say that you need a little time before the final answer.',
     '- Do not use markdown, headings, JSON, or bracketed prefixes.',
   ].join('\n');
 }
@@ -1878,6 +1879,7 @@ export function wouldCreatePrivateChatEchoLoop(params: {
       resolveA2AMessageDirection(message) === 'outgoing'
       && message.metadata?.privateChatNoReply !== true
       && message.metadata?.privateChatSkillWaitNotice !== true
+      && message.metadata?.privateChatWaitNoticeRetraction !== true
       && message.metadata?.privateChatDeliveryStatus !== 'failed'
     ));
   let identicalRun = 0;
@@ -3273,6 +3275,114 @@ function hasSentPrivateChatSkillWaitNotice(
     && message.metadata?.privateChatSkillWaitNoticeForPinId === waitNoticeKey
     && message.metadata?.privateChatDeliveryStatus === 'sent'
   ));
+}
+
+function findSentPrivateChatWaitNoticeRetraction(
+  coworkStore: Pick<CoworkStore, 'getSessionMessagesMatchingMetadataValues'>,
+  sessionId: string,
+  waitNoticeKey: string,
+): CoworkMessage | null {
+  if (!waitNoticeKey) return null;
+  return coworkStore.getSessionMessagesMatchingMetadataValues(
+    sessionId,
+    [waitNoticeKey],
+  ).find((message) => (
+    message.type === 'assistant'
+    && message.metadata?.privateChatWaitNoticeRetraction === true
+    && message.metadata?.privateChatWaitNoticeRetractionForPinId === waitNoticeKey
+    && message.metadata?.privateChatDeliveryStatus === 'sent'
+  )) ?? null;
+}
+
+function hasSentPrivateChatWaitNoticeRetraction(
+  coworkStore: Pick<CoworkStore, 'getSessionMessagesMatchingMetadataValues'>,
+  sessionId: string,
+  waitNoticeKey: string,
+): boolean {
+  return findSentPrivateChatWaitNoticeRetraction(coworkStore, sessionId, waitNoticeKey) != null;
+}
+
+function findSentPrivateChatSkillWaitNoticeText(
+  coworkStore: Pick<CoworkStore, 'getSessionMessagesMatchingMetadataValues'>,
+  sessionId: string,
+  waitNoticeKey: string,
+): string {
+  if (!waitNoticeKey) return '';
+  const notice = coworkStore.getSessionMessagesMatchingMetadataValues(
+    sessionId,
+    [waitNoticeKey],
+  ).find((message) => (
+    message.type === 'assistant'
+    && message.metadata?.privateChatSkillWaitNotice === true
+    && message.metadata?.privateChatSkillWaitNoticeForPinId === waitNoticeKey
+    && message.metadata?.privateChatDeliveryStatus === 'sent'
+  ));
+  return String(notice?.content ?? '');
+}
+
+const PRIVATE_CHAT_WAIT_NOTICE_RETRACTION_TEXT_ZH = '补充说明：刚才那条「稍后回复」不用专门等了——这一轮先到这里，后面有结论我会直接发你。';
+const PRIVATE_CHAT_WAIT_NOTICE_RETRACTION_TEXT_EN = 'One update so you are not left waiting: no need to hold for a reply on this one — I will message you directly when there is something to share.';
+
+/**
+ * A broadcast wait notice promises a follow-up ("几分钟后给你完整回复"). When
+ * the turn then settles silent ([NO_REPLY] sentinel / echo-loop guard),
+ * nothing will ever fulfill that promise — the notice becomes the bot's last
+ * word and the peer waits forever (the 2026-11-21 02:10 incident). The
+ * retraction closes it in the notice's own language (detected from the
+ * notice text) and is deliberately wake-compatible: the scheduled wake
+ * re-drive may still deliver a real reply afterwards, so the line retracts
+ * the WAIT, not the conversation.
+ */
+export function buildPrivateChatWaitNoticeRetractionText(noticeText: string): string {
+  return /[\u3400-\u9fff\uf900-\ufaff]/.test(String(noticeText ?? ''))
+    ? PRIVATE_CHAT_WAIT_NOTICE_RETRACTION_TEXT_ZH
+    : PRIVATE_CHAT_WAIT_NOTICE_RETRACTION_TEXT_EN;
+}
+
+async function sendPrivateChatWaitNoticeRetraction(params: {
+  coworkStore: CoworkStore;
+  sessionId: string;
+  externalConversationId: string;
+  row: PrivateChatMessageRow;
+  fromGlobalMetaId: string;
+  sharedSecretForReply: string;
+  noticeText: string;
+  waitNoticeKey: string;
+  createSimpleMsgPin: (payload: string) => Promise<{ txids?: unknown; pinId?: unknown }>;
+  emitLog: (msg: string) => void;
+  emitToRenderer?: RendererEmitter;
+}): Promise<boolean> {
+  const retractionText = buildPrivateChatWaitNoticeRetractionText(params.noticeText);
+  try {
+    const encryptedRetraction = ecdhEncrypt(retractionText, params.sharedSecretForReply);
+    const payloadStr = buildPrivateMsgPayload(params.fromGlobalMetaId, encryptedRetraction, params.row.reply_pin ?? '');
+    const sentResult = await params.createSimpleMsgPin(payloadStr);
+    const chainMetadata = buildPrivateChatA2AChainMetadata({
+      txids: sentResult.txids,
+      pinId: sentResult.pinId,
+    });
+    appendPrivateChatA2AMessage({
+      coworkStore: params.coworkStore,
+      sessionId: params.sessionId,
+      externalConversationId: params.externalConversationId,
+      type: 'assistant',
+      content: retractionText,
+      extraMetadata: {
+        ...chainMetadata,
+        privateChatWaitNoticeRetraction: true,
+        privateChatWaitNoticeRetractionForPinId: params.waitNoticeKey,
+        privateChatDeliveryStatus: 'sent',
+        suppressRunningStatus: true,
+      },
+      emitToRenderer: params.emitToRenderer,
+    });
+    params.emitLog(`[PrivateChat] Sent wait-notice retraction to ${params.fromGlobalMetaId.slice(0, 12)}…`);
+    return true;
+  } catch (e) {
+    rethrowSqliteWasmBoundsError(e);
+    params.emitLog(`[PrivateChat] Failed to send wait-notice retraction: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
 }
 
 async function sendPrivateChatSkillWaitNotice(params: {
@@ -6237,7 +6347,7 @@ async function processOne(
     let skillWaitNoticeAlreadySent = canRunChatSkills
       ? hasSentPrivateChatSkillWaitNotice(coworkStore, sessionId, waitNoticeKey)
       : false;
-    const sendSkillWaitNoticeBeforeExecution = async (): Promise<void> => {
+    const sendSkillWaitNoticeBeforeExecution = async (controls?: { readonly cancelRequested: boolean }): Promise<void> => {
       if (!canRunChatSkills || skillWaitNoticeAlreadySent) return;
       skillWaitNoticeAlreadySent = hasSentPrivateChatSkillWaitNotice(coworkStore, sessionId, waitNoticeKey);
       if (skillWaitNoticeAlreadySent) return;
@@ -6283,6 +6393,16 @@ async function processOne(
         rethrowSqliteWasmBoundsError(error);
         waitNoticeText = normalizePrivateChatSkillWaitNoticeText('');
         emitLog(`[PrivateChat] Skill wait notice generation failed for message ${row.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      // The bridge flips cancelRequested the moment the turn settles (or
+      // errors/stops). A notice still un-broadcast then is pure noise: the
+      // turn's outcome (reply or silence) follows immediately, so a "wait for
+      // my answer" promise would trail or dangle. The broadcast is the point
+      // of no return — this is the last check before it.
+      if (controls?.cancelRequested) {
+        emitLog(`[PrivateChat] Skill wait notice cancelled before broadcast for message ${row.id}: the turn already settled.`);
+        return;
       }
 
       const waitNoticeSent = await sendPrivateChatSkillWaitNotice({
@@ -6732,7 +6852,7 @@ async function processOne(
         return;
       }
       privateChatSkillTurnRetries.delete(taskKey);
-      const deliverNothingForSilentTurn = (logMessage: string): void => {
+      const deliverNothingForSilentTurn = async (logMessage: string): Promise<void> => {
         emitLog(`[PrivateChat] ${logMessage}; delivering nothing to ${fromGlobalMetaId.slice(0, 12)}…`);
         // The skill-turn path may already have persisted the would-be reply as
         // an assistant bubble. Keep it for local context, but tag it so the
@@ -6754,6 +6874,29 @@ async function processOne(
               });
             }
           }
+        }
+        // A broadcast wait notice promised a follow-up ("几分钟后给你完整回复")
+        // that this silent settlement will never deliver — close the promise
+        // explicitly so the notice does not become the bot's last word
+        // (2026-11-21 02:10 incident). Sent before the wake arm so the
+        // re-drive's transcript context already carries the closure.
+        if (
+          hasSentPrivateChatSkillWaitNotice(coworkStore, sessionId, waitNoticeKey)
+          && !hasSentPrivateChatWaitNoticeRetraction(coworkStore, sessionId, waitNoticeKey)
+        ) {
+          await sendPrivateChatWaitNoticeRetraction({
+            coworkStore,
+            sessionId,
+            externalConversationId,
+            row,
+            fromGlobalMetaId,
+            sharedSecretForReply,
+            noticeText: findSentPrivateChatSkillWaitNoticeText(coworkStore, sessionId, waitNoticeKey),
+            waitNoticeKey,
+            createSimpleMsgPin,
+            emitLog,
+            emitToRenderer,
+          });
         }
         // The host only runs this bot again when a NEW peer message arrives,
         // so a silent decision in an open conversation can strand both sides
@@ -6782,7 +6925,7 @@ async function processOne(
         markProcessed(db, row.id, saveDb);
       };
       if (isPrivateChatNoReplySentinel(trimmed)) {
-        deliverNothingForSilentTurn(
+        await deliverNothingForSilentTurn(
           `Bot chose silence for message ${row.id} (${PRIVATE_CHAT_NO_REPLY_SENTINEL})`
         );
         return;
@@ -6796,7 +6939,7 @@ async function processOne(
         messages: coworkStore.getRecentPrivateA2AMessages(sessionId, 24),
         replyText: trimmed,
       })) {
-        deliverNothingForSilentTurn(
+        await deliverNothingForSilentTurn(
           `Echo-loop guard matched for message ${row.id}: the reply repeats the last delivered outgoing messages verbatim`
         );
         return;

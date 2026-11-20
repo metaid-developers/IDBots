@@ -421,3 +421,92 @@ test('wake budget is exhausted after the configured fires', async () => {
   const wakeTurns = handle.skillTurnCalls.filter((params) => params.systemPrompt.includes('Host Wake Check'));
   assert.equal(wakeTurns.length, 3);
 });
+
+// 2026-11-21 02:10 incident: the wait notice promised "稍后给你确认", the turn
+// settled [NO_REPLY], and the promise dangled forever. The silent settlement
+// must close it with exactly one retraction in the notice's own language —
+// and never repeat it across wake re-drives that stay silent too.
+test('silent turn after a broadcast wait notice sends exactly one wake-compatible retraction', async () => {
+  setPrivateChatA2AWakeDelaysForTests([300]);
+  const harness = createWakeDaemonHarness();
+  const logs = [];
+  const handle = startWakeHarnessDaemon(harness, logs, async (params, call, coworkStore) => {
+    if (call === 1) {
+      // Skill execution starts: the wait-notice pipeline broadcasts the ack.
+      await params.onSkillExecutionStart?.();
+    }
+    const persisted = coworkStore.addMessage(params.sessionId, {
+      type: 'assistant',
+      content: '[NO_REPLY]',
+      metadata: { isStreaming: false, isFinal: true },
+    });
+    return { replyText: '[NO_REPLY]', assistantMessageId: persisted.id };
+  });
+
+  try {
+    await waitFor(() => logs.some((message) => message.includes('Sent wait-notice retraction')), 20_000);
+    await waitFor(() => logs.some((message) => message.includes('Wake budget exhausted')), 60_000);
+    // No further retraction may appear after exhaustion.
+    await new Promise((resolve) => setTimeout(resolve, 7_000));
+  } finally {
+    await stopPrivateChatDaemon({ waitForTick: true });
+    setPrivateChatA2AWakeDelaysForTests(PRIVATE_CHAT_A2A_DEFAULT_WAKE_DELAYS_MS);
+  }
+
+  const retractions = harness.session.messages.filter(
+    (message) => message.metadata?.privateChatWaitNoticeRetraction === true,
+  );
+  assert.equal(retractions.length, 1, 'the retraction is sent once, never repeated across wake re-drives');
+  assert.equal(retractions[0].metadata.privateChatWaitNoticeRetractionForPinId, harness.row.pin_id);
+  assert.equal(retractions[0].metadata.privateChatDeliveryStatus, 'sent');
+  assert.ok(
+    retractions[0].content.includes('不用专门等'),
+    'the retraction mirrors the CJK notice language and retracts the wait',
+  );
+  assert.ok(
+    harness.session.messages.some((message) => message.metadata?.privateChatSkillWaitNotice === true),
+    'the triggering wait notice is still on the transcript',
+  );
+  assert.equal(handle.skillTurnCalls.length, 2, 'original turn + one wake fire, then budget exhausted');
+  assert.equal(harness.row.is_processed, 1);
+});
+
+// A delivered reply already closes the wait-notice promise — the settlement
+// must not add a retraction on top of it.
+test('delivered reply after a wait notice sends no retraction', async () => {
+  setPrivateChatA2AWakeDelaysForTests([300]);
+  const harness = createWakeDaemonHarness();
+  const logs = [];
+  const replyText = '更正已递。回你三处：①紧迫度认账 ②充值闸三层 ③读数必带时刻';
+  const handle = startWakeHarnessDaemon(harness, logs, async (params, call, coworkStore) => {
+    if (call === 1) {
+      await params.onSkillExecutionStart?.();
+    }
+    const persisted = coworkStore.addMessage(params.sessionId, {
+      type: 'assistant',
+      content: replyText,
+      metadata: { isStreaming: false, isFinal: true },
+    });
+    return { replyText, assistantMessageId: persisted.id };
+  });
+
+  try {
+    await waitFor(() => logs.some((message) => message.includes('Replied to')), 20_000);
+    await new Promise((resolve) => setTimeout(resolve, 7_000));
+  } finally {
+    await stopPrivateChatDaemon({ waitForTick: true });
+    setPrivateChatA2AWakeDelaysForTests(PRIVATE_CHAT_A2A_DEFAULT_WAKE_DELAYS_MS);
+  }
+
+  assert.equal(handle.skillTurnCalls.length, 1, 'the delivered reply cancels the wake — no second turn');
+  assert.equal(
+    handle.createPinCount,
+    2,
+    'notice + reply broadcast only; no retraction pin',
+  );
+  assert.equal(
+    harness.session.messages.some((message) => message.metadata?.privateChatWaitNoticeRetraction === true),
+    false,
+    'a delivered reply needs no retraction',
+  );
+});
