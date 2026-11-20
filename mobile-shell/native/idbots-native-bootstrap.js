@@ -1,6 +1,8 @@
 (() => {
   const remoteOrigin = __IDBOTS_REMOTE_ORIGIN_JSON__;
   const platform = __IDBOTS_PLATFORM_JSON__;
+  const appVersion = __IDBOTS_APP_VERSION_JSON__;
+  const appVersionCode = __IDBOTS_APP_VERSION_CODE_JSON__;
   if (window.top !== window || window.location.origin !== remoteOrigin) return;
 
   if (!window.idbotsMobile) {
@@ -119,6 +121,8 @@
   const isProductRootRoute = () => ['/', '/app', '/app/', '/login', '/login/'].includes(window.location.pathname);
   const bridge = Object.freeze({
     nativeBridgeVersion: 1,
+    appVersion,
+    appVersionCode,
     bootstrap: Object.freeze({ phase: 'document-start', origin: remoteOrigin, platform }),
     getCapabilities: () => ({
       camera: hasNativeMethod('pickPhoto'),

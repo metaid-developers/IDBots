@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRightIcon } from '@heroicons/react/24/outline';
 import { t } from '../../i18n';
 import { getMobileElectron } from '../appBridge';
+import { getNativeAdapter } from '../../native/nativeAdapter';
 import { useIdentity } from '../hooks/useIdentity';
 import { useSettings } from '../hooks/useSettings';
 import { useMemorySettings } from '../hooks/useMemorySettings';
@@ -136,6 +137,7 @@ export default function MeScreen(props: {
   const memory = useMemorySettings();
   const skills = useSkills();
   const metabots = useMetabots();
+  const nativeApp = typeof window === 'undefined' ? null : getNativeAdapter().getAppVersion();
   const [appVersion, setAppVersion] = useState<string | null>(null);
   useEffect(() => {
     void getMobileElectron()
@@ -265,7 +267,7 @@ export default function MeScreen(props: {
           ? 'mobile.me.themeDark'
           : 'mobile.me.themeSystem',
     ),
-    appVersion,
+    appVersion: nativeApp?.versionName ?? appVersion,
     meTotal,
   };
 

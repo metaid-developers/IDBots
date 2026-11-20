@@ -15,7 +15,9 @@ final class NativeBootstrap {
             String template = readUtf8(input);
             return template
                 .replace("__IDBOTS_REMOTE_ORIGIN_JSON__", JSONObject.quote(remoteOrigin))
-                .replace("__IDBOTS_PLATFORM_JSON__", JSONObject.quote(platform));
+                .replace("__IDBOTS_PLATFORM_JSON__", JSONObject.quote(platform))
+                .replace("__IDBOTS_APP_VERSION_JSON__", JSONObject.quote(BuildConfig.VERSION_NAME))
+                .replace("__IDBOTS_APP_VERSION_CODE_JSON__", Integer.toString(BuildConfig.VERSION_CODE));
         }
     }
 

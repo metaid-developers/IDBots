@@ -267,6 +267,9 @@ test('remaining secondary pages render their shells', () => {
   assert.match(about, /data-testid="about-link-terms"/);
   assert.match(about, /data-testid="about-link-privacy"/);
   assert.match(about, /data-testid="about-link-custody"/);
+  assert.match(about, /data-testid="about-app-version"/);
+  assert.match(about, /Gateway protocol version: 1\.0\.0/);
+  assert.match(about, /not an app or blockchain contract version/);
 });
 
 // --- WeChat bot binding page -------------------------------------------------
