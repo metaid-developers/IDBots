@@ -167,7 +167,7 @@ export interface TaskWorkerSubmission {
 }
 
 export interface LongTermEvidence {
-  /** dir | metaapp | metafile | pin | url | other */
+  /** dir | file | metaapp | metafile | pin | url | other (dir/file = local absolute path) */
   kind: string;
   uri: string;
   note?: string;

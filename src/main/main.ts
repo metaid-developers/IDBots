@@ -97,6 +97,9 @@ import {
   isDelegationPriceNumeric,
   type DelegationRequest,
 } from './libs/coworkRunner';
+// §9 session-level visibility: merge the live "running on a fallback brain"
+// marker into session summaries (list + per-session refresh).
+import { withActiveFallbackBrain, type FallbackBrainActivation } from './libs/fallbackBrainStatus';
 import { SkillManager } from './skillManager';
 import { listAssignedSkillIds, removeMetabotAssignments, runSkillAssignmentMigration, setMetabotAssignedSkills } from './libs/skillAssignmentStore';
 import { MetaAppManager } from './metaAppManager';
@@ -1007,6 +1010,28 @@ const emitCoworkStreamMessageUpdate = (
  */
 const broadcastProfileRefreshed = (sessionId: string): void => {
   broadcastToRenderers('cowork:session:profileRefreshed', { sessionId });
+};
+
+/**
+ * §9 session-level visibility (2026-11-20): ping renderers when a session's
+ * turn starts or stops running on a fallback brain. The payload is ONLY the
+ * session id — the marker itself rides the session summary, so the renderer
+ * re-reads it from the one source of truth and a missed ping can never invent
+ * a badge.
+ */
+const broadcastFallbackBrainChanged = (sessionId: string): void => {
+  broadcastToRenderers('cowork:session:fallbackBrain', { sessionId });
+};
+
+/**
+ * Decorate session summaries with the live fallback-brain marker (§9).
+ * Reads the runner's in-memory registry: the marker deliberately is NOT
+ * persisted — it describes a RUNNING turn, and a process restart ends that
+ * turn, so a persisted flag could only go stale.
+ */
+const decorateWithFallbackBrain = <T extends { id?: string | null }>(rows: T[]): T[] => {
+  const runner = getCoworkRunner();
+  return rows.map((row) => withActiveFallbackBrain(row, (id) => runner.getActiveFallbackBrain(id)));
 };
 
 /**
@@ -9655,6 +9680,17 @@ const getCoworkRunner = () => {
       broadcastToRenderers('cowork:stream:sessionTitle', { sessionId, title });
     });
 
+    // §9 session-level visibility (2026-11-20): the turn just switched onto a
+    // fallback brain route (activation set) or settled off it (activation
+    // null). Renderers re-read the session summary, which carries the marker;
+    // the event itself is just a wake-up.
+    coworkRunner.on('fallbackBrain', (sessionId: string, _activation: FallbackBrainActivation | null) => {
+      if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
+        return;
+      }
+      broadcastFallbackBrainChanged(sessionId);
+    });
+
     // Handle delegation requests from the LLM
     coworkRunner.on('delegation:requested', (sessionId: string, delegation: DelegationRequest) => {
       // Execute the full delegation pipeline asynchronously.
@@ -16614,11 +16650,15 @@ if (!gotTheLock) {
       try {
         repairSelfDirectedServiceOrders();
         const isDesktopRenderer = event.sender !== null;
-        const sessions = enrichCoworkSessionsWithServiceOrderSummaries(
-          getCoworkStore().listSessions({
-            ...options,
-            omitInlinePeerDataAvatar: options?.omitInlinePeerDataAvatar ?? isDesktopRenderer,
-          })
+        // §9 visibility: the live fallback-brain marker rides every summary
+        // (no DB column — see decorateWithFallbackBrain).
+        const sessions = decorateWithFallbackBrain(
+          enrichCoworkSessionsWithServiceOrderSummaries(
+            getCoworkStore().listSessions({
+              ...options,
+              omitInlinePeerDataAvatar: options?.omitInlinePeerDataAvatar ?? isDesktopRenderer,
+            })
+          )
         );
         return { success: true, sessions };
       } catch (error) {
@@ -16673,7 +16713,10 @@ if (!gotTheLock) {
           return { success: true, summary: null };
         }
         const [summary] = enrichCoworkSessionsWithServiceOrderSummaries([raw]);
-        return { success: true, summary: summary ?? raw };
+        // §9 visibility: same live marker as the list read, so a per-session
+        // refresh cannot momentarily drop the badge.
+        const [decorated] = decorateWithFallbackBrain([summary ?? raw]);
+        return { success: true, summary: decorated ?? summary ?? raw };
       } catch (error) {
         if (isSqliteWasmBoundsError(error)) throw error;
         return {

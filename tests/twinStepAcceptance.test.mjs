@@ -154,6 +154,94 @@ test('two accepts on the same step are two distinct events, in order', async () 
   }
 });
 
+test('accepts a local single file as evidence (kind=file) and advertises file in the refusal text', async () => {
+  const { sqliteStore, orchestration } = await openStore();
+  try {
+    const { step } = seedDelegatedStep(orchestration);
+    const acceptance = orchestration.recordStepAcceptance({
+      stepId: step.id,
+      evidence: [{ kind: 'file', uri: '/tmp/idbots-worker-2/out/report.md', note: 'verification log' }],
+      note: 'a single local file is recorded truthfully instead of being mislabelled other',
+    });
+    assert.deepEqual(acceptance.evidence, [
+      { kind: 'file', uri: '/tmp/idbots-worker-2/out/report.md', note: 'verification log' },
+    ]);
+    assert.deepEqual(orchestration.listStepAcceptances(step.id)[0].evidence, acceptance.evidence);
+
+    // The kind gate still refuses everything unknown, and its readable reason
+    // now lists the extended whitelist so a caller can self-correct.
+    let refusal;
+    try {
+      orchestration.recordStepAcceptance({ stepId: step.id, evidence: [{ kind: 'sneaky', uri: '/tmp/x' }] });
+    } catch (error) {
+      refusal = error;
+    }
+    assert.equal(refusalCode(refusal), 'ACCEPTANCE_EVIDENCE_INVALID');
+    assert.match(refusal.message, /dir\|file\|metaapp\|pin\|url\|other/);
+    assert.equal(acceptanceCount(sqliteStore.getDatabase()), 1, 'the refused accept wrote nothing');
+  } finally {
+    sqliteStore.close();
+  }
+});
+
+test('every acceptance evidence schema gate accepts kind=file and still refuses unknown kinds', async () => {
+  const { z } = require('zod');
+  const { buildLongTermTaskAgentTools } = require('../dist-electron/main/libs/longTermTaskAgentTools.js');
+  const { buildStudioChiefOfStaffAgentTools } = require('../dist-electron/main/libs/studioChiefOfStaffAgentTools.js');
+
+  // The builders only touch `control` from inside handlers, so schema capture
+  // needs no database: build them with stubs and parse the published shapes.
+  const captured = new Map();
+  const tool = (name, _description, schema) => {
+    captured.set(name, schema);
+    return { name };
+  };
+  buildLongTermTaskAgentTools({
+    tool,
+    control: { store: () => ({}) },
+  });
+  buildStudioChiefOfStaffAgentTools({
+    tool,
+    sessionId: 'twin-session',
+    control: {
+      isTwinSession: () => true,
+      resolveTwinMetabotId: () => 1,
+      enqueueDecision: () => ({ ok: false, error: 'unused' }),
+      listOpenDecisions: () => [],
+      resolveDecision: () => ({ ok: false, error: 'unused' }),
+      deferDecision: () => ({ ok: false, error: 'unused' }),
+      markPresence: () => ({ ok: true }),
+    },
+  });
+
+  const fileEvidence = [{ kind: 'file', uri: '/tmp/idbots-worker-2/out/report.md', note: 'evidence file' }];
+  const unknownEvidence = [{ kind: 'sneaky', uri: '/tmp/idbots-worker-2/out/report.md' }];
+  const gates = [
+    ['longterm_subtask_propose', { subtaskId: 'lts_x', summary: 's', evidence: fileEvidence }],
+    ['longterm_task_complete', { taskId: 'ltt_x', summary: 's', evidence: fileEvidence }],
+    ['task_subtask_propose', { subtaskId: 'sub_x', summary: 's', evidence: fileEvidence }],
+    ['task_subtask_submit', { subtaskId: 'sub_x', outcome: 'ready_for_review', summary: 's', evidence: fileEvidence }],
+    ['studio_decision_enqueue', {
+      kind: 'acceptance',
+      title: 't',
+      backgroundSummary: 'b',
+      progressSummary: 'p',
+      question: 'q',
+      recommendation: 'r',
+      nextStep: 'n',
+      evidence: fileEvidence,
+    }],
+  ];
+  for (const [name, args] of gates) {
+    const schema = captured.get(name);
+    assert.ok(schema, `${name} tool missing`);
+    const parsed = z.object(schema).safeParse(args);
+    assert.equal(parsed.success, true, `${name} must accept kind=file: ${JSON.stringify(parsed.error?.issues ?? [])}`);
+    const refused = z.object(schema).safeParse({ ...args, evidence: unknownEvidence });
+    assert.equal(refused.success, false, `${name} must still refuse an unknown evidence kind`);
+  }
+});
+
 test('refusals are explicit and write nothing', async () => {
   const { sqliteStore, orchestration } = await openStore();
   try {

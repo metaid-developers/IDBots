@@ -259,7 +259,7 @@ export interface LongTermTaskAgentControl {
 }
 
 const CHANNEL_ENUM = ['delegate_bot', 'group_task', 'owner_external', 'owner_together'] as const;
-const EVIDENCE_KIND_ENUM = ['dir', 'metaapp', 'metafile', 'pin', 'url', 'other'] as const;
+const EVIDENCE_KIND_ENUM = ['dir', 'file', 'metaapp', 'metafile', 'pin', 'url', 'other'] as const;
 
 const subtaskDraftSchema = z.object({
   title: z.string().min(1).describe('Sub-project / subtask title (short, verifiable).'),
@@ -446,7 +446,7 @@ export function buildLongTermTaskAgentTools(deps: {
     {
       taskId: z.string().min(1),
       summary: z.string().min(1).describe('Goal-level closure verdict in the owner\'s language: how the goal is met (quote it), which evidence proves it, and why the remaining open sub-projects are moot.'),
-      evidence: z.array(z.object({ kind: z.enum(['dir', 'metaapp', 'pin', 'url', 'other']), uri: z.string().min(1), note: z.string().optional() })).min(1).describe('Goal-level proof: local dir, metaapp:// URI, pin:// id, or URL.'),
+      evidence: z.array(z.object({ kind: z.enum(['dir', 'file', 'metaapp', 'pin', 'url', 'other']), uri: z.string().min(1), note: z.string().optional() })).min(1).describe('Goal-level proof: local dir or file, metaapp:// URI, pin:// id, or URL.'),
     },
     async (args: { taskId?: string; summary?: string; evidence?: unknown[] }) => {
       try {
@@ -579,10 +579,10 @@ export function buildLongTermTaskAgentTools(deps: {
 
   const proposeSubtask = tool(
     'longterm_subtask_propose',
-    `Propose acceptance for a sub-project: attach verifiable evidence (local dir, metaapp:// URI, pin:// id, URL) and a summary of how each acceptance criterion is met. Moves the card to waiting-owner; the owner accepts or rejects with feedback. The summary is also the owner's decision brief (criterion-by-criterion evidence recap inside section 1/2): ${ownerBriefRule}`,
+    `Propose acceptance for a sub-project: attach verifiable evidence (local dir or file, metaapp:// URI, pin:// id, URL) and a summary of how each acceptance criterion is met. Moves the card to waiting-owner; the owner accepts or rejects with feedback. The summary is also the owner's decision brief (criterion-by-criterion evidence recap inside section 1/2): ${ownerBriefRule}`,
     {
       subtaskId: z.string().min(1),
-      evidence: z.array(z.object({ kind: z.enum(['dir', 'metaapp', 'pin', 'url', 'other']), uri: z.string().min(1), note: z.string().optional() })).min(1),
+      evidence: z.array(z.object({ kind: z.enum(['dir', 'file', 'metaapp', 'pin', 'url', 'other']), uri: z.string().min(1), note: z.string().optional() })).min(1),
       summary: z.string().min(1).describe('Evidence recap per acceptance criterion AND the six-section decision brief described in the tool description (multi-line, owner\'s language).'),
     },
     async (args: { subtaskId?: string; evidence?: unknown[]; summary?: string }) => {

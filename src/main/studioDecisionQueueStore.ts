@@ -21,7 +21,8 @@ export interface StudioDecisionOption {
 }
 
 export interface StudioDecisionEvidence {
-  kind: 'dir' | 'metaapp' | 'pin' | 'url' | 'other';
+  /** `dir` / `file` are local absolute paths (directory / single file). */
+  kind: 'dir' | 'file' | 'metaapp' | 'pin' | 'url' | 'other';
   uri: string;
   note?: string;
 }

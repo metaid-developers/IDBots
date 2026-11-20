@@ -143,8 +143,10 @@ export type LongTermSubtaskStatusListener = (change: LongTermSubtaskStatusChange
 const WAIT_NOTE_MAX_CHARS = 4000;
 
 /** Allowed evidence kinds (LongTermEvidence.kind) — anything else bypasses
- *  the per-kind URI shape checks and is refused. */
-const EVIDENCE_KINDS = ['dir', 'metaapp', 'metafile', 'pin', 'url', 'other'];
+ *  the per-kind URI shape checks and is refused. `dir` and `file` are local
+ *  absolute paths; `file` names ONE produced file so it is recorded truthfully
+ *  instead of being mislabelled `other`. */
+const EVIDENCE_KINDS = ['dir', 'file', 'metaapp', 'metafile', 'pin', 'url', 'other'];
 
 const ORIGIN_CHANNELS: readonly TaskOriginChannel[] = [
   'studio',
@@ -1922,6 +1924,7 @@ export class LongTermTaskStore {
       if (kind === 'metafile') return !uri.startsWith('metafile://');
       if (kind === 'url') return !/^https?:\/\//.test(uri);
       if (kind === 'dir') return !uri.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(uri);
+      if (kind === 'file') return !uri.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(uri);
       return false;
     });
     if (malformed.length > 0) {
