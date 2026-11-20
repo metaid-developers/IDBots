@@ -125,7 +125,11 @@ test('main.ts hot metadata providers avoid full-transcript getSession loads', ()
   ).replace(/\r\n/g, '\n');
 
   assert.match(mainSource, /mcpServerProvider:[\s\S]{0,220}getCoworkStore\(\)\.getSessionMetabotId\(coworkSessionId\)/);
-  assert.match(mainSource, /browserAutomationProvider:[\s\S]{0,120}getCoworkStore\(\)\.getSessionMetabotId\(coworkSessionId\)/);
-  assert.match(mainSource, /computerUseProvider:[\s\S]{0,120}getCoworkStore\(\)\.getSessionMetabotId\(coworkSessionId\)/);
+  // The windows accommodate the guard lines added in front of the cheap
+  // metadata read (mobile request-boundary filter + Studio owner-chat
+  // demotion); the point stays: these hot providers read getSessionMetabotId,
+  // never a full transcript-bearing getSession load.
+  assert.match(mainSource, /browserAutomationProvider:[\s\S]{0,320}getCoworkStore\(\)\.getSessionMetabotId\(coworkSessionId\)/);
+  assert.match(mainSource, /computerUseProvider:[\s\S]{0,320}getCoworkStore\(\)\.getSessionMetabotId\(coworkSessionId\)/);
   assert.match(mainSource, /createStudioLiveStageService\(\{\s*getSession: \(sessionId\) => getCoworkStore\(\)\.getSessionWithoutMessages\(sessionId\),\s*hasMultipleUserMessages:/);
 });
