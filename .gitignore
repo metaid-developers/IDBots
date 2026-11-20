@@ -807,6 +807,8 @@ man_base_data_pebble/
 !tests/scheduledRunReceiptWritePath.test.mjs
 !tests/dshSessionLogGuard.test.mjs
 !tests/dshSessionLogAtomicity.test.mjs
+!tests/fallbackBrainStatus.test.mjs
+!tests/fallbackBrainSessionRow.test.tsx
 !tests/settingsUnarchiveRefreshStatic.test.mjs
 !tests/settingsInputContextMenu.test.tsx
 !tests/coworkDshSessionTitle.test.mjs

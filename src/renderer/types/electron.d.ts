@@ -1756,6 +1756,8 @@ interface IElectronAPI {
     }>;
     onDelegationStateChange: (callback: (data: { sessionId: string; blocking: boolean; orderId?: string; message?: string }) => void) => () => void;
     onSessionProfileRefreshed: (callback: (data: { sessionId: string }) => void) => () => void;
+    /** §9 visibility: a turn switched onto / settled off a fallback brain route. */
+    onSessionFallbackBrain: (callback: (data: { sessionId: string }) => void) => () => void;
   };
   dialog: {
     selectDirectory: () => Promise<{ success: boolean; path: string | null }>;

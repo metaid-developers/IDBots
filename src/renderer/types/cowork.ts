@@ -876,11 +876,38 @@ export interface CoworkPermissionResponse {
   result: CoworkPermissionResult;
 }
 
+// §9 session-level visibility (2026-11-20): a RUNNING turn is being served by
+// a non-primary brain. Merged into the summary by the main process from the
+// runner's in-memory registry — deliberately never persisted: it describes the
+// live turn, and a process restart ends that turn.
+export type CoworkFallbackBrainRung = 'bot-fallback' | 'current-default' | 'system-rescue';
+
+export interface CoworkActiveFallbackBrain {
+  /** Model id currently serving the turn. */
+  model: string;
+  /** Provider key currently serving the turn. */
+  provider: string;
+  /** Model id of the route that failed. */
+  fromModel?: string | null;
+  /** Provider key of the route that failed. */
+  fromProvider?: string | null;
+  /** Which ladder rung resolved the serving route. */
+  rung: CoworkFallbackBrainRung;
+  /** Epoch ms of the switch. */
+  since: number;
+}
+
 // Session summary for list display (without full messages)
 export interface CoworkSessionSummary {
   id: string;
   title: string;
   status: CoworkSessionStatus;
+  /**
+   * Live fallback-brain marker (§9). Present only while a running turn is
+   * served by a non-primary route; the row then labels its status
+   * 「备用脑运行中」 instead of a bare 运行中. Absent/undefined = primary route.
+   */
+  activeFallbackBrain?: CoworkActiveFallbackBrain | null;
   pinned: boolean;
   createdAt: number;
   updatedAt: number;

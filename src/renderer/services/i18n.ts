@@ -961,6 +961,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkStatusError: '错误',
     coworkStatusErrorRetried: '已重试（历史失败）',
     coworkStatusStopped: '已终止',
+    // §9 session-level visibility: a RUNNING turn served by a non-primary brain.
+    coworkStatusFallbackBrain: '备用脑运行中',
+    coworkStatusDegradedModel: '降级模型运行中',
+    coworkStatusFallbackBrainDetail: '主模型 {from} 不可用，本轮由 {route} 继续执行。',
+    coworkStatusFallbackBrainUnknownPrimary: '主模型',
     coworkPeerProfileRefresh: '点击刷新对方资料',
     coworkPeerProfileRefreshing: '正在刷新对方资料…',
     coworkPermissionRequired: '需要权限确认',
@@ -4824,6 +4829,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkStatusError: 'Error',
     coworkStatusErrorRetried: 'Retried (failed attempt)',
     coworkStatusStopped: 'Stopped',
+    // §9 session-level visibility: a RUNNING turn served by a non-primary brain.
+    coworkStatusFallbackBrain: 'Fallback brain running',
+    coworkStatusDegradedModel: 'Degraded model running',
+    coworkStatusFallbackBrainDetail: 'Primary model {from} is unavailable; this turn is continuing on {route}.',
+    coworkStatusFallbackBrainUnknownPrimary: 'the primary model',
     coworkPeerProfileRefresh: 'Click to refresh peer profile',
     coworkPeerProfileRefreshing: 'Refreshing peer profile…',
     coworkPermissionRequired: 'Permission Required',

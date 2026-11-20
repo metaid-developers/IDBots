@@ -799,6 +799,13 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('cowork:session:profileRefreshed', handler);
       return () => ipcRenderer.removeListener('cowork:session:profileRefreshed', handler);
     },
+    // §9 session-level visibility: a turn started/stopped running on a
+    // fallback brain; the listener re-reads that session's summary.
+    onSessionFallbackBrain: (callback: (data: { sessionId: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string }) => callback(data);
+      ipcRenderer.on('cowork:session:fallbackBrain', handler);
+      return () => ipcRenderer.removeListener('cowork:session:fallbackBrain', handler);
+    },
   },
   dialog: {
     selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),

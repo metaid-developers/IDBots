@@ -447,6 +447,17 @@ class CoworkService {
     if (typeof profileRefreshedCleanup === 'function') {
       this.streamListenerCleanups.push(profileRefreshedCleanup);
     }
+
+    // §9 session-level visibility: the turn switched onto a fallback brain
+    // route (or settled off it). The summary carries the marker, so a summary
+    // re-read is the whole job — no parallel session-state copy that could
+    // drift from the main process.
+    const fallbackBrainCleanup = cowork.onSessionFallbackBrain?.(({ sessionId }) => {
+      void this.refreshSessionSummaryOrReload(sessionId).catch(() => undefined);
+    });
+    if (typeof fallbackBrainCleanup === 'function') {
+      this.streamListenerCleanups.push(fallbackBrainCleanup);
+    }
   }
 
   private cleanupListeners(): void {

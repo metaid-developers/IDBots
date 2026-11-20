@@ -90,6 +90,10 @@ import {
   resolveFollowUpAction,
 } from '../cerebellum/sessionFollowUpGate';
 import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isModelSwitchCompactionFailedDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isRuntimeBootDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, shouldAutoReviewDshToolCall, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, extractOfficialRelayMeErrorCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice, meBalanceSpendableMilli } from './coworkAssistantReply';
+// §9 session-level visibility for a fallback-brain turn (see the module doc):
+// the runner records WHICH rung is serving the turn and clears it at settle;
+// route selection itself is untouched.
+import { FallbackBrainRegistry, type FallbackBrainActivation, type FallbackBrainRung } from './fallbackBrainStatus';
 import {
   filterSdkInternalDiagnostics,
   isSdkInternalDiagnostic,
@@ -11315,6 +11319,54 @@ export class CoworkRunner extends EventEmitter {
   /** Sessions already notified about a given exhaustion period — one bypass notice per period per session. */
   private readonly quotaBypassNoticeBySession = new Map<string, { provider: string; sinceMs: number }>();
 
+  /**
+   * Live per-session "this turn is NOT on the primary brain" markers (§9
+   * visibility, 2026-11-20). Written only when a switch has ALREADY been
+   * committed, cleared in the turn's single settle point (finish()); the session
+   * summary IPC merges it so a sidebar row can say 备用脑运行中 instead of a bare
+   * 运行中. Purely an annotation layer — it never feeds route selection.
+   */
+  private readonly fallbackBrainRegistry = new FallbackBrainRegistry();
+
+  /** Live fallback-brain marker for a session (null when the turn runs on its own route). */
+  getActiveFallbackBrain(sessionId: string): FallbackBrainActivation | null {
+    return this.fallbackBrainRegistry.get(sessionId);
+  }
+
+  /**
+   * Record + announce a committed brain switch (annotation only: the caller has
+   * already resolved and entered the new route). Emits `fallbackBrain` so the
+   * main process can ping renderers without waiting for the turn to settle.
+   */
+  private markFallbackBrainActive(
+    sessionId: string,
+    input: {
+      provider: string;
+      model: string;
+      fromProvider: string | null;
+      fromModel: string | null;
+      rung: FallbackBrainRung;
+    },
+  ): void {
+    const activation = this.fallbackBrainRegistry.mark(sessionId, { ...input, at: Date.now() });
+    if (!activation) return;
+    this.emit('fallbackBrain', sessionId, activation);
+    coworkLog('INFO', 'markFallbackBrainActive', 'Session turn is running on a fallback brain route', {
+      sessionId,
+      rung: activation.rung,
+      fromProvider: activation.fromProvider,
+      fromModel: activation.fromModel,
+      toProvider: activation.provider,
+      toModel: activation.model,
+    });
+  }
+
+  /** Clear + announce the marker (called from the turn's settle point). */
+  private clearFallbackBrainActive(sessionId: string): void {
+    if (!this.fallbackBrainRegistry.clear(sessionId)) return;
+    this.emit('fallbackBrain', sessionId, null);
+  }
+
   /** The exhaustion entry when the provider should still be bypassed, else null (absent, or the re-probe window is due). */
   private quotaExhaustedBypassEntry(provider: string): { sinceMs: number; lastProbeAt: number } | null {
     const entry = this.providerQuotaExhausted.get(provider);
@@ -11362,16 +11414,16 @@ export class CoworkRunner extends EventEmitter {
   private resolveQuotaBypassDshRoute(
     sessionId: string,
     deadRoute: DshProviderRouteInfo,
-  ): { route: DshProviderRouteInfo; targetZh: string; targetEn: string } | null {
+  ): { route: DshProviderRouteInfo; targetZh: string; targetEn: string; rung: FallbackBrainRung } | null {
     const brainFallback = this.resolveSessionFallbackDshRoute(sessionId, deadRoute);
     if (brainFallback && !this.isQuotaDeadAlternative(brainFallback)) {
-      return { route: brainFallback, targetZh: '该 Bot 的备用模型', targetEn: "the bot's fallback model" };
+      return { route: brainFallback, targetZh: '该 Bot 的备用模型', targetEn: "the bot's fallback model", rung: 'bot-fallback' };
     }
     const rescue = this.resolveCurrentDefaultDshRoute(sessionId, deadRoute);
     if (rescue.route && !this.isQuotaDeadAlternative(rescue.route)) {
       return rescue.source === 'system-rescue'
-        ? { route: rescue.route, targetZh: '系统兜底模型', targetEn: 'the system rescue model' }
-        : { route: rescue.route, targetZh: '当前默认模型', targetEn: 'the current default model' };
+        ? { route: rescue.route, targetZh: '系统兜底模型', targetEn: 'the system rescue model', rung: 'system-rescue' }
+        : { route: rescue.route, targetZh: '当前默认模型', targetEn: 'the current default model', rung: 'current-default' };
     }
     return null;
   }
@@ -12419,6 +12471,10 @@ export class CoworkRunner extends EventEmitter {
     // activeSessions, and turn N+1 arrives after turn N's teardown removed it.
     this.activeSessions.set(sessionId, activeSession);
     this.dshActiveTurns.add(sessionId);
+    // §9 visibility: a new turn starts on the session's own route, so any mark
+    // left by a torn-down predecessor (crash / restart path that skipped
+    // finish()) must not decorate it. Absent mark → no-op, no emit.
+    this.clearFallbackBrainActive(sessionId);
     // Stop/abort maps to the runtime's native turn cancel; the turn promise
     // then settles with an aborted reason. The cancel tag rides the abort
     // signal's reason: stopSession passes its caller-supplied reason through
@@ -12437,6 +12493,10 @@ export class CoworkRunner extends EventEmitter {
         claudeSessionId: activeSession.claudeSessionId,
         status,
       });
+      // §9 visibility: the turn is over, so "running on the fallback brain" is
+      // no longer true. Cleared AFTER the status write so a renderer refresh
+      // triggered by the announcement can never observe running + stale mark.
+      this.clearFallbackBrainActive(sessionId);
     };
 
     try {
@@ -13584,6 +13644,17 @@ export class CoworkRunner extends EventEmitter {
         const bypass = this.resolveQuotaBypassDshRoute(sessionId, route);
         if (bypass) {
           quotaBypassRoute = bypass.route;
+          // §9 visibility: this turn is about to run on a non-primary route.
+          // The notice below is rate-limited to once per exhaustion period per
+          // session, so it cannot double as the per-turn status marker — this
+          // one is written for every bypassed turn and cleared at settle.
+          this.markFallbackBrainActive(sessionId, {
+            provider: bypass.route.provider,
+            model: bypass.route.model,
+            fromProvider: route.provider,
+            fromModel: route.model,
+            rung: bypass.rung,
+          });
           const deadProviderLabel = isFreeQuotaProvider(route.provider) ? FREE_PROVIDER_DISPLAY_NAME : route.provider;
           const altProviderLabel = isFreeQuotaProvider(bypass.route.provider) ? FREE_PROVIDER_DISPLAY_NAME : bypass.route.provider;
           const noticed = this.quotaBypassNoticeBySession.get(sessionId);
@@ -13891,6 +13962,18 @@ export class CoworkRunner extends EventEmitter {
               ...(fallbackIsSystemRescue ? { systemRescue: true } : {}),
             }
           );
+          // §9 session-level visibility: the transcript notice above is only
+          // visible to a reader of THIS session's messages — a post-mortem that
+          // inspects the sidebar row needs the status itself to say "on the
+          // fallback brain". Annotation only: the route was already resolved and
+          // is entered by the attempts below, unchanged.
+          this.markFallbackBrainActive(sessionId, {
+            provider: fallbackRoute.provider,
+            model: fallbackRoute.model,
+            fromProvider: route.provider,
+            fromModel: route.model,
+            rung: fallbackIsSystemRescue ? 'system-rescue' : fallbackIsCurrentDefault ? 'current-default' : 'bot-fallback',
+          });
           // Direct-entry failures get one fallback attempt. Only the transient
           // entry uses the loop below, preserving its established resume cap.
           if (gateQuota || gateOverflow || gateConfigHard || gateRuntimeBoot) {
