@@ -308,7 +308,7 @@ test('verify-claim refuses when the deposit left the vault', async () => {
   });
 });
 
-test('verify-claim refuses under 6 confirmations and on a triple mismatch', async () => {
+test('verify-claim refuses under minConfirmations (default 1-conf) and on a triple mismatch', async () => {
   await withTempLedger('claim-gates', async (ledger) => {
     const { row, txid } = detect(ledger, 819);
     await expectCode(
@@ -317,6 +317,17 @@ test('verify-claim refuses under 6 confirmations and on a triple mismatch', asyn
         album: ALBUM,
         row,
         claimantAddress: CLAIMANT,
+        deps: makeDeps({ vaultRows: [vaultRow(txid, 819)], overrides: { fetchConfirmations: async () => 0 } }).deps,
+      }),
+      'INSUFFICIENT_CONFIRMATIONS',
+    );
+    await expectCode(
+      verifyAndClaim({
+        ledger,
+        album: ALBUM,
+        row,
+        claimantAddress: CLAIMANT,
+        minConfirmations: 6,
         deps: makeDeps({ vaultRows: [vaultRow(txid, 819)], overrides: { fetchConfirmations: async () => 5 } }).deps,
       }),
       'INSUFFICIENT_CONFIRMATIONS',
@@ -332,6 +343,22 @@ test('verify-claim refuses under 6 confirmations and on a triple mismatch', asyn
       'TRIPLE_MISMATCH',
     );
     assert.equal(ledger.rowById(row.id).state, 'detected');
+  });
+});
+
+test('verify-claim accepts 1 confirmation under v0.5 default minConfirmations', async () => {
+  await withTempLedger('claim-1conf', async (ledger) => {
+    const { row, txid } = detect(ledger, 821);
+    const out = await verifyAndClaim({
+      ledger,
+      album: ALBUM,
+      row,
+      claimantAddress: CLAIMANT,
+      deps: makeDeps({ vaultRows: [vaultRow(txid, 821)], overrides: { fetchConfirmations: async () => 1 } }).deps,
+    });
+    assert.equal(out.ok, true);
+    assert.equal(out.state, 'claimed');
+    assert.equal(ledger.rowById(row.id).state, 'claimed');
   });
 });
 

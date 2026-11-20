@@ -25,6 +25,7 @@ import { ensureMetawebStudyJobSchema } from './metawebStudyJobStore';
 import { ensureMetawebSurfSchema } from './metawebSurfStore';
 import { ensureChainContentHistorySchema } from './chainContentHistoryStore';
 import { ensureBotWalletTransferSchema } from './services/botWalletTransferStore';
+import { ensureNftSwapClientOrderSchema } from './services/swapOrderTrackerService';
 
 type ChangePayload<T = unknown> = {
   key: string;
@@ -3103,6 +3104,9 @@ export class SqliteStore {
     // (broadcast/refused/failed) with txid/from/to/amount/fee/session.
     // Same idempotent pattern.
     ensureBotWalletTransferSchema(this.db);
+    // WS-A client swap orders ledger (nft_swap_client_orders): tracks legacy
+    // MetaContract -> MRC-721 swap batches submitted by Twin MetaBots.
+    ensureNftSwapClientOrderSchema(this.db);
 
     this.save();
   }

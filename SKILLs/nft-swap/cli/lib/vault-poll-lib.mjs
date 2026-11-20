@@ -29,7 +29,7 @@
  */
 
 export const VAULT_POLL_PAGE_CAP = 50;
-export const MVP_CONFIRMATIONS = 6;
+export const MVP_CONFIRMATIONS = 1;
 
 /**
  * Fetch ALL nft UTXO rows for an address via flag-cursor pagination.
@@ -169,6 +169,7 @@ export async function pollVault({
     if (existing) {
       // refresh confirmations on a tracked deposit
       ledger.recordDetection({
+        collectionSlug: album.collectionSlug ?? 'metabot-avatar',
         genesis: album.genesis,
         codeHash: album.codeHash,
         tokenIndex: row.tokenIndex,
@@ -181,6 +182,7 @@ export async function pollVault({
       continue;
     }
     const { row: ledgerRow } = ledger.recordDetection({
+      collectionSlug: album.collectionSlug ?? 'metabot-avatar',
       genesis: album.genesis,
       codeHash: album.codeHash,
       tokenIndex: row.tokenIndex,
@@ -198,6 +200,7 @@ export async function pollVault({
     const outpoint = `${row.txid}:${row.outIndex}`;
     if (ledger.rowByOutpoint(outpoint)) continue; // already recorded
     const { row: ledgerRow } = ledger.recordDetection({
+      collectionSlug: album.collectionSlug ?? 'metabot-avatar',
       genesis: row.genesis || album.genesis,
       codeHash: row.codehash || album.codeHash,
       tokenIndex: Number.isInteger(row.tokenIndex) ? row.tokenIndex : -1,

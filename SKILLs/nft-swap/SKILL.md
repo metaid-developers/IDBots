@@ -1,7 +1,7 @@
 ---
 name: nft-swap
-description: MetaContract NFT → MRC-721 swap pilot for the MetaBot Avatar album. Issuer import gate, identity restore, swap engine CLI (vault-poll / verify-claim / mint-and-send / burn-batch) with cover preservation built in (mint-time auto cover, no-cover-no-mint, burn pre-gate), the image-conversion pipeline stage (cli/attach-cover.mjs — snapshot → preupload → post-mint item_desc cover+desc, dry-run by default), and idempotent cover/desc backfill for already-minted items (cli/backfill-covers.mjs). Only the MetaBot Avatar album is in scope; every fund/token action goes through host confirmation gates per PRD §9.
-version: 0.4.0
+description: Multi-collection MetaContract NFT → MRC-721 swap station engine (SERIES_REGISTRY, 1-confirmation deposit threshold, A2A SWAP_CLAIM_V1 / SWAP_COMPLETED_V1 wire handler, and idempotent cover-preserving mint/burn pipeline). Every fund/token action goes through host confirmation gates per PRD §9.
+version: 0.5.0
 ---
 
 # NFT Swap (MetaContract → MRC-721 pilot, MetaBot Avatar album)
@@ -43,6 +43,18 @@ requirements, none may be weakened.
 
 ## Changelog
 
+- **0.5.0 (2026-11-20)** — Multi-collection & A2A auto-swap station upgrade:
+  ① Table-driven `cli/lib/series-registry.mjs` (`SERIES_REGISTRY`) replacing
+  hard-coded single-collection constants across `vault-poll`, `verify-claim`,
+  `mint-and-send`, and `burn-batch` (via `--collection <slug>`, defaulting to
+  `metabot-avatar`); ② `swap_ledger` idempotent migration adding
+  `collection_slug` (existing rows backfilled to `metabot-avatar`) and
+  upgrading the active single-lock key to `(collection_slug, token_index)`;
+  ③ `MVP_CONFIRMATIONS` lowered from `6` to `1` (~1-3 min swap latency);
+  ④ new `cli/handle-claim-message.mjs` + `cli/lib/claim-handler.mjs` for
+  Contract C5.1 `idbots-swap-v1` A2A wire messages (`SWAP_CLAIM_V1` →
+  `SWAP_STATUS_V1` `pending_1_conf` on 0-conf or `SWAP_COMPLETED_V1` after
+  mint+delivery).
 - **0.4.0 (2026-11-19)** — cover-loss root-cause fix (report §4.2, four steps):
   ① vault row mapper keeps `name`/`imgUrl`; ② cover kernel vendored from the
   installed tree into the repo (cover-core/attach-cover/backfill-covers/docs);

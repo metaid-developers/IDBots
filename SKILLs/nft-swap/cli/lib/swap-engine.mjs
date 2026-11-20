@@ -23,6 +23,7 @@
  */
 
 import { MVP_CONFIRMATIONS } from './vault-poll-lib.mjs';
+import { albumFromSeries, resolveSeries } from './series-registry.mjs';
 
 export const ITEM_PATH_PAD = 4;
 export const MANAPI_BASE_DEFAULT = 'https://manapi.metaid.io';
@@ -70,7 +71,8 @@ export function itemPathForToken(tokenIndex) {
  * per-field first-write-wins, an after-the-fact burnTxid could never land).
  */
 export function buildItemDisplay({ tokenIndex, depositTxid, album, cover, partName = null }) {
-  const title = partName ? `MetaBot Avatar - ${partName} #${tokenIndex}` : `MetaBot Avatar #${tokenIndex}`;
+  const prefix = album.itemTitlePrefix || 'MetaBot Avatar';
+  const title = partName ? `${prefix} - ${partName} #${tokenIndex}` : `${prefix} #${tokenIndex}`;
   const metadata = {
     title,
     ...(cover ? { cover } : {}),
@@ -78,6 +80,7 @@ export function buildItemDisplay({ tokenIndex, depositTxid, album, cover, partNa
       swap: {
         mode: 'mrc721-mint-on-demand',
         from: 'MetaContract',
+        ...(album.collectionSlug ? { collectionSlug: album.collectionSlug } : {}),
         legacyGenesis: album.genesis,
         legacyCodeHash: album.codeHash,
         tokenIndex,
@@ -94,22 +97,47 @@ export function buildItemDisplay({ tokenIndex, depositTxid, album, cover, partNa
  * "Arms 8"). Used when a cover-less recorded display must be rebuilt with a
  * cover on the item_desc resume path (cover-loss fix, 2026-11-19).
  */
-export function partNameFromTitle(title) {
-  const match = /^MetaBot Avatar - (.+) #\d+$/.exec(String(title || ''));
+export function partNameFromTitle(title, prefix = 'MetaBot Avatar') {
+  const escaped = String(prefix || 'MetaBot Avatar').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`^(?:${escaped}|MetaBot Avatar) - (.+) #\\d+$`).exec(String(title || ''));
   return match ? match[1] : null;
 }
 
-/** Album constants from the pilot config (same shape as ISSUER_CONFIG). */
-export function albumFromConfig(config) {
+/** Album constants from the pilot config + SERIES_REGISTRY. */
+export function albumFromConfig(config, options = {}) {
+  const requestedSlug = options?.collectionSlug || config?.collectionSlug || null;
+  const series = resolveSeries({
+    collectionSlug: requestedSlug,
+    genesis: requestedSlug ? null : config?.genesis,
+    codeHash: requestedSlug ? null : config?.codeHash,
+  });
+  if (series) {
+    return albumFromSeries(series, {
+      ...(config?.genesis && !requestedSlug ? { genesis: config.genesis } : {}),
+      ...(config?.codeHash && !requestedSlug ? { codeHash: config.codeHash } : {}),
+      ...(config?.sensibleId !== undefined && !requestedSlug ? { sensibleId: config.sensibleId } : {}),
+      ...(config?.tokenSupply != null && !requestedSlug ? { tokenSupply: config.tokenSupply } : {}),
+      ...(config?.issuerAddress ? { issuerAddress: config.issuerAddress } : {}),
+      ...(config?.collectionName && !requestedSlug ? { collectionName: config.collectionName } : {}),
+      ...(config?.vaultAddress ? { vaultAddress: config.vaultAddress } : {}),
+      ...(config?.burnAddress ? { burnAddress: config.burnAddress } : {}),
+      ...(config?.perSwapFeeCeilingSats != null ? { perSwapFeeCeilingSats: config.perSwapFeeCeilingSats } : {}),
+    });
+  }
   return {
+    collectionSlug: requestedSlug || 'metabot-avatar',
     genesis: config.genesis,
     codeHash: config.codeHash,
     sensibleId: config.sensibleId ?? null,
     tokenSupply: config.tokenSupply,
     issuerAddress: config.issuerAddress,
     collectionName: config.collectionName,
+    vaultAddress: config.vaultAddress ?? null,
+    collectionPinId: config.collectionPinId ?? null,
+    itemTitlePrefix: config.itemTitlePrefix ?? 'MetaBot Avatar',
     burnAddress: config.burnAddress,
     perSwapFeeCeilingSats: config.perSwapFeeCeilingSats ?? 5000,
+    minConfirmations: config.minConfirmations ?? 1,
   };
 }
 
@@ -479,7 +507,8 @@ async function mintAndSendLocked({
 
   // ---- mint phase -------------------------------------------------------
   if (current.state === 'claimed' && !current.mint_pin_id) {
-    const otherMinted = ledger.mintedRowsByToken(album.genesis, tokenIndex).filter((r) => r.id !== current.id);
+    const collectionKey = current.collection_slug || album.collectionSlug || album.genesis;
+    const otherMinted = ledger.mintedRowsByToken(collectionKey, tokenIndex).filter((r) => r.id !== current.id);
     if (otherMinted.length) {
       fail(
         'TOKEN_INDEX_ALREADY_MINTED',
@@ -912,6 +941,7 @@ async function mintAndSendLocked({
   current = ledger.rowById(current.id);
   return {
     ok: current.state === 'sent',
+    collectionSlug: current.collection_slug || album.collectionSlug || 'metabot-avatar',
     state: current.state,
     ledgerId: current.id,
     tokenIndex,

@@ -38,6 +38,7 @@ import { formatBotWorkspaceDate } from '../libs/botWorkspace';
 import { isDshShutdownError } from '../libs/dshShutdownError';
 import { PrivateChatOrderCowork, type OrderCoworkRequest } from './privateChatOrderCowork';
 import { appendA2AGuidanceToSystemPrompt } from './a2aGuidance';
+import type { SwapOrderTrackerService } from './swapOrderTrackerService';
 import { buildOrderPrompts } from './orderPromptBuilder';
 import { buildMetabotPersonaPrompt } from '../libs/metabotPersonaPrompt';
 import {
@@ -4480,6 +4481,7 @@ async function processOne(
   requestFriendActionApproval?: RequestFriendActionApprovalFn,
   /** Best-effort relationship gate for invites (S4 provider); optional. */
   resolveFriendPairState?: ResolveFriendPairStateFn,
+  swapOrderTracker?: SwapOrderTrackerService,
 ): Promise<void> {
   const taskKey = row.pin_id;
   if (thinkingTasks.has(taskKey)) return;
@@ -4784,6 +4786,21 @@ async function processOne(
     })) {
       markProcessed(db, row.id, saveDb);
       return;
+    }
+
+    if (plaintext.trim() && swapOrderTracker) {
+      const swapHandled = await swapOrderTracker.handleIncomingSwapMessage({
+        metabotId: metabot.id,
+        fromGlobalMetaId,
+        plaintext,
+      });
+      if (swapHandled.handled) {
+        emitLog(
+          `[PrivateChat] Handled ${swapHandled.type || 'swap'} message ${row.id} (requestId=${swapHandled.requestId ?? 'unknown'}, matched=${String(swapHandled.matched ?? false)})`,
+        );
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
     }
 
     if (metabot.enabled === false) {
@@ -7178,6 +7195,7 @@ export function startPrivateChatDaemon(
   requestFriendActionApproval?: RequestFriendActionApprovalFn,
   /** Best-effort relationship gate for invites (S4 provider); optional. */
   resolveFriendPairState?: ResolveFriendPairStateFn,
+  swapOrderTracker?: SwapOrderTrackerService,
 ): void {
   void stopPrivateChatDaemon();
   const daemonGeneration = ++privateChatDaemonGeneration;
@@ -7286,6 +7304,7 @@ export function startPrivateChatDaemon(
               getKnowledgeStore,
               requestFriendActionApproval,
               resolveFriendPairState,
+              swapOrderTracker,
             );
           })();
           trackPrivateChatDetachedWork(work);
