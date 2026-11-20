@@ -826,6 +826,42 @@ test('http: file route never reaches the handler for bad tokens (no leaks in res
   assert.equal((await httpRequest(handle.port, 'GET', '/gateway/v1/files/')).status, 404);
 });
 
+test('http: malformed percent encoding on /gateway/v1/files and /app answers 400 and never crashes the gateway', async (t) => {
+  const bundle = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-bundle-')));
+  t.after(() => fs.rmSync(bundle, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(bundle, 'index.html'), '<html><body>mobile</body></html>');
+  const { handle } = await startServer(t, { gateway: { staticBundleDir: bundle } });
+
+  // '%zz' makes decodeURIComponent throw URIError. Unguarded, that throw
+  // escapes handleRequest (no outer try/catch) into the http server's
+  // 'request' emit as an uncaughtException — one request kills the main
+  // process. Each row below must answer 400 and leave the gateway serving.
+  const malformed = [
+    '/gateway/v1/files/%zz',
+    '/gateway/v1/files/%E0%A4%A',
+    '/gateway/v1/files/%',
+    '/app/%zz',
+    '/app/%zz.js',
+    '/app/%E0%A4%A/index.html',
+    '/app/assets/%',
+  ];
+  for (const pathname of malformed) {
+    const res = await httpRequest(handle.port, 'GET', pathname);
+    assert.equal(res.status, 400, `${pathname} must answer 400, not crash`);
+    assert.equal(await res.text(), '', `${pathname} must have an empty body`);
+  }
+
+  // The process is still alive and still routing after every malformed hit.
+  const alive = await httpRequest(handle.port, 'GET', '/healthz', { secret: null });
+  assert.equal(alive.status, 200, 'the gateway must survive malformed percent encoding');
+  assert.deepEqual(await alive.json(), { ok: true });
+
+  const afterFiles = await httpRequest(handle.port, 'GET', '/gateway/v1/files/not-a-token');
+  assert.equal(afterFiles.status, 404, 'well-formed bad token still 404s');
+  const afterApp = await httpRequest(handle.port, 'GET', '/app/index.html');
+  assert.equal(afterApp.status, 200, 'well-formed bundle path still serves');
+});
+
 test('F-11: authorized downloads of office/pdf documents carry the correct content-type', async (t) => {
   const { handle, paths } = await startServer(t);
   const cases = [

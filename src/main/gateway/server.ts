@@ -182,6 +182,24 @@ function sendEmpty(res: http.ServerResponse, status: number, headers?: Record<st
   res.end();
 }
 
+/**
+ * Decode one percent-encoded URL path segment, or return null when the
+ * encoding is malformed ('%zz', a lone '%', an overlong sequence, …).
+ *
+ * decodeURIComponent throws URIError synchronously on malformed input, and
+ * handleRequest has no outer try/catch: an escaping throw reaches the http
+ * server's 'request' emit as an uncaughtException, which takes the whole main
+ * process down from a single unauthenticated-URL-shaped request. Malformed
+ * encoding is a client mistake, so every caller answers 400 instead.
+ */
+function decodePathSegment(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Per-socket state
 // ---------------------------------------------------------------------------
@@ -244,7 +262,13 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   // -- HTTP routes -----------------------------------------------------------
 
   const handleFileRoute = (req: http.IncomingMessage, res: http.ServerResponse, url: URL): void => {
-    const rawToken = decodeURIComponent(url.pathname.slice(GATEWAY_FILES_PATH_PREFIX.length + 1));
+    // The token is percent-encoded in the path; a malformed sequence ('%zz')
+    // is a client error (400), never an escaping URIError that crashes main.
+    const rawToken = decodePathSegment(url.pathname.slice(GATEWAY_FILES_PATH_PREFIX.length + 1));
+    if (rawToken === null) {
+      sendEmpty(res, 400);
+      return;
+    }
     const payload = verifyFileToken(options.secret, options.tenantId, rawToken);
     if (!payload) {
       sendEmpty(res, 404);
@@ -446,7 +470,13 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     }
     const routePath = url.pathname.slice(APP_BUNDLE_PATH_PREFIX.length);
     const bundleRoot = fs.realpathSync(options.staticBundleDir);
-    const decoded = decodeURIComponent(routePath);
+    // Same guard as the file route: a malformed percent sequence is a 400, not
+    // a URIError that escapes handleRequest and crashes the main process.
+    const decoded = decodePathSegment(routePath);
+    if (decoded === null) {
+      sendEmpty(res, 400);
+      return;
+    }
     const relative = decoded === '' || decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
     const resolved = path.normalize(path.join(bundleRoot, relative));
     if (!isInsideRoot(resolved, bundleRoot)) {
