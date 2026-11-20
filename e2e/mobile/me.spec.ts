@@ -11,9 +11,10 @@ test.describe('me screen', () => {
   test('points home shows the merged ME balance and the four buckets', async ({ page }, testInfo) => {
     await page.goto('/app/');
     await page.getByRole('button', { name: 'Me' }).click();
+    await expect(page.getByText('Mock User')).toBeVisible();
+    await page.getByTestId('me-compact-credits').click();
 
     await expect(page.getByTestId('me-points-hero')).toBeVisible();
-    await expect(page.getByText('Mock User')).toBeVisible();
     // Mock free-tier ledger: 1,480 weekly + 30,000 top-up + 2,000 bonus +
     // 1,250 earned = 34,730 ME merged.
     await expect(page.getByTestId('me-points-total')).toHaveText('34,730');

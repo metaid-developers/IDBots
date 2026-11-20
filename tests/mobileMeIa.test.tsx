@@ -34,15 +34,15 @@ import type { MobileUserIdentity } from '../src/mobile/app/hooks/useIdentity.ts'
  * (e2e/mobile/me-ia.spec.ts) — renderToStaticMarkup never runs effects.
  */
 
-test('registry: ten list entries in three groups, profile rides the card', () => {
+test('registry: eleven list entries in three groups, profile rides the card', () => {
   assert.deepEqual(
     ME_ENTRIES.map((entry) => entry.id),
-    ['bots', 'nfts', 'weixinBind', 'usage', 'skills', 'memory', 'model', 'general', 'account', 'about'],
+    ['notifications', 'bots', 'nfts', 'weixinBind', 'usage', 'skills', 'memory', 'model', 'general', 'account', 'about'],
   );
   assert.deepEqual(ME_ENTRY_GROUPS.map((group) => group.group), ['bots', 'general', 'account']);
   // The bots group renders without a heading (My Bots + NFTs + WeChat bot rows on top).
   assert.equal(ME_ENTRY_GROUPS[0].titleKey, null);
-  assert.deepEqual(meEntriesForGroup('bots').map((entry) => entry.id), ['bots', 'nfts', 'weixinBind']);
+  assert.deepEqual(meEntriesForGroup('bots').map((entry) => entry.id), ['notifications', 'bots', 'nfts', 'weixinBind']);
   assert.deepEqual(meEntriesForGroup('general').map((entry) => entry.id), ['usage', 'skills', 'memory', 'model', 'general']);
   assert.deepEqual(meEntriesForGroup('account').map((entry) => entry.id), ['account', 'about']);
   // profile is NOT a registry row (card entry, IA-PLAN §2.1); the retired
@@ -58,15 +58,16 @@ test('registry: ten list entries in three groups, profile rides the card', () =>
   }
 });
 
-test('primary page renders user card, ME points hero and the registry rows', () => {
+test('primary page renders user card, compact credits and the registry rows', () => {
   const html = renderToStaticMarkup(React.createElement(MeScreen, {
     canPurchase: true,
     onOpenPurchase: () => undefined,
   }));
   assert.match(html, /data-testid="user-card"/);
-  assert.match(html, /data-testid="me-points-hero"/);
+  assert.match(html, /data-testid="me-compact-credits"/);
+  assert.doesNotMatch(html, /data-testid="me-points-hero"/);
   assert.match(html, /data-testid="me-balance-chip"/);
-  assert.match(html, /data-testid="me-topup-locked"/);
+  assert.doesNotMatch(html, /data-testid="me-topup-locked"/);
   assert.doesNotMatch(html, /data-testid="me-tier-cards"/);
   assert.doesNotMatch(html, /data-testid="me-tiers-empty"/);
   // The old traffic/quota balance card is retired (S9 §3).
@@ -140,6 +141,7 @@ test('usage & credits page: balance, ledger, orders, rates and compliance sectio
     React.createElement(UsageCreditsPage, { onBack: () => undefined }),
   );
   assert.match(html, /data-testid="me-page-usage"/);
+  assert.match(html, /data-testid="me-points-hero"/);
   assert.match(html, /data-testid="usage-history"/);
   assert.match(html, /data-testid="usage-orders"/);
   assert.match(html, /data-testid="usage-rates"/);

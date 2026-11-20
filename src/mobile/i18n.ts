@@ -1,4 +1,9 @@
-import { MOCK_LOGIN_API } from './buildFlags';
+import { createMobileI18n } from './i18nCore';
+import {
+  loginCommonTranslations,
+  loginEnTranslations,
+  loginZhTranslations,
+} from './login/loginCopy';
 
 /**
  * Standalone mobile i18n service (REQ-E-18).
@@ -16,15 +21,6 @@ import { MOCK_LOGIN_API } from './buildFlags';
 export type MobileLanguage = 'zh' | 'en';
 
 export type MobileDictionary = Record<string, string>;
-
-/**
- * Demo notice values (mobile.login.demoNote). Defined as constants so
- * mobileI18nStatic's dictionary parser can verify the referenced copy is
- * non-empty for the mock mode, while a production build folds
- * `MOCK_LOGIN_API ? copy : ''` to `''` and never ships the notice string.
- */
-const DEMO_NOTE_ZH = MOCK_LOGIN_API ? '演示环境：登录接口为 mock。' : '';
-const DEMO_NOTE_EN = MOCK_LOGIN_API ? 'Demo build: the login API is mocked.' : '';
 
 const zhTranslations: MobileDictionary = {
   'mobile.common.loading': '加载中…',
@@ -848,7 +844,6 @@ const zhTranslations: MobileDictionary = {
   'mobile.login.invalidPhone':
     '手机号需带国家码，如 +8613800138000；大陆手机号输入 11 位数字即可自动补 +86。',
   'mobile.login.invalidCode': '验证码不正确，请重试',
-  'mobile.login.demoNote': DEMO_NOTE_ZH,
   'mobile.login.resendIn': '重新发送验证码（{sec} 秒）',
   'mobile.login.invitePlaceholder': '邀请码',
   'mobile.login.inviteRequired': '注册需要邀请码。请输入邀请码后重试。',
@@ -1721,7 +1716,6 @@ const enTranslations: MobileDictionary = {
   'mobile.login.invalidPhone':
     'Use a phone number with country code, e.g. +8613800138000; typing an 11-digit mainland number auto-adds +86.',
   'mobile.login.invalidCode': 'Invalid code, please try again',
-  'mobile.login.demoNote': DEMO_NOTE_EN,
   'mobile.login.resendIn': 'Resend code ({sec}s)',
   'mobile.login.invitePlaceholder': 'Invite code',
   'mobile.login.inviteRequired': 'An invite code is required to sign up. Enter one and try again.',
@@ -1772,8 +1766,8 @@ const enTranslations: MobileDictionary = {
 };
 
 const dictionaries: Record<MobileLanguage, MobileDictionary> = {
-  zh: zhTranslations,
-  en: enTranslations,
+  zh: { ...loginCommonTranslations.zh, ...loginZhTranslations, ...zhTranslations },
+  en: { ...loginCommonTranslations.en, ...loginEnTranslations, ...enTranslations },
 };
 
 export function registerMobileTranslations(translations: Record<MobileLanguage, MobileDictionary>): void {
@@ -1781,74 +1775,9 @@ export function registerMobileTranslations(translations: Record<MobileLanguage, 
   Object.assign(dictionaries.en, translations.en);
 }
 
-/** Same locale rule as the desktop inferLanguageFromLocale (services/i18n.ts). */
-export function inferLanguageFromLocale(systemLocale: string): MobileLanguage {
-  const normalized = String(systemLocale || '').trim().replace(/_/g, '-').toLowerCase();
-  if (!normalized) {
-    return 'en';
-  }
-  const tags = normalized.split('-').filter(Boolean);
-  if (tags[0] !== 'zh') {
-    return 'en';
-  }
-  if (tags.includes('hant') || tags[1] === 'tw' || tags[1] === 'hk' || tags[1] === 'mo') {
-    return 'en';
-  }
-  return 'zh';
-}
+export { inferLanguageFromLocale } from './i18nCore';
 
-class MobileI18nService {
-  private currentLanguage: MobileLanguage = 'en';
-  private listeners = new Set<() => void>();
-
-  /** Picks the device language; safe before any bridge exists (no electron calls). */
-  initFromDeviceLocale(locale?: string): MobileLanguage {
-    const source =
-      locale ??
-      (typeof navigator !== 'undefined' && typeof navigator.language === 'string'
-        ? navigator.language
-        : 'en');
-    this.currentLanguage = inferLanguageFromLocale(source);
-    return this.currentLanguage;
-  }
-
-  t(key: string, params?: Record<string, string | number>): string {
-    let translation = dictionaries[this.currentLanguage][key];
-    if (translation === undefined) {
-      // Missing key (e.g. the deleted demo notice outside VITE_MOBILE_MOCK
-      // builds): warn loudly for development, but render nothing — falling
-      // back to the key name would leak an internal identifier into the UI.
-      console.warn(`[mobile-i18n] missing key: ${key} (${this.currentLanguage})`);
-      translation = dictionaries.en[key];
-      if (translation === undefined) return '';
-    }
-    if (params) {
-      translation = translation.replace(/\{(\w+)\}/g, (match, name: string) =>
-        params[name] !== undefined ? String(params[name]) : match,
-      );
-    }
-    return translation;
-  }
-
-  setLanguage(language: MobileLanguage): void {
-    if (this.currentLanguage === language) return;
-    this.currentLanguage = language;
-    for (const listener of [...this.listeners]) listener();
-  }
-
-  getLanguage(): MobileLanguage {
-    return this.currentLanguage;
-  }
-
-  subscribe(listener: () => void): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
-}
-
-export const mobileI18n = new MobileI18nService();
+export const mobileI18n = createMobileI18n(dictionaries);
 
 /** Short alias mirroring the desktop `i18nService.t` call sites. */
 export const t = (key: string, params?: Record<string, string | number>): string =>

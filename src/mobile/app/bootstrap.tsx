@@ -6,13 +6,13 @@ import MobileApp from './MobileApp';
 import { initSystemThemeListener, loadSettings } from './services/settings';
 
 /**
- * Hydrates persisted language + theme from the R-store before first paint
- * (no flash of the wrong theme), then mounts the shell. The OS theme
- * listener keeps 'system' mode in sync afterward.
+ * Mounts the shell immediately while persisted language + theme hydrate from
+ * the R-store in the background. The OS theme listener keeps 'system' mode in
+ * sync afterward, so a disconnected settings read cannot hold the launch splash.
  */
 export async function mountMobileApp(): Promise<void> {
   try {
-    await loadSettings();
+    void loadSettings();
     initSystemThemeListener();
     const rootElement = document.getElementById('root');
     if (!rootElement) {

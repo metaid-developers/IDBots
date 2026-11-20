@@ -68,7 +68,7 @@ export function MePointsHero(props: {
   canPurchase: boolean;
   onUpgrade: () => void;
   onRecharge: () => void;
-  onOpenUsage: () => void;
+  onOpenUsage?: () => void;
   onRetry: () => void;
 }): JSX.Element {
   const { balance } = props;
@@ -200,13 +200,15 @@ export function MePointsHero(props: {
         </p>
       ) : null}
 
-      <button type="button" className="me-hero-link" onClick={props.onOpenUsage} data-testid="me-usage-link">
-        <span>
-          <span className="me-hero-link-title">{t('mobile.me.points.usageEntry')}</span>
-          <span className="me-hero-link-hint">{t('mobile.me.points.usageHint')}</span>
-        </span>
-        <ChevronRightIcon className="h-4 w-4" aria-hidden />
-      </button>
+      {props.onOpenUsage ? (
+        <button type="button" className="me-hero-link" onClick={props.onOpenUsage} data-testid="me-usage-link">
+          <span>
+            <span className="me-hero-link-title">{t('mobile.me.points.usageEntry')}</span>
+            <span className="me-hero-link-hint">{t('mobile.me.points.usageHint')}</span>
+          </span>
+          <ChevronRightIcon className="h-4 w-4" aria-hidden />
+        </button>
+      ) : null}
     </section>
   );
 }

@@ -1951,8 +1951,14 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
           ? { success: true, subscriptionOrder: order }
           : { success: false, error: 'order not found', errorCode: 'ORDER_NOT_FOUND' };
       }),
-    getSubscriptionOrders: () => guardOnline(async () => ({ success: true, orders: mockMeSubscriptionOrders })),
-    getTopupOrders: () => guardOnline(async () => ({ success: true, orders: mockMeOrders })),
+    getSubscriptionOrders: () => guardOnline(async () => ({
+      success: true,
+      orders: mockMeSubscriptionOrders.map((order) => ({ ...order })),
+    })),
+    getTopupOrders: () => guardOnline(async () => ({
+      success: true,
+      orders: mockMeOrders.map((order) => ({ ...order })),
+    })),
     getPaymentInfo: () => ({ success: true, payment: { qrContent: 'https://example.com/me-pay/demo', payeeHint: 'Demo payee · ME top-up' } }),
     pickVoucher: () => Promise.resolve({ success: false }),
   };

@@ -3,16 +3,21 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { mePaymentPhase } from '@/components/me/mePayment';
 import { t } from '../../../i18n';
 import { getMobileElectron } from '../../appBridge';
+import { MePointsHero } from '../../components/MePointsHero';
 import {
   formatMe,
   formatMeRate,
   formatMeSigned,
+  isMeSubscribed,
+  meCurrentPlan,
+  meSubscriptionExpiryMs,
   meFromMilli,
   meResetParts,
   meSpendableMilli,
   refreshMeBalance,
   refreshMeCatalog,
   refreshMeHistory,
+  refreshMeSubscription,
   refreshMeTopupOrders,
   useMeStore,
   type MobileMeHistoryEntry,
@@ -175,9 +180,12 @@ function OrderRow(props: {
 }
 
 export function UsageCreditsPage(props: {
+  resyncCounter?: number;
   onBack: () => void;
   canPurchase?: boolean;
   onResumeOrder?: (section: 'subscribe' | 'topup', subjectId: string, orderId: string) => void;
+  onUpgrade?: () => void;
+  onRecharge?: () => void;
 }): JSX.Element {
   const snapshot = useMeStore();
   const [filter, setFilter] = useState<HistoryFilter>('all');
@@ -188,6 +196,12 @@ export function UsageCreditsPage(props: {
   const balance = snapshot.balance;
   const weekly = balance?.weeklyGrant ?? null;
   const total = balance ? meFromMilli(meSpendableMilli(balance)) : null;
+  const subscribed = isMeSubscribed(snapshot.subscription);
+  const expiryMs = meSubscriptionExpiryMs(snapshot.subscription);
+  const currentPlan = useMemo(
+    () => meCurrentPlan(snapshot.plans, snapshot.subscription),
+    [snapshot.plans, snapshot.subscription],
+  );
 
   const loadSubscriptionOrders = useCallback(async () => {
     setSubscriptionOrdersLoading(true);
@@ -206,6 +220,7 @@ export function UsageCreditsPage(props: {
   const loadAll = useCallback(() => {
     void refreshMeBalance();
     void refreshMeCatalog();
+    void refreshMeSubscription();
     void refreshMeTopupOrders();
     void refreshMeHistory({ reset: true, type: filter === 'all' ? undefined : filter });
     void loadSubscriptionOrders();
@@ -213,7 +228,7 @@ export function UsageCreditsPage(props: {
 
   useEffect(() => {
     loadAll();
-  }, [loadAll]);
+  }, [loadAll, props.resyncCounter]);
 
   // Merged payment records (subscription + topup) newest first — a missing
   // createdAt sorts to the bottom instead of splitting the two blocks.
@@ -238,6 +253,19 @@ export function UsageCreditsPage(props: {
       </div>
 
       <div className="twin-scroll space-y-3 p-3">
+        <MePointsHero
+          balance={balance}
+          loading={snapshot.balanceLoading}
+          error={snapshot.balanceError}
+          featureUnavailable={snapshot.balanceFeatureUnavailable}
+          plan={currentPlan}
+          subscribed={subscribed}
+          expiryMs={expiryMs}
+          canPurchase={props.canPurchase ?? false}
+          onUpgrade={props.onUpgrade ?? (() => undefined)}
+          onRecharge={props.onRecharge ?? (() => undefined)}
+          onRetry={loadAll}
+        />
         <section className="twin-panel twin-panel-padded">
           <div className="me-summary-head">
             <span className="me-summary-label">{t('mobile.me.usage.balanceTitle')}</span>

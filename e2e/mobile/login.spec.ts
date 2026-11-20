@@ -44,4 +44,22 @@ test.describe('login sign-up flow', () => {
     await expect(page.getByRole('button', { name: 'Chat', exact: true })).toBeVisible();
     await attachScreen(testInfo, page, 'login-returning-session-restored');
   });
+
+  test('preserves a notification return path through sign-up and preparing', async ({ page }) => {
+    const returnTo = '/app/notifications/mock-work-complete';
+    await page.goto(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+    await page.getByPlaceholder('Phone number').fill('13800138001');
+    await page.getByRole('button', { name: 'Send code' }).click();
+    await page.getByPlaceholder('SMS code').fill('123456');
+    const checkboxes = page.getByRole('checkbox');
+    await checkboxes.nth(0).check();
+    await checkboxes.nth(1).check();
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.getByPlaceholder('Invite code').fill('E2E-INVITE');
+    await page.getByRole('button', { name: 'Sign in' }).click();
+
+    await expect(page.getByText('Preparing your Bot')).toBeVisible();
+    await page.waitForURL(/\/app\/sessions\/mock-session-1/, { timeout: 60_000 });
+    await expect(page.getByTestId('chat-header-title')).toHaveText('Long-term document result');
+  });
 });
