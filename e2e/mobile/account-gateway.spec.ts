@@ -18,7 +18,12 @@ async function chooseMePlan(page: Page, planTestId: string): Promise<void> {
   const recovered = page.getByTestId('me-payment-pending').or(page.getByTestId('me-purchase-submitted'));
   await expect(page.getByTestId(planTestId).or(recovered)).toBeVisible();
   if (await recovered.isVisible().catch(() => false)) return;
-  await page.getByTestId(planTestId).click();
+  try {
+    await page.getByTestId(planTestId).click({ timeout: 10_000 });
+  } catch (error) {
+    if (await recovered.isVisible().catch(() => false)) return;
+    throw error;
+  }
 }
 
 async function installMeOrderStatus(page: Page, orderId: string, status: string): Promise<void> {
