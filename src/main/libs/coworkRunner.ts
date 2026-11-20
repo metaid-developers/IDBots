@@ -264,6 +264,10 @@ import {
   type ProjectsControl,
 } from './projectsAgentTools';
 import {
+  buildMobilePageAgentTools,
+  type MobilePageAgentToolsControl,
+} from './mobilePageAgentTools';
+import {
   buildSocialRecallAgentTools,
   type SocialRecallControl,
 } from './socialRecallAgentTools';
@@ -2506,6 +2510,15 @@ export interface CoworkRunnerOptions {
    */
   projects?: ProjectsControl;
   /**
+   * Server mode only (REQ-A-5 posture): when set, the session gets the
+   * `mobile_open_page` tool — the bot hosts one local HTML page through the
+   * running gateway with an HMAC-signed, expiring page token and returns a
+   * tappable card the owner opens on their phone. Desktop never wires this
+   * control, and the mount seam also checks isServerMode(), so the desktop
+   * tool surface does not change.
+   */
+  mobilePage?: MobilePageAgentToolsControl;
+  /**
    * When set, every cowork session gets on-chain social post search tools
    * (search_social_posts + social_post_detail + social_post_comments) backed
    * by the metaso-p2p Social Recall API (so.metaid.io/api/social/*). Browser
@@ -3008,6 +3021,8 @@ export class CoworkRunner extends EventEmitter {
   private networkServices?: NetworkServicesControl;
   private onlineBots?: OnlineBotsControl;
   private projects?: ProjectsControl;
+  /** Server-mode-only mobile page hosting surface (see CoworkRunnerOptions). */
+  private mobilePage?: MobilePageAgentToolsControl;
   private socialRecall?: SocialRecallControl;
   private metawebLearning?: MetawebLearningControl;
   private metaProtocolRegistry?: MetaProtocolRegistryControl;
@@ -3235,6 +3250,7 @@ export class CoworkRunner extends EventEmitter {
     this.networkServices = options?.networkServices;
     this.onlineBots = options?.onlineBots;
     this.projects = options?.projects;
+    this.mobilePage = options?.mobilePage;
     this.socialRecall = options?.socialRecall;
     this.metawebLearning = options?.metawebLearning;
     this.metaProtocolRegistry = options?.metaProtocolRegistry;
@@ -16273,6 +16289,16 @@ export class CoworkRunner extends EventEmitter {
     if (this.projects) {
       memoryTools.push(
         ...buildProjectsAgentTools({ tool, control: this.projects })
+      );
+    }
+    // Mobile page hosting (`mobile_open_page`) is SERVER MODE ONLY: it mints
+    // a gateway page token, which only a running mobile gateway can serve.
+    // Desktop tool surfaces therefore stay exactly as before (this branch is
+    // never entered: desktop never wires the control, and the mode switch is
+    // re-checked here as the second gate).
+    if (this.mobilePage && isServerMode()) {
+      memoryTools.push(
+        ...buildMobilePageAgentTools({ tool, control: this.mobilePage })
       );
     }
     // On-chain social post search (MetaSo social recall) is registered for

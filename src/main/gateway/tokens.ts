@@ -12,6 +12,11 @@
  *   the control plane is the minter (cloud/control-plane/src/routes/
  *   sensitive.ts) and contract 01 §Sensitive Route defines it that way.
  *   `p` purpose, `n` random nonce; the tenant rejects reused nonces.
+ * - Mobile page tokens (server mode `mobile_open_page`, C2 hosting):
+ *     payload = base64url(JSON.stringify({ p, i, e, t }))
+ *   `p` realpath'd page root, `i` entry file relative to the root. Same
+ *   HMAC-over-base64url-text shape as file tokens; minted and verified in
+ *   this process.
  *
  * Verification returns null on bad signature, wrong tenant, or expiry — the
  * HTTP routes map null to 404 (file) / 403 (reverify). Signature comparison
@@ -44,6 +49,36 @@ export interface ReverifyTokenPayload {
   e: number;
   /** Random nonce, single-use while unexpired. */
   n: string;
+}
+
+/**
+ * Mobile page token (server mode `mobile_open_page`): a temporary hosting
+ * grant for one page root directory.
+ *
+ *     payload = base64url(JSON.stringify({ p, i, e, t }))
+ *     token   = payload + "." + base64url(HMAC-SHA256(secret, payload))
+ *
+ * `p` realpath'd page root, `i` entry file relative to the root (index.html
+ * when a directory was hosted), `e` expiry, `t` tenant. Minted and verified
+ * in this process (like file tokens, the signature input is the base64url
+ * text). A page token never grants a path outside `p`: the pages route
+ * resolves every requested asset under the root and re-checks containment.
+ */
+export interface PageTokenPayload {
+  /** Resolved (realpath'd) page root directory. */
+  p: string;
+  /** Entry file relative to `p` (no separators). */
+  i: string;
+  /** Expiry, ms since epoch. */
+  e: number;
+  /** Tenant id. */
+  t: string;
+  /**
+   * Single-file hosting: when 1, ONLY the entry file is servable (the caller
+   * handed the tool one .html file, not a page directory), so the token can
+   * never expose sibling files that happen to share the parent directory.
+   */
+  s?: 0 | 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +158,65 @@ export function verifyFileToken(
   ) {
     return null;
   }
+  if (payload.t !== tenantId) return null;
+  if (payload.e <= now) return null;
+  return payload;
+}
+
+// ---------------------------------------------------------------------------
+// Mobile page tokens
+// ---------------------------------------------------------------------------
+
+/** Entry file names are plain file names: no separators, no traversal. */
+const PAGE_ENTRY_NAME_RE = /^[A-Za-z0-9._-]{1,128}$/;
+
+export function signPageToken(
+  secret: string,
+  tenantId: string,
+  pageRoot: string,
+  entry: string,
+  expiresAt: number,
+  singleFile: boolean = false,
+): string {
+  const payload = base64urlEncode(JSON.stringify({
+    p: pageRoot,
+    i: entry,
+    e: expiresAt,
+    t: tenantId,
+    ...(singleFile ? { s: 1 } : {}),
+  }));
+  return `${payload}.${hmacSignature(secret, payload)}`;
+}
+
+export function verifyPageToken(
+  secret: string,
+  tenantId: string,
+  token: string,
+  now: number = Date.now(),
+): PageTokenPayload | null {
+  const parts = splitToken(token);
+  if (!parts) return null;
+  if (!constantTimeEqual(hmacSignature(secret, parts.payload), parts.signature)) return null;
+  const decoded = base64urlDecode(parts.payload);
+  if (!decoded) return null;
+  let payload: PageTokenPayload;
+  try {
+    payload = JSON.parse(decoded.toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (
+    !payload
+    || typeof payload !== 'object'
+    || typeof payload.p !== 'string'
+    || typeof payload.i !== 'string'
+    || typeof payload.e !== 'number'
+    || typeof payload.t !== 'string'
+  ) {
+    return null;
+  }
+  if (!PAGE_ENTRY_NAME_RE.test(payload.i) || payload.i === '.' || payload.i === '..' || payload.i.startsWith('.')) return null;
+  if (payload.s !== undefined && payload.s !== 0 && payload.s !== 1) return null;
   if (payload.t !== tenantId) return null;
   if (payload.e <= now) return null;
   return payload;
