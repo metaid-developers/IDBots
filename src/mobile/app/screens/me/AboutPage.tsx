@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { t } from '../../../i18n';
 import { CONTRACT_VERSION } from '../../../bridge/types';
 import { getMobileElectron } from '../../appBridge';
+import { getNativeAdapter } from '../../../native/nativeAdapter';
 import { SecondaryPageShell } from './SecondaryPageShell';
 
 /**
@@ -17,6 +18,7 @@ const LEGAL_LINKS: ReadonlyArray<{ key: string; href: string; testId: string }> 
 ];
 
 export function AboutPage(props: { onBack: () => void }): JSX.Element {
+  const nativeApp = typeof window === 'undefined' ? null : getNativeAdapter().getAppVersion();
   const [appVersion, setAppVersion] = useState<string | null>(null);
   useEffect(() => {
     void getMobileElectron()
@@ -32,11 +34,19 @@ export function AboutPage(props: { onBack: () => void }): JSX.Element {
           alt="IDBots"
           className="h-16 w-16 rounded-2xl border border-[var(--border-color)] object-cover"
         />
+        {nativeApp ? (
+          <p className="text-sm text-[var(--text-secondary)]" data-testid="about-native-app-version">
+            {t('mobile.me.nativeVersion', { version: nativeApp.versionName, build: nativeApp.versionCode })}
+          </p>
+        ) : null}
         <p className="text-sm text-[var(--text-secondary)]" data-testid="about-app-version">
-          {t('mobile.me.appVersion', { version: appVersion ?? '—' })}
+          {t('mobile.me.cloudVersion', { version: appVersion ?? '—' })}
         </p>
         <p className="text-sm text-[var(--text-secondary)]">
-          {t('mobile.me.contractVersion', { version: CONTRACT_VERSION })}
+          {t('mobile.me.protocolVersion', { version: CONTRACT_VERSION })}
+        </p>
+        <p className="max-w-xs text-center text-xs text-[var(--text-secondary)]">
+          {t('mobile.me.protocolHint')}
         </p>
       </div>
 

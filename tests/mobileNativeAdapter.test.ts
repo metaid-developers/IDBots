@@ -47,6 +47,7 @@ test('browser and PWA adapters need no native bridge and retain web external beh
   const fake = target();
   const adapter = createNativeAdapter(fake.value);
   assert.equal(adapter.isNative, false);
+  assert.equal(adapter.getAppVersion(), null);
   assert.deepEqual(adapter.getCapabilities(), capabilities({
     appState: false,
     backButton: false,
@@ -58,6 +59,14 @@ test('browser and PWA adapters need no native bridge and retain web external beh
   assert.deepEqual(fake.assigned, ['alipays://platformapi/startapp?saId=10000007']);
   assert.equal(adapter.onAppStateChange(() => undefined)(), undefined);
   assert.equal(adapter.onBackButton(() => false)(), undefined);
+});
+
+test('native app version is exposed only when the shell provides valid package facts', () => {
+  const adapter = createNativeAdapter(target(nativeBridge({ appVersion: '0.1.6', appVersionCode: 8 })).value);
+  assert.deepEqual(adapter.getAppVersion(), { versionName: '0.1.6', versionCode: 8 });
+  assert.equal(createNativeAdapter(target(nativeBridge()).value).getAppVersion(), null);
+  assert.equal(createNativeAdapter(target(nativeBridge({ appVersion: '', appVersionCode: 7 })).value).getAppVersion(), null);
+  assert.equal(createNativeAdapter(target(nativeBridge({ appVersion: '0.1.5', appVersionCode: 0 })).value).getAppVersion(), null);
 });
 
 test('an absent or mismatched native version cannot capture web fallback behavior', async () => {
