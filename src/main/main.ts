@@ -6054,6 +6054,15 @@ const startStartupNightlyServices = (): void => {
     reportDir: path.join(app.getPath('userData'), 'daily-reports'),
     resolveSessionCwd: (baseWorkingDirectory, metabotId) =>
       resolveSessionWorkingDirectory(baseWorkingDirectory, metabotId),
+    onResult: (result) => {
+      getNotificationService().recordDailyReport({
+        runId: result.runId,
+        metabotId: result.metabotId,
+        sessionId: result.status === 'completed' ? result.sessionId : null,
+        outcome: result.status === 'completed' ? 'completed' : 'failed',
+        language: getPersistedAppLanguage(),
+      });
+    },
   });
 
   // Memory hygiene ("记忆整理"): the deterministic compression stroke that
@@ -10625,8 +10634,8 @@ const getLongTermTaskStore = () => {
     // cheap, and it keeps this hook correct on its own instead of depending on
     // every owner path remembering to broadcast.
     longTermTaskStore.onSubtaskStatusChange((change) => {
+      const detailForFocus = longTermTaskStore?.getTask(change.taskId) ?? null;
       try {
-        const detailForFocus = longTermTaskStore?.getTask(change.taskId) ?? null;
         if (detailForFocus?.definitionSessionId && getStudioChiefOfStaffService().isStudioOwnerSession(detailForFocus.definitionSessionId)) {
           getStudioChiefOfStaffService().focusTask(detailForFocus.definitionSessionId, detailForFocus.id);
         }
@@ -10634,6 +10643,29 @@ const getLongTermTaskStore = () => {
         // Focus update is best-effort.
       }
       broadcastLongTermTaskUpdate([change.taskId], `subtask_${change.reason}`);
+      if (detailForFocus && (
+        change.status === 'waiting_owner'
+        || (change.status === 'accepted' && detailForFocus.stage === 'done')
+        || change.status === 'rejected'
+      )) {
+        try {
+          const subtask = detailForFocus.subtasks.find((item) => item.id === change.subtaskId);
+          getNotificationService().recordLongTermTask({
+            taskId: detailForFocus.id,
+            subtaskId: change.subtaskId,
+            reason: change.reason,
+            title: subtask && subtask.title !== detailForFocus.title
+              ? `${detailForFocus.title} · ${subtask.title}`
+              : detailForFocus.title,
+            metabotId: detailForFocus.currentAssigneeMetabotId ?? null,
+            sessionId: detailForFocus.definitionSessionId,
+            outcome: change.status === 'waiting_owner' ? 'waiting_owner' : change.status === 'accepted' ? 'completed' : 'failed',
+            language: getPersistedAppLanguage(),
+          });
+        } catch (error) {
+          console.warn('[Notification] Failed to record long-term task transition:', error);
+        }
+      }
       if (change.status === 'waiting_owner') {
         try {
           const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
@@ -11980,6 +12012,19 @@ const getSurfService = (): SurfService => {
       },
       broadcast: (payload) => {
         broadcastToRenderers(SURF_STATUS_CHANNEL, payload);
+        if (payload.status !== 'running') {
+          try {
+            getNotificationService().recordSurfRun({
+              runId: payload.runId,
+              metabotId: payload.metabotId,
+              botName: getMetabotStore().getMetabotById(payload.metabotId)?.name ?? 'Bot',
+              outcome: payload.status === 'done' ? 'done' : 'failed',
+              language: getPersistedAppLanguage(),
+            });
+          } catch (error) {
+            console.warn('[Notification] Failed to record Surf terminal event:', error);
+          }
+        }
       },
       // Dream review P3: validate the surf bot's model binding BEFORE the
       // pipeline can create an orphan [编排任务] session (13/13 pre-dream

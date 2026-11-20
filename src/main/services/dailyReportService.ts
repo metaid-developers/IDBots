@@ -131,6 +131,7 @@ export interface DailyReportServiceDeps {
   reportDir: string;
   /** resolveSessionWorkingDirectory(base, metabotId) — twin workspace cwd. */
   resolveSessionCwd: (baseWorkingDirectory: string, metabotId: number | null) => string;
+  onResult?: (result: DailyReportRunNowResult & { runId: string; metabotId: number }) => void;
   now?: () => Date;
   /** Service-start anchor for the catch-up rule (defaults to real start). */
   serviceStartedAtMs?: number;
@@ -444,11 +445,21 @@ export const startDailyReportService = (deps: DailyReportServiceDeps): DailyRepo
         },
       };
       deps.dailyReportStore.markCompleted(run.id, sessionId, JSON.stringify(stats), nowMs);
+      try {
+        deps.onResult?.({ status: 'completed', sessionId, runId: String(run.id), metabotId: twin.id });
+      } catch (error) {
+        log(`${dateLabel}: notification failed soft: ${error instanceof Error ? error.message : String(error)}`);
+      }
       log(`${dateLabel}: report delivered (session ${sessionId}, fallback=${generated.usedFallback}).`);
       return { status: 'completed', sessionId };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       deps.dailyReportStore.markFailed(run.id, message, nowMs);
+      try {
+        deps.onResult?.({ status: 'failed', error: message, runId: String(run.id), metabotId: twin.id });
+      } catch (notificationError) {
+        log(`${dateLabel}: notification failed soft: ${notificationError instanceof Error ? notificationError.message : String(notificationError)}`);
+      }
       const terminal = classifyDreamError(error) === 'terminal';
       log(`${dateLabel}: report failed (${terminal ? 'terminal' : 'retryable'}): ${message}`);
       return { status: 'failed', error: message };

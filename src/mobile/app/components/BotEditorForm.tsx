@@ -16,6 +16,7 @@ import {
   DEFAULT_A2A_MAX_INCOMING_TURNS,
   cooldownMinutes,
 } from '../a2aLimits';
+import { BotAutomationSection, type BotAutomationActions } from '../automation/BotAutomationSection';
 
 /**
  * MetaBot create/edit forms, split per the UE rework (2026-10-29, A5):
@@ -44,7 +45,7 @@ interface BotEditorState {
   outcome: BotOperationResult | null;
 }
 
-type EditorTabKey = 'basic' | 'persona' | 'model' | 'chatSettings' | 'other';
+export type EditorTabKey = 'basic' | 'persona' | 'model' | 'chatSettings' | 'automation' | 'other';
 
 const EFFORT_LEVELS: ReadonlyArray<string> = ['', 'off', 'low', 'high', 'max'];
 
@@ -351,12 +352,18 @@ export function BotEditorForm(props: {
   onClose: () => void;
   /** A6: surfaced so the botEdit page can guard back navigation (IA-PLAN §2.5). */
   onDirtyChange?: (dirty: boolean) => void;
+  automationActions?: BotAutomationActions;
+  onOpenSession?: (sessionId: string) => Promise<boolean>;
+  initialTab?: EditorTabKey;
+  initialSurfRunId?: string;
 }): JSX.Element {
   const { bot, busy, outcome } = props.state;
   const isEdit = Boolean(bot);
-  const tabs: ReadonlyArray<EditorTabKey> = ['basic', 'persona', 'model', 'chatSettings', 'other'];
+  const tabs: ReadonlyArray<EditorTabKey> = isEdit && props.automationActions
+    ? ['basic', 'persona', 'model', 'chatSettings', 'automation', 'other']
+    : ['basic', 'persona', 'model', 'chatSettings', 'other'];
 
-  const [tab, setTab] = useState<EditorTabKey>(isEdit ? 'basic' : 'basic');
+  const [tab, setTab] = useState<EditorTabKey>(props.initialTab ?? 'basic');
 
   const options = [...props.brainOptions];
   if (bot?.llm_id && !options.some((option) => option.modelId === bot.llm_id && option.providerKey === (bot.llm_provider ?? ''))) {
@@ -724,6 +731,17 @@ export function BotEditorForm(props: {
                 </Field>
               </div>
             </div>
+          </div>
+
+          <div data-testid="bot-panel-automation" className={TAB_PANEL_CLASS} style={panelHidden('automation')}>
+            {bot && props.automationActions ? (
+              <BotAutomationSection
+                bot={bot}
+                actions={props.automationActions}
+                onOpenSession={props.onOpenSession}
+                highlightRunId={props.initialSurfRunId}
+              />
+            ) : null}
           </div>
 
           {/* Other: binding notes, fees, live balance. */}

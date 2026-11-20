@@ -23,6 +23,15 @@ test('notification routes round-trip session, task, scheduled run, and notificat
   assert.deepEqual(parseMobileAppRoute('/app/'), { kind: 'root' });
 });
 
+test('automation notification routes preserve the Bot, section, and run', () => {
+  const target = { kind: 'bot_automation', metabotId: 7, section: 'surf', runId: 'surf-run-1' } as const;
+  assert.equal(notificationTargetPath(target), '/app/bots/7/automation?section=surf&runId=surf-run-1');
+  assert.deepEqual(parseMobileAppRoute('/app/bots/7/automation', 'section=surf&runId=surf-run-1'), target);
+  assert.deepEqual(parseMobileAppRoute('/app/bots/7/automation', 'section=daily_report'), {
+    kind: 'bot_automation', metabotId: 7, section: 'daily_report',
+  });
+});
+
 test('login return paths stay local to the mobile app', () => {
   assert.equal(sanitizeMobileReturnPath('/app/notifications/event-1?from=push'), '/app/notifications/event-1?from=push');
   assert.equal(sanitizeMobileReturnPath('https://evil.example/'), '/app/');

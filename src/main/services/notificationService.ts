@@ -19,6 +19,16 @@ const COPY = {
     permissionBody: 'Your Bot needs your input before it can continue.',
     openResult: (title: string) => `Open “${title}” to review the result.`,
     scheduledBody: (title: string) => `Open the run for “${title}”.`,
+    dailyReady: 'Daily report ready',
+    dailyFailed: 'Daily report failed',
+    surfCompleted: 'Surf completed',
+    surfFailed: 'Surf failed',
+    dailyBody: 'Open your Twin daily briefing.',
+    dailyFailedBody: 'Open Automation to review the report failure.',
+    surfBody: (name: string) => `Open the Surf report for “${name}”.`,
+    longTermWaiting: 'Decision needed',
+    longTermFailed: 'Task needs attention',
+    longTermBody: (title: string) => `Open “${title}” to review the work.`,
   },
   zh: {
     workCompleted: '任务已完成',
@@ -29,6 +39,16 @@ const COPY = {
     permissionBody: 'Bot 需要你的确认后才能继续。',
     openResult: (title: string) => `打开“${title}”查看结果。`,
     scheduledBody: (title: string) => `查看“${title}”的运行记录。`,
+    dailyReady: '每日汇报已生成',
+    dailyFailed: '每日汇报失败',
+    surfCompleted: '冲浪已完成',
+    surfFailed: '冲浪失败',
+    dailyBody: '打开 Twin 的每日汇报查看。',
+    dailyFailedBody: '打开自动化页面查看汇报失败原因。',
+    surfBody: (name: string) => `打开“${name}”的冲浪报告。`,
+    longTermWaiting: '需要你处理',
+    longTermFailed: '任务需要关注',
+    longTermBody: (title: string) => `打开“${title}”查看结果。`,
   },
 } as const;
 
@@ -156,6 +176,72 @@ export class NotificationService {
       body: copy.permissionBody,
       priority: 'high',
       target: { kind: 'session', sessionId: input.sessionId },
+    });
+  }
+
+  recordDailyReport(input: { runId: string; metabotId: number; sessionId: string | null; outcome: 'completed' | 'failed'; language?: string }): boolean {
+    const copy = COPY[language(input.language)];
+    const completed = input.outcome === 'completed';
+    return this.record({
+      eventId: `daily_report:${input.runId}`,
+      type: completed ? 'daily_report.completed' : 'daily_report.failed',
+      category: 'report',
+      metabotId: input.metabotId,
+      sessionId: input.sessionId,
+      taskId: null,
+      runId: input.runId,
+      title: completed ? copy.dailyReady : copy.dailyFailed,
+      body: completed ? copy.dailyBody : copy.dailyFailedBody,
+      priority: completed ? 'normal' : 'high',
+      target: completed && input.sessionId
+        ? { kind: 'session', sessionId: input.sessionId }
+        : { kind: 'bot_automation', metabotId: input.metabotId, section: 'daily_report', runId: input.runId },
+    });
+  }
+
+  recordSurfRun(input: { runId: string; metabotId: number; botName: string; outcome: 'done' | 'failed'; language?: string }): boolean {
+    const copy = COPY[language(input.language)];
+    const completed = input.outcome === 'done';
+    return this.record({
+      eventId: `surf:${input.runId}`,
+      type: completed ? 'surf.completed' : 'surf.failed',
+      category: 'report',
+      metabotId: input.metabotId,
+      sessionId: null,
+      taskId: null,
+      runId: input.runId,
+      title: completed ? copy.surfCompleted : copy.surfFailed,
+      body: copy.surfBody(text(input.botName, 160)),
+      priority: completed ? 'normal' : 'high',
+      target: { kind: 'bot_automation', metabotId: input.metabotId, section: 'surf', runId: input.runId },
+    });
+  }
+
+  recordLongTermTask(input: {
+    taskId: string;
+    subtaskId: string;
+    reason: string;
+    title: string;
+    metabotId: number | null;
+    sessionId: string | null;
+    outcome: 'waiting_owner' | 'completed' | 'failed';
+    language?: string;
+  }): boolean {
+    const copy = COPY[language(input.language)];
+    const waiting = input.outcome === 'waiting_owner';
+    const completed = input.outcome === 'completed';
+    return this.record({
+      eventId: `longterm:${input.taskId}:${input.subtaskId}:${input.reason}`,
+      type: waiting ? 'longterm.waiting_owner' : completed ? 'longterm.completed' : 'longterm.failed',
+      category: waiting ? 'action' : 'work',
+      metabotId: input.metabotId,
+      sessionId: input.sessionId,
+      taskId: input.taskId,
+      runId: input.subtaskId,
+      title: waiting ? copy.longTermWaiting : completed ? copy.workCompleted : copy.longTermFailed,
+      body: copy.longTermBody(text(input.title, 200)),
+      priority: completed ? 'normal' : 'high',
+      target: { kind: 'task', taskId: input.taskId },
     });
   }
 

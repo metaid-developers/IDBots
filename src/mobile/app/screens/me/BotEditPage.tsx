@@ -17,6 +17,9 @@ export function BotEditPage(props: {
   onBack: () => void;
   onSaved: () => void;
   onDirtyChange?: (dirty: boolean) => void;
+  onOpenSession?: (sessionId: string) => Promise<boolean>;
+  initialTab?: import('../../components/BotEditorForm').EditorTabKey;
+  initialSurfRunId?: string;
 }): JSX.Element {
   const manager = useMetabots();
   const [busy, setBusy] = useState(false);
@@ -46,6 +49,10 @@ export function BotEditPage(props: {
           catalogError={manager.catalogError}
           getBalance={manager.getBotBalance}
           onDirtyChange={props.onDirtyChange}
+          automationActions={manager}
+          onOpenSession={props.onOpenSession}
+          initialTab={props.initialTab}
+          initialSurfRunId={props.initialSurfRunId}
           onClose={props.onBack}
           onSave={async (input: MobileBotInput) => {
             setBusy(true);

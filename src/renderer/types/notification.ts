@@ -4,7 +4,8 @@ export type AgentNotificationPriority = 'normal' | 'high';
 export type AgentNotificationTarget =
   | { kind: 'session'; sessionId: string }
   | { kind: 'task'; taskId: string }
-  | { kind: 'scheduled_run'; taskId: string; runId: string; sessionId: string | null };
+  | { kind: 'scheduled_run'; taskId: string; runId: string; sessionId: string | null }
+  | { kind: 'bot_automation'; metabotId: number; section: 'surf' | 'daily_report'; runId?: string };
 
 export interface AgentNotification {
   eventId: string;

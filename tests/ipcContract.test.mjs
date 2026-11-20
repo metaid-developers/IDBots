@@ -42,7 +42,7 @@ test('generated IPC contract is fresh (generate-ipc-contract.mjs --check)', () =
 test('contract shape: versions, sorted unique method paths', () => {
   assert.equal(contract.contractVersion, '1.0.0');
   assert.equal(contract.allowlistVersion, allowlist.ALLOWLIST_VERSION);
-  assert.equal(allowlist.ALLOWLIST_VERSION, '1.1.0');
+  assert.equal(allowlist.ALLOWLIST_VERSION, '1.2.0');
   assert.equal(contract.source, 'src/main/preload.ts');
   assert.ok(Array.isArray(contract.methods) && contract.methods.length > 0);
 
@@ -276,10 +276,20 @@ test('`02` invoke channels exist in the data: WS-A new channels + broad P1 spot-
     'chainBackup:restore',
     'app:getAutoLaunch',
     'app:setAutoLaunch',
+  ]) {
+    assert.equal(allowlist.lookupInvokeChannel(channel).tier, 'N', `${channel} must be N per \`02\``);
+  }
+
+  for (const channel of [
+    'surf:listRuns',
+    'surf:runNow',
+    'surf:listRunsByDay',
+    'surf:listRunDays',
+    'dailyReport:runNow',
     'app:getExperimentalAutomation',
     'app:setExperimentalAutomation',
   ]) {
-    assert.equal(allowlist.lookupInvokeChannel(channel).tier, 'N', `${channel} must be N per \`02\``);
+    assert.equal(allowlist.lookupInvokeChannel(channel).tier, 'P1', `${channel} must be P1 per CR-WSE-003`);
   }
 });
 

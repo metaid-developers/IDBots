@@ -1,6 +1,5 @@
-// IPC allowlist data — encodes docs/cloud-mobile/02-ipc-allowlist-v1.md
-// (allowlist version 1.0.4 per CR-WSA-001 + CR-WSA-002 + CR-WSA-003 + CR-WSA-004 + CR-WSE-001; frozen at 1.0.0 on
-// 2026-10-15) as data, per REQ-A-17.
+// IPC allowlist data — encodes docs/cloud-mobile/02-ipc-allowlist-v1.md and
+// approved change requests through CR-WSE-003, per REQ-A-17.
 //
 // Every tier/restriction/timeout assignment in the FROZEN sections of this
 // file traces to a row of `02`. `02`'s header is itself a rule: "Everything
@@ -33,8 +32,8 @@ export interface AllowlistEntry {
   note?: string;
 }
 
-/** Allowlist version from `02` (frozen at 1.0.0 on 2026-10-15; 1.0.4 = CR-WSE-001). */
-export const ALLOWLIST_VERSION = '1.1.0';
+/** Allowlist version after approved CR-WSE-003 mobile automation additions. */
+export const ALLOWLIST_VERSION = '1.2.0';
 
 /** C2 Limits: default invoke timeout. Channel-specific overrides live on entries. */
 export const DEFAULT_INVOKE_TIMEOUT_MS = 120_000;
@@ -278,10 +277,10 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'dream:listCapabilityDrafts': { tier: 'P2' },
   'dream:listTelemetryDaily': { tier: 'P2' },
   'dream:runNow': { tier: 'P2' },
-  'surf:listRuns': { tier: 'P2' },
-  'surf:runNow': { tier: 'P2' },
-  'surf:listRunsByDay': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop-only surf day index for the reports calendar, 2026-11-18); read-only half-open UTC-day query the mobile gateway does not use.' },
-  'surf:listRunDays': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop-only surf calendar marker days, 2026-11-18); read-only distinct-day list the mobile gateway does not use.' },
+  'surf:listRuns': { tier: 'P1', note: 'CR-WSE-003: mobile Surf run history and running-state recovery.' },
+  'surf:runNow': { tier: 'P1', note: 'CR-WSE-003: explicit owner-triggered run on the existing tenant Surf service.' },
+  'surf:listRunsByDay': { tier: 'P1', note: 'CR-WSE-003: read-only half-open UTC-day report query.' },
+  'surf:listRunDays': { tier: 'P1', note: 'CR-WSE-003: read-only distinct report-day list.' },
   'memoryHygiene:get': { tier: 'P2' },
   'memoryHygiene:setConfig': { tier: 'P2' },
   'memoryHygiene:runNow': { tier: 'P2' },
@@ -347,15 +346,15 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'api:stream:cancel': { tier: 'N', note: '`02`: generic outbound HTTP proxy.' },
   'app:getAutoLaunch': { tier: 'N', note: '`02`: desktop-only.' },
   'app:setAutoLaunch': { tier: 'N', note: '`02`: desktop-only.' },
-  'app:getExperimentalAutomation': { tier: 'N', note: '`02`: desktop-only.' },
-  'app:setExperimentalAutomation': { tier: 'N', note: '`02`: desktop-only.' },
+  'app:getExperimentalAutomation': { tier: 'P1', note: 'CR-WSE-003: read the cloud automation gate; never implies control of the phone or desktop.' },
+  'app:setExperimentalAutomation': { tier: 'P1', note: 'CR-WSE-003: explicit owner change of the cloud automation gate.' },
   'studioLiveStage:get': { tier: 'N', note: 'Studio Live Stage settings; desktop-only.' },
   'studioLiveStage:set': { tier: 'N', note: 'Studio Live Stage settings; desktop-only.' },
   'studio:liveStage:getStageEntry': { tier: 'N', note: 'Persistent Live Stage entry URI for draft prewarm; desktop-only.' },
   'studio:liveStage:showSession': { tier: 'N', note: 'Reveal an existing Studio session on its Live Stage; desktop-only.' },
   'studio:liveStage:prepareDraft': { tier: 'N', note: 'Patch the prewarmed draft tab with bot identity; desktop-only.' },
   'app:getDataDirectory': { tier: 'N', note: 'feat/legacy-data-recovery ②: desktop Settings page data-directory visibility; desktop-only.' },
-  'dailyReport:runNow': { tier: 'N', note: '`02`: desktop-only — spawns a local Twin report session.' },
+  'dailyReport:runNow': { tier: 'P1', note: 'CR-WSE-003: existing tenant Twin report pipeline, preserving experimental/per-Twin gates and result session.' },
 };
 
 // ---------------------------------------------------------------------------
