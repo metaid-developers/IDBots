@@ -79,6 +79,35 @@ test('swapWireProtocol round-trips SWAP_CLAIM_V1, SWAP_STATUS_V1, and SWAP_COMPL
   });
   const parsedCompleted = parseSwapWireMessage(completedMsg);
   assert.equal(parsedCompleted?.type, 'SWAP_COMPLETED_V1');
+
+  // Contract C5.1 wire status "sent" parses cleanly; unknown status is ignored
+  const sentWireMsg = formatSwapWireMessage({
+    type: 'SWAP_COMPLETED_V1',
+    requestId: 'req-sent',
+    collectionSlug: 'metabot-avatar',
+    collectionPinId: TARGET_PIN,
+    results: [
+      {
+        tokenIndex: '0',
+        status: 'sent' as unknown as 'completed',
+        itemPinId: ITEM_PIN_1,
+        cover: 'metafile://cover0',
+      },
+      {
+        tokenIndex: '1',
+        status: 'bogus_status' as unknown as 'completed',
+        itemPinId: ITEM_PIN_2,
+      },
+    ],
+  });
+  const parsedSent = parseSwapWireMessage(sentWireMsg);
+  assert.equal(parsedSent?.type, 'SWAP_COMPLETED_V1');
+  if (parsedSent?.type === 'SWAP_COMPLETED_V1') {
+    assert.equal(parsedSent.results.length, 1);
+    assert.equal(parsedSent.results[0].tokenIndex, '0');
+    assert.equal(parsedSent.results[0].status, 'completed');
+    assert.equal(parsedSent.results[0].cover, 'metafile://cover0');
+  }
 });
 
 test('SwapOrderTrackerService schema migration is idempotent across restarts and cleans up handles safely', () => {
@@ -253,6 +282,88 @@ test('SwapOrderTrackerService MetaSo polling fallback detects creatorMinted arri
     assert.equal(secondPass.notified, 0);
     assert.equal(emitted.length, 1);
   } finally {
+    disposeDb(db, dir);
+  }
+});
+
+test('SwapOrderTrackerService default MetaSo fetcher paginates cursor across >100 items', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'swap-order-tracker-paginate-'));
+  const db = createNativeSqliteDatabase(path.join(dir, 'tracker.sqlite'));
+  const emitted: unknown[] = [];
+
+  const prevFetch = globalThis.fetch;
+  let pageRequests = 0;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes('/api/mrc721/address/item')) {
+      pageRequests += 1;
+      const u = new URL(url);
+      const cursor = u.searchParams.get('cursor');
+      if (!cursor) {
+        return new Response(
+          JSON.stringify({
+            code: 1,
+            data: {
+              list: [
+                {
+                  itemPinId: ITEM_PIN_1,
+                  collectionPinId: TARGET_PIN,
+                  name: 'MetaBot Avatar #1',
+                  creatorMinted: true,
+                },
+              ],
+              cursor: 'page2',
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          code: 1,
+          data: {
+            list: [
+              {
+                itemPinId: ITEM_PIN_2,
+                collectionPinId: TARGET_PIN,
+                name: 'MetaBot Avatar #0',
+                creatorMinted: true,
+                cover: 'metafile://cover0',
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+
+  try {
+    const tracker = new SwapOrderTrackerService(db, () => {}, {
+      emitToRenderer: (channel, payload) => {
+        if (channel === 'nftSwap:orderCompleted') emitted.push(payload);
+      },
+    });
+
+    tracker.registerOrder({
+      requestId: 'req-page-1',
+      metabotId: 5,
+      stationGlobalMetaId: STATION_GMID,
+      collectionSlug: 'metabot-avatar',
+      targetCollectionPinId: TARGET_PIN,
+      recipientAddress: RECIPIENT_ADDR,
+      items: [{ tokenIndex: '0', depositTxId: 'ee'.repeat(32) }],
+    });
+
+    const pass = await tracker.pollPendingOrdersOnce();
+    assert.equal(pass.checked, 1);
+    assert.equal(pass.notified, 1);
+    assert.equal(pageRequests, 2);
+    assert.equal(tracker.getOrder('req-page-1')?.status, 'completed');
+    assert.equal(emitted.length, 1);
+  } finally {
+    globalThis.fetch = prevFetch;
     disposeDb(db, dir);
   }
 });

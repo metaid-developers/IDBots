@@ -207,6 +207,24 @@ export class SwapLedger {
   }
 
   /**
+   * Look up the ledger row matching an exact (collection_slug, tokenIndex,
+   * deposit_txid) tuple so a claim cannot attach to an unrelated deposit for
+   * the same tokenIndex.
+   */
+  rowByDepositTx(collectionOrGenesis, tokenIndex, depositTxid) {
+    const slug = resolveCollectionSlugKey(collectionOrGenesis);
+    const txid = String(depositTxid ?? '').trim().toLowerCase();
+    if (!txid) return null;
+    return (
+      this.db
+        .prepare(
+          'SELECT * FROM swap_ledger WHERE collection_slug = ? AND token_index = ? AND LOWER(deposit_txid) = ? ORDER BY id DESC LIMIT 1',
+        )
+        .get(slug, tokenIndex, txid) ?? null
+    );
+  }
+
+  /**
    * Rows that already carry a minted pin for this (collection_slug, tokenIndex)
    * (mint_pending onward). Used to prove "one tokenIndex per collection is
    * swapped at most once in its whole lifetime" before mint/adoption (PRD §6).

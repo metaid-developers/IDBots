@@ -160,6 +160,11 @@ export function buildNftSwapAgentTools(deps: {
       token_indices: z.array(z.string()).optional().describe('Alias for tokenIndexes'),
       feeRate: z.number().int().positive().optional().describe('Optional MVC fee rate in sat/vB'),
       fee_rate: z.number().int().positive().optional().describe('Alias for feeRate'),
+      retryClaimRequestId: z
+        .string()
+        .optional()
+        .describe('Resend SWAP_CLAIM_V1 for an existing tracked swap order without re-transferring legacy NFTs'),
+      retry_claim_request_id: z.string().optional().describe('Alias for retryClaimRequestId'),
     },
     async (args: {
       collectionSlug?: string;
@@ -174,6 +179,8 @@ export function buildNftSwapAgentTools(deps: {
       token_indices?: string[];
       feeRate?: number;
       fee_rate?: number;
+      retryClaimRequestId?: string;
+      retry_claim_request_id?: string;
     }) => {
       const metabotId = resolveMetabotId(sessionId);
       if (!metabotId) {
@@ -192,6 +199,98 @@ export function buildNftSwapAgentTools(deps: {
         );
       }
 
+      const retryRequestId = (args.retryClaimRequestId ?? args.retry_claim_request_id)?.trim() ?? '';
+      if (retryRequestId) {
+        if (!control.getOrder) {
+          return textResult('Failed: swap order lookup is unavailable for retryClaimRequestId.', true);
+        }
+        const existingOrder = control.getOrder(retryRequestId);
+        if (!existingOrder) {
+          return textResult(`Failed: swap order ${retryRequestId} was not found.`, true);
+        }
+        if (existingOrder.metabotId !== metabotId) {
+          return textResult(
+            `Failed: swap order ${retryRequestId} belongs to MetaBot #${existingOrder.metabotId}, not #${metabotId}.`,
+            true,
+          );
+        }
+        if (!existingOrder.items.length) {
+          return textResult(`Failed: swap order ${retryRequestId} has no deposited items to claim.`, true);
+        }
+        const retryStation = listed.stations.find(
+          (s) => s.globalMetaId.trim() === existingOrder.stationGlobalMetaId.trim(),
+        );
+        const retrySeries = retryStation?.swapConfig?.supportedSeries.find(
+          (s) => s.collectionSlug.trim().toLowerCase() === existingOrder.collectionSlug.trim().toLowerCase(),
+        );
+        if (!retryStation || !retrySeries || !retryStation.swapConfig) {
+          return textResult(
+            `CA verification refused retry: station ${existingOrder.stationGlobalMetaId} or series ${existingOrder.collectionSlug} is no longer active in the official CA registry.`,
+            true,
+          );
+        }
+        const retryVerified = await verifyStation({
+          stationGlobalMetaId: retryStation.globalMetaId,
+          vaultAddress: retryStation.swapConfig.vaultAddress.trim(),
+          codehash: retrySeries.codehash,
+          genesis: retrySeries.genesis,
+        });
+        if (retryVerified.verified !== true) {
+          const failure = retryVerified as { verified: false; reason: string };
+          return textResult(`CA verification refused retry: ${failure.reason}`, true);
+        }
+
+        const recipientAddress = existingOrder.recipientAddress || identity.mvcAddress;
+        const retryClaimMessage = formatSwapWireMessage({
+          type: 'SWAP_CLAIM_V1',
+          requestId: existingOrder.requestId,
+          collectionSlug: retryVerified.seriesConfig.collectionSlug,
+          codehash: retryVerified.seriesConfig.codehash,
+          genesis: retryVerified.seriesConfig.genesis,
+          recipientAddress,
+          recipientGlobalMetaId: identity.globalMetaId,
+          items: existingOrder.items,
+        });
+
+        try {
+          const sent = await control.sendSwapClaim({
+            metabotId,
+            toGlobalMetaId: retryVerified.stationEntry.globalMetaId,
+            content: retryClaimMessage,
+          });
+          return textResult(
+            JSON.stringify(
+              {
+                ok: true,
+                retried: true,
+                requestId: existingOrder.requestId,
+                collectionSlug: retryVerified.seriesConfig.collectionSlug,
+                stationGlobalMetaId: retryVerified.stationEntry.globalMetaId,
+                items: existingOrder.items,
+                claimPinId: sent.pinId,
+                claimTxIds: sent.txids,
+              },
+              null,
+              2,
+            ),
+          );
+        } catch (err) {
+          return textResult(
+            JSON.stringify(
+              {
+                ok: false,
+                retried: true,
+                requestId: existingOrder.requestId,
+                error: err instanceof Error ? err.message : String(err),
+              },
+              null,
+              2,
+            ),
+            true,
+          );
+        }
+      }
+
       const wantSlug = (args.collectionSlug ?? args.collection_slug)?.trim().toLowerCase() ?? '';
       const wantStation = (args.stationGlobalMetaId ?? args.station_global_metaid)?.trim() ?? '';
       const wantVault = (args.vaultAddress ?? args.vault_address)?.trim() ?? '';
@@ -200,21 +299,76 @@ export function buildNftSwapAgentTools(deps: {
       const requestedTokenList = args.tokenIndexes ?? args.token_indices;
       const effectiveFeeRate = args.feeRate ?? args.fee_rate;
 
+      let prefetchedBalance: Awaited<ReturnType<NftSwapToolsControl['getMvcNftBalance']>> | null = null;
       let matchedStation: (typeof listed.stations)[number] | undefined;
       let matchedSeries: NonNullable<(typeof listed.stations)[number]['swapConfig']>['supportedSeries'][number] | undefined;
 
-      for (const station of listed.stations) {
-        if (wantStation && station.globalMetaId.trim() !== wantStation) continue;
-        const seriesList = station.swapConfig?.supportedSeries ?? [];
-        for (const series of seriesList) {
-          if (wantSlug && series.collectionSlug.trim().toLowerCase() !== wantSlug) continue;
-          if (wantCodehash && series.codehash.trim().toLowerCase() !== wantCodehash) continue;
-          if (wantGenesis && series.genesis.trim().toLowerCase() !== wantGenesis) continue;
-          matchedStation = station;
-          matchedSeries = series;
-          break;
+      if (!wantSlug && !wantCodehash && !wantGenesis) {
+        prefetchedBalance = await control.getMvcNftBalance(identity.mvcAddress);
+        const heldSeriesMatches: Array<{
+          station: (typeof listed.stations)[number];
+          series: NonNullable<(typeof listed.stations)[number]['swapConfig']>['supportedSeries'][number];
+          heldCount: number;
+        }> = [];
+        const seenSeriesKey = new Set<string>();
+
+        for (const station of listed.stations) {
+          if (wantStation && station.globalMetaId.trim() !== wantStation) continue;
+          const seriesList = station.swapConfig?.supportedSeries ?? [];
+          for (const series of seriesList) {
+            const heldItems = (prefetchedBalance.collections ?? []).filter(
+              (col) =>
+                col.codeHash?.trim().toLowerCase() === series.codehash.trim().toLowerCase() &&
+                col.genesis?.trim().toLowerCase() === series.genesis.trim().toLowerCase() &&
+                (col.items?.length ?? 0) > 0,
+            );
+            const heldCount = heldItems.reduce((sum, col) => sum + (col.items?.length ?? 0), 0);
+            if (heldCount <= 0) continue;
+            const dedupKey = `${station.globalMetaId.trim()}|${series.collectionSlug.trim().toLowerCase()}|${series.codehash.trim().toLowerCase()}|${series.genesis.trim().toLowerCase()}`;
+            if (seenSeriesKey.has(dedupKey)) continue;
+            seenSeriesKey.add(dedupKey);
+            heldSeriesMatches.push({ station, series, heldCount });
+          }
         }
-        if (matchedSeries) break;
+
+        if (heldSeriesMatches.length === 0) {
+          const availableSlugs = listed.stations.flatMap((s) =>
+            (s.swapConfig?.supportedSeries ?? []).map((sr) => sr.collectionSlug),
+          );
+          return textResult(
+            `No held legacy MetaContract collectibles at ${identity.mvcAddress} match any active CA-certified swap series (${availableSlugs.join(', ') || 'none'}).`,
+            true,
+          );
+        }
+        if (heldSeriesMatches.length > 1) {
+          const summary = heldSeriesMatches
+            .map(
+              (m) =>
+                `${m.series.collectionSlug} (${m.heldCount} item(s), station=${m.station.globalMetaId})`,
+            )
+            .join('; ');
+          return textResult(
+            `Multiple CA-certified legacy series found in ${identity.mvcAddress}: ${summary}. Please call nft_swap_submit_batch separately with collectionSlug specified for the series you want to swap.`,
+            true,
+          );
+        }
+
+        matchedStation = heldSeriesMatches[0].station;
+        matchedSeries = heldSeriesMatches[0].series;
+      } else {
+        for (const station of listed.stations) {
+          if (wantStation && station.globalMetaId.trim() !== wantStation) continue;
+          const seriesList = station.swapConfig?.supportedSeries ?? [];
+          for (const series of seriesList) {
+            if (wantSlug && series.collectionSlug.trim().toLowerCase() !== wantSlug) continue;
+            if (wantCodehash && series.codehash.trim().toLowerCase() !== wantCodehash) continue;
+            if (wantGenesis && series.genesis.trim().toLowerCase() !== wantGenesis) continue;
+            matchedStation = station;
+            matchedSeries = series;
+            break;
+          }
+          if (matchedSeries) break;
+        }
       }
 
       if (!matchedStation || !matchedSeries || !matchedStation.swapConfig) {
@@ -236,7 +390,7 @@ export function buildNftSwapAgentTools(deps: {
         return textResult(`CA verification refused swap: ${failure.reason}`, true);
       }
 
-      const nftBalance = await control.getMvcNftBalance(identity.mvcAddress);
+      const nftBalance = prefetchedBalance ?? (await control.getMvcNftBalance(identity.mvcAddress));
       const matchingCollections = (nftBalance.collections ?? []).filter(
         (col) =>
           col.codeHash?.trim().toLowerCase() === verified.seriesConfig.codehash.toLowerCase() &&

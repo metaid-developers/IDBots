@@ -14,7 +14,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { ISSUER_CONFIG } from './issuer-config.mjs';
-import { albumFromSeries, resolveSeries } from './series-registry.mjs';
+import { albumFromSeries, registerSeries, resolveSeries } from './series-registry.mjs';
 import { SwapLedger } from './swap-ledger.mjs';
 import { SwapEngineError } from './swap-engine.mjs';
 
@@ -78,6 +78,23 @@ export function resolveLedgerPath(userDataPath, args) {
  * WITHOUT touching the app build. Read-only; the row never contains key
  * material (addresses and constants only).
  */
+export function registerConfiguredSeries(config) {
+  const list = Array.isArray(config?.series) ? config.series : [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const collectionSlug = String(item.collectionSlug ?? '').trim().toLowerCase();
+    const legacyGenesis = String(item.legacyGenesis ?? item.genesis ?? '').trim().toLowerCase();
+    const legacyCodeHash = String(item.legacyCodeHash ?? item.codeHash ?? item.codehash ?? '').trim().toLowerCase();
+    if (!collectionSlug || !legacyGenesis || !legacyCodeHash) continue;
+    registerSeries({
+      ...item,
+      collectionSlug,
+      legacyGenesis,
+      legacyCodeHash,
+    });
+  }
+}
+
 export function readPilotConfig(userDataPath) {
   const dbPath = path.join(userDataPath, APP_DB_FILENAME);
   if (!existsSync(dbPath)) {
@@ -95,7 +112,9 @@ export function readPilotConfig(userDataPath) {
         `cowork_config key ${PILOT_CONFIG_KEY} is absent — M0 restore-issuer has not run against this userData`,
       );
     }
-    return JSON.parse(String(row.value));
+    const parsed = JSON.parse(String(row.value));
+    registerConfiguredSeries(parsed);
+    return parsed;
   } finally {
     db.close();
   }

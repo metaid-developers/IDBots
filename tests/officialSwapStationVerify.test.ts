@@ -268,3 +268,160 @@ test('S-01: nft_swap_submit_batch blocks forged station/vault with zero confirma
   assert.equal(transferCalls, 0);
   assert.equal(privateMsgCalls, 0);
 });
+
+test('P0-3 & P1-2: nft_swap_submit_batch auto-matches single held series, disambiguates multi-series, and supports retryClaimRequestId', async () => {
+  const CODEHASH_2 = 'dd'.repeat(20);
+  const GENESIS_2 = 'ee'.repeat(20);
+  const TARGET_PIN_2 = `${'dd'.repeat(32)}i0`;
+  const multiRegistry = makeRegistry({
+    officialBots: [
+      {
+        globalMetaId: STATION_GMID,
+        mvcAddress: VAULT_ADDR,
+        role: 'swap_station',
+        badgeType: 'official_swap_station',
+        badgeLabel: '官方兑换站',
+        swapConfig: {
+          vaultAddress: VAULT_ADDR,
+          supportedSeries: [
+            {
+              collectionSlug: 'metabot-avatar',
+              targetCollectionPinId: TARGET_PIN,
+              codehash: CODEHASH,
+              genesis: GENESIS,
+              maxTokenIndex: 9559,
+              minConfirmations: 1,
+            },
+            {
+              collectionSlug: 'second-series',
+              targetCollectionPinId: TARGET_PIN_2,
+              codehash: CODEHASH_2,
+              genesis: GENESIS_2,
+              maxTokenIndex: 500,
+              minConfirmations: 1,
+            },
+          ],
+        },
+        active: true,
+      },
+    ],
+  });
+
+  let heldMode: 'second-only' | 'both' = 'second-only';
+  let confirmCalls = 0;
+  let transferCalls = 0;
+  let sendClaimCalls = 0;
+  let lastClaimContent = '';
+  const storedOrders = new Map<string, any>();
+
+  const toolsByName = new Map<string, (args: unknown) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>>();
+  buildNftSwapAgentTools({
+    tool: (name, _desc, _schema, handler) => {
+      toolsByName.set(name, handler as (args: unknown) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>);
+      return { name };
+    },
+    sessionId: 'sess-p03',
+    resolveMetabotId: () => 2,
+    confirmBatchSwap: async () => {
+      confirmCalls += 1;
+      return true;
+    },
+    control: {
+      getMetabotIdentity: () => ({
+        name: 'Twin2',
+        mvcAddress: '1TwinAddr22222222222222222222222222',
+        globalMetaId: 'idq1twin20000000000000000000000000000000',
+      }),
+      getMvcNftBalance: async () =>
+        heldMode === 'second-only'
+          ? {
+              collections: [
+                {
+                  seriesName: 'Second Series',
+                  codeHash: CODEHASH_2,
+                  genesis: GENESIS_2,
+                  items: [{ tokenIndex: '7', name: 'Second Series #7' }],
+                },
+              ],
+            }
+          : {
+              collections: [
+                {
+                  seriesName: 'MetaBot Avatar',
+                  codeHash: CODEHASH,
+                  genesis: GENESIS,
+                  items: [{ tokenIndex: '101', name: 'MetaBot Avatar #101' }],
+                },
+                {
+                  seriesName: 'Second Series',
+                  codeHash: CODEHASH_2,
+                  genesis: GENESIS_2,
+                  items: [{ tokenIndex: '7', name: 'Second Series #7' }],
+                },
+              ],
+            },
+      transferMvcNft: async ({ tokenIndex }) => {
+        transferCalls += 1;
+        return { txId: `${tokenIndex.padStart(2, '0')}`.repeat(32), rawTx: '00' };
+      },
+      sendSwapClaim: async ({ content }) => {
+        sendClaimCalls += 1;
+        lastClaimContent = content;
+        return { pinId: `${'ef'.repeat(32)}i0`, txids: ['ef'.repeat(32)] };
+      },
+      registerOrder: (input) => {
+        const record = {
+          ...input,
+          targetCollectionPinId: input.targetCollectionPinId ?? null,
+          sessionId: input.sessionId ?? null,
+          status: 'submitted',
+          completedItems: [],
+          notifiedAt: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        storedOrders.set(record.requestId, record);
+        return record;
+      },
+      getOrder: (requestId) => storedOrders.get(requestId) ?? null,
+      verifyOfficialSwapStation: async (params) =>
+        verifyOfficialSwapStation(params, { getRegistry: async () => multiRegistry }),
+      listVerifiedOfficialSwapStations: async (opts) =>
+        listVerifiedOfficialSwapStations(opts, { getRegistry: async () => multiRegistry }),
+    },
+  });
+
+  const submitTool = toolsByName.get('nft_swap_submit_batch')!;
+
+  // 1. Both series held and collectionSlug omitted -> asks user to pick one
+  heldMode = 'both';
+  const ambigRes = await submitTool({});
+  assert.equal(ambigRes.isError, true);
+  assert.match(ambigRes.content[0].text, /metabot-avatar/);
+  assert.match(ambigRes.content[0].text, /second-series/);
+  assert.equal(confirmCalls, 0);
+  assert.equal(transferCalls, 0);
+
+  // 2. Only second-series held and collectionSlug omitted -> auto-selects second-series!
+  heldMode = 'second-only';
+  const autoRes = await submitTool({});
+  assert.equal(autoRes.isError, undefined);
+  const autoJson = JSON.parse(autoRes.content[0].text);
+  assert.equal(autoJson.ok, true);
+  assert.equal(autoJson.collectionSlug, 'second-series');
+  assert.equal(confirmCalls, 1);
+  assert.equal(transferCalls, 1);
+  assert.equal(sendClaimCalls, 1);
+
+  // 3. retryClaimRequestId resends SWAP_CLAIM_V1 without re-transferring or re-confirming
+  const retryRes = await submitTool({ retryClaimRequestId: autoJson.requestId });
+  assert.equal(retryRes.isError, undefined);
+  const retryJson = JSON.parse(retryRes.content[0].text);
+  assert.equal(retryJson.ok, true);
+  assert.equal(retryJson.retried, true);
+  assert.equal(retryJson.requestId, autoJson.requestId);
+  assert.equal(confirmCalls, 1);
+  assert.equal(transferCalls, 1);
+  assert.equal(sendClaimCalls, 2);
+  assert.match(lastClaimContent, /second-series/);
+});

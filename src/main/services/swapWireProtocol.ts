@@ -181,8 +181,15 @@ export function parseSwapWireMessage(plaintext: string | null | undefined): Swap
         if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
         const row = item as Record<string, unknown>;
         const tokenIndex = String(row.tokenIndex ?? '').trim();
-        const itemStatus = row.status === 'failed' ? 'failed' : 'completed';
+        const rawStatus = typeof row.status === 'string' ? row.status.trim().toLowerCase() : '';
         if (!tokenIndex) continue;
+        let itemStatus: 'completed' | 'failed' | null = null;
+        if (rawStatus === 'sent' || rawStatus === 'completed') {
+          itemStatus = 'completed';
+        } else if (rawStatus === 'failed') {
+          itemStatus = 'failed';
+        }
+        if (!itemStatus) continue;
         results.push({
           tokenIndex,
           status: itemStatus,

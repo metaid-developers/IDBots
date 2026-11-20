@@ -278,3 +278,73 @@ test('extractCertifiedLegacySeries enforces registry.verified and active swap_st
   };
   assert.deepEqual(extractCertifiedLegacySeries(revokedRegistry), []);
 });
+
+test('P0-2: MetaSo rawFallback cannot forge verified:true and spoofed metasoLatest falls back to Bob-signed modify_history', async () => {
+  delete process.env.IDBOTS_NFT_CA_PINID;
+  delete process.env.IDBOTS_MAN_P2P_LOCAL_BASE;
+  clearNftCaRegistryCache();
+
+  const SPOOFED_PIN = `${'dd'.repeat(32)}i0`;
+  const ATTACKER_METAID = 'ff'.repeat(32);
+
+  // Case A: MetaSo returns spoofed pin + raw collections/officialBots, while pin content is unreachable -> must fall back to root/history; if root is also unreachable -> verified: false
+  const regUnreachable = await withFetchStub(async (input) => {
+    const url = String(input);
+    if (url.includes('/api/mrc721/ca/registry')) {
+      return jsonResponse({
+        code: 0,
+        data: {
+          pinId: MODIFIED_CA_PIN,
+          collections: V11_PAYLOAD.collections,
+          officialBots: V11_PAYLOAD.officialBots,
+        },
+      });
+    }
+    if (url.includes(`/content/`) || url.includes(`/pin/`)) {
+      return jsonResponse({ code: 404 }, 404);
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  }, () => getNftCaRegistry({ refresh: true }));
+  assert.equal(regUnreachable.verified, false);
+  assert.equal(regUnreachable.officialBots.length, 0);
+
+  clearNftCaRegistryCache();
+
+  // Case B: MetaSo returns attacker pin, while root modify_history has [ROOT, MODIFIED (Bob), SPOOFED (Attacker)] -> must skip SPOOFED and pick MODIFIED (Bob)
+  const regFallback = await withFetchStub(async (input) => {
+    const url = String(input);
+    if (url.includes('/api/mrc721/ca/registry')) {
+      return jsonResponse({
+        code: 0,
+        data: { pinId: SPOOFED_PIN },
+      });
+    }
+    if (url.includes(`/pin/${SPOOFED_PIN}`)) {
+      return jsonResponse({ code: 1, data: { id: SPOOFED_PIN, creator: ATTACKER_METAID } });
+    }
+    if (url.includes(`/content/${SPOOFED_PIN}`)) {
+      return jsonResponse({ collections: [], officialBots: [] });
+    }
+    if (url.includes(`/pin/${ROOT_CA_PIN}`)) {
+      return jsonResponse({
+        code: 1,
+        data: {
+          id: ROOT_CA_PIN,
+          creator: OFFICIAL_IDBOTS_METAID,
+          modify_history: [ROOT_CA_PIN, MODIFIED_CA_PIN, SPOOFED_PIN],
+        },
+      });
+    }
+    if (url.includes(`/pin/${MODIFIED_CA_PIN}`)) {
+      return jsonResponse({ code: 1, data: { id: MODIFIED_CA_PIN, creator: OFFICIAL_IDBOTS_METAID } });
+    }
+    if (url.includes(`/content/${MODIFIED_CA_PIN}`)) {
+      return jsonResponse(V11_PAYLOAD);
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  }, () => getNftCaRegistry({ refresh: true }));
+
+  assert.equal(regFallback.verified, true);
+  assert.equal(regFallback.pinId, MODIFIED_CA_PIN);
+  assert.equal(regFallback.officialBots.length, 2);
+});

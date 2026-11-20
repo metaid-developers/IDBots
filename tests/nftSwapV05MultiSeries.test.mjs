@@ -13,7 +13,9 @@ import {
   resolveSeries,
 } from '../SKILLs/nft-swap/cli/lib/series-registry.mjs';
 import { MVP_CONFIRMATIONS, pollVault } from '../SKILLs/nft-swap/cli/lib/vault-poll-lib.mjs';
-import { handleClaimMessage } from '../SKILLs/nft-swap/cli/lib/claim-handler.mjs';
+import { handleClaimMessage, parseSwapClaimMessage } from '../SKILLs/nft-swap/cli/lib/claim-handler.mjs';
+import { deriveMvcInputAddressesFromRawTx, itemPathForToken } from '../SKILLs/nft-swap/cli/lib/swap-engine.mjs';
+import { registerConfiguredSeries } from '../SKILLs/nft-swap/cli/lib/cli-common.mjs';
 
 function withTempLedgerDir(name, fn) {
   const dir = mkdtempSync(path.join(tmpdir(), `nft-swap-v05-${name}-`));
@@ -206,6 +208,7 @@ test('handleClaimMessage returns SWAP_STATUS_V1 (pending_1_conf) on 0-conf and S
         itemPath: 'item-0102',
         mintPinId: `${'66'.repeat(32)}i0`,
         txids: ['77'.repeat(32)],
+        dualCheck: { display: { cover: 'metafile://cover0102' } },
       });
       ledger.recordMintConfirmed(pendingRow.id, { creatorMinted: true, createAddressMatch: true, outputValue: 1 });
       ledger.recordTransferBroadcast(pendingRow.id, { transferTxid: '88'.repeat(32) });
@@ -247,6 +250,7 @@ test('handleClaimMessage returns SWAP_STATUS_V1 (pending_1_conf) on 0-conf and S
             }),
           }),
           fetchConfirmations: async () => 0,
+          fetchDepositSenderAddresses: async () => ['1UserAddr'],
         },
       });
       assert.equal(pendingResp.ok, true);
@@ -278,16 +282,215 @@ test('handleClaimMessage returns SWAP_STATUS_V1 (pending_1_conf) on 0-conf and S
               data: { list: [] },
             }),
           }),
+          fetchDepositSenderAddresses: async (txid) => (txid === txid1 ? ['1UserAddr'] : []),
         },
       });
       assert.equal(completedResp.ok, true);
       assert.equal(completedResp.pending, false);
       assert.equal(completedResp.replyPayload.type, 'SWAP_COMPLETED_V1');
-      assert.equal(completedResp.replyPayload.results[0].status, 'completed');
+      assert.equal(completedResp.replyPayload.results[0].status, 'sent');
       assert.equal(completedResp.replyPayload.results[0].itemPinId, `${'66'.repeat(32)}i0`);
+      assert.equal(completedResp.replyPayload.results[0].cover, 'metafile://cover0102');
       assert.match(completedResp.replyText, /```idbots-swap-v1/);
     } finally {
       ledger.close();
     }
   });
+});
+
+test('P0-1: handleClaimMessage blocks hijacked depositTxId, claimant mismatch, deposit sender mismatch, and sender identity mismatch', async () => {
+  await withTempLedgerDir('anti-hijack', async (dir) => {
+    const ledger = new SwapLedger(path.join(dir, 'ledger.sqlite'));
+    try {
+      const series = resolveSeries({ collectionSlug: DEFAULT_COLLECTION_SLUG });
+      const album = albumFromSeries(series);
+      const realTxId = 'a1'.repeat(32);
+      const fakeTxId = 'b2'.repeat(32);
+      const realSender = '1RealDepositorAddress1111111111111111';
+      const attackerAddr = '1AttackerAddress111111111111111111111';
+      const realGmid = 'idq1realdepositor00000000000000000000000';
+      const attackerGmid = 'idq1attacker0000000000000000000000000000';
+
+      const det = ledger.recordDetection({
+        collectionSlug: series.collectionSlug,
+        genesis: album.genesis,
+        codeHash: album.codeHash,
+        tokenIndex: 205,
+        depositTxid: realTxId,
+        depositVout: 0,
+        depositHeight: 850_000,
+      }).row;
+
+      const emptyVaultDeps = {
+        fetchImpl: async () => ({
+          json: async () => ({ code: 0, data: { list: [] } }),
+        }),
+      };
+
+      // 1. Wrong depositTxId for token #205 -> DEPOSIT_TXID_MISMATCH
+      const wrongTxResp = await handleClaimMessage({
+        ledger,
+        rawMessage: JSON.stringify({
+          type: 'SWAP_CLAIM_V1',
+          requestId: 'req-wrong-tx',
+          collectionSlug: series.collectionSlug,
+          codehash: album.codeHash,
+          genesis: album.genesis,
+          recipientAddress: realSender,
+          recipientGlobalMetaId: realGmid,
+          items: [{ tokenIndex: '205', depositTxId: fakeTxId }],
+        }),
+        broadcast: true,
+        deps: {
+          ...emptyVaultDeps,
+          fetchDepositSenderAddresses: async () => [realSender],
+        },
+      });
+      assert.equal(wrongTxResp.ok, false);
+      assert.equal(wrongTxResp.replyPayload.results[0].code, 'DEPOSIT_TXID_MISMATCH');
+
+      // 2. Right depositTxId, wrong on-chain depositor -> DEPOSIT_SENDER_MISMATCH
+      const wrongSenderResp = await handleClaimMessage({
+        ledger,
+        rawMessage: JSON.stringify({
+          type: 'SWAP_CLAIM_V1',
+          requestId: 'req-wrong-sender',
+          collectionSlug: series.collectionSlug,
+          codehash: album.codeHash,
+          genesis: album.genesis,
+          recipientAddress: attackerAddr,
+          recipientGlobalMetaId: attackerGmid,
+          items: [{ tokenIndex: '205', depositTxId: realTxId }],
+        }),
+        broadcast: true,
+        deps: {
+          ...emptyVaultDeps,
+          fetchDepositSenderAddresses: async () => [realSender],
+        },
+      });
+      assert.equal(wrongSenderResp.ok, false);
+      assert.equal(wrongSenderResp.replyPayload.results[0].code, 'DEPOSIT_SENDER_MISMATCH');
+
+      // 3. No deposit sender verifier wired in broadcast mode -> fail-closed DEPOSIT_SENDER_MISMATCH
+      const unverifiedSenderResp = await handleClaimMessage({
+        ledger,
+        rawMessage: JSON.stringify({
+          type: 'SWAP_CLAIM_V1',
+          requestId: 'req-no-verifier',
+          collectionSlug: series.collectionSlug,
+          codehash: album.codeHash,
+          genesis: album.genesis,
+          recipientAddress: realSender,
+          recipientGlobalMetaId: realGmid,
+          items: [{ tokenIndex: '205', depositTxId: realTxId }],
+        }),
+        broadcast: true,
+        deps: emptyVaultDeps,
+      });
+      assert.equal(unverifiedSenderResp.ok, false);
+      assert.equal(unverifiedSenderResp.replyPayload.results[0].code, 'DEPOSIT_SENDER_MISMATCH');
+
+      // 4. Already claimed by realSender; attacker cannot hijack receipt -> CLAIMANT_MISMATCH
+      ledger.claim(det.id, { channel: 'a2a', messageId: 'req-legit', claimantAddress: realSender });
+      const claimantMismatchResp = await handleClaimMessage({
+        ledger,
+        rawMessage: JSON.stringify({
+          type: 'SWAP_CLAIM_V1',
+          requestId: 'req-hijack-claimant',
+          collectionSlug: series.collectionSlug,
+          codehash: album.codeHash,
+          genesis: album.genesis,
+          recipientAddress: attackerAddr,
+          recipientGlobalMetaId: attackerGmid,
+          items: [{ tokenIndex: '205', depositTxId: realTxId }],
+        }),
+        broadcast: true,
+        deps: {
+          ...emptyVaultDeps,
+          fetchDepositSenderAddresses: async () => [realSender, attackerAddr],
+        },
+      });
+      assert.equal(claimantMismatchResp.ok, false);
+      assert.equal(claimantMismatchResp.replyPayload.results[0].code, 'CLAIMANT_MISMATCH');
+
+      // 5. Private chat senderGlobalMetaId / senderAddress mismatch -> SENDER_IDENTITY_MISMATCH
+      await assert.rejects(
+        () =>
+          handleClaimMessage({
+            ledger,
+            rawMessage: JSON.stringify({
+              type: 'SWAP_CLAIM_V1',
+              requestId: 'req-gmid-spoof',
+              collectionSlug: series.collectionSlug,
+              codehash: album.codeHash,
+              genesis: album.genesis,
+              recipientAddress: realSender,
+              recipientGlobalMetaId: realGmid,
+              items: [{ tokenIndex: '205', depositTxId: realTxId }],
+            }),
+            senderGlobalMetaId: attackerGmid,
+            broadcast: true,
+            deps: emptyVaultDeps,
+          }),
+        (err) => err?.code === 'SENDER_IDENTITY_MISMATCH',
+      );
+    } finally {
+      ledger.close();
+    }
+  });
+});
+
+test('P1-1: tokenIndex 0 is supported, raw tx input address parser extracts P2PKH sender, and config.series[] registers dynamically', () => {
+  assert.equal(itemPathForToken(0), 'item-0000');
+  const parsedZero = parseSwapClaimMessage(
+    JSON.stringify({
+      type: 'SWAP_CLAIM_V1',
+      requestId: 'req-zero',
+      collectionSlug: 'metabot-avatar',
+      codehash: 'e205939ad9956673ce7da9fbd40514b30f66dc35',
+      genesis: '005d69cba8c80e6978157e146f998c21288a9d49',
+      recipientAddress: '1UserAddr',
+      items: [{ tokenIndex: '0', depositTxId: 'cc'.repeat(32) }],
+    }),
+  );
+  assert.equal(parsedZero.items.length, 1);
+  assert.equal(parsedZero.items[0].tokenIndex, 0);
+
+  // Build minimal legacy raw tx with 1 input carrying compressed pubkey 0x02 + 32 bytes of 0x11
+  const pubkey = Buffer.concat([Buffer.from([0x02]), Buffer.alloc(32, 0x11)]);
+  const sig = Buffer.alloc(71, 0x30);
+  const scriptSig = Buffer.concat([
+    Buffer.from([sig.length]),
+    sig,
+    Buffer.from([pubkey.length]),
+    pubkey,
+  ]);
+  const rawTx = Buffer.concat([
+    Buffer.from([0x01, 0x00, 0x00, 0x00]), // version
+    Buffer.from([0x01]), // 1 input
+    Buffer.alloc(32, 0xaa), // prev txid
+    Buffer.alloc(4, 0x00), // vout
+    Buffer.from([scriptSig.length]),
+    scriptSig,
+    Buffer.from([0xff, 0xff, 0xff, 0xff]), // sequence
+    Buffer.from([0x00]), // 0 outputs
+    Buffer.alloc(4, 0x00), // locktime
+  ]).toString('hex');
+  const derived = deriveMvcInputAddressesFromRawTx(rawTx);
+  assert.equal(derived.length, 1);
+  assert.match(derived[0], /^1[1-9A-HJ-NP-Za-km-z]{20,40}$/);
+
+  registerConfiguredSeries({
+    series: [
+      {
+        collectionSlug: 'dynamic-pilot-series',
+        legacyGenesis: 'dd'.repeat(20),
+        legacyCodeHash: 'ee'.repeat(20),
+        collectionName: 'dynamic-pilot',
+      },
+    ],
+  });
+  const dyn = resolveSeries({ collectionSlug: 'dynamic-pilot-series' });
+  assert.ok(dyn);
+  assert.equal(dyn.legacyGenesis, 'dd'.repeat(20));
 });

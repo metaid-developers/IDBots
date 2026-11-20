@@ -22,12 +22,15 @@
  * network. Nothing here prints; the CLIs own output and exit codes.
  */
 
+import { createHash } from 'node:crypto';
 import { MVP_CONFIRMATIONS } from './vault-poll-lib.mjs';
 import { albumFromSeries, resolveSeries } from './series-registry.mjs';
 
 export const ITEM_PATH_PAD = 4;
 export const MANAPI_BASE_DEFAULT = 'https://manapi.metaid.io';
 export const MRC721_READ_BASE_DEFAULT = 'https://so.metaid.io';
+export const METALET_API_BASE_DEFAULT = 'https://www.metalet.space';
+export const MVC_OPEN_API_BASE_DEFAULT = 'https://api.microvisionchain.com/open-api-mvc';
 export const PATH_PROBE_PAGE_SIZE = 100;
 export const MAX_PATH_PROBE_PAGES = 20;
 export const ESTIMATE_PLACEHOLDER_PINID = `${'0'.repeat(64)}i0`;
@@ -53,10 +56,10 @@ const fail = (code, message, detail) => {
   throw new SwapEngineError(code, message, detail);
 };
 
-/** `item-####` mapping (PRD §5.6; tokenIndex ≤ 9560 keeps it unambiguous). */
+/** `item-####` mapping (PRD §5.6; tokenIndex 0..9560 keeps it unambiguous). */
 export function itemPathForToken(tokenIndex) {
-  if (!Number.isInteger(tokenIndex) || tokenIndex <= 0) {
-    fail('TOKEN_INDEX_INVALID', `tokenIndex must be a positive integer, got: ${tokenIndex}`);
+  if (!Number.isInteger(tokenIndex) || tokenIndex < 0) {
+    fail('TOKEN_INDEX_INVALID', `tokenIndex must be a non-negative integer, got: ${tokenIndex}`);
   }
   const text = String(tokenIndex);
   if (text.length > ITEM_PATH_PAD) {
@@ -274,7 +277,166 @@ export function createIndexReaders({ fetchImpl = globalThis.fetch, manapiBase, n
       const confs = Number(json.data.confirmations ?? 0);
       return Number.isFinite(confs) ? Math.max(0, confs) : 0;
     },
+
+    /**
+     * Resolve input/sender MVC addresses for a deposit transaction from its
+     * on-chain raw transaction inputs (with open-api-mvc tx detail fallback).
+     * Used by claim-handler to verify the claimant actually sent the deposit.
+     */
+    async fetchDepositSenderAddresses(txid) {
+      const cleanTxid = String(txid ?? '').trim().toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(cleanTxid)) return [];
+      const addrs = new Set();
+      try {
+        const res = await fetchImpl(
+          `${METALET_API_BASE_DEFAULT}/wallet-api/v4/mvc/tx/raw?net=livenet&txId=${encodeURIComponent(cleanTxid)}`,
+        );
+        if (res && res.ok) {
+          const json = await res.json().catch(() => null);
+          const data = json?.data;
+          const rawHex = typeof data === 'string' ? data : (data?.rawTx ?? data?.hex ?? '');
+          if (rawHex) {
+            for (const addr of deriveMvcInputAddressesFromRawTx(rawHex)) {
+              addrs.add(addr);
+            }
+          }
+        }
+      } catch {
+        // Fall through to open-api-mvc tx detail
+      }
+      if (addrs.size === 0) {
+        try {
+          const res = await fetchImpl(`${MVC_OPEN_API_BASE_DEFAULT}/tx/${encodeURIComponent(cleanTxid)}`);
+          if (res && res.ok) {
+            const json = await res.json().catch(() => null);
+            const vin = Array.isArray(json?.vin) ? json.vin : Array.isArray(json?.data?.vin) ? json.data.vin : [];
+            for (const input of vin) {
+              const candidate = String(input?.address ?? input?.prevOut?.address ?? '').trim();
+              if (/^[1-9A-HJ-NP-Za-km-z]{20,60}$/.test(candidate)) addrs.add(candidate);
+            }
+          }
+        } catch {
+          // Return empty so caller fails closed in broadcast mode
+        }
+      }
+      return Array.from(addrs);
+    },
   };
+}
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function readTxVarInt(buffer, offset) {
+  if (offset >= buffer.length) throw new Error('varint out of bounds');
+  const first = buffer[offset];
+  if (first < 0xfd) return { value: first, nextOffset: offset + 1 };
+  if (first === 0xfd) return { value: buffer.readUInt16LE(offset + 1), nextOffset: offset + 3 };
+  if (first === 0xfe) return { value: buffer.readUInt32LE(offset + 1), nextOffset: offset + 5 };
+  const lo = buffer.readUInt32LE(offset + 1);
+  const hi = buffer.readUInt32LE(offset + 5);
+  return { value: hi * 0x100000000 + lo, nextOffset: offset + 9 };
+}
+
+function base58CheckEncode(payload) {
+  const checksum = createHash('sha256')
+    .update(createHash('sha256').update(payload).digest())
+    .digest()
+    .subarray(0, 4);
+  const bytes = Buffer.concat([payload, checksum]);
+  let value = 0n;
+  for (const byte of bytes) value = (value << 8n) + BigInt(byte);
+  let encoded = '';
+  while (value > 0n) {
+    encoded = BASE58_ALPHABET[Number(value % 58n)] + encoded;
+    value /= 58n;
+  }
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    encoded = `1${encoded}`;
+  }
+  return encoded;
+}
+
+function pubkeyToMvcAddress(pubkey) {
+  const hash160 = createHash('ripemd160')
+    .update(createHash('sha256').update(pubkey).digest())
+    .digest();
+  return base58CheckEncode(Buffer.concat([Buffer.from([0x00]), hash160]));
+}
+
+function extractPubkeysFromScriptSig(script) {
+  const pubkeys = [];
+  let offset = 0;
+  while (offset < script.length) {
+    const op = script[offset];
+    if (op >= 0x01 && op <= 0x4b) {
+      const push = script.subarray(offset + 1, offset + 1 + op);
+      if (
+        (op === 33 && (push[0] === 0x02 || push[0] === 0x03)) ||
+        (op === 65 && push[0] === 0x04)
+      ) {
+        pubkeys.push(push);
+      }
+      offset += 1 + op;
+    } else if (op === 0x4c) {
+      if (offset + 1 >= script.length) break;
+      const len = script[offset + 1];
+      const push = script.subarray(offset + 2, offset + 2 + len);
+      if (
+        (len === 33 && (push[0] === 0x02 || push[0] === 0x03)) ||
+        (len === 65 && push[0] === 0x04)
+      ) {
+        pubkeys.push(push);
+      }
+      offset += 2 + len;
+    } else if (op === 0x4d) {
+      if (offset + 2 >= script.length) break;
+      const len = script.readUInt16LE(offset + 1);
+      offset += 3 + len;
+    } else if (op === 0x4e) {
+      if (offset + 4 >= script.length) break;
+      const len = script.readUInt32LE(offset + 1);
+      offset += 5 + len;
+    } else {
+      offset += 1;
+    }
+  }
+  return pubkeys;
+}
+
+/**
+ * Derive all unique P2PKH MVC addresses whose public keys appear in any
+ * input's scriptSig of a raw MVC transaction hex. Handles MetaContract contract
+ * unlock inputs (which may contain OP_PUSHDATA2) as well as standard P2PKH
+ * fee inputs.
+ */
+export function deriveMvcInputAddressesFromRawTx(rawTxHex) {
+  try {
+    const buffer = Buffer.from(String(rawTxHex || '').trim(), 'hex');
+    if (buffer.length < 10) return [];
+    let offset = 4; // version
+    if (buffer[offset] === 0x00 && buffer[offset + 1] !== 0x00) {
+      offset += 2;
+    }
+    const inputCount = readTxVarInt(buffer, offset);
+    offset = inputCount.nextOffset;
+    if (inputCount.value < 1) return [];
+    const addresses = new Set();
+    for (let i = 0; i < inputCount.value; i += 1) {
+      if (offset + 36 >= buffer.length) break;
+      offset += 36; // prev txid (32) + vout (4)
+      const scriptLen = readTxVarInt(buffer, offset);
+      offset = scriptLen.nextOffset;
+      const scriptSig = buffer.subarray(offset, offset + scriptLen.value);
+      for (const pubkey of extractPubkeysFromScriptSig(scriptSig)) {
+        addresses.add(pubkeyToMvcAddress(pubkey));
+      }
+      offset += scriptLen.value + 4; // scriptSig + nSequence
+    }
+    return Array.from(addresses);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -939,6 +1101,16 @@ async function mintAndSendLocked({
   }
 
   current = ledger.rowById(current.id);
+  let resolvedDisplayCover = null;
+  try {
+    const parsedDual = current.dual_check_json ? JSON.parse(current.dual_check_json) : null;
+    resolvedDisplayCover = String(parsedDual?.display?.cover ?? '').trim() || null;
+  } catch {
+    resolvedDisplayCover = null;
+  }
+  if (!resolvedDisplayCover && cover) {
+    resolvedDisplayCover = String(cover).trim() || null;
+  }
   return {
     ok: current.state === 'sent',
     collectionSlug: current.collection_slug || album.collectionSlug || 'metabot-avatar',
@@ -950,6 +1122,7 @@ async function mintAndSendLocked({
     itemDescPinId: current.item_desc_pin_id,
     transferTxid: current.transfer_txid,
     transferCount: current.transfer_count,
+    cover: resolvedDisplayCover,
     steps,
   };
 }

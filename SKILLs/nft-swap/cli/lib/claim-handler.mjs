@@ -48,7 +48,7 @@ export function parseSwapClaimMessage(raw) {
       tokenIndex: Number(item?.tokenIndex),
       depositTxId: String(item?.depositTxId ?? '').trim(),
     }))
-    .filter((item) => Number.isInteger(item.tokenIndex) && item.tokenIndex > 0 && item.depositTxId);
+    .filter((item) => Number.isInteger(item.tokenIndex) && item.tokenIndex >= 0 && item.depositTxId);
 
   if (items.length === 0) {
     throw new SwapEngineError('INVALID_CLAIM_MESSAGE', 'SWAP_CLAIM_V1 contains no valid items');
@@ -70,6 +70,34 @@ export function formatWireReply(payload) {
   return `\`\`\`idbots-swap-v1\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
 }
 
+function extractCoverFromLedgerRow(row) {
+  if (!row?.dual_check_json) return null;
+  try {
+    const parsed = JSON.parse(row.dual_check_json);
+    const cover = String(parsed?.display?.cover ?? '').trim();
+    return cover || null;
+  } catch {
+    return null;
+  }
+}
+
+async function verifyItemDepositSender({ item, row, recipientAddress, deps, broadcast }) {
+  if (typeof deps?.verifyDepositSender === 'function') {
+    const verified = await deps.verifyDepositSender({
+      depositTxId: item.depositTxId,
+      recipientAddress,
+      row,
+    });
+    return Boolean(verified);
+  }
+  if (typeof deps?.fetchDepositSenderAddresses === 'function') {
+    const senders = await deps.fetchDepositSenderAddresses(item.depositTxId);
+    return Array.isArray(senders) && senders.includes(recipientAddress);
+  }
+  // Fail closed in broadcast mode when no on-chain sender verifier is wired.
+  return !broadcast;
+}
+
 /**
  * Process one SWAP_CLAIM_V1 payload against the station's ledger + vault.
  */
@@ -85,8 +113,24 @@ export async function handleClaimMessage({
   claimChannel = 'metaweb_private',
   feeCeilingSats,
   itemInfoTimeoutMs = 360_000,
+  senderGlobalMetaId = null,
+  senderAddress = null,
 }) {
   const claim = parseSwapClaimMessage(rawMessage);
+
+  if (senderGlobalMetaId && String(senderGlobalMetaId).trim() !== claim.recipientGlobalMetaId) {
+    throw new SwapEngineError(
+      'SENDER_IDENTITY_MISMATCH',
+      `private-chat sender globalMetaId ${senderGlobalMetaId} does not match claim.recipientGlobalMetaId ${claim.recipientGlobalMetaId}`,
+    );
+  }
+  if (senderAddress && String(senderAddress).trim() !== claim.recipientAddress) {
+    throw new SwapEngineError(
+      'SENDER_IDENTITY_MISMATCH',
+      `private-chat sender address ${senderAddress} does not match claim.recipientAddress ${claim.recipientAddress}`,
+    );
+  }
+
   const series = resolveSeries({ collectionSlug: claim.collectionSlug }, registry);
   if (!series) {
     throw new SwapEngineError('UNKNOWN_COLLECTION', `unsupported collectionSlug: ${claim.collectionSlug}`);
@@ -121,7 +165,7 @@ export async function handleClaimMessage({
 
   for (const item of claim.items) {
     const unconfirmedMatch = poll.unconfirmed.find(
-      (u) => Number(u.tokenIndex) === item.tokenIndex || u.txid === item.depositTxId,
+      (u) => Number(u.tokenIndex) === item.tokenIndex && String(u.txid || '').toLowerCase() === item.depositTxId.toLowerCase(),
     );
     if (unconfirmedMatch) {
       pendingItems.push({
@@ -133,26 +177,79 @@ export async function handleClaimMessage({
       continue;
     }
 
-    let row =
+    const exactRow = ledger.rowByDepositTx(album.collectionSlug, item.tokenIndex, item.depositTxId);
+    const tokenRow =
       ledger.activeRowByToken(album.collectionSlug, item.tokenIndex) ??
       ledger.latestRowByToken(album.collectionSlug, item.tokenIndex);
+
+    if (!exactRow && tokenRow) {
+      results.push({
+        tokenIndex: String(item.tokenIndex),
+        status: 'failed',
+        code: 'DEPOSIT_TXID_MISMATCH',
+        error: `DEPOSIT_TXID_MISMATCH: deposit ${item.depositTxId} does not match recorded deposit for #${item.tokenIndex}`,
+      });
+      continue;
+    }
+
+    let row = exactRow;
 
     if (!row) {
       results.push({
         tokenIndex: String(item.tokenIndex),
         status: 'failed',
+        code: 'DEPOSIT_NOT_FOUND',
         error: `deposit ${item.depositTxId} for #${item.tokenIndex} not found in vault`,
       });
       continue;
     }
 
-    if (row.state === 'sent') {
+    if (String(row.deposit_txid || '').trim().toLowerCase() !== item.depositTxId.toLowerCase()) {
       results.push({
         tokenIndex: String(item.tokenIndex),
-        status: 'completed',
+        status: 'failed',
+        code: 'DEPOSIT_TXID_MISMATCH',
+        error: `DEPOSIT_TXID_MISMATCH: deposit ${item.depositTxId} does not match ledger deposit_txid ${row.deposit_txid}`,
+      });
+      continue;
+    }
+
+    if (row.claimant_address && String(row.claimant_address).trim() !== '' && String(row.claimant_address).trim() !== claim.recipientAddress) {
+      results.push({
+        tokenIndex: String(item.tokenIndex),
+        status: 'failed',
+        code: 'CLAIMANT_MISMATCH',
+        error: `CLAIMANT_MISMATCH: token #${item.tokenIndex} is already claimed by a different recipient address`,
+      });
+      continue;
+    }
+
+    const senderVerified = await verifyItemDepositSender({
+      item,
+      row,
+      recipientAddress: claim.recipientAddress,
+      deps,
+      broadcast,
+    });
+    if (!senderVerified) {
+      results.push({
+        tokenIndex: String(item.tokenIndex),
+        status: 'failed',
+        code: 'DEPOSIT_SENDER_MISMATCH',
+        error: `DEPOSIT_SENDER_MISMATCH: on-chain inputs of deposit ${item.depositTxId} do not match recipientAddress ${claim.recipientAddress}`,
+      });
+      continue;
+    }
+
+    if (row.state === 'sent') {
+      const rowCover = extractCoverFromLedgerRow(row) || (cover ? String(cover).trim() || null : null);
+      results.push({
+        tokenIndex: String(item.tokenIndex),
+        status: 'sent',
         itemPinId: row.mint_pin_id,
         deliveryTxId: row.transfer_txid,
         itemName: `${album.itemTitlePrefix} #${item.tokenIndex}`,
+        ...(rowCover ? { cover: rowCover } : {}),
       });
       continue;
     }
@@ -196,12 +293,14 @@ export async function handleClaimMessage({
       });
 
       if (sent.ok) {
+        const sentCover = sent.cover ?? extractCoverFromLedgerRow(ledger.rowById(row.id));
         results.push({
           tokenIndex: String(item.tokenIndex),
-          status: 'completed',
+          status: 'sent',
           itemPinId: sent.mintPinId,
           deliveryTxId: sent.transferTxid,
           itemName: `${album.itemTitlePrefix} #${item.tokenIndex}`,
+          ...(sentCover ? { cover: sentCover } : {}),
         });
       } else {
         results.push({
@@ -240,13 +339,15 @@ export async function handleClaimMessage({
   }
 
   if (!broadcast) {
+    const hasFailed = results.some((r) => r.status === 'failed');
     return {
-      ok: true,
+      ok: !hasFailed,
       dryRun: true,
       requestId: claim.requestId,
       collectionSlug: album.collectionSlug,
       items: processedDryRun,
-      alreadySent: results,
+      alreadySent: results.filter((r) => r.status === 'sent'),
+      ...(hasFailed ? { rejected: results.filter((r) => r.status === 'failed') } : {}),
     };
   }
 
@@ -259,7 +360,7 @@ export async function handleClaimMessage({
   };
 
   return {
-    ok: results.every((r) => r.status === 'completed'),
+    ok: results.every((r) => r.status === 'sent'),
     pending: false,
     requestId: claim.requestId,
     collectionSlug: album.collectionSlug,

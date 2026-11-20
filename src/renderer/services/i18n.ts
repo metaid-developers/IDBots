@@ -6168,7 +6168,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     legacyDepositGuideCaUnverified: 'Official CA registry could not be verified. Certified swap series are hidden for your safety.',
     legacyDepositGuideNoSeries: 'No upgradeable legacy collectible series found in the verified registry.',
     legacyDepositGuideUpgradeButton: 'Upgrade my newly deposited legacy collectibles for free',
-    legacyDepositGuidePromptText: '帮我把刚转入的旧藏品免费升级为新版数字商品',
+    legacyDepositGuidePromptText: 'Please upgrade the legacy collectibles I just deposited into new digital items for free',
 
     // Onboarding
     onboardingTitle: 'Awakening Onboarding',

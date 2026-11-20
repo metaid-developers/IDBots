@@ -37,6 +37,8 @@ const HELP = `handle-claim-message — 处理 SWAP_CLAIM_V1 自动置换请求�
 选项:
   --message <文本>               包含 idbots-swap-v1 fenced JSON 的消息文本
   --message-file <路径>          从文件读取消息文本
+  --sender-global-metaid <id>    来信者的 globalMetaId（校验与 recipientGlobalMetaId 一致）
+  --sender-address <addr>        来信者的 MVC 地址（校验与 recipientAddress 一致）
   --broadcast                    真实铸造并发送（默认 dry-run）
   --dry-run                      只检查金库与确认数，不广播
   --min-confirmations <n>        确认门槛（默认 1）
@@ -56,6 +58,8 @@ async function main(argv) {
     values: [
       'message',
       'message-file',
+      'sender-global-metaid',
+      'sender-address',
       'min-confirmations',
       'cover',
       'cover-catalog',
@@ -97,6 +101,7 @@ async function main(argv) {
     const vaultAddress = config.vaultAddress;
     const deps = {
       fetchConfirmations: (txid) => readers.fetchConfirmations(txid),
+      fetchDepositSenderAddresses: (txid) => readers.fetchDepositSenderAddresses(txid),
       probeItemPath: (input) => readers.probeItemPath(input),
       fetchVaultRows: () => fetchVaultTokenRows({ address: vaultAddress }),
       fetchCollectionInfo: (name) => readers.fetchCollectionInfo(name),
@@ -134,6 +139,8 @@ async function main(argv) {
       broadcast,
       cover: args.cover || null,
       minConfirmations,
+      senderGlobalMetaId: args['sender-global-metaid'] || null,
+      senderAddress: args['sender-address'] || null,
     });
     if (result.pending) process.exitCode = 3;
     return {

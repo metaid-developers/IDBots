@@ -439,7 +439,7 @@ export function clearNftCaRegistryCache(): void {
   cache = null;
 }
 
-async function fetchLatestCaFromMetaso(): Promise<{ pinId: string; rawFallback?: string } | null> {
+async function fetchLatestCaFromMetaso(): Promise<{ pinId: string } | null> {
   try {
     const base = getMetasoApiBase();
     const res = await fetch(`${base}/api/mrc721/ca/registry`, {
@@ -450,8 +450,6 @@ async function fetchLatestCaFromMetaso(): Promise<{ pinId: string; rawFallback?:
       code?: unknown;
       data?: {
         pinId?: unknown;
-        collections?: unknown;
-        officialBots?: unknown;
       };
     };
     const code = Number(json?.code);
@@ -460,19 +458,14 @@ async function fetchLatestCaFromMetaso(): Promise<{ pinId: string; rawFallback?:
     if (!data || typeof data !== 'object') return null;
     const pinId = typeof data.pinId === 'string' ? data.pinId.trim().toLowerCase() : '';
     if (!pinId || !PIN_ID_PATTERN.test(pinId)) return null;
-    const rawFallback = Array.isArray(data.collections)
-      ? JSON.stringify({
-          collections: data.collections,
-          ...(Array.isArray(data.officialBots) ? { officialBots: data.officialBots } : {}),
-        })
-      : undefined;
-    return { pinId, rawFallback };
+    return { pinId };
   } catch {
     return null;
   }
 }
 
 async function resolveLatestPinIdFromHistory(rootPinId: string): Promise<string> {
+  const officialMetaId = OFFICIAL_IDBOTS_METAID.toLowerCase();
   try {
     const row = await getPinData(rootPinId, false);
     const rawHistory = row?.modify_history;
@@ -487,10 +480,20 @@ async function resolveLatestPinIdFromHistory(rootPinId: string): Promise<string>
         // ignore malformed modify_history
       }
     }
+    const seen = new Set<string>();
     for (let i = list.length - 1; i >= 0; i -= 1) {
       const entry = list[i];
       const candidate = typeof entry === 'string' ? entry.trim().toLowerCase() : '';
-      if (candidate && PIN_ID_PATTERN.test(candidate)) {
+      if (!candidate || !PIN_ID_PATTERN.test(candidate) || seen.has(candidate)) {
+        continue;
+      }
+      seen.add(candidate);
+      const creatorMetaId = await resolveNftCaPinCreator(candidate);
+      if (creatorMetaId !== officialMetaId) {
+        continue;
+      }
+      const candidateRaw = await fetchCaPinContent(candidate);
+      if (parseNftCaPinPayload(candidateRaw)) {
         return candidate;
       }
     }
@@ -502,17 +505,28 @@ async function resolveLatestPinIdFromHistory(rootPinId: string): Promise<string>
 
 async function fetchNftCaRegistryUncached(): Promise<NftCaRegistry> {
   const envOverridePinId = getEnvOverrideNftCaPinId();
+  const officialMetaId = OFFICIAL_IDBOTS_METAID.toLowerCase();
   let pinId: string | null = envOverridePinId;
   let raw: string | null = null;
+  let resolvedCreatorMetaId: string | null | undefined;
 
   if (envOverridePinId) {
     raw = await fetchCaPinContent(envOverridePinId);
   } else {
     const metasoLatest = await fetchLatestCaFromMetaso();
+    let acceptedMetaso = false;
     if (metasoLatest) {
-      pinId = metasoLatest.pinId;
-      raw = (await fetchCaPinContent(metasoLatest.pinId)) ?? metasoLatest.rawFallback ?? null;
-    } else {
+      const candidateRaw = await fetchCaPinContent(metasoLatest.pinId);
+      const candidateParsed = parseNftCaPinPayload(candidateRaw);
+      const candidateCreator = candidateParsed ? await resolveNftCaPinCreator(metasoLatest.pinId) : null;
+      if (candidateParsed && candidateCreator === officialMetaId) {
+        pinId = metasoLatest.pinId;
+        raw = candidateRaw;
+        resolvedCreatorMetaId = candidateCreator;
+        acceptedMetaso = true;
+      }
+    }
+    if (!acceptedMetaso) {
       const basePinId = getConfiguredNftCaPinId();
       if (!basePinId) {
         return buildEmptyNftCaRegistry(
@@ -543,8 +557,10 @@ async function fetchNftCaRegistryUncached(): Promise<NftCaRegistry> {
     };
   }
 
-  const creatorMetaId = await resolveNftCaPinCreator(pinId);
-  const verified = !!creatorMetaId && creatorMetaId === OFFICIAL_IDBOTS_METAID.toLowerCase();
+  const creatorMetaId = resolvedCreatorMetaId !== undefined
+    ? resolvedCreatorMetaId
+    : await resolveNftCaPinCreator(pinId);
+  const verified = !!creatorMetaId && creatorMetaId === officialMetaId;
   return {
     protocol: NFT_CA_PROTOCOL,
     version: NFT_CA_SCHEMA_VERSION,

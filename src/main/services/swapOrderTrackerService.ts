@@ -171,16 +171,24 @@ function extractTokenIndexFromMrc721Item(item: Mrc721ItemSummary): string | null
   return null;
 }
 
+function normalizeTokenKey(raw: string | number | undefined | null): string {
+  const s = String(raw ?? '').trim();
+  if (/^\d+$/.test(s)) {
+    return String(Number(s));
+  }
+  return s;
+}
+
 function mergeResults(
   existing: SwapCompletedResultItemV1[],
   incoming: SwapCompletedResultItemV1[],
 ): SwapCompletedResultItemV1[] {
   const byToken = new Map<string, SwapCompletedResultItemV1>();
   for (const item of existing) {
-    byToken.set(String(Number(item.tokenIndex) || item.tokenIndex), item);
+    byToken.set(normalizeTokenKey(item.tokenIndex), item);
   }
   for (const item of incoming) {
-    const key = String(Number(item.tokenIndex) || item.tokenIndex);
+    const key = normalizeTokenKey(item.tokenIndex);
     const prev = byToken.get(key);
     if (!prev || prev.status !== 'completed' || item.status === 'completed') {
       byToken.set(key, {
@@ -198,12 +206,12 @@ function deriveOrderStatus(
 ): NftSwapClientOrderStatus {
   const byToken = new Map<string, SwapCompletedResultItemV1>();
   for (const item of mergedResults) {
-    byToken.set(String(Number(item.tokenIndex) || item.tokenIndex), item);
+    byToken.set(normalizeTokenKey(item.tokenIndex), item);
   }
   let completedCount = 0;
   let failedCount = 0;
   for (const req of requestedItems) {
-    const key = String(Number(req.tokenIndex) || req.tokenIndex);
+    const key = normalizeTokenKey(req.tokenIndex);
     const hit = byToken.get(key);
     if (hit?.status === 'completed') completedCount += 1;
     else if (hit?.status === 'failed') failedCount += 1;
@@ -430,12 +438,23 @@ export class SwapOrderTrackerService {
       const fetchItems =
         this.deps.fetchAddressCollectionItems ??
         (async (recipientAddress: string, targetCollectionPinId: string) => {
-          const page = await fetchMrc721AddressItemsPage({
-            address: recipientAddress,
-            pinId: targetCollectionPinId,
-            size: 100,
-          });
-          return page.items;
+          const all: Mrc721ItemSummary[] = [];
+          let cursor: string | undefined;
+          for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+            const page = await fetchMrc721AddressItemsPage({
+              address: recipientAddress,
+              pinId: targetCollectionPinId,
+              size: 100,
+              ...(cursor ? { cursor } : {}),
+            });
+            all.push(...page.items);
+            const nextCursor = page.cursor ? String(page.cursor).trim() : '';
+            if (!page.items.length || !nextCursor || nextCursor === cursor) {
+              break;
+            }
+            cursor = nextCursor;
+          }
+          return all;
         });
       const verifyItem =
         this.deps.verifyItem ??
@@ -458,11 +477,11 @@ export class SwapOrderTrackerService {
         const completedKeys = new Set(
           order.completedItems
             .filter((r) => r.status === 'completed')
-            .map((r) => String(Number(r.tokenIndex) || r.tokenIndex)),
+            .map((r) => normalizeTokenKey(r.tokenIndex)),
         );
         const wantedByToken = new Map<string, SwapClaimItemV1>();
         for (const req of order.items) {
-          const key = String(Number(req.tokenIndex) || req.tokenIndex);
+          const key = normalizeTokenKey(req.tokenIndex);
           if (!completedKeys.has(key)) {
             wantedByToken.set(key, req);
           }
