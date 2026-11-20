@@ -49,6 +49,8 @@ docs/*
 !docs/nft-offer-e2e-playbook.md
 !docs/nft-zero-conf-indexer-requirements.md
 !docs/cloud-mobile/
+!docs/nft-commerce-loop/
+!docs/nft-commerce-loop/**
 !docs/metaid_protocols/
 !docs/metaid_protocols/**
 !docs/deepseek-optimization.md
