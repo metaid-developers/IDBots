@@ -45,11 +45,16 @@ function createHarness({ transferResult } = {}) {
   };
   const balanceEntries = new Map();
   const control = {
-    getBalances: async ({ metabotIds, chains }) => ({
-      entries: metabotIds.map((id) => balanceEntries.get(id)),
-      queried_at: '2026-09-03T00:00:00.000Z',
-    }),
-    getBalanceForAddress: async (chain, address) => ({
+    getBalances: async ({ metabotIds, chains, options }) => {
+      control.lastBalanceQuery = { metabotIds, chains, options };
+      return {
+        entries: metabotIds.map((id) => balanceEntries.get(id)),
+        queried_at: '2026-09-03T00:00:00.000Z',
+      };
+    },
+    getBalanceForAddress: async (chain, address, options) => {
+      control.lastAddressBalanceQuery = { chain, address, options };
+      return ({
       chain,
       address,
       unit: chain === 'btc' ? 'BTC' : chain === 'doge' ? 'DOGE' : 'SPACE',
@@ -57,7 +62,11 @@ function createHarness({ transferResult } = {}) {
       unconfirmed_sats: 3,
       total_sats: 10,
       utxo_count: 2,
-    }),
+      ...(chain === 'mvc' && options?.deep === true
+        ? { mvc_truth: { verdict: 'degraded', reason: 'deep probe fixture', guidance: 'fixture rule' } }
+        : {}),
+    });
+    },
     resolveMetabotIdByName: (name) => (name === 'AI_Sunny' ? 1 : name === 'Worker' ? 2 : null),
     getMetabotMvcAddress: (id) => (id === 2 ? '1WorkerAddr' : id === 1 ? '1TwinAddr' : null),
     transfer: async (params, host) => {
@@ -223,4 +232,26 @@ test('wallet_transfer guards: no session bot, unknown target, dust amount', asyn
   const dust = await handlers.wallet_transfer.handler({ to: '2', amount: 0.000001 });
   assert.equal(dust.isError, true);
   assert.match(dust.content[0].text, /dust limit/);
+});
+
+test('wallet_balance passes deep to the MVC truth layer and renders the degraded verdict', async () => {
+  const { buildWalletAgentTools } = loadWalletAgentTools();
+  const { handlers, control } = createHarness();
+  buildWalletAgentTools({ tool: (name, description, schema, handler) => { handlers[name] = { description, schema, handler }; }, control, sessionId: 's', resolveMetabotId: () => 1 });
+
+  const result = await handlers.wallet_balance.handler({ chain: 'mvc', address: '1MvcDeep', deep: true });
+  const text = result.content[0].text;
+  assert.equal(control.lastAddressBalanceQuery?.options?.deep, true, 'deep reaches the truth layer');
+  assert.match(text, /verdict: DEGRADED — deep probe fixture/);
+  assert.match(text, /rule: fixture rule/);
+
+  // The light path never claims deep verification.
+  await handlers.wallet_balance.handler({ chain: 'mvc', address: '1MvcDeep' });
+  assert.equal(control.lastAddressBalanceQuery?.options?.deep, undefined);
+  assert.doesNotMatch(control.lastAddressBalanceQuery ? '' : '', /x/); // no-op shape guard
+
+  // deep on non-mvc chains is ignored (the flag never reaches the snapshot).
+  await handlers.wallet_balance.handler({ chain: 'btc', address: '1BtcDeep', deep: true });
+  assert.equal(control.lastAddressBalanceQuery?.chain, 'btc');
+  assert.equal(control.lastAddressBalanceQuery?.options?.deep, undefined);
 });

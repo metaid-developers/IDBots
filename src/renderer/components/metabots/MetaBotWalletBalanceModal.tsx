@@ -29,18 +29,33 @@ interface BalanceState {
   btc?: string;
   mvc?: string;
   doge?: string;
+  /** MVC only: degraded-verdict note from the truth layer (read path suspect). */
+  mvcNote?: string;
   loading: boolean;
 }
 
+type ChainBalanceRow = { value: number | null; unit: string; degraded?: string; error?: string };
+
+function chainBalanceText(row: ChainBalanceRow | undefined): string | undefined {
+  if (row == null) return undefined;
+  if (row.value == null) return i18nService.t('metabotBalanceUnavailable');
+  return `${row.value.toFixed(8)} ${row.unit}`;
+}
+
 function balanceStateFromApi(balance: {
-  btc?: { value: number; unit: string };
-  mvc?: { value: number; unit: string };
-  doge?: { value: number; unit: string };
+  btc?: ChainBalanceRow;
+  mvc?: ChainBalanceRow;
+  doge?: ChainBalanceRow;
 }): Omit<BalanceState, 'loading'> {
   return {
-    btc: balance.btc != null ? `${balance.btc.value.toFixed(8)} ${balance.btc.unit}` : undefined,
-    mvc: balance.mvc != null ? `${balance.mvc.value.toFixed(8)} ${balance.mvc.unit}` : undefined,
-    doge: balance.doge != null ? `${balance.doge.value.toFixed(8)} ${balance.doge.unit}` : undefined,
+    btc: chainBalanceText(balance.btc),
+    mvc: chainBalanceText(balance.mvc),
+    doge: chainBalanceText(balance.doge),
+    // A degraded MVC read is flagged, never stated as fact (2026-11-21
+    // balance-truth line: indexer outages used to render as a fake 0).
+    mvcNote: balance.mvc?.degraded
+      ? `${i18nService.t('metabotBalanceDegraded')} ${balance.mvc.degraded}`
+      : undefined,
   };
 }
 
@@ -150,16 +165,20 @@ const MetaBotWalletBalanceModal: React.FC<MetaBotWalletBalanceModalProps> = ({
     addr: string,
     balanceValue: string | undefined,
     chain: 'btc' | 'mvc' | 'doge',
+    note?: string,
   ) => {
     if (!addr) return null;
     return (
+      <div className="space-y-1">
       <div className="flex items-center gap-1.5 text-xs overflow-hidden rounded-lg border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2">
         <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary w-12 shrink-0">{label}</span>
         <code className="truncate flex-1 min-w-0 dark:text-claude-darkText text-claude-text">
           {formatShort(addr)}
         </code>
         <span className="shrink-0 dark:text-claude-darkText text-claude-text text-[11px] tabular-nums truncate max-w-[110px]">
-          {balance.loading ? i18nService.t('metabotBalanceLoading') : balanceValue ?? '0.00'}
+          {balance.loading
+            ? i18nService.t('metabotBalanceLoading')
+            : balanceValue ?? i18nService.t('metabotBalanceUnavailable')}
         </span>
         <button
           type="button"
@@ -177,6 +196,10 @@ const MetaBotWalletBalanceModal: React.FC<MetaBotWalletBalanceModalProps> = ({
         >
           {i18nService.t('metabotTransfer')}
         </button>
+      </div>
+      {note && (
+        <p className="px-3 text-[11px] leading-snug text-amber-600 dark:text-amber-400">{note}</p>
+      )}
       </div>
     );
   };
@@ -221,7 +244,7 @@ const MetaBotWalletBalanceModal: React.FC<MetaBotWalletBalanceModalProps> = ({
 
           <div className="px-6 py-5 space-y-2">
             {renderChainRow('BTC', btcAddr, balance.btc, 'btc')}
-            {renderChainRow('MVC', mvcAddr, balance.mvc, 'mvc')}
+            {renderChainRow('MVC', mvcAddr, balance.mvc, 'mvc', balance.mvcNote)}
             {renderChainRow('DOGE', dogeAddr, balance.doge, 'doge')}
             {!btcAddr && !mvcAddr && !dogeAddr && (
               <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">

@@ -2165,7 +2165,11 @@ interface IElectronAPI {
     getAddressBalance: (options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) =>
       Promise<{
         success: boolean;
-        balance?: { btc?: { value: number; unit: string }; mvc?: { value: number; unit: string }; doge?: { value: number; unit: string } };
+        balance?: {
+          btc?: { value: number | null; unit: string; degraded?: string; error?: string };
+          mvc?: { value: number | null; unit: string; degraded?: string; error?: string };
+          doge?: { value: number | null; unit: string; degraded?: string; error?: string };
+        };
         error?: string;
       }>;
     getMetabotWalletAssets: (input: { metabotId: number }) => Promise<{
