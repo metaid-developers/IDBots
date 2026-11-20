@@ -97,7 +97,7 @@ export interface ControlPlaneConfig {
   };
 }
 
-function parsePushConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig['push'] {
+export function parsePushConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig['push'] {
   const provider = env.CP_PUSH_PROVIDER ?? 'disabled';
   if (provider !== 'disabled' && provider !== 'fake' && provider !== 'fcm') {
     throw new ConfigError('CP_PUSH_PROVIDER must be "disabled", "fake", or "fcm"');

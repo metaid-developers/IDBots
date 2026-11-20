@@ -277,9 +277,10 @@ test('login card uses the active surface and concentric radius in both schemes',
   for (const isDark of [true, false]) {
     const styles = buildStyles(isDark);
     assert.equal(styles.loginCard.backgroundColor, styles.input.backgroundColor);
-    assert.equal(styles.loginCard.borderRadius, 28);
-    assert.equal(styles.loginCard.padding, 14);
+    assert.equal(styles.loginCard.borderRadius, 24);
+    assert.equal(styles.loginCard.padding, '26px 22px');
     assert.equal(styles.input.borderRadius, 14);
+    assert.equal(styles.phoneField.borderRadius, 14);
     assert.ok(String(styles.loginCard.boxShadow).length > 0);
   }
 });
