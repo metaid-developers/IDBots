@@ -225,7 +225,10 @@ test('installMacDmg (interactive fallback) runs the same guard before the copy',
 
 test('both macOS install paths share one guard, so they cannot drift apart', () => {
   const refusals = source.split('Refusing to install a mislabeled update').length - 1;
-  assert.equal(refusals, 1, 'the refusal must live in exactly one place');
+  // macOS refuses inside assertInstallerBundleVersion ("the bundle reports");
+  // the Windows twin (13f7dc08c) repeats the refusal with "the installer
+  // reports" wording — one refusal site per platform, two in this file.
+  assert.equal(refusals, 2, 'one refusal site per platform: macOS bundle guard + Windows installer twin');
   assert.doesNotMatch(silentBody(), /readDeclaredInstallerVersion|readMacBundleVersion/);
   assert.doesNotMatch(interactiveBody(), /readDeclaredInstallerVersion|readMacBundleVersion/);
   assert.equal(
