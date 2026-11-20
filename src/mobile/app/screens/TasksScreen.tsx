@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -19,6 +19,7 @@ import { Switch } from '../components/Switch';
 import { UnifiedTasksSection } from '../components/unifiedTasks/UnifiedTasksSection';
 import { UnifiedTaskDetail } from '../components/unifiedTasks/UnifiedTaskDetail';
 import { useUnifiedTasks } from '../hooks/useUnifiedTasks';
+import { NotificationBell } from '../components/NotificationBell';
 
 type ScheduleKind = 'interval' | 'daily' | 'cron';
 type TaskScreen = ReturnType<typeof useScheduledTasks>;
@@ -384,6 +385,10 @@ export default function TasksScreen({
   onOpenDraft = () => undefined,
   onOpenUri = () => undefined,
   onAttentionCount = () => undefined,
+  notificationUnreadCount = 0,
+  onOpenNotifications,
+  requestedTaskId,
+  requestedScheduledRun,
 }: {
   resyncCounter?: number;
   twinMetabotId: number | null;
@@ -392,6 +397,10 @@ export default function TasksScreen({
   onOpenDraft?: (draft: string) => void;
   onOpenUri?: (uri: string) => void;
   onAttentionCount?: (count: number) => void;
+  notificationUnreadCount?: number;
+  onOpenNotifications?: () => void;
+  requestedTaskId?: string;
+  requestedScheduledRun?: { taskId: string; runId: string };
 }): JSX.Element {
   const [primaryTab, setPrimaryTab] = useState<PrimaryTaskTab>(readPrimaryTaskTab);
   const [scheduledSubTab, setScheduledSubTab] = useState<'schedules' | 'history'>('schedules');
@@ -402,7 +411,27 @@ export default function TasksScreen({
   const [formOpen, setFormOpen] = useState(false);
   const [editTask, setEditTask] = useState<ScheduledTask | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScheduledTask | null>(null);
+  const deepLinkHandledRef = useRef('');
   const attentionCount = unified.cards.filter((card) => card.column === 'waiting_owner' && card.stage !== 'done' && card.stage !== 'cancelled').length;
+
+  useEffect(() => {
+    if (!requestedTaskId) return;
+    setPrimaryTab('tasks');
+    unified.openDetail(requestedTaskId);
+  }, [requestedTaskId, unified.openDetail]);
+
+  useEffect(() => {
+    const request = requestedScheduledRun;
+    if (!request) return;
+    setPrimaryTab('scheduled');
+    setScheduledSubTab('history');
+    const run = screen.allRuns.find((entry) => entry.id === request.runId && entry.taskId === request.taskId);
+    if (!run) return;
+    const key = `${request.taskId}:${request.runId}`;
+    if (deepLinkHandledRef.current === key) return;
+    deepLinkHandledRef.current = key;
+    void screen.openRun(run);
+  }, [requestedScheduledRun, screen.allRuns, screen.openRun]);
 
   useEffect(() => {
     try {
@@ -440,15 +469,18 @@ export default function TasksScreen({
               : t('mobile.taskCenter.scheduledSubtitle')}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={primaryTab === 'tasks' ? () => onOpenDraft(t('mobile.taskCenter.newTaskDraft')) : openScheduleForm}
-          className="twin-icon-button twin-icon-button-primary"
-          aria-label={t(primaryTab === 'tasks' ? 'mobile.taskCenter.newTask' : 'mobile.tasks.create')}
-          data-testid="task-center-create"
-        >
-          <PlusIcon aria-hidden />
-        </button>
+        <div className="flex items-center">
+          {onOpenNotifications ? <NotificationBell count={notificationUnreadCount ?? 0} onClick={onOpenNotifications} /> : null}
+          <button
+            type="button"
+            onClick={primaryTab === 'tasks' ? () => onOpenDraft(t('mobile.taskCenter.newTaskDraft')) : openScheduleForm}
+            className="twin-icon-button twin-icon-button-primary"
+            aria-label={t(primaryTab === 'tasks' ? 'mobile.taskCenter.newTask' : 'mobile.tasks.create')}
+            data-testid="task-center-create"
+          >
+            <PlusIcon aria-hidden />
+          </button>
+        </div>
       </div>
       <div className="twin-unified-primary-tabs" role="tablist" aria-label={t('mobile.taskCenter.primaryTabs')}>
         <button type="button" role="tab" aria-selected={primaryTab === 'tasks'} onClick={() => setPrimaryTab('tasks')}>

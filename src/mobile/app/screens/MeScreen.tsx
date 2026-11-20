@@ -43,6 +43,8 @@ import { GeneralPage } from './me/GeneralPage';
 import { AccountPage } from './me/AccountPage';
 import { WeixinBindPage } from './me/WeixinBindPage';
 import { AboutPage } from './me/AboutPage';
+import NotificationsScreen from './NotificationsScreen';
+import type { AgentNotification } from '@/types/notification';
 
 /**
  * Me tab (REQ-E-14), A6 settings IA rework (IA-PLAN v1) + S9 ME points home.
@@ -119,6 +121,8 @@ export default function MeScreen(props: {
   onOpenUri?: (uri: string) => void;
   /** Bumped by the shell when a submitted order should open Usage & credits. */
   usageSignal?: number;
+  notificationUnreadCount?: number;
+  onOpenNotification: (item: AgentNotification) => Promise<boolean>;
 }): JSX.Element {
   const identity = useIdentity(props.resyncCounter);
   const [stack, setStack] = useState<MeStackEntry[]>([]);
@@ -252,6 +256,7 @@ export default function MeScreen(props: {
   }, [popRoute]);
 
   const summaryInput: MeEntrySummaryInput = {
+    notificationUnreadCount: props.notificationUnreadCount ?? null,
     botCount: metabots.loading && metabots.bots.length === 0 ? null : metabots.bots.length,
     skillsEnabledCount: skills.skills.length === 0 ? null : skills.skills.filter((skill) => skill.enabled).length,
     memoryEnabled: memory.config ? memory.config.memoryEnabled : null,
@@ -285,6 +290,8 @@ export default function MeScreen(props: {
 
   if (top) {
     switch (top) {
+      case 'notifications':
+        return <NotificationsScreen resyncCounter={props.resyncCounter} onBack={requestBack} onOpenNotification={props.onOpenNotification} />;
       case 'profile':
         return (
           <>

@@ -119,6 +119,9 @@ tests/*
 !tests/mobileChannels.test.mjs
 !tests/notificationStore.test.mjs
 !tests/notificationMainWiring.test.mjs
+!tests/mobileNotificationRoutes.test.ts
+!tests/mobileColdStart.test.mjs
+!tests/mobileLegal.test.ts
 !tests/mobileShim.test.ts
 !tests/mobileNativeBootstrap.test.ts
 !tests/mobileNativeAdapter.test.ts

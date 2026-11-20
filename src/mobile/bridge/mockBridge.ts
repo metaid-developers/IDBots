@@ -56,6 +56,7 @@ import type {
   ScheduledTaskMemoryAccess,
   ScheduledTaskRun,
 } from './types';
+import type { AgentNotification } from '@/types/notification';
 import { selectFileOnPhone, type PhoneFileSelectionOptions } from './installShim';
 import { uploadFile, type UploadTransport } from './upload';
 import { getMockArtifact, MOCK_ARTIFACT_PATHS } from './mockArtifacts';
@@ -692,6 +693,38 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     createActiveLongTermFixture(activeLongTermSession.id),
   ];
   const findLongTermDetail = (taskId: string) => longTermDetails.find((detail) => detail.id === taskId);
+  const notifications: AgentNotification[] = [
+    {
+      eventId: 'mock-work-complete',
+      type: 'work.completed',
+      category: 'work',
+      createdAt: bootAt - 60_000,
+      metabotId: 1,
+      sessionId: longTermSession.id,
+      taskId: null,
+      runId: null,
+      title: 'Task completed',
+      body: 'Open “Long-term document result” to review the result.',
+      priority: 'normal',
+      target: { kind: 'session', sessionId: longTermSession.id },
+      readAt: null,
+    },
+    {
+      eventId: 'mock-permission-resolved',
+      type: 'permission.required',
+      category: 'action',
+      createdAt: bootAt - 120_000,
+      metabotId: 1,
+      sessionId: activeLongTermSession.id,
+      taskId: null,
+      runId: null,
+      title: 'Approval needed',
+      body: 'Your Bot needs your input before it can continue.',
+      priority: 'high',
+      target: { kind: 'session', sessionId: activeLongTermSession.id },
+      readAt: bootAt - 30_000,
+    },
+  ];
   let longTermSeq = 0;
   const emitLongTermUpdate = (reason: string, taskId: string) => {
     longTermSeq += 1;
@@ -896,6 +929,25 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
       };
       task.updatedAt = new Date(finishedMs).toISOString();
       completeArtifactSession(runSession, task.prompt);
+      const eventId = `scheduled:${run.id}`;
+      if (!notifications.some((item) => item.eventId === eventId)) {
+        notifications.unshift({
+          eventId,
+          type: 'scheduled.completed',
+          category: 'work',
+          createdAt: finishedMs,
+          metabotId: task.metabotId,
+          sessionId: run.sessionId,
+          taskId: task.id,
+          runId: run.id,
+          title: 'Scheduled task completed',
+          body: `Open the run for “${task.name}”.`,
+          priority: 'normal',
+          target: { kind: 'scheduled_run', taskId: task.id, runId: run.id, sessionId: run.sessionId },
+          readAt: null,
+        });
+        emitter.emit('notification:changed', { eventId });
+      }
       emitter.emit('scheduledTask:runUpdate', { run: { ...run } });
       emitter.emit('scheduledTask:statusUpdate', { taskId: task.id, state: { ...task.state } });
     };
@@ -1990,6 +2042,61 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
           twinMetabotId: 1,
         })),
     },
+    notification: {
+      list: (options?: {
+        category?: AgentNotification['category'];
+        unreadOnly?: boolean;
+        limit?: number;
+        before?: { createdAt: number; eventId: string } | null;
+      }) => guardOnline(async () => {
+        const limit = Math.min(100, Math.max(1, Math.floor(options?.limit ?? 50)));
+        const filtered = notifications
+          .filter((item) => !options?.category || item.category === options.category)
+          .filter((item) => !options?.unreadOnly || item.readAt === null)
+          .filter((item) => !options?.before
+            || item.createdAt < options.before.createdAt
+            || (item.createdAt === options.before.createdAt && item.eventId < options.before.eventId))
+          .sort((left, right) => right.createdAt - left.createdAt || right.eventId.localeCompare(left.eventId));
+        const items = filtered.slice(0, limit).map((item) => ({ ...item, target: { ...item.target } }));
+        const last = items[items.length - 1];
+        return {
+          success: true,
+          items,
+          nextCursor: filtered.length > limit && last ? { createdAt: last.createdAt, eventId: last.eventId } : null,
+        };
+      }),
+      get: (eventId: string) => guardOnline(async () => {
+        const item = notifications.find((entry) => entry.eventId === eventId);
+        return item ? { success: true, item: { ...item } } : { success: false, error: 'Notification not found' };
+      }),
+      getUnreadCount: (category?: AgentNotification['category']) => guardOnline(async () => ({
+        success: true,
+        count: notifications.filter((item) => item.readAt === null && (!category || item.category === category)).length,
+      })),
+      markRead: (eventIds: string[]) => guardOnline(async () => {
+        let count = 0;
+        for (const item of notifications) {
+          if (eventIds.includes(item.eventId) && item.readAt === null) {
+            item.readAt = now();
+            count += 1;
+            emitter.emit('notification:changed', { eventId: item.eventId });
+          }
+        }
+        return { success: true, count };
+      }),
+      markAllRead: (category?: AgentNotification['category']) => guardOnline(async () => {
+        let count = 0;
+        for (const item of notifications) {
+          if (item.readAt === null && (!category || item.category === category)) {
+            item.readAt = now();
+            count += 1;
+            emitter.emit('notification:changed', { eventId: item.eventId });
+          }
+        }
+        return { success: true, count };
+      }),
+      onChanged: (callback: (payload: { eventId: string }) => void) => emitter.on('notification:changed', callback as never),
+    },
     gateway: {
       // Real shape per src/renderer/types/electron.d.ts: the success variant
       // carries {url, expiresAt, size, mime} directly (no success envelope).
@@ -2351,7 +2458,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
   }
   // Wrap the implemented namespaces too, so even they reject (never TypeError)
   // on methods the mock did not implement.
-  for (const name of ['store', 'cowork', 'scheduledTasks', 'bundle', 'mobile', 'gateway', 'metabot', 'skills', 'traffic', 'llmRelay', 'startup', 'window', 'dialog', 'shell', 'appInfo', 'userIdentity', 'p2p'] as const) {
+  for (const name of ['store', 'cowork', 'scheduledTasks', 'bundle', 'mobile', 'notification', 'gateway', 'metabot', 'skills', 'traffic', 'llmRelay', 'startup', 'window', 'dialog', 'shell', 'appInfo', 'userIdentity', 'p2p'] as const) {
     electron[name] = stubNamespace(name, (electron[name] as Record<string, unknown>) ?? {});
   }
 
@@ -2411,8 +2518,32 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
           request: event.request,
           createdAt: now(),
         });
+        const eventId = `permission:${event.request.requestId}`;
+        if (!notifications.some((item) => item.eventId === eventId)) {
+          notifications.unshift({
+            eventId,
+            type: 'permission.required',
+            category: 'action',
+            createdAt: now(),
+            metabotId: sessions.get(event.sessionId)?.metabotId ?? null,
+            sessionId: event.sessionId,
+            taskId: null,
+            runId: null,
+            title: 'Approval needed',
+            body: 'Your Bot needs your input before it can continue.',
+            priority: 'high',
+            target: { kind: 'session', sessionId: event.sessionId },
+            readAt: null,
+          });
+          emitter.emit('notification:changed', { eventId });
+        }
         permissionWaiters.set(event.request.requestId, () => {
           pendingPermissions.delete(event.request.requestId);
+          const notification = notifications.find((item) => item.eventId === `permission:${event.request.requestId}`);
+          if (notification?.readAt === null) {
+            notification.readAt = now();
+            emitter.emit('notification:changed', { eventId: notification.eventId });
+          }
           emitter.emit('cowork:stream:permissionResolved', {
             sessionId: event.sessionId,
             requestId: event.request.requestId,
@@ -2422,6 +2553,11 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
         const event = payload as { requestId: string };
         pendingPermissions.delete(event.requestId);
         permissionWaiters.delete(event.requestId);
+        const notification = notifications.find((item) => item.eventId === `permission:${event.requestId}`);
+        if (notification?.readAt === null) {
+          notification.readAt = now();
+          emitter.emit('notification:changed', { eventId: notification.eventId });
+        }
       }
       emitter.emit(`cowork:stream:${channel}`, payload);
     },

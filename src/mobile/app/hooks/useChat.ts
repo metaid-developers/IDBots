@@ -347,6 +347,7 @@ export function useChat(bots: MockMetabot[] = []) {
   }, [controller, permissionRequest]);
 
   return {
+    isReady: controller !== null,
     messages,
     activityMessages,
     sessions: snapshot.sessions,

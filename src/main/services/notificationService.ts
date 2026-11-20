@@ -77,11 +77,20 @@ export class NotificationService {
   }
 
   markRead(eventIds: string[]): number {
-    return this.store.markRead(eventIds);
+    const changed = this.store.markRead(eventIds);
+    if (changed > 0) {
+      for (const eventId of new Set(eventIds)) this.onChanged({ eventId });
+    }
+    return changed;
   }
 
   markAllRead(category?: AgentNotificationCategory): number {
-    return this.store.markAllRead(category);
+    const unread = this.store.list({ category, unreadOnly: true, limit: 100 }).items;
+    const changed = this.store.markAllRead(category);
+    if (changed > 0) {
+      for (const item of unread) this.onChanged({ eventId: item.eventId });
+    }
+    return changed;
   }
 
   recordCoworkTerminal(input: {
