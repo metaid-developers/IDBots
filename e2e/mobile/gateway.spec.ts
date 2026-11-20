@@ -67,6 +67,50 @@ test.describe('gateway-backed smoke', () => {
     await attachScreen(testInfo, page, 'gateway-session-drawer');
   });
 
+  test('foreground signals coalesce recovery and keep all four tabs usable @gateway', async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      const scope = window as unknown as { __recoverySockets: WebSocket[]; WebSocket: typeof WebSocket };
+      const NativeWebSocket = scope.WebSocket;
+      scope.__recoverySockets = [];
+      scope.WebSocket = new Proxy(NativeWebSocket, {
+        construct(target, args) {
+          const socket = Reflect.construct(target, args) as WebSocket;
+          if (new URL(String(args[0]), window.location.href).pathname === '/ws') {
+            scope.__recoverySockets.push(socket);
+          }
+          return socket;
+        },
+      });
+    });
+    await page.goto('/app/');
+    await expect(page.getByRole('button', { name: 'Chat', exact: true })).toBeVisible();
+    await expect(page.locator('[data-connection-state]')).toHaveAttribute('data-connection-state', 'online');
+    await expect(page.locator('#idbots-launch-splash')).toHaveCount(0);
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('online'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForTimeout(250);
+    expect(await page.evaluate(() => (window as unknown as { __recoverySockets: WebSocket[] }).__recoverySockets.length)).toBe(1);
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('offline'));
+      window.dispatchEvent(new Event('online'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await expect(page.locator('[data-connection-state]')).toHaveAttribute('data-connection-state', 'online');
+    expect(await page.evaluate(() => (window as unknown as { __recoverySockets: WebSocket[] }).__recoverySockets.length)).toBe(2);
+
+    for (const tab of ['browser', 'tasks', 'me', 'chat'] as const) {
+      const button = page.getByTestId(`mobile-tab-${tab}`);
+      await button.click();
+      await expect(button).toHaveAttribute('aria-current', 'page');
+    }
+    await expect(page.locator('[data-connection-state]')).toHaveAttribute('data-connection-state', 'online');
+    await attachScreen(testInfo, page, 'gateway-foreground-recovery');
+  });
+
   test('F-11: chat file links render as same-origin /files downloads and really download @gateway', async ({ page }, testInfo) => {
     test.skip(process.env.GW_FIXTURE_FILE === '0', 'requires the default file-delivery fixture (explicitly disabled with GW_FIXTURE_FILE=0)');
 

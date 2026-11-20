@@ -114,7 +114,7 @@ test('performResync skips the session and stream pulls when nothing is open', as
   assert.equal(snapshot.liveContent, null);
 });
 
-test('native foreground resyncs an already-online bridge without reconnecting', () => {
+test('native foreground resyncs and probes an already-online bridge', () => {
   let reconnects = 0;
   let resyncs = 0;
   const bridge = {
@@ -122,7 +122,7 @@ test('native foreground resyncs an already-online bridge without reconnecting', 
     gateway: { reconnectNow: () => { reconnects += 1; } },
   };
   recoverNativeAppState(true, bridge as never, () => { resyncs += 1; });
-  assert.equal(reconnects, 0);
+  assert.equal(reconnects, 1);
   assert.equal(resyncs, 1);
 });
 
