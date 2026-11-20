@@ -16,18 +16,67 @@
     error.code = code;
     return error;
   };
+  const MAX_NATIVE_FILE_BYTES = 25 * 1024 * 1024;
+  const NATIVE_FILE_CHUNK_BYTES = 256 * 1024;
+  const decodeBase64 = (value) => {
+    const binary = atob(value || '');
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  };
   const readNativeFile = async (descriptor) => {
     if (!descriptor || typeof descriptor.uri !== 'string' || !hasNativeMethod('readFile')) {
       throw nativeFailure('Native file reading is unavailable', 'UNAVAILABLE');
     }
-    const payload = await nativeCapabilitiesPlugin().readFile({
+    if (Number.isFinite(descriptor.size) && descriptor.size > MAX_NATIVE_FILE_BYTES) {
+      throw nativeFailure('File exceeds the 25 MB limit', 'TOO_LARGE');
+    }
+    const readChunk = (offset) => nativeCapabilitiesPlugin().readFile({
       uri: descriptor.uri,
       temporary: descriptor.temporary === true,
+      offset,
+      length: NATIVE_FILE_CHUNK_BYTES,
     });
-    const binary = atob(payload.data);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
-    return new File([bytes], payload.name || descriptor.name || 'file', {
+    let payload = await readChunk(0);
+    if (payload?.chunked !== true) {
+      const bytes = decodeBase64(payload.data);
+      return new File([bytes], payload.name || descriptor.name || 'file', {
+        type: payload.mime || descriptor.mime || 'application/octet-stream',
+        lastModified: Date.now(),
+      });
+    }
+    const declaredSize = Number.isFinite(descriptor.size) && descriptor.size >= 0
+      ? descriptor.size
+      : (Number.isFinite(payload.size) && payload.size >= 0 ? payload.size : null);
+    const bytes = declaredSize === null || declaredSize === 0 ? null : new Uint8Array(declaredSize);
+    const parts = [];
+    let offset = 0;
+    while (true) {
+      if (payload.offset !== undefined && Number(payload.offset) !== offset) {
+        throw nativeFailure('Native file chunk offset mismatch', 'NATIVE_FAILED');
+      }
+      const chunk = decodeBase64(payload.data);
+      if (offset + chunk.length > MAX_NATIVE_FILE_BYTES || (bytes && offset + chunk.length > bytes.length)) {
+        throw nativeFailure('File exceeds the 25 MB limit', 'TOO_LARGE');
+      }
+      if (bytes) bytes.set(chunk, offset);
+      else parts.push(chunk);
+      offset += chunk.length;
+      if (payload.end === true) break;
+      if (chunk.length === 0) throw nativeFailure('Native file reading made no progress', 'NATIVE_FAILED');
+      payload = await readChunk(offset);
+      if (payload?.chunked !== true) throw nativeFailure('Native file chunking is unavailable', 'NATIVE_FAILED');
+    }
+    let content = bytes;
+    if (!content) {
+      content = new Uint8Array(offset);
+      let position = 0;
+      for (const part of parts) {
+        content.set(part, position);
+        position += part.length;
+      }
+    }
+    return new File([content], payload.name || descriptor.name || 'file', {
       type: payload.mime || descriptor.mime || 'application/octet-stream',
       lastModified: Date.now(),
     });

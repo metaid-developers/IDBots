@@ -125,17 +125,14 @@ public class NativeCapabilitiesPlugin extends Plugin {
             call.reject("A file URI is required", "NATIVE_FAILED");
             return;
         }
+        Integer chunkLength = call.getInt("length");
+        if (chunkLength != null) {
+            new Thread(() -> readFileChunk(call, raw, chunkLength), "idbots-native-file-read").start();
+            return;
+        }
         try {
             Uri uri = Uri.parse(raw);
-            String scheme = uri.getScheme();
-            if (!"content".equals(scheme) && !"file".equals(scheme)) {
-                call.reject("Only selected content files can be read", "NATIVE_FAILED");
-                return;
-            }
-            if ("file".equals(scheme) && !isOwnedCameraFile(new File(uri.getPath() == null ? "" : uri.getPath()))) {
-                call.reject("Only temporary camera files can be read by path", "NATIVE_FAILED");
-                return;
-            }
+            validateReadableUri(uri);
             long declaredSize = sizeOf(uri);
             if (declaredSize > MAX_FILE_BYTES) {
                 call.reject("File exceeds the 25 MB limit", "TOO_LARGE");
@@ -156,6 +153,77 @@ public class NativeCapabilitiesPlugin extends Plugin {
             call.reject("Unable to read the selected file", "NATIVE_FAILED", error);
         } finally {
             if (temporary) deleteTemporaryCameraFile(raw);
+        }
+    }
+
+    private void readFileChunk(PluginCall call, String raw, int requestedLength) {
+        Uri uri = Uri.parse(raw);
+        boolean temporary = call.getBoolean("temporary", false);
+        int offset = Math.max(0, call.getInt("offset", 0));
+        boolean end = false;
+        try {
+            validateReadableUri(uri);
+            if (requestedLength <= 0 || offset > MAX_FILE_BYTES) {
+                call.reject("Invalid file chunk request", "NATIVE_FAILED");
+                return;
+            }
+            long declaredSize = sizeOf(uri);
+            if (declaredSize > MAX_FILE_BYTES) {
+                call.reject("File exceeds the 25 MB limit", "TOO_LARGE");
+                return;
+            }
+            int length = Math.min(requestedLength, 256 * 1024);
+            byte[] bytes = new byte[length];
+            int total = 0;
+            try (InputStream stream = openStream(uri)) {
+                long remaining = offset;
+                while (remaining > 0) {
+                    long skipped = stream.skip(remaining);
+                    if (skipped > 0) {
+                        remaining -= skipped;
+                    } else if (stream.read() >= 0) {
+                        remaining -= 1;
+                    } else {
+                        break;
+                    }
+                }
+                if (remaining == 0) {
+                    while (total < length) {
+                        int read = stream.read(bytes, total, length - total);
+                        if (read < 0) break;
+                        total += read;
+                    }
+                }
+            }
+            end = total < length || (declaredSize >= 0 && offset + total >= declaredSize);
+            if (offset + total > MAX_FILE_BYTES) throw new OversizeException();
+            JSObject response = new JSObject();
+            response.put("name", nameOf(uri));
+            response.put("mime", mimeOf(uri));
+            response.put("size", declaredSize);
+            response.put("offset", offset);
+            response.put("chunked", true);
+            response.put("end", end);
+            response.put("data", Base64.encodeToString(bytes, 0, total, Base64.NO_WRAP));
+            call.resolve(response);
+        } catch (SecurityException error) {
+            call.reject("File permission was denied", "PERMISSION_DENIED", error);
+        } catch (OversizeException error) {
+            call.reject("File exceeds the 25 MB limit", "TOO_LARGE");
+        } catch (Exception error) {
+            call.reject("Unable to read the selected file", "NATIVE_FAILED", error);
+        } finally {
+            if (temporary && end) deleteTemporaryCameraFile(raw);
+        }
+    }
+
+    private void validateReadableUri(Uri uri) throws Exception {
+        String scheme = uri.getScheme();
+        if (!"content".equals(scheme) && !"file".equals(scheme)) {
+            throw new IllegalArgumentException("Only selected content files can be read");
+        }
+        if ("file".equals(scheme) && !isOwnedCameraFile(new File(uri.getPath() == null ? "" : uri.getPath()))) {
+            throw new SecurityException("Only temporary camera files can be read by path");
         }
     }
 
