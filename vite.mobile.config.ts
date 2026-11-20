@@ -80,6 +80,7 @@ function mobileDevProxy() {
       // press on the mic lands on the vite server and 404s before the upgrade.
       '/asr': { target: wsTarget, ws: true, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
       '/files/': { target: httpTarget, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
+      '/pages/': { target: httpTarget, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
       '/upload': { target: httpTarget, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
     };
   }
@@ -95,6 +96,14 @@ function mobileDevProxy() {
     },
     // C2 File Download (signed tokens); /files/<token> → /gateway/v1/files/<token>.
     '/files/': {
+      target: `http://${GATEWAY_TARGET_HOST}`,
+      changeOrigin: true,
+      headers: secretHeader(),
+      rewrite: (requestPath: string) => `/gateway/v1${requestPath}`,
+    },
+    // Server-mode mobile page hosting; /pages/<token>/<asset> →
+    // /gateway/v1/pages/<token>/<asset> (token re-validated by the gateway).
+    '/pages/': {
       target: `http://${GATEWAY_TARGET_HOST}`,
       changeOrigin: true,
       headers: secretHeader(),

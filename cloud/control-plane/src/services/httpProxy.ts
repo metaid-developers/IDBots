@@ -225,8 +225,51 @@ async function proxyApp(
   });
 }
 
+/**
+ * `GET /pages/*` (cookie) → `GET {tenant}/gateway/v1/pages/*`.
+ *
+ * Server-mode mobile page hosting (`mobile_open_page`): the bot mints one
+ * HMAC-signed page token, the chat card points at `/pages/<token>/`, and this
+ * route forwards the page and every asset it loads to the tenant gateway —
+ * which re-validates the token on each request and confines every path to
+ * the hosted page root. Cookie auth means the page opens in the signed-in
+ * in-app browser exactly like `/app/*`; an expired/invalid token is the
+ * tenant's own 404, passed through unchanged.
+ */
+async function proxyPages(
+  app: AppContext,
+  reqCtx: RequestCtx,
+  _body: unknown,
+  params: Record<string, string>,
+): Promise<void> {
+  const session = resolveSession(app, reqCtx.cookieHeader);
+  if (!session) {
+    redirectToLogin(reqCtx);
+    return;
+  }
+  const lookup = await resolveTenantForUser(app, session.user.id);
+  if (!lookup.ok) {
+    tenantNotReadyOrError(lookup, reqCtx);
+    return;
+  }
+  const original = new URL(reqCtx.req?.url ?? '/pages/', 'http://localhost');
+  const rest = params['*'] ?? '';
+  const headers: Record<string, string> = { 'X-IDBots-Gateway-Secret': lookup.resolved.secret };
+  const range = reqCtx.req?.headers.range;
+  if (typeof range === 'string') {
+    headers.Range = range;
+  }
+  await streamToRes(
+    reqCtx,
+    `${lookup.resolved.baseUrl}/gateway/v1/pages/${rest}${original.search}`,
+    'GET',
+    headers,
+  );
+}
+
 export const proxyRoutes: Route[] = [
   { method: 'GET', path: '/files/:token', auth: true, handler: proxyFile },
   { method: 'POST', path: '/upload', auth: true, raw: true, handler: proxyUpload },
   { method: 'GET', path: '/app/*', handler: proxyApp },
+  { method: 'GET', path: '/pages/*', handler: proxyPages },
 ];

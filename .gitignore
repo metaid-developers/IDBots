@@ -141,6 +141,7 @@ tests/*
 !tests/relayCatalogFreshness.test.mjs
 !tests/mobileSettings.test.ts
 !tests/mobileModelSettings.test.tsx
+!tests/mobileOpenPage.test.mjs
 !tests/mobileRechargeRecovery.test.ts
 !tests/mobileBotLifecycle.test.ts
 !tests/mobileBotEditor.test.tsx
@@ -917,6 +918,7 @@ deploy/hosts/prometheus.yml
 !tests/mobileUpload.test.ts
 !tests/mobileChatAttachments.test.ts
 !tests/mobileArtifactPreview.test.ts
+!tests/mobilePageCardMarkdown.test.tsx
 !tests/mobileBackgroundTasks.test.ts
 !tests/mobileActivity.test.ts
 !tests/mobileUnifiedTasks.test.tsx

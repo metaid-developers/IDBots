@@ -8001,6 +8001,15 @@ const getCoworkRunner = () => {
       projects: {
         list: () => getProjectStore().listProjects(),
       },
+      // Server-mode mobile page hosting (`mobile_open_page`): the tool reads
+      // the SAME running-gateway context `gateway:file:sign` uses, so the
+      // page token is signed with the gateway secret and served by the
+      // gateway's /gateway/v1/pages route. Wired unconditionally (the tool
+      // seam itself is gated on isServerMode()), and it fails closed with a
+      // clear refusal when the gateway is not running.
+      mobilePage: {
+        getGatewayContext: getActiveGatewayContext,
+      },
       socialRecall: {
         feed: async ({ keywords, publisher, publishers, since, until, sort, scope, user, chainName, size, cursor }) => {
           // scope=following needs a subject; fall back to the identity the
