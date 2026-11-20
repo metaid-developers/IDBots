@@ -8,6 +8,7 @@ import { asrRoutes } from './routes/asr.js';
 import { authRoutes } from './routes/auth.js';
 import { creditRoutes } from './routes/credit.js';
 import { tenantCreditRoutes } from './routes/tenantCredit.js';
+import { pushRoutes } from './routes/push.js';
 import { sensitiveRoutes } from './routes/sensitive.js';
 import { requireUser } from './routes/auth.js';
 import { maskPhone } from './crypto.js';
@@ -223,6 +224,7 @@ const routes: Route[] = [
   ...accountRoutes,
   ...creditRoutes,
   ...tenantCreditRoutes,
+  ...pushRoutes,
   ...asrRoutes,
   ...proxyRoutes,
   ...loginRoutes,

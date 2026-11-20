@@ -41,6 +41,10 @@ function rowToNotification(row: NotificationRow): AgentNotification {
   };
 }
 
+export interface NotificationDeliveryItem extends AgentNotification {
+  attemptCount: number;
+}
+
 export class NotificationStore {
   constructor(private db: Database, private saveDb: () => void) {
     this.ensureSchema();
@@ -77,6 +81,10 @@ export class NotificationStore {
       )
     `);
     this.db.run('CREATE INDEX IF NOT EXISTS idx_notification_outbox_delivery ON notification_outbox(state, next_attempt_at)');
+    const columns = this.getAll<{ name: string }>('PRAGMA table_info(notification_outbox)');
+    if (!columns.some((column) => column.name === 'claimed_at')) {
+      this.db.run('ALTER TABLE notification_outbox ADD COLUMN claimed_at INTEGER');
+    }
   }
 
   private getOne<T>(sql: string, params: unknown[] = []): T | undefined {
@@ -170,8 +178,14 @@ export class NotificationStore {
        WHERE read_at IS NULL AND event_id IN (${ids.map(() => '?').join(',')})`,
       [atMs, ...ids],
     );
+    const changed = this.db.getRowsModified?.() ?? 0;
+    this.db.run(
+      `UPDATE notification_outbox SET state = 'cancelled', claimed_at = NULL
+       WHERE state IN ('pending', 'sending') AND event_id IN (${ids.map(() => '?').join(',')})`,
+      ids,
+    );
     this.saveDb();
-    return this.db.getRowsModified?.() ?? 0;
+    return changed;
   }
 
   markAllRead(category?: AgentNotificationCategory, atMs: number = Date.now()): number {
@@ -180,8 +194,15 @@ export class NotificationStore {
        WHERE read_at IS NULL ${category ? 'AND category = ?' : ''}`,
       category ? [atMs, category] : [atMs],
     );
+    const changed = this.db.getRowsModified?.() ?? 0;
+    this.db.run(
+      `UPDATE notification_outbox SET state = 'cancelled', claimed_at = NULL
+       WHERE state IN ('pending', 'sending') AND event_id IN (
+         SELECT event_id FROM notification_events WHERE read_at IS NOT NULL
+       )`,
+    );
     this.saveDb();
-    return this.db.getRowsModified?.() ?? 0;
+    return changed;
   }
 
   listPendingOutbox(limit = 50): Array<{ eventId: string; attemptCount: number; nextAttemptAt: number }> {
@@ -191,5 +212,60 @@ export class NotificationStore {
        ORDER BY next_attempt_at ASC, event_id ASC LIMIT ?`,
       [Math.min(100, Math.max(1, Math.floor(limit)))],
     );
+  }
+
+  claimPendingOutbox(now: number, limit = 20, leaseMs = 30_000): NotificationDeliveryItem[] {
+    const boundedLimit = Math.min(100, Math.max(1, Math.floor(limit)));
+    this.db.run('BEGIN IMMEDIATE');
+    try {
+      this.db.run(
+        `UPDATE notification_outbox SET state = 'pending', claimed_at = NULL
+         WHERE state = 'sending' AND claimed_at < ?`,
+        [now - leaseMs],
+      );
+      const rows = this.getAll<{ eventId: string; attemptCount: number }>(
+        `SELECT o.event_id AS eventId, o.attempt_count AS attemptCount FROM notification_outbox o
+         JOIN notification_events e ON e.event_id = o.event_id
+         WHERE o.state = 'pending' AND o.next_attempt_at <= ? AND e.read_at IS NULL
+         ORDER BY o.next_attempt_at ASC, o.event_id ASC LIMIT ?`,
+        [now, boundedLimit],
+      );
+      for (const row of rows) {
+        this.db.run(
+          `UPDATE notification_outbox SET state = 'sending', claimed_at = ?
+           WHERE event_id = ? AND state = 'pending'`,
+          [now, row.eventId],
+        );
+      }
+      this.db.run('COMMIT');
+      if (rows.length > 0) this.saveDb();
+      return rows.map((row) => {
+        const item = this.get(row.eventId);
+        return item?.readAt === null ? { ...item, attemptCount: row.attemptCount } : null;
+      }).filter((item): item is NotificationDeliveryItem => item !== null);
+    } catch (error) {
+      this.db.run('ROLLBACK');
+      throw error;
+    }
+  }
+
+  markOutboxDelivered(eventId: string): void {
+    this.db.run(
+      `UPDATE notification_outbox SET state = 'delivered', claimed_at = NULL, last_error = NULL
+       WHERE event_id = ? AND state = 'sending'`,
+      [eventId],
+    );
+    this.saveDb();
+  }
+
+  retryOutbox(eventId: string, error: string, nextAttemptAt: number): void {
+    this.db.run(
+      `UPDATE notification_outbox
+       SET state = 'pending', claimed_at = NULL, attempt_count = attempt_count + 1,
+           next_attempt_at = ?, last_error = ?
+       WHERE event_id = ? AND state = 'sending'`,
+      [nextAttemptAt, error.slice(0, 500), eventId],
+    );
+    this.saveDb();
   }
 }

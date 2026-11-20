@@ -4,6 +4,7 @@ import type { DockerClient } from './docker/client.js';
 import type { SmsProvider } from './sms.js';
 import type { TenantPoller } from './services/poller.js';
 import type { MetricsRegistry } from './metrics.js';
+import type { PushDeliveryService } from './services/pushDelivery.js';
 
 /** Shared application context passed to routes and services. */
 export interface AppContext {
@@ -13,4 +14,5 @@ export interface AppContext {
   sms: SmsProvider;
   poller: TenantPoller | null;
   metrics: MetricsRegistry;
+  push: PushDeliveryService;
 }

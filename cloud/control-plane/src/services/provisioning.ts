@@ -57,6 +57,7 @@ export function buildContainerSpec(
     IDBOTS_SERVER_MODE: '1',
     IDBOTS_TENANT_ID: input.tenantId,
     IDBOTS_GATEWAY_SECRET: input.gatewaySecret,
+    IDBOTS_CONTROL_PLANE_URL: app.config.publicOrigin,
     IDBOTS_GATEWAY_PORT: String(GATEWAY_PORT),
     IDBOTS_GATEWAY_TIER: 'P1',
     IDBOTS_USER_DATA_PATH: '/data/userdata',

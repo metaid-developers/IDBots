@@ -24,4 +24,8 @@
     <string name="update_failed_title">Update download failed</string>
     <string name="update_failed_message">Check your connection and try again. Your current version is unaffected.</string>
     <string name="update_retry">Try again</string>
+    <string name="notification_channel_work">Task results</string>
+    <string name="notification_channel_action">Action required</string>
+    <string name="notification_channel_report">Daily reports</string>
+    <string name="notification_channel_system">Account and system</string>
 </resources>

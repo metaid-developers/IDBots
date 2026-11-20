@@ -53,7 +53,7 @@ authoritative table.
 | `CP_LISTEN` | public listen address (default `0.0.0.0:8080`) |
 | `CP_METRICS_LISTEN` | internal metrics listen address (default `0.0.0.0:9100`) |
 | `CP_DB_PATH` | SQLite file on a persistent volume |
-| `CP_MASTER_KEY` | 32 bytes base64; AES-256-GCM key for gateway secrets and redeem codes |
+| `CP_MASTER_KEY` | 32 bytes base64; AES-256-GCM key for gateway secrets, redeem codes, and device push tokens |
 | `CP_DOCKER_URL` | Docker Engine API, e.g. `http://docker-proxy:2375` or `http+unix:///var/run/docker.sock` |
 | `CP_TENANT_IMAGE` | default tenant image tag |
 | `CP_TENANT_NETWORK` | Docker network for tenants |
@@ -64,6 +64,10 @@ authoritative table.
 | `CP_SMS_ACCESS_KEY_ID`, `CP_SMS_ACCESS_KEY_SECRET`, `CP_SMS_SIGN_NAME`, `CP_SMS_TEMPLATE_LOGIN`, `CP_SMS_TEMPLATE_REVERIFY` | Alibaba Cloud SMS |
 | `CP_FAKE_SMS_NUMBERS` | staging-only test numbers for the fixed code `246810` |
 | `CP_ALERT_WEBHOOK` | Feishu/DingTalk webhook for provisioning and upgrade failures |
+| `CP_PUSH_PROVIDER` | `disabled` (default), `fcm`, or `fake` for local/staging tests |
+| `CP_FCM_SERVICE_ACCOUNT_JSON` | FCM service-account JSON with `project_id`, `client_email`, and `private_key`; required for `fcm`, secret environment only |
+
+The additive device routes are `POST /api/v1/devices/register`, `POST /api/v1/devices/unregister`, and `GET/PUT /api/v1/notification-preferences`. Tenant notification ingest is `POST /internal/v1/tenants/:tenantId/notifications` using the existing tenant gateway bearer credential. Delivery is persisted per `(eventId, deviceId)` with retries and invalid-token revocation. See `docs/cloud-mobile/change-requests/CR-WSE-004-device-push-delivery.md`. Fake push is not a production delivery implementation; Chinese OEM and APNs acceptance remain separate launch gates.
 
 `CP_SMS_MODE=fake` refuses to start unless `CP_PUBLIC_ORIGIN` is
 `localhost`, `127.0.0.1`, `[::1]`, or a `*.staging` origin.

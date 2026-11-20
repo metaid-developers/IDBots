@@ -61,6 +61,14 @@ If the host uses an HTTP(S) proxy, Java does not necessarily inherit the desktop
 
 CocoaPods commands require UTF-8 locale settings. The iOS build script supplies `LANG=en_US.UTF-8` and `LC_ALL=en_US.UTF-8`.
 
+## System notifications
+
+The Android shell includes the typed push adapter, Android 13+ permission flow, Work / Action required / Reports / System channels, and event-only notification taps. Permission is requested only from an explicit enable action; the notification inbox works without it. Installation IDs are not credentials and provider tokens are never stored in localStorage.
+
+A working FCM installation needs both the control-plane FCM configuration and the matching local `android/app/google-services.json`. That file is not committed. `CP_PUSH_PROVIDER=disabled` is the safe default and does not pretend that a notification was delivered. `fake` is limited to localhost/staging automated tests.
+
+An APK build and fake-provider tests do not validate real delivery. Release acceptance must cover physical devices in foreground/background/process-killed states, logout and token revocation, offline/reconnect, and cold/warm taps. Chinese OEM channels and APNs entitlements/credentials remain separate launch work; their absence is not covered up by the FCM adapter.
+
 ## Flavors
 
 Staging is the default. Production is always an explicit command.

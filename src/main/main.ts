@@ -507,6 +507,7 @@ import { DreamStore } from './dreamStore';
 import { DailyReportStore } from './dailyReportStore';
 import { NotificationStore } from './notificationStore';
 import { NotificationService } from './services/notificationService';
+import { startNotificationDeliveryLoop, type NotificationDeliveryLoop } from './services/notificationDeliveryService';
 import { startDailyReportService, stopDailyReportService } from './services/dailyReportService';
 import { collectDailyReportFacts, createDailyReportDbAccessor } from './services/dailyReportCollector';
 import { MessageFeedbackStore } from './messageFeedbackStore';
@@ -3142,6 +3143,7 @@ let relayCatalogRefresh: ReturnType<typeof createRelayCatalogRefresh> | null = n
 let relayCatalogRefreshTimer: ReturnType<typeof setInterval> | null = null;
 /** Plan B: tenant-side pull of pending credit grants (server mode only). */
 let creditPullLoop: CreditPullLoop | null = null;
+let notificationDeliveryLoop: NotificationDeliveryLoop | null = null;
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -22897,6 +22899,8 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     relayCatalogRefresh = null;
     creditPullLoop?.stop();
     creditPullLoop = null;
+    notificationDeliveryLoop?.stop();
+    notificationDeliveryLoop = null;
     await stopMetaAppServer().catch((error) => {
       console.error('[metaapps] Failed to stop local server during cleanup:', error);
     });
@@ -23283,6 +23287,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       // account; retries never mark a grant applied on failure.
       creditPullLoop = startCreditPullLoop({
         log: (level, msg, extra) => serverPhaseLog(level, 'credit-pull', msg, extra),
+      });
+      notificationDeliveryLoop = startNotificationDeliveryLoop(getNotificationService().getStore(), {
+        log: (level, msg, extra) => serverPhaseLog(level, 'notification-delivery', msg, extra),
       });
     }
 

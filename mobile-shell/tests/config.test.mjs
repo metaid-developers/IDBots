@@ -195,9 +195,18 @@ test('native dependencies stay outside the root package and Electron artifact', 
   const electronBuilder = JSON.parse(read('../../electron-builder.json'));
   assert.doesNotMatch(JSON.stringify(electronBuilder.files), /mobile-shell/);
   assert.doesNotMatch(JSON.stringify(electronBuilder.extraResources), /mobile-shell/);
-  for (const dependency of ['@capacitor/camera', '@capacitor/share', '@capacitor/push-notifications']) {
+  for (const dependency of ['@capacitor/camera', '@capacitor/share']) {
     assert.equal(nativePackage.dependencies[dependency], undefined);
   }
+  assert.equal(nativePackage.dependencies['@capacitor/push-notifications'], '8.1.3');
+  assert.equal(nativePackage.dependencies['@capacitor/local-notifications'], '8.3.1');
+});
+
+test('Android notification permission, category channels and event-only tap routing are present', () => {
+  assert.match(read('../android/app/src/main/AndroidManifest.xml'), /android\.permission\.POST_NOTIFICATIONS/);
+  const activity = read('../android/app/src/main/java/com/idbots/world/MainActivity.java');
+  for (const channel of ['work', 'action', 'report', 'system']) assert.match(activity, new RegExp(`"${channel}"`));
+  assert.match(read('../native/idbots-native-bootstrap.js'), /event\?\.notification\?\.data\?\.eventId/);
 });
 
 test('NS2 native capabilities are registered with privacy and size boundaries', () => {

@@ -21,6 +21,8 @@ import type { MobileTab } from './components/TabBar';
 import { handleMobileRootBack } from './nativeBack';
 import { useNativeBackHandler } from './hooks/useNativeBackHandler';
 import { isRechargeAllowed } from '../native/rechargePolicy';
+import { getNativeAdapter } from '../native/nativeAdapter';
+import { getPushNotificationCoordinator } from '../native/pushNotifications';
 import type { MobileNftMintRequest } from './me/nftMint';
 import type { MobileBrowserRequest } from './browser/MobileBrowserScreen';
 import {
@@ -175,6 +177,14 @@ export default function MobileApp(): JSX.Element {
     },
     chat.applyResync,
   );
+  useEffect(() => {
+    const coordinator = getPushNotificationCoordinator();
+    void coordinator.load();
+    return getNativeAdapter().onAppStateChange((active) => {
+      if (active) void coordinator.load();
+    });
+  }, []);
+
   const notificationUnreadCount = useNotificationUnreadCount(resyncCounter);
   useNotificationReadThrough(
     chat.sessionId,
@@ -234,6 +244,23 @@ export default function MobileApp(): JSX.Element {
     setScheduledDeepLink({ taskId: route.taskId, runId: route.runId });
     setTab('tasks');
   }, [openNotification, openWorkSession]);
+
+  const pendingNativeEventRef = useRef<string | null>(null);
+  useEffect(() => getNativeAdapter().onPushNotificationOpen((eventId) => {
+    pendingNativeEventRef.current = eventId;
+    window.history.pushState({ notificationDeepLink: true }, '', notificationCenterPath(eventId));
+    if (chat.isReady) {
+      pendingNativeEventRef.current = null;
+      void handleRoute({ kind: 'notification', eventId });
+    }
+  }), [chat.isReady, handleRoute]);
+
+  useEffect(() => {
+    const eventId = pendingNativeEventRef.current;
+    if (!chat.isReady || !eventId) return;
+    pendingNativeEventRef.current = null;
+    void handleRoute({ kind: 'notification', eventId });
+  }, [chat.isReady, handleRoute]);
 
   const handledInitialRouteRef = useRef(false);
   useEffect(() => {

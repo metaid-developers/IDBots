@@ -13,6 +13,7 @@ function capabilities(overrides: Partial<MobileNativeCapabilities> = {}): Mobile
     backButton: true,
     externalUrls: true,
     secureScreen: false,
+    pushNotifications: false,
     ...overrides,
   };
 }
@@ -152,6 +153,29 @@ test('app-state and back subscriptions honor capability absence and unsubscribe'
   const adapter = createNativeAdapter(unavailable.value);
   assert.equal(adapter.onAppStateChange(() => undefined)(), undefined);
   assert.equal(adapter.onBackButton(() => false)(), undefined);
+});
+
+test('push permission, token and notification taps stay behind the native capability', async () => {
+  let opened: ((eventId: string) => void) | undefined;
+  const bridge = nativeBridge({
+    getCapabilities: () => capabilities({ pushNotifications: true }),
+    getPushPermission: async () => 'prompt',
+    requestPushPermission: async () => 'granted',
+    registerForPush: async () => 'provider-token',
+    onPushNotificationOpen: (callback) => { opened = callback; return () => { opened = undefined; }; },
+  });
+  const adapter = createNativeAdapter(target(bridge).value);
+  assert.equal(await adapter.getPushPermission(), 'prompt');
+  assert.equal(await adapter.requestPushPermission(), 'granted');
+  assert.equal(await adapter.registerForPush(), 'provider-token');
+  const events: string[] = [];
+  const unsubscribe = adapter.onPushNotificationOpen((eventId) => events.push(eventId));
+  opened?.('cowork:session-1:completed:1');
+  unsubscribe();
+  assert.deepEqual(events, ['cowork:session-1:completed:1']);
+  const unavailable = createNativeAdapter(target().value);
+  assert.equal(await unavailable.getPushPermission(), 'unavailable');
+  await assert.rejects(unavailable.registerForPush(), (error) => (error as { code?: string }).code === 'UNAVAILABLE');
 });
 
 test('malformed capabilities degrade to false instead of crashing feature detection', () => {

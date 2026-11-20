@@ -8,10 +8,22 @@ async function pendingOrderId(page: Page): Promise<string> {
 }
 
 async function chooseMePlan(page: Page, planTestId: string): Promise<void> {
-  await page.getByTestId('me-compact-credits').click();
+  const usage = page.getByTestId('me-page-usage');
+  if (!await usage.isVisible().catch(() => false)) {
+    await page.getByTestId('me-compact-credits').click();
+  }
+  await expect(usage).toBeVisible();
   await page.locator('[data-testid="me-points-hero"] .me-hero-button-primary').click();
   await expect(page.getByTestId('me-purchase-page')).toBeVisible();
-  await page.getByTestId(planTestId).click();
+  const recovered = page.getByTestId('me-payment-pending').or(page.getByTestId('me-purchase-submitted'));
+  await expect(page.getByTestId(planTestId).or(recovered)).toBeVisible();
+  if (await recovered.isVisible().catch(() => false)) return;
+  try {
+    await page.getByTestId(planTestId).click({ timeout: 10_000 });
+  } catch (error) {
+    if (await recovered.isVisible().catch(() => false)) return;
+    throw error;
+  }
 }
 
 async function installMeOrderStatus(page: Page, orderId: string, status: string): Promise<void> {
@@ -51,14 +63,19 @@ test.describe('gateway account and daily use', () => {
 
     await page.getByRole('button', { name: 'Close' }).click();
     await chooseMePlan(page, 'me-tier-me_pro');
-    await expect(page.locator('.me-checkout-order')).toHaveText(orderId);
+    await expect(page.locator('.me-checkout-order, .me-success-order').filter({ hasText: orderId })).toBeVisible();
     await page.reload();
     await page.getByRole('button', { name: 'Me', exact: true }).click();
     await page.getByTestId('me-compact-credits').click();
-    await page.getByTestId(`usage-resume-${orderId}`).click();
-    await expect(page.locator('.me-checkout-order')).toHaveText(orderId);
-
-    await expect(page.getByTestId('me-purchase-submitted')).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByTestId('usage-orders')).toContainText(orderId);
+    const resume = page.getByTestId(`usage-resume-${orderId}`);
+    if (await resume.count()) {
+      await resume.click();
+      await expect(page.locator('.me-checkout-order, .me-success-order').filter({ hasText: orderId })).toBeVisible();
+      await expect(page.getByTestId('me-purchase-submitted')).toBeVisible({ timeout: 45_000 });
+    } else {
+      await expect(page.locator('[data-testid="usage-order-row"][data-kind="subscribe"]').filter({ hasText: orderId })).toHaveAttribute('data-status', 'confirmed');
+    }
     const before = await page.evaluate(async () => (await window.electron.mePoints.getBalance()).balance);
     await page.evaluate(async (id) => {
       await window.electron.mePoints.getSubscriptionOrder({ orderId: id });
@@ -70,7 +87,9 @@ test.describe('gateway account and daily use', () => {
     expect(after.weeklyGrant.remainingMilli).toBe(before.weeklyGrant.remainingMilli);
     expect(after.persistent).toEqual(before.persistent);
 
-    await page.getByRole('button', { name: 'Done' }).click();
+    if (await page.getByTestId('me-purchase-submitted').isVisible().catch(() => false)) {
+      await page.getByRole('button', { name: 'Done' }).click();
+    }
     await page.getByRole('button', { name: 'Chat', exact: true }).click();
     await page.getByPlaceholder('Type a message…').fill('next message after gateway recharge');
     await page.getByTestId('chat-composer-input').press('Enter');
@@ -92,7 +111,7 @@ test.describe('gateway account and daily use', () => {
     await installMeOrderStatus(page, orderId, 'submitted');
     await page.getByRole('button', { name: 'Me', exact: true }).click();
     await chooseMePlan(page, 'me-tier-me_pro');
-    await expect(page.locator('.me-checkout-order')).toHaveText(orderId);
+    await expect(page.locator('.me-checkout-order, .me-success-order').filter({ hasText: orderId })).toBeVisible();
 
     await installMeOrderStatus(page, orderId, 'confirmed');
     await page.getByTestId('me-payment-check').click();

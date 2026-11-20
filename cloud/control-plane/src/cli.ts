@@ -19,6 +19,7 @@ import { newInviteCode, newGatewaySecret } from './ids.js';
 import { encryptSecret, sha256Hex, maskPhone } from './crypto.js';
 import { upgradeTenants, findContainerId, recreateContainer } from './services/upgrade.js';
 import { MetricsRegistry } from './metrics.js';
+import { PushDeliveryService } from './services/pushDelivery.js';
 import type { AppContext } from './context.js';
 import { attachCreditApplyCode, grantCredit, listCredits } from './services/creditService.js';
 import { HttpError } from './http.js';
@@ -94,15 +95,18 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
     // The CLI grants credits through services/creditService directly (actor
     // admin:<name>); the HTTP token is irrelevant here — inert default.
     adminApiToken: null,
+    push: { provider: 'disabled', fcm: null },
   } as ControlPlaneConfig;
   const docker = new DockerClient(config.dockerUrl);
+  const db = openDb(dbPath);
   return {
     config,
-    db: openDb(dbPath),
+    db,
     docker,
     sms: new FakeSmsProvider([]),
     poller: null,
     metrics: new MetricsRegistry(),
+    push: new PushDeliveryService(db, config),
   };
 }
 
