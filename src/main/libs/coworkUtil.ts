@@ -1337,6 +1337,9 @@ export async function generateSessionTitle(userIntent: string | null): Promise<s
         // Per-attempt window: the fallback brain gets its own fresh 12s
         // instead of inheriting the primary's spent signal.
         attemptTimeoutMs: 12_000,
+        // Streaming transport: bounds stream silence, not the whole generation —
+        // a slowly-flowing title still completes (bounded by the 96s total cap).
+        attemptTimeoutKind: 'idle',
       }
     );
     return sanitizeGeneratedSessionTitle(result.content ?? '', fallback);
@@ -1415,6 +1418,7 @@ export async function generateTurnAckReply(userText: string, sessionTitle?: stri
         // search detour would defeat the whole point of a fast ack.
         webSearch: false,
         attemptTimeoutMs: 4_000,
+        attemptTimeoutKind: 'idle',
         // Optional caller abort — linked into each per-attempt timeout signal
         // by withPerAttemptSignal.
         signal,
@@ -1480,6 +1484,7 @@ export async function generateOwnerWaitUpdate(input: OwnerWaitUpdateInput): Prom
         throwOnEmptyContent: true,
         webSearch: false,
         attemptTimeoutMs: 4_000,
+        attemptTimeoutKind: 'idle',
       }
     );
     const metadata = result.responseMetadata;
@@ -1537,6 +1542,7 @@ export async function generateTurnStatusGoal(userText: string, sessionTitle?: st
         throwOnEmptyContent: true,
         webSearch: false,
         attemptTimeoutMs: 4_000,
+        attemptTimeoutKind: 'idle',
         signal,
       }
     );

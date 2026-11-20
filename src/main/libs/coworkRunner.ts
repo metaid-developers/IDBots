@@ -10432,6 +10432,7 @@ export class CoworkRunner extends EventEmitter {
             effort: 'low',
             webSearch: false,
             attemptTimeoutMs: STUDIO_CHAPTER_CARD_TIMEOUT_MS,
+            attemptTimeoutKind: 'idle',
           },
         );
         const parsed = parseStudioChapterCardResponse(raw);

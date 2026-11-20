@@ -804,8 +804,14 @@ export function generateRuntimeConfig(input) {
       // web_fetch is on now that fetch rides DeepSeek's server-side Fetch API —
       // its 403 policy rejects unsafe targets server-side, so the old
       // local-fetch SSRF concern no longer applies. The 60s search timeout
-      // stays for the legacy provider's full-model-turn latency.
-      { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60000 } },
+      // stays for the legacy provider's full-model-turn latency. fetch
+      // matches it: the plugin's 30s default was the only exact-30s budget in
+      // the whole client, and every relay web_fetch that hit it aborted the
+      // upstream at exactly 30s — the highly-consistent 30.0s deepseek-4.1-flash
+      // streaming client_gone cluster in the 2026-11-20 ABS relay handoff
+      // (zero tokens: the relay tools endpoint's internal LLM never got to
+      // emit). Sits under the local proxy's 50s per-attempt / 55s ladder budget.
+      { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60000, fetchTimeoutMs: 60000 } },
     ] : []),
     // Model-facing subagent delegation (in-process spawn provider, foreground).
     { id: 'subagent', name: '@deepseek-ai/dsh-subagent' },

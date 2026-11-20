@@ -37,6 +37,7 @@ type PerformChatFn = (
     fallbackEffort?: 'off' | 'low' | 'high' | 'max' | null;
     thinking?: 'enabled' | 'disabled';
     attemptTimeoutMs?: number;
+    attemptTimeoutKind?: 'total' | 'idle';
   },
 ) => Promise<string>;
 
@@ -124,7 +125,10 @@ export async function generateA2AEpisodeHandoffSummary(params: {
         effort: params.effort,
         fallbackEffort: params.fallbackEffort,
         thinking: 'disabled',
+        // Streaming transport: 45s bounds stream silence, not the whole
+        // generation (outer 90s race still bounds the await).
         attemptTimeoutMs: 45_000,
+        attemptTimeoutKind: 'idle',
       },
     );
     const summary = await Promise.race([
