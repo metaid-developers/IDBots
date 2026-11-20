@@ -80,7 +80,7 @@ const OPTION_SCHEMA = z.object({
 });
 
 const EVIDENCE_SCHEMA = z.object({
-  kind: z.enum(['dir', 'metaapp', 'pin', 'url', 'other']),
+  kind: z.enum(['dir', 'file', 'metaapp', 'pin', 'url', 'other']),
   uri: z.string().min(1),
   note: z.string().optional(),
 });

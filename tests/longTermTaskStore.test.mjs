@@ -355,6 +355,31 @@ test('proposeSubtask validates evidence URI shapes', async () => {
   assert.ok(good.ok, JSON.stringify(good));
 });
 
+test('proposeSubtask accepts kind=file for a local file path and still refuses relative ones', async () => {
+  const { store } = await openStore();
+  const taskId = await createActive(store);
+  const first = store.getTask(taskId).subtasks[0];
+  store.beginSubtask(first.id, 'twin');
+
+  // file is a PATH kind, exactly like dir: a relative path is malformed.
+  const bad = store.proposeSubtask(first.id, {
+    evidence: [{ kind: 'file', uri: 'reports/out.html' }],
+    summary: 's',
+  }, 'twin');
+  assert.equal(bad.ok, false);
+  assert.equal(bad.code, 'VALIDATION');
+  assert.match(bad.error, /malformed evidence/);
+
+  const good = store.proposeSubtask(first.id, {
+    evidence: [{ kind: 'file', uri: '/tmp/x/reports/out.html', note: 'briefing page' }],
+    summary: 's',
+  }, 'twin');
+  assert.ok(good.ok, JSON.stringify(good));
+  assert.deepEqual(store.getSubtask(first.id).evidence, [
+    { kind: 'file', uri: '/tmp/x/reports/out.html', note: 'briefing page' },
+  ]);
+});
+
 test('session history accumulates across binds and unions legacy rows at read time', async () => {
   const { store } = await openStore();
   const taskId = await createActive(store);
