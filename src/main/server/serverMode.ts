@@ -174,6 +174,17 @@ export const SERVER_MODE_DISABLED_AGENT_TOOLS: ReadonlySet<string> = new Set([
   'bot_browser_screenshot',
   'bot_browser_act',
   'browser_open',
+  // Desktop Studio projector & Chief-of-Staff queue tools (no projector or
+  // right-hand decision stage exists on cloud mobile).
+  'browser_tabs',
+  'projection_begin',
+  'studio_decision_enqueue',
+  'studio_decision_list',
+  'studio_decision_resolve',
+  'studio_decision_defer',
+  'studio_presence_mark',
+  'studio_task_focus',
+  'twin_stamp_publish',
   // OS screen capture via desktopCapturer (screenshotAgentTools.ts).
   'screenshot',
   // Local MetaApp open/resolve (coworkRunner inline tools).
@@ -246,10 +257,14 @@ export function resolveMobileToolMountPolicy(input: {
   isMobileOwnerChat: boolean;
   expansions: readonly MobileToolExpansion[];
 }): Record<MobileToolExpansion, boolean> {
+  // When a desktop Studio session is reopened on mobile, the cloud mobile
+  // policy takes precedence so historical Studio flags do not lock out
+  // intent-expanded social or worker-economy tools.
+  const effectiveStudioOwnerChat = input.isStudioOwnerChat && !input.isMobileOwnerChat;
   return {
-    workerEconomy: !input.isStudioOwnerChat && (!input.isMobileOwnerChat || input.expansions.includes('workerEconomy')),
+    workerEconomy: !effectiveStudioOwnerChat && (!input.isMobileOwnerChat || input.expansions.includes('workerEconomy')),
     financial: !input.isMobileOwnerChat || input.expansions.includes('financial'),
-    social: !input.isStudioOwnerChat && (!input.isMobileOwnerChat || input.expansions.includes('social')),
+    social: !effectiveStudioOwnerChat && (!input.isMobileOwnerChat || input.expansions.includes('social')),
     metaweb: !input.isMobileOwnerChat || input.expansions.includes('metaweb'),
     orchestration: !input.isMobileOwnerChat || input.expansions.includes('orchestration'),
     memoryAdvanced: !input.isMobileOwnerChat || input.expansions.includes('memoryAdvanced'),
@@ -259,7 +274,7 @@ export function resolveMobileToolMountPolicy(input: {
 
 const MOBILE_CORE_TOOLS: ReadonlySet<string> = new Set([
   'bash', 'read', 'write', 'edit', 'glob', 'grep', 'read_image',
-  'web_search', 'web_fetch', 'skill_tool',
+  'web_search', 'web_fetch', 'skill_tool', 'owner_update',
   'conversation_recall', 'conversation_search', 'recent_chats', 'memory_user_edits',
   'upload_file', 'describe_image', 'describe_video', 'describe_audio',
   'media_info', 'convert_media', 'grab_video_frame', 'check_metafile_route',
@@ -280,6 +295,7 @@ const MOBILE_EXPANSION_TOOL_PATTERNS: Record<Exclude<MobileToolExpansion, 'autom
 
 /** Core chat stays small; optional families appear only after explicit intent. */
 export function isMobileToolVisible(toolName: string, expansions: readonly MobileToolExpansion[]): boolean {
+  if (SERVER_MODE_DISABLED_AGENT_TOOLS.has(toolName)) return false;
   if (MOBILE_CORE_TOOLS.has(toolName)) return true;
   if (toolName.startsWith('mcp__playwright-mcp__')) return expansions.includes('automation');
   for (const [expansion, pattern] of Object.entries(MOBILE_EXPANSION_TOOL_PATTERNS) as Array<[Exclude<MobileToolExpansion, 'automation'>, RegExp]>) {

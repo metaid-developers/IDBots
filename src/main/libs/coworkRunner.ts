@@ -6940,11 +6940,21 @@ export class CoworkRunner extends EventEmitter {
   }
 
   private isMobileOwnerChatSession(sessionId: string): boolean {
+    if (!isServerMode()) return false;
     return isMobileOwnerChatSessionProfile({
-      serverMode: isServerMode(),
-      session: this.store.getSession(sessionId),
-      sourceChannel: this.store.getConversationSourceContextBySession(sessionId)?.sourceChannel,
+      serverMode: true,
+      session: this.store.getSession?.(sessionId),
+      sourceChannel: this.store.getConversationSourceContextBySession?.(sessionId)?.sourceChannel,
     });
+  }
+
+  /**
+   * Sessions that use the owner-facing assistant progress stream (turnAck +
+   * owner_update + wait heartbeat) instead of raw mid-turn commentary. Both
+   * desktop Studio and cloud Mobile owner chats share this interaction contract.
+   */
+  private isOwnerProgressChatSession(sessionId: string): boolean {
+    return this.isAssistantModeOwnerChatSession(sessionId) || this.isMobileOwnerChatSession(sessionId);
   }
 
   private updateMobileToolExpansions(sessionId: string, currentUserText: string): MobileToolExpansion[] {
@@ -6971,6 +6981,7 @@ export class CoworkRunner extends EventEmitter {
    * section; the renderer embed policy mirrors this from the session payload.
    */
   isProjectorModeSession(sessionId: string): boolean {
+    if (isServerMode()) return false;
     const session = this.store.getSession(sessionId);
     return !!session?.assistantMode && (session.sessionType ?? 'standard') === 'browser';
   }
@@ -8127,6 +8138,7 @@ export class CoworkRunner extends EventEmitter {
     // (slice 2) is what makes the index grow.
     if (
       !trustSuppressed
+      && !isServerMode()
       && this.store.getSessionWithoutMessages(sessionId)?.sessionType === 'browser'
       && this.isAssistantModeOwnerChatSession(sessionId)
       && shouldInjectVolatile('session-chapters')
@@ -10298,7 +10310,8 @@ export class CoworkRunner extends EventEmitter {
     try {
       const session = this.store.getSessionWithoutMessages(sessionId);
       const isStudioOwner = Boolean(
-        session
+        !isServerMode()
+        && session
         && session.sessionType === 'browser'
         && this.isAssistantModeOwnerChatSession(sessionId),
       );
@@ -14441,7 +14454,7 @@ export class CoworkRunner extends EventEmitter {
       return []
     }
     const tools = this.buildSessionInlineTools(sessionId, passthrough, undefined, currentUserText)
-    if (!activeSession || !this.isAssistantModeOwnerChatSession(sessionId)) {
+    if (!activeSession || !this.isOwnerProgressChatSession(sessionId)) {
       return tools
     }
     tools.push(passthrough(
@@ -14486,7 +14499,7 @@ export class CoworkRunner extends EventEmitter {
     // accumulated as ~63% of one day's context growth — snapshots of the same
     // tabs, re-sent and never reclaimed. Studio (browser-type) sessions get
     // the tool; the byte-stable browser guide stays in the tail (deduped).
-    if (this.getBrowserTabsPrompt && this.store.getSessionWithoutMessages(sessionId)?.sessionType === 'browser') {
+    if (!isServerMode() && this.getBrowserTabsPrompt && this.store.getSessionWithoutMessages(sessionId)?.sessionType === 'browser') {
       tools.push(passthrough(
         'browser_tabs',
         'List the Bot Browser\'s LIVE tab state for this session: the active tab (title, uri, renderer type, source_dir for MetaApp/HTML pages) and every open tab. Live tab state is NOT auto-injected into the conversation — call this FIRST whenever the owner refers to "the page / 当前页面 / this tab", asks what is open, or before reading or controlling a specific tab; then act with the bot_browser_* tools. Returns a <browser_tabs> block; "not open" means the Bot Browser has no tabs right now, not an error.',
@@ -14551,7 +14564,8 @@ export class CoworkRunner extends EventEmitter {
       }
       const sessionMetaForStudio = this.store.getSessionWithoutMessages?.(sessionId) ?? this.store.getSession(sessionId);
       const isStudioTwinFrontOffice = Boolean(
-        sessionMetaForStudio
+        !isServerMode()
+        && sessionMetaForStudio
         && !sessionMetaForStudio.autoOrigin
         && sessionMetaForStudio.sessionType === 'browser'
         && sessionMetaForStudio.assistantMode === true
@@ -14811,7 +14825,7 @@ export class CoworkRunner extends EventEmitter {
   }
 
   private noteAssistantOwnerVisible(sessionId: string, activeSession: ActiveSession, waiting = false): void {
-    if (this.activeSessions.get(sessionId) !== activeSession || !this.isAssistantModeOwnerChatSession(sessionId)) return
+    if (this.activeSessions.get(sessionId) !== activeSession || !this.isOwnerProgressChatSession(sessionId)) return
     activeSession.assistantOwnerLastVisibleAt = Date.now()
     activeSession.assistantOwnerHeartbeatCount = waiting
       ? (activeSession.assistantOwnerHeartbeatCount ?? 0) + 1
@@ -14827,7 +14841,7 @@ export class CoworkRunner extends EventEmitter {
     if (
       this.assistantOwnerWaitTimeoutMs <= 0
       || this.activeSessions.get(sessionId) !== activeSession
-      || !this.isAssistantModeOwnerChatSession(sessionId)
+      || !this.isOwnerProgressChatSession(sessionId)
       || (activeSession.assistantOwnerUpdateCount ?? 0) >= ASSISTANT_OWNER_UPDATE_PER_TURN_CAP
     ) return
     const heartbeatCount = activeSession.assistantOwnerHeartbeatCount ?? 0
@@ -14939,7 +14953,7 @@ export class CoworkRunner extends EventEmitter {
     args: { message?: unknown; kind?: unknown },
     activeSession: ActiveSession,
   ): { shown: boolean; remaining?: number; reason?: string } {
-    if (this.activeSessions.get(sessionId) !== activeSession || !this.isAssistantModeOwnerChatSession(sessionId)) {
+    if (this.activeSessions.get(sessionId) !== activeSession || !this.isOwnerProgressChatSession(sessionId)) {
       return { shown: false, reason: 'owner update turn is no longer active' }
     }
     const message = typeof args.message === 'string' ? args.message.trim() : ''
@@ -15957,7 +15971,7 @@ export class CoworkRunner extends EventEmitter {
         })
       );
     }
-    if (this.studioChiefOfStaffTools) {
+    if (this.studioChiefOfStaffTools && !isServerMode()) {
       memoryTools.push(
         ...buildStudioChiefOfStaffAgentTools({
           tool,

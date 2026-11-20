@@ -9307,6 +9307,7 @@ const getCoworkRunner = () => {
       },
       isProjectorHeldByStage: (sessionId: string) => getStudioGenesisStageService().isClaimed(sessionId),
       getBrowserGuidePrompt: async (sessionId: string): Promise<string | null> => {
+        if (isServerMode()) return null;
         const coworkStoreInstance = getCoworkStore();
         const session = coworkStoreInstance.getSession(sessionId);
         if (session?.sessionType !== 'browser') return null;
@@ -9363,6 +9364,7 @@ const getCoworkRunner = () => {
         ].join('\n');
       },
       getBrowserTabsPrompt: async (sessionId: string): Promise<string | null> => {
+        if (isServerMode()) return null;
         const coworkStoreInstance = getCoworkStore();
         const session = coworkStoreInstance.getSession(sessionId);
         if (session?.sessionType !== 'browser') return null;
