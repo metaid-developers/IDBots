@@ -42,3 +42,27 @@ test('writeFileAtomicSync preserves the original file if rename fails', () => {
     [],
   );
 });
+test('writeFileAtomicSync preserves the original file if the temp write fails mid-way', () => {
+  const { writeFileAtomicSync } = require('../dist-electron/main/libs/atomicFile.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-atomic-writefail-'));
+  const target = path.join(dir, 'idbots.sqlite');
+  fs.writeFileSync(target, 'old');
+
+  assert.throws(
+    () => writeFileAtomicSync(target, Buffer.from('new'), {
+      // A direct writeFileSync(target, …) truncates first and would leave a
+      // 4-byte file here; the temp+rename path must leave the target untouched.
+      writeFileSync: (tempPath, data) => {
+        fs.writeFileSync(tempPath, Buffer.from(data).subarray(0, 4));
+        throw new Error('ENOSPC (simulated)');
+      },
+    }),
+    /ENOSPC/,
+  );
+
+  assert.equal(fs.readFileSync(target, 'utf8'), 'old');
+  assert.deepEqual(
+    fs.readdirSync(dir).filter((name) => name.includes('.tmp-')),
+    [],
+  );
+});
