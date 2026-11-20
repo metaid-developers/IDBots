@@ -36,6 +36,7 @@ import { i18nService } from '../../services/i18n';
 import { useInlineMetaAppActor } from './InlineMetaAppActorContext';
 import {
   INLINE_METAAPP_BROWSER_ONLY_METHODS,
+  INLINE_METAAPP_COMMERCE_METHODS,
   INLINE_METAAPP_DEFAULT_HEIGHT,
   INLINE_METAAPP_SUPPORTED_METHODS,
   bridgeErrorFromHostResult,
@@ -59,6 +60,19 @@ import {
   type InlineMetaAppBridgeError,
   type InlineMetaAppBridgeRequest,
 } from './inlineMetaAppBridge';
+import {
+  COMMERCE_INTENT_WINDOW_EVENT,
+  SOCIAL_FRIEND_PROMPT_WINDOW_EVENT,
+  sanitizeAddFriendPrompt,
+  sanitizeAskTwinToBuy,
+  sanitizeOpenPromoPack,
+  checkPromoPackOwnership,
+  COMMERCE_METHOD_TO_INTENT,
+  SanitizeFailure,
+  type CommerceIntentKind,
+  type CommerceIntentSource,
+} from '../commerce/commerceBridgeContract';
+import { tCommerce } from '../commerce/commercePromoI18n';
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
@@ -96,11 +110,18 @@ type PromptState =
       purpose: string;
       phase: 'review';
       decide: (approved: boolean) => void;
+    }
+  | {
+      kind: 'commerce';
+      intent: CommerceIntentKind;
+      params: Record<string, unknown>;
+      decide: (approved: boolean) => void;
     };
 
 type PromptDraft =
   | { kind: 'pin-write' | 'permissions'; confirmation: Record<string, unknown> }
-  | { kind: 'llm'; purpose: string };
+  | { kind: 'llm'; purpose: string }
+  | { kind: 'commerce'; intent: CommerceIntentKind; params: Record<string, unknown> };
 
 interface InlineMetaAppBlockProps {
   /** Normalized metaapp://<pinId> URI (see parseMetaAppEmbedUri). */
@@ -221,7 +242,9 @@ const InlineMetaAppBlock: React.FC<InlineMetaAppBlockProps> = ({ uri, title }) =
       };
       const state: PromptState = draft.kind === 'llm'
         ? { kind: 'llm', purpose: draft.purpose, phase: 'review', decide }
-        : { kind: draft.kind, confirmation: draft.confirmation, phase: 'review', decide };
+        : draft.kind === 'commerce'
+          ? { kind: 'commerce', intent: draft.intent, params: draft.params, decide }
+          : { kind: draft.kind, confirmation: draft.confirmation, phase: 'review', decide };
       promptRef.current = state;
       if (mountedRef.current) setPrompt(state);
     });
@@ -355,12 +378,60 @@ const InlineMetaAppBlock: React.FC<InlineMetaAppBlockProps> = ({ uri, title }) =
     return bridgeResultFromHostResult(result);
   }, [requireActorId, sessionId]);
 
+  // browser.commerce.* / browser.social.addFriendPrompt (REQ-E-01): pure
+  // intent raisers. Params are re-validated through commerceBridgeContract,
+  // the user approves through the in-block card, and only THEN does the host
+  // dispatch the commerce window event (WS-D mounts the downstream purchase /
+  // friend / promo-pack surfaces on it). Nothing here signs or sends.
+  const runCommerceIntent = useCallback(async (method: string, params: Record<string, unknown>): Promise<unknown> => {
+    const intent = COMMERCE_METHOD_TO_INTENT[method];
+    if (!intent) throw new BridgeFailure(unsupportedMethodError());
+    const source: CommerceIntentSource = 'inline-metaapp';
+
+    let sanitized: Record<string, unknown>;
+    if (intent === 'askTwinToBuy') {
+      const result = sanitizeAskTwinToBuy(params);
+      if (result instanceof SanitizeFailure) {
+        throw new BridgeFailure({ code: result.error.code, message: result.error.message });
+      }
+      sanitized = result as unknown as Record<string, unknown>;
+    } else if (intent === 'addFriendPrompt') {
+      const result = sanitizeAddFriendPrompt(params);
+      if (result instanceof SanitizeFailure) {
+        throw new BridgeFailure({ code: result.error.code, message: result.error.message });
+      }
+      sanitized = result as unknown as Record<string, unknown>;
+    } else {
+      const result = sanitizeOpenPromoPack(params);
+      if (result instanceof SanitizeFailure) {
+        throw new BridgeFailure({ code: result.error.code, message: result.error.message });
+      }
+      const ownership = checkPromoPackOwnership(result, actorRef.current?.globalMetaId ?? null);
+      if (ownership instanceof SanitizeFailure) {
+        throw new BridgeFailure({ code: ownership.error.code, message: ownership.error.message });
+      }
+      sanitized = result as unknown as Record<string, unknown>;
+    }
+
+    const approved = await askUser({ kind: 'commerce', intent, params: sanitized });
+    if (!approved) throw new BridgeFailure(userCancelledError('Commerce intent was cancelled.'));
+    clearPrompt();
+
+    const eventName = intent === 'addFriendPrompt' ? SOCIAL_FRIEND_PROMPT_WINDOW_EVENT : COMMERCE_INTENT_WINDOW_EVENT;
+    window.dispatchEvent(new CustomEvent(eventName, {
+      detail: { intent, source, params: sanitized, actorId: actorRef.current?.actorId || undefined },
+    }));
+    return { opened: true };
+  }, [askUser, clearPrompt]);
+
   const handleRequest = useCallback(async (request: InlineMetaAppBridgeRequest): Promise<void> => {
     const { id, method, params } = request;
     try {
       let result: unknown;
       if (method === 'browser.actor.current') {
         result = { actor: buildInlineMetaAppActorSnapshot(actorRef.current) };
+      } else if (INLINE_METAAPP_COMMERCE_METHODS.has(method)) {
+        result = await runCommerceIntent(method, params);
       } else if (INLINE_METAAPP_BROWSER_ONLY_METHODS.has(method)) {
         throw new BridgeFailure(browserOnlyMethodError(method));
       } else if (!INLINE_METAAPP_SUPPORTED_METHODS.has(method)) {
@@ -384,7 +455,7 @@ const InlineMetaAppBlock: React.FC<InlineMetaAppBlockProps> = ({ uri, title }) =
         toBridgeError(error, { code: 'bridge_failed', message: 'Bridge request failed.' }),
       ));
     }
-  }, [postToFrame, runLlmComplete, runMetafileUpload, runPermissions, runPinWrite]);
+  }, [postToFrame, runCommerceIntent, runLlmComplete, runMetafileUpload, runPermissions, runPinWrite]);
 
   // Bridge host: accept only frames whose source is THIS block's iframe and
   // whose origin is the app's; navigate requests to other on-chain resources
@@ -590,12 +661,20 @@ interface InlineMetaAppPromptCardProps {
  */
 const InlineMetaAppPromptCard: React.FC<InlineMetaAppPromptCardProps> = ({ prompt, appTitle, actor, onClose }) => {
   const t = (key: string) => i18nService.t(key);
-  const confirmation = prompt.kind === 'llm' ? null : prompt.confirmation;
+  const confirmation = prompt.kind === 'llm' || prompt.kind === 'commerce' ? null : prompt.confirmation;
   const confirmationActor = confirmation && isPlainObject(confirmation.actor) ? confirmation.actor : null;
   const actorName = text(confirmationActor?.name) || actor?.name || '';
   const actorGlobalMetaId = text(confirmationActor?.globalMetaId) || actor?.globalMetaId || '';
-  const phase = prompt.phase;
+  const phase: PromptPhase | 'review' = 'phase' in prompt ? prompt.phase : 'review';
   const busy = phase === 'sending';
+  const commerceLang = (() => {
+    const maybeI18n = i18nService as { getLanguage?: () => string };
+    try {
+      return maybeI18n.getLanguage ? maybeI18n.getLanguage() : 'en';
+    } catch {
+      return 'en';
+    }
+  })();
 
   const primaryButtonClass = 'inline-flex items-center justify-center rounded-lg bg-claude-accent px-3 py-1.5 text-xs font-medium text-claude-accentInk transition-colors hover:bg-claude-accentHover disabled:opacity-60';
   const secondaryButtonClass = 'inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-60';
@@ -609,6 +688,12 @@ const InlineMetaAppPromptCard: React.FC<InlineMetaAppPromptCardProps> = ({ promp
   } else if (prompt.kind === 'permissions') {
     eyebrow = t('metaAppPermissionsTitle');
     intro = t('metaAppPermissionsIntro');
+  } else if (prompt.kind === 'commerce') {
+    eyebrow = tCommerce('commerceConfirmTitle', commerceLang);
+    intro = prompt.intent === 'addFriendPrompt'
+      ? tCommerce('commerceConfirmIntroFriend', commerceLang)
+      : tCommerce('commerceConfirmIntroBuy', commerceLang);
+    Icon = SparklesIcon;
   } else {
     eyebrow = t('metaAppLlmTitle');
     intro = t('metaAppLlmIntro');
@@ -690,12 +775,51 @@ const InlineMetaAppPromptCard: React.FC<InlineMetaAppPromptCardProps> = ({ promp
         <p className="mt-3 text-xs leading-5 dark:text-claude-darkText text-claude-text">{prompt.purpose}</p>
       )}
 
+      {prompt.kind === 'commerce' && (
+        <dl className="mt-3 space-y-1.5">
+          {prompt.intent === 'askTwinToBuy' && (() => {
+            const params = prompt.params as Record<string, string | number | undefined>;
+            const modeLabel = params.mode === 'negotiate'
+              ? tCommerce('commerceModeNegotiate', commerceLang)
+              : params.mode === 'inquire_unlisted'
+                ? tCommerce('commerceModeInquire', commerceLang)
+                : tCommerce('commerceModeBuy', commerceLang);
+            return (
+              <>
+                <PromptField label={tCommerce('commerceFieldItem', commerceLang)} value={String(params.itemName || '')} />
+                <PromptField label={tCommerce('commerceFieldCollection', commerceLang)} value={String(params.collectionName || '')} />
+                <PromptField label={tCommerce('commerceFieldSeller', commerceLang)} value={String(params.sellerName || params.sellerGlobalMetaId || '')} mono={!params.sellerName} />
+                <PromptField label={tCommerce('commerceFieldMode', commerceLang)} value={modeLabel} />
+              </>
+            );
+          })()}
+          {prompt.intent === 'addFriendPrompt' && (() => {
+            const params = prompt.params as Record<string, string | undefined>;
+            return (
+              <>
+                <PromptField label={tCommerce('commerceFieldSeller', commerceLang)} value={String(params.targetName || params.targetGlobalMetaId || '')} mono={!params.targetName} />
+                {params.greeting ? <PromptField label="✎" value={params.greeting} /> : null}
+              </>
+            );
+          })()}
+          {prompt.intent === 'openPromoPack' && (() => {
+            const params = prompt.params as { shopOwnerName?: string; shopOwnerGlobalMetaId?: string; shopSlogan?: string };
+            return (
+              <>
+                <PromptField label={tCommerce('commerceFieldOwner', commerceLang)} value={params.shopOwnerName || params.shopOwnerGlobalMetaId || ''} mono={!params.shopOwnerName} />
+                {params.shopSlogan ? <PromptField label="✎" value={params.shopSlogan} /> : null}
+              </>
+            );
+          })()}
+        </dl>
+      )}
+
       {phase === 'sending' && (
         <p className="mt-3 text-[11px] leading-4 text-claude-accent" role="status" aria-live="polite">
           {prompt.kind === 'pin-write' ? t('metaAppPinWriteSending') : t('metaAppPermissionsSending')}
         </p>
       )}
-      {prompt.phase === 'failed' && (
+      {'phase' in prompt && prompt.phase === 'failed' && (
         <p className="mt-3 break-words text-[11px] leading-4 text-red-500" role="alert">
           {t('metaAppPinWriteFailed')}{prompt.failure ? `: ${prompt.failure}` : ''}
         </p>
@@ -709,10 +833,10 @@ const InlineMetaAppPromptCard: React.FC<InlineMetaAppPromptCardProps> = ({ promp
         ) : (
           <>
             <button type="button" className={secondaryButtonClass} onClick={() => prompt.decide(false)} disabled={busy}>
-              {t('metaAppConfirmDeny')}
+              {prompt.kind === 'commerce' ? tCommerce('commerceCancel', commerceLang) : t('metaAppConfirmDeny')}
             </button>
             <button type="button" className={primaryButtonClass} onClick={() => prompt.decide(true)} disabled={busy}>
-              {prompt.kind === 'llm' ? t('metaAppConfirmAllow') : t('metaAppConfirmApprove')}
+              {prompt.kind === 'llm' ? t('metaAppConfirmAllow') : prompt.kind === 'commerce' ? tCommerce('commerceSendToTwin', commerceLang) : t('metaAppConfirmApprove')}
             </button>
           </>
         )}

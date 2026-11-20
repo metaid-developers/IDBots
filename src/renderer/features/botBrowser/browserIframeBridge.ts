@@ -25,6 +25,110 @@ ${buildLegacyWebViewUrlCompatibilityScript()}
   }
   globalThis.__idbotsBrowserIframeBridgeInstalled = true;
 
+  // Commerce/social bridge relay (REQ-E-01). MetaApps may ask the host to
+  // open user-confirmed commerce intents ("browser.commerce.askTwinToBuy",
+  // "browser.social.addFriendPrompt", "browser.commerce.openPromoPack").
+  // ABC does not know these methods and would answer unsupported_method, so
+  // this relay claims them FIRST: this script is injected ahead of the ABC
+  // runtime, and the capture-phase listener below runs before ABC's own
+  // message listeners. The relay is transport-only — it forwards the raw
+  // params to the host renderer and hands the host verdict back to the app
+  // frame. It NEVER writes a pin, charges points or sends a message: the
+  // host renderer re-validates every field (commerceBridgeContract) and the
+  // user must click the host-owned confirmation card before anything
+  // happens. Every other agent-browser:request method is passed through to
+  // ABC untouched.
+  var COMMERCE_INTENT_METHODS = {
+    'browser.commerce.askTwinToBuy': 'askTwinToBuy',
+    'browser.social.addFriendPrompt': 'addFriendPrompt',
+    'browser.commerce.openPromoPack': 'openPromoPack'
+  };
+  var commercePending = {};
+  var commerceSeq = 0;
+
+  function isDirectChildFrame(source) {
+    try {
+      return Boolean(source) && source !== window && source.parent === window;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function respondCommerceError(source, requestId, code, message) {
+    try {
+      source.postMessage({
+        type: 'agent-browser:response',
+        version: 1,
+        id: requestId,
+        ok: false,
+        error: { code: code, message: message }
+      }, '*');
+    } catch (error) {
+      // Source frame went away mid-request: nothing left to answer.
+    }
+  }
+
+  window.addEventListener('message', function (event) {
+    var data = event && event.data;
+    if (!data || typeof data !== 'object' || data.type !== 'agent-browser:request') return;
+    var intent = COMMERCE_INTENT_METHODS[data.method];
+    if (!intent) return; // Not ours: let the ABC runtime handle it.
+    if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+    var requestId = typeof data.id === 'string' && data.id ? data.id : '';
+    if (!isDirectChildFrame(event.source)) {
+      if (requestId && event.source) {
+        respondCommerceError(event.source, requestId, 'invalid_request', 'Commerce bridge requests must come from the app frame.');
+      }
+      return;
+    }
+    if (!requestId) return;
+    var params = data.params && typeof data.params === 'object' && !Array.isArray(data.params) ? data.params : {};
+    var relayId = 'commerce-' + Date.now().toString(36) + '-' + (++commerceSeq);
+    var entry = { source: event.source, timer: 0 };
+    commercePending[relayId] = entry;
+    entry.timer = setTimeout(function () {
+      if (!commercePending[relayId]) return;
+      delete commercePending[relayId];
+      respondCommerceError(entry.source, requestId, 'commerce_timeout', 'The host did not answer the commerce request in time.');
+    }, 120000);
+    window.parent.postMessage({
+      source: BRIDGE_SOURCE,
+      type: 'commerce-intent',
+      relayId: relayId,
+      requestId: requestId,
+      intent: intent,
+      params: params
+    }, targetOrigin);
+  }, true);
+
+  window.addEventListener('message', function (event) {
+    var data = event && event.data;
+    if (!data || typeof data !== 'object' || data.type !== 'commerce-intent-response') return;
+    if (event.source !== window.parent) return;
+    var entry = commercePending[data.relayId];
+    if (!entry) return;
+    delete commercePending[data.relayId];
+    clearTimeout(entry.timer);
+    var frame = {
+      type: 'agent-browser:response',
+      version: 1,
+      id: data.requestId,
+      ok: Boolean(data.ok)
+    };
+    if (data.ok) {
+      frame.result = data.result && typeof data.result === 'object' ? data.result : { opened: true };
+    } else {
+      frame.error = data.error && typeof data.error === 'object'
+        ? { code: String(data.error.code || 'commerce_failed'), message: String(data.error.message || 'Commerce request failed.') }
+        : { code: 'commerce_failed', message: 'Commerce request failed.' };
+    }
+    try {
+      entry.source.postMessage(frame, '*');
+    } catch (error) {
+      // Source frame went away mid-request.
+    }
+  });
+
   // Window dragging: CSS -webkit-app-region is not honored inside this srcDoc
   // iframe, so emulate it. Blank areas of the ABC tabstrip/toolbar forward drag
   // deltas to the host, which moves the window. Interactive children (tabs,

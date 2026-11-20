@@ -22,6 +22,22 @@ import {
 } from './browserElementSelectionsBridge';
 import { elementSelectionsStore } from './elementSelectionsStore';
 import { useBotBrowserCapture } from './useBotBrowserCapture';
+import { CommerceIntentConfirmModal } from '../../components/commerce/CommerceIntentConfirmModal';
+import { PromoAmmoPackModal } from '../../components/commerce/PromoAmmoPackModal';
+import {
+  COMMERCE_INTENT_WINDOW_EVENT,
+  SOCIAL_FRIEND_PROMPT_WINDOW_EVENT,
+  sanitizeAddFriendPrompt,
+  sanitizeAskTwinToBuy,
+  sanitizeOpenPromoPack,
+  checkPromoPackOwnership,
+  type AddFriendPromptParams,
+  type AskTwinToBuyParams,
+  type OpenPromoPackParams,
+  SanitizeFailure,
+} from '../../components/commerce/commerceBridgeContract';
+import { resolveCommerceLang } from '../../components/commerce/commercePromoI18n';
+import { resolveBrowserRuntimeActors } from './idbotsBrowserActorModel.js';
 import type {
   BotBrowserConversationRequest,
   BotBrowserOpenUriInput,
@@ -79,7 +95,30 @@ type BrowserIframeMessage =
         answers?: unknown;
         skip?: unknown;
       };
+    }
+  | {
+      source: 'idbots-browser-iframe-bridge';
+      type: 'commerce-intent';
+      relayId: string;
+      requestId: string;
+      intent: 'askTwinToBuy' | 'addFriendPrompt' | 'openPromoPack';
+      params: Record<string, unknown>;
     };
+
+type CommerceResponseMessage = {
+  type: 'commerce-intent-response';
+  relayId: string;
+  requestId: string;
+  ok: boolean;
+  result?: unknown;
+  error?: { code: string; message: string };
+};
+
+type CommerceConfirmState =
+  | { kind: 'askTwinToBuy'; relayId: string; requestId: string; params: AskTwinToBuyParams }
+  | { kind: 'addFriendPrompt'; relayId: string; requestId: string; params: AddFriendPromptParams };
+
+type CommercePromoPackState = { relayId: string; requestId: string; params: OpenPromoPackParams };
 
 type PendingTabCommand = {
   command: BotBrowserTabCommand;
@@ -163,6 +202,9 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
     const selectionsBridgeRef = useRef<BrowserElementSelectionsBridge | null>(null);
     const [srcDoc, setSrcDoc] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
+    const [commerceConfirm, setCommerceConfirm] = useState<CommerceConfirmState | null>(null);
+    const [commercePromoPack, setCommercePromoPack] = useState<CommercePromoPackState | null>(null);
+    const actorGlobalMetaIdRef = useRef('');
 
     callbacksRef.current = {
       onOpenConversation,
@@ -229,6 +271,93 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
       target.postMessage({ source: PARENT_SOURCE, ...message }, '*');
       return true;
     }, []);
+
+    // The default Bot Browser actor (same resolver ABC uses), needed for the
+    // promo-pack ownership gate. Refreshed on actor changes.
+    useEffect(() => {
+      let cancelled = false;
+      const loadActor = async () => {
+        try {
+          const [metabotsResult, humanResult] = await Promise.all([
+            window.electron.metabot.list().catch(() => null),
+            window.electron.botBrowser.getHumanActor().catch(() => null),
+          ]);
+          if (cancelled) return;
+          const { defaultActor } = resolveBrowserRuntimeActors(metabotsResult?.list ?? [], humanResult?.actor ?? null);
+          actorGlobalMetaIdRef.current = defaultActor?.globalMetaId ?? '';
+        } catch {
+          if (!cancelled) actorGlobalMetaIdRef.current = '';
+        }
+      };
+      void loadActor();
+      const unsubscribe = window.electron.botBrowser.onActorsChanged(() => {
+        void loadActor();
+      });
+      return () => {
+        cancelled = true;
+        unsubscribe();
+      };
+    }, []);
+
+    const respondCommerce = useCallback((
+      relayId: string,
+      requestId: string,
+      ok: boolean,
+      result?: unknown,
+      error?: { code: string; message: string },
+    ): void => {
+      const message: CommerceResponseMessage = { type: 'commerce-intent-response', relayId, requestId, ok };
+      if (ok) message.result = result ?? { opened: true };
+      else message.error = error ?? { code: 'commerce_failed', message: 'Commerce request failed.' };
+      postToIframe(message as unknown as Record<string, unknown>);
+    }, [postToIframe]);
+
+    // Commerce/social intents relayed by the iframe bridge (REQ-E-01). Every
+    // intent is re-validated here before any UI opens; the relay script is
+    // transport-only and this is the authoritative gate. Nothing in this path
+    // writes a pin, charges points or sends a message — confirm cards only
+    // dispatch the commerce window events (WS-D mounts downstream flows).
+    const handleCommerceIntent = useCallback((data: Extract<BrowserIframeMessage, { type: 'commerce-intent' }>): void => {
+      const fail = (code: string, message: string): void => {
+        respondCommerce(data.relayId, data.requestId, false, undefined, { code, message });
+      };
+      if (data.intent === 'askTwinToBuy') {
+        const sanitized = sanitizeAskTwinToBuy(data.params);
+        if (sanitized instanceof SanitizeFailure) {
+          return fail(sanitized.error.code, sanitized.error.message);
+        }
+        setCommerceConfirm({
+          kind: 'askTwinToBuy',
+          relayId: data.relayId,
+          requestId: data.requestId,
+          params: sanitized,
+        });
+        return; // response follows the user's decision on the confirm card
+      }
+      if (data.intent === 'addFriendPrompt') {
+        const sanitized = sanitizeAddFriendPrompt(data.params);
+        if (sanitized instanceof SanitizeFailure) {
+          return fail(sanitized.error.code, sanitized.error.message);
+        }
+        setCommerceConfirm({
+          kind: 'addFriendPrompt',
+          relayId: data.relayId,
+          requestId: data.requestId,
+          params: sanitized,
+        });
+        return;
+      }
+      const sanitized = sanitizeOpenPromoPack(data.params);
+      if (sanitized instanceof SanitizeFailure) {
+        return fail(sanitized.error.code, sanitized.error.message);
+      }
+      const ownership = checkPromoPackOwnership(sanitized, actorGlobalMetaIdRef.current);
+      if (ownership instanceof SanitizeFailure) {
+        return fail(ownership.error.code, ownership.error.message);
+      }
+      setCommercePromoPack({ relayId: data.relayId, requestId: data.requestId, params: sanitized });
+      respondCommerce(data.relayId, data.requestId, true, { opened: true });
+    }, [respondCommerce]);
 
     const postThemeToIframe = useCallback((): boolean => {
       const target = iframeRef.current?.contentWindow;
@@ -459,6 +588,11 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
           return;
         }
 
+        if (data.type === 'commerce-intent') {
+          handleCommerceIntent(data);
+          return;
+        }
+
         if (data.type === 'endpoint-request') {
           const shim = endpointShimRef.current;
           if (!shim) return;
@@ -479,6 +613,7 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
       flushPendingOpenUris,
       flushPendingRefreshRuntime,
       flushPendingTabCommands,
+      handleCommerceIntent,
       postThemeToIframe,
       postToIframe,
     ]);
@@ -569,6 +704,18 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
     }), [clearElementSelections, controlTabs, ensureSrcDoc, getElementSelections, postOpenUri, postToIframe]);
 
     const showLoading = loading || !srcDoc;
+    const commerceLang = resolveCommerceLang(getBrowserLanguagePreference());
+
+    const handleCommerceConfirm = (state: CommerceConfirmState): void => {
+      const eventName = state.kind === 'addFriendPrompt'
+        ? SOCIAL_FRIEND_PROMPT_WINDOW_EVENT
+        : COMMERCE_INTENT_WINDOW_EVENT;
+      window.dispatchEvent(new CustomEvent(eventName, {
+        detail: { intent: state.kind, source: 'bot-browser', params: state.params },
+      }));
+      respondCommerce(state.relayId, state.requestId, true, { opened: true });
+      setCommerceConfirm(null);
+    };
 
     return (
       <div
@@ -590,6 +737,28 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
             {i18nService.t('loading')}
           </div>
         ) : null}
+        {visible && commerceConfirm && (
+          <CommerceIntentConfirmModal
+            kind={commerceConfirm.kind}
+            params={commerceConfirm.params}
+            lang={commerceLang}
+            onConfirm={() => handleCommerceConfirm(commerceConfirm)}
+            onCancel={() => {
+              respondCommerce(commerceConfirm.relayId, commerceConfirm.requestId, false, undefined, {
+                code: 'user_cancelled',
+                message: 'Commerce intent was cancelled.',
+              });
+              setCommerceConfirm(null);
+            }}
+          />
+        )}
+        {visible && commercePromoPack && (
+          <PromoAmmoPackModal
+            params={commercePromoPack.params}
+            lang={commerceLang}
+            onClose={() => setCommercePromoPack(null)}
+          />
+        )}
       </div>
     );
   },
