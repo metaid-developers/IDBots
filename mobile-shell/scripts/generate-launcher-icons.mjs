@@ -18,15 +18,11 @@ function pngSize(path) {
 const sourceSize = pngSize(source);
 if (sourceSize.width !== sourceSize.height) throw new Error('The launcher artwork must be square');
 
-function render(destination, size, contentRatio = 1) {
-  const contentSize = Math.round(size * contentRatio);
-  const offset = Math.floor((size - contentSize) / 2);
-  const filters = [`scale=${contentSize}:${contentSize}:flags=neighbor`];
-  if (contentSize !== size) filters.push(`pad=${size}:${size}:${offset}:${offset}:color=0xFEB338`);
+function render(destination, size) {
   mkdirSync(dirname(destination), { recursive: true });
   const result = spawnSync('ffmpeg', [
     '-v', 'error', '-y', '-i', source,
-    '-vf', filters.join(','), '-frames:v', '1', destination,
+    '-vf', `scale=${size}:${size}:flags=neighbor`, '-frames:v', '1', destination,
   ], { stdio: 'inherit' });
   if (result.error) throw new Error(`ffmpeg is required to generate launcher icons: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`ffmpeg failed for ${destination}`);
@@ -38,22 +34,20 @@ function render(destination, size, contentRatio = 1) {
 }
 
 const densities = [
-  ['mdpi', 48, 108],
-  ['hdpi', 72, 162],
-  ['xhdpi', 96, 216],
-  ['xxhdpi', 144, 324],
-  ['xxxhdpi', 192, 432],
+  ['mdpi', 48],
+  ['hdpi', 72],
+  ['xhdpi', 96],
+  ['xxhdpi', 144],
+  ['xxxhdpi', 192],
 ];
-for (const [density, legacySize, adaptiveSize] of densities) {
+for (const [density, size] of densities) {
   const resources = resolve(shellRoot, `android/app/src/main/res/mipmap-${density}`);
-  render(resolve(resources, 'ic_launcher.png'), legacySize);
-  render(resolve(resources, 'ic_launcher_round.png'), legacySize);
-  render(resolve(resources, 'ic_launcher_foreground.png'), adaptiveSize, 0.5);
+  render(resolve(resources, 'ic_launcher.png'), size);
+  render(resolve(resources, 'ic_launcher_round.png'), size);
 }
 
 render(resolve(shellRoot, 'ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png'), 1024);
 render(resolve(repoRoot, 'src/mobile/app/public/icon-192.png'), 192);
 render(resolve(repoRoot, 'src/mobile/app/public/icon-512.png'), 512);
-render(resolve(repoRoot, 'src/mobile/app/public/icon-maskable-512.png'), 512, 0.5);
 render(resolve(repoRoot, 'src/mobile/app/public/apple-touch-icon.png'), 180);
 render(resolve(repoRoot, 'src/mobile/login/public/icon-192.png'), 192);

@@ -11,15 +11,19 @@ import { initSystemThemeListener, loadSettings } from './services/settings';
  * listener keeps 'system' mode in sync afterward.
  */
 export async function mountMobileApp(): Promise<void> {
-  await loadSettings();
-  initSystemThemeListener();
-  const rootElement = document.getElementById('root');
-  if (!rootElement) {
-    throw new Error('Failed to find the root element');
+  try {
+    await loadSettings();
+    initSystemThemeListener();
+    const rootElement = document.getElementById('root');
+    if (!rootElement) {
+      throw new Error('Failed to find the root element');
+    }
+    ReactDOM.createRoot(rootElement).render(
+      <React.StrictMode>
+        <MobileApp />
+      </React.StrictMode>,
+    );
+  } finally {
+    requestAnimationFrame(() => document.getElementById('idbots-launch-splash')?.remove());
   }
-  ReactDOM.createRoot(rootElement).render(
-    <React.StrictMode>
-      <MobileApp />
-    </React.StrictMode>,
-  );
 }

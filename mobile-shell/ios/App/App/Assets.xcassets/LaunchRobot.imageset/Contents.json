@@ -1,0 +1,23 @@
+{
+  "images": [
+    {
+      "idiom": "universal",
+      "filename": "launch-robot-264.png",
+      "scale": "1x"
+    },
+    {
+      "idiom": "universal",
+      "filename": "launch-robot-528.png",
+      "scale": "2x"
+    },
+    {
+      "idiom": "universal",
+      "filename": "launch-robot-792.png",
+      "scale": "3x"
+    }
+  ],
+  "info": {
+    "version": 1,
+    "author": "xcode"
+  }
+}

@@ -4,8 +4,8 @@
   "display": "standalone",
   "start_url": "/app/",
   "scope": "/app/",
-  "theme_color": "#F2F3F5",
-  "background_color": "#F2F3F5",
+  "theme_color": "#FEB338",
+  "background_color": "#FEB338",
   "icons": [
     {
       "src": "icon-192.png",
@@ -17,12 +17,6 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
-    },
-    {
-      "src": "icon-maskable-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
     }
   ]
 }

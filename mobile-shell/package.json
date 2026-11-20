@@ -17,6 +17,7 @@
     "build:android:release": "node scripts/build-android.mjs production --release",
     "release:android:metadata": "node scripts/create-android-release-metadata.mjs",
     "generate:icons": "node scripts/generate-launcher-icons.mjs",
+    "generate:splash": "node scripts/generate-splash-assets.mjs",
     "build:ios": "pnpm run build:ios:staging",
     "build:ios:staging": "node scripts/build-ios.mjs staging",
     "build:ios:production": "node scripts/build-ios.mjs production",
