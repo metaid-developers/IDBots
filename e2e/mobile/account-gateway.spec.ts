@@ -8,7 +8,11 @@ async function pendingOrderId(page: Page): Promise<string> {
 }
 
 async function chooseMePlan(page: Page, planTestId: string): Promise<void> {
-  await page.getByTestId('me-compact-credits').click();
+  const usage = page.getByTestId('me-page-usage');
+  if (!await usage.isVisible().catch(() => false)) {
+    await page.getByTestId('me-compact-credits').click();
+  }
+  await expect(usage).toBeVisible();
   await page.locator('[data-testid="me-points-hero"] .me-hero-button-primary').click();
   await expect(page.getByTestId('me-purchase-page')).toBeVisible();
   await page.getByTestId(planTestId).click();

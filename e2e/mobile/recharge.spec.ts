@@ -16,7 +16,11 @@ async function pendingOrderId(page: import('@playwright/test').Page): Promise<st
 }
 
 async function chooseMePlan(page: import('@playwright/test').Page, planTestId: string): Promise<void> {
-  await page.getByTestId('me-compact-credits').click();
+  const usage = page.getByTestId('me-page-usage');
+  if (!await usage.isVisible().catch(() => false)) {
+    await page.getByTestId('me-compact-credits').click();
+  }
+  await expect(usage).toBeVisible();
   await page.locator('[data-testid="me-points-hero"] .me-hero-button-primary').click();
   await expect(page.getByTestId('me-purchase-page')).toBeVisible();
   await page.getByTestId(planTestId).click();
@@ -88,6 +92,7 @@ test.describe('ME purchase & topup', () => {
         .idbotsMobile.mock?.setMeSubscribed?.(true);
     });
     await page.getByRole('button', { name: 'Me' }).click();
+    await page.getByTestId('me-compact-credits').click();
     await page.locator('[data-testid="me-points-hero"] button[aria-label="Retry"]').click();
     await chooseMePlan(page, 'me-tier-me_max');
     await page.getByTestId('me-purchase-submit').click();
