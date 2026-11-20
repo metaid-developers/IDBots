@@ -43,7 +43,12 @@ const DISPLAY_NAME_MIN = 1;
 const DISPLAY_NAME_MAX = 24;
 
 function normalizePhone(input: string): string {
-  const digits = input.replace(/[\s-]/g, '');
+  let digits = input.replace(/[\s-]/g, '');
+  // Accept paste-in international formats even though the field shows a fixed
+  // +86 prefix: "+8613800138000" and "8613800138000" both reduce to 11 digits.
+  if (/^\+?86\d{11}$/.test(digits)) {
+    digits = digits.replace(/^\+?86/, '');
+  }
   return /^\d{11}$/.test(digits) ? `+86${digits}` : digits;
 }
 
@@ -238,20 +243,24 @@ function LoginPage(): JSX.Element {
       <p style={styles.subtitle}>{t('mobile.login.subtitle')}</p>
       <div style={styles.field}>
         <label htmlFor="login-phone" style={styles.label}>{t('mobile.login.phoneLabel')}</label>
-        <input
-          id="login-phone"
-          type="tel"
-          inputMode="tel"
-          autoComplete="tel"
-          value={phone}
-          onChange={(event) => {
-            setPhone(event.target.value);
-            clearError();
-          }}
-          placeholder={t('mobile.login.phonePlaceholder')}
-          style={styles.input}
-          aria-invalid={errorField === 'phone' && Boolean(error)}
-        />
+        <div className="login-ui-field" style={styles.phoneField}>
+          <span style={styles.phonePrefix} aria-hidden="true">+86</span>
+          <input
+            id="login-phone"
+            type="tel"
+            inputMode="numeric"
+            autoComplete="tel-national"
+            maxLength={11}
+            value={phone}
+            onChange={(event) => {
+              setPhone(event.target.value.replace(/\D/g, '').slice(0, 11));
+              clearError();
+            }}
+            placeholder={t('mobile.login.phonePlaceholder')}
+            style={styles.phoneInput}
+            aria-invalid={errorField === 'phone' && Boolean(error)}
+          />
+        </div>
         {errorField === 'phone' && error ? <p style={styles.errorLeft} role="alert">{error}</p> : null}
       </div>
       <button
@@ -272,13 +281,14 @@ function LoginPage(): JSX.Element {
               inputMode="numeric"
               autoComplete="one-time-code"
               maxLength={6}
+              className="login-ui-input"
               value={code}
               onChange={(event) => {
                 setCode(event.target.value.replace(/\D/g, '').slice(0, 6));
                 clearError();
               }}
               placeholder={t('mobile.login.codePlaceholder')}
-              style={styles.input}
+              style={styles.codeInput}
               aria-invalid={errorField === 'code' && Boolean(error)}
             />
             {errorField === 'code' && error ? <p style={styles.errorLeft} role="alert">{error}</p> : null}
@@ -291,6 +301,7 @@ function LoginPage(): JSX.Element {
                 type="text"
                 autoCapitalize="characters"
                 autoCorrect="off"
+                className="login-ui-input"
                 value={inviteCode}
                 onChange={(event) => {
                   setInviteCode(event.target.value);
@@ -311,6 +322,7 @@ function LoginPage(): JSX.Element {
                 type="text"
                 autoComplete="nickname"
                 maxLength={DISPLAY_NAME_MAX}
+                className="login-ui-input"
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
                 placeholder={t('mobile.login.displayNamePlaceholder')}
@@ -326,6 +338,7 @@ function LoginPage(): JSX.Element {
               type="checkbox"
               checked={agreeTerms}
               onChange={(event) => setAgreeTerms(event.target.checked)}
+              style={styles.checkbox}
             />
             <span>
               {t('mobile.login.termsPrefix')}{' '}
@@ -354,6 +367,7 @@ function LoginPage(): JSX.Element {
               type="checkbox"
               checked={hkConsent}
               onChange={(event) => setHkConsent(event.target.checked)}
+              style={styles.checkbox}
             />
             <span>{t('mobile.login.hkDataConsent')}</span>
           </label>

@@ -888,7 +888,7 @@ const zhTranslations: MobileDictionary = {
   'mobile.common.retry': '重试',
   'mobile.login.title': '登录 IDBots',
   'mobile.login.subtitle': '使用手机号和验证码登录。',
-  'mobile.login.phonePlaceholder': '手机号（带国家码，如 +8613800138000）',
+  'mobile.login.phonePlaceholder': '请输入手机号',
   'mobile.login.phoneLabel': '手机号',
   'mobile.login.codeLabel': '短信验证码',
   'mobile.login.inviteLabel': '邀请码',
@@ -901,7 +901,7 @@ const zhTranslations: MobileDictionary = {
   'mobile.login.verify': '登录',
   'mobile.login.verified': '登录成功，正在准备你的 Bot（{status}）',
   'mobile.login.invalidPhone':
-    '手机号需带国家码，如 +8613800138000；大陆手机号输入 11 位数字即可自动补 +86。',
+    '手机号格式不正确，请输入 11 位手机号。',
   'mobile.login.invalidCode': '验证码不正确，请重试',
   'mobile.login.resendIn': '重新发送验证码（{sec} 秒）',
   'mobile.login.invitePlaceholder': '邀请码',
@@ -919,7 +919,7 @@ const zhTranslations: MobileDictionary = {
   'mobile.login.conjunction': '和',
   'mobile.login.privacyLink': '隐私政策',
   // Wording pending legal review before launch.
-  'mobile.login.hkDataConsent': '我同意将我的数据存储和处理于香港。',
+  'mobile.login.hkDataConsent': '我同意将我的个人数据存储于中国香港的服务器，并由必要的第三方处理（详见《隐私政策》）。',
   'mobile.login.signOut': '退出登录',
   'mobile.login.restoreTitle': '正在恢复登录状态…',
   'mobile.login.restoreFailed': '暂时无法恢复登录状态，请检查网络后重试。',
@@ -1819,7 +1819,7 @@ const enTranslations: MobileDictionary = {
   'mobile.common.retry': 'Retry',
   'mobile.login.title': 'Sign in to IDBots',
   'mobile.login.subtitle': 'Sign in with your phone number and SMS code.',
-  'mobile.login.phonePlaceholder': 'Phone number (with country code, e.g. +8613800138000)',
+  'mobile.login.phonePlaceholder': 'Mobile number',
   'mobile.login.phoneLabel': 'Phone number',
   'mobile.login.codeLabel': 'SMS code',
   'mobile.login.inviteLabel': 'Invite code',
@@ -1832,7 +1832,7 @@ const enTranslations: MobileDictionary = {
   'mobile.login.verify': 'Sign in',
   'mobile.login.verified': 'Signed in; preparing your Bot ({status})',
   'mobile.login.invalidPhone':
-    'Use a phone number with country code, e.g. +8613800138000; typing an 11-digit mainland number auto-adds +86.',
+    'Invalid phone number. Enter an 11-digit mainland number.',
   'mobile.login.invalidCode': 'Invalid code, please try again',
   'mobile.login.resendIn': 'Resend code ({sec}s)',
   'mobile.login.invitePlaceholder': 'Invite code',
@@ -1850,7 +1850,7 @@ const enTranslations: MobileDictionary = {
   'mobile.login.conjunction': 'and',
   'mobile.login.privacyLink': 'Privacy Policy',
   // Wording pending legal review before launch.
-  'mobile.login.hkDataConsent': 'I consent to my data being stored and processed in Hong Kong.',
+  'mobile.login.hkDataConsent': 'I consent to my personal data being stored on servers in Hong Kong and processed by necessary third parties (see the Privacy Policy).',
   'mobile.login.signOut': 'Sign out',
   'mobile.login.restoreTitle': 'Restoring your session…',
   'mobile.login.restoreFailed': 'We could not restore your session. Check your connection and try again.',
