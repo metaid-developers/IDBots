@@ -7,6 +7,7 @@ interface MobileNativeCapabilities {
   backButton: boolean;
   externalUrls: boolean;
   secureScreen: boolean;
+  pushNotifications: boolean;
 }
 
 interface IdbotsNativeListenerHandle {
@@ -38,6 +39,11 @@ interface IdbotsNativeBridge {
   openExternal?(url: string): Promise<void>;
   onAppStateChange?(callback: (active: boolean) => void): () => void;
   onBackButton?(callback: () => boolean): () => void;
+  getPushPermission?(): Promise<'granted' | 'denied' | 'prompt'>;
+  requestPushPermission?(): Promise<'granted' | 'denied' | 'prompt'>;
+  registerForPush?(): Promise<string>;
+  onPushNotificationOpen?(callback: (eventId: string) => void): () => void;
+  openNotificationSettings?(): Promise<void>;
 }
 
 interface IdbotsNativeProof {

@@ -40,6 +40,8 @@ function bootstrap(origin, platform = 'android', remoteOrigin = 'https://staging
     URL,
     File,
     atob: (value) => Buffer.from(value, 'base64').toString('binary'),
+    setTimeout,
+    clearTimeout,
   }));
   return window;
 }
@@ -62,7 +64,31 @@ test('Android installs the versioned bridge at document start on the exact origi
     backButton: true,
     externalUrls: true,
     secureScreen: false,
+    pushNotifications: false,
   });
+});
+
+test('push registration returns only the token and taps expose only a bounded event ID', async () => {
+  const window = bootstrap('https://staging.idbots.world');
+  window.Capacitor.Plugins.PushNotifications = {
+    async checkPermissions() { return { receive: 'prompt' }; },
+    async requestPermissions() { return { receive: 'granted' }; },
+    async register() { window.listeners.get('registration')({ value: 'provider-token' }); },
+    async addListener(eventName, callback) {
+      window.listeners.set(eventName, callback);
+      return { remove: async () => window.listeners.delete(eventName) };
+    },
+  };
+  assert.equal(window.idbotsNative.getCapabilities().pushNotifications, true);
+  assert.equal(await window.idbotsNative.getPushPermission(), 'prompt');
+  assert.equal(await window.idbotsNative.requestPushPermission(), 'granted');
+  assert.equal(await window.idbotsNative.registerForPush(), 'provider-token');
+  const events = [];
+  window.idbotsNative.onPushNotificationOpen((eventId) => events.push(eventId));
+  window.listeners.get('pushNotificationActionPerformed')({ notification: { data: { eventId: 'cowork:session-1:completed:1' } } });
+  window.listeners.get('pushNotificationActionPerformed')({ notification: { data: { eventId: `https://evil.example/${'x'.repeat(201)}` } } });
+  assert.deepEqual(events, ['cowork:session-1:completed:1']);
+  assert.equal(window.location.href, undefined);
 });
 
 test('iOS reports its own platform and no Android back capability', () => {
@@ -200,6 +226,7 @@ test('NS2 capabilities convert native files in order and preserve share and secu
     backButton: true,
     externalUrls: true,
     secureScreen: true,
+    pushNotifications: false,
   });
   const files = await window.idbotsNative.pickFiles(true);
   assert.deepEqual(Array.from(files, (file) => file.name), ['first.txt', 'second.txt']);

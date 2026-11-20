@@ -3,6 +3,7 @@ import { t } from '../../i18n';
 import { useNotifications } from '../hooks/useNotifications';
 import type { NotificationFilter } from '../hooks/useNotifications';
 import { SecondaryPageShell } from './me/SecondaryPageShell';
+import { PushNotificationSettings } from '../components/PushNotificationSettings';
 
 const FILTERS: NotificationFilter[] = ['unread', 'all', 'work', 'action', 'report', 'system'];
 
@@ -56,6 +57,7 @@ export default function NotificationsScreen({
       ) : null}
     >
       <p className="px-1 text-xs text-[var(--text-secondary)]">{t('mobile.notifications.subtitle', { count: controller.unreadCount })}</p>
+      <PushNotificationSettings />
       <div className="twin-chip-row" role="tablist" aria-label={t('mobile.notifications.filters')}>
         {FILTERS.map((filter) => (
           <button

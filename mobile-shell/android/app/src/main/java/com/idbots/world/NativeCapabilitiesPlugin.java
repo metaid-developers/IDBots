@@ -6,6 +6,7 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.util.Base64;
 import android.view.WindowManager;
 import androidx.activity.result.ActivityResult;
@@ -267,6 +268,18 @@ public class NativeCapabilitiesPlugin extends Plugin {
             }
             call.resolve();
         });
+    }
+
+    @PluginMethod
+    public void openNotificationSettings(PluginCall call) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+            intent.putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName());
+            getBridge().getActivity().startActivity(intent);
+            call.resolve();
+        } catch (android.content.ActivityNotFoundException error) {
+            call.reject("System notification settings are unavailable", "UNAVAILABLE", error);
+        }
     }
 
     private JSObject describe(Uri uri, boolean temporary) throws Exception {

@@ -17,6 +17,7 @@ function capabilities() {
     backButton: true,
     externalUrls: true,
     secureScreen: false,
+    pushNotifications: false,
   };
 }
 

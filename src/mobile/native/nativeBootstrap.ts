@@ -9,6 +9,7 @@ const CAPABILITY_KEYS = [
   'backButton',
   'externalUrls',
   'secureScreen',
+  'pushNotifications',
 ] as const;
 
 function detectedPlatform(): 'android' | 'ios' | 'web' {

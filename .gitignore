@@ -126,6 +126,7 @@ tests/*
 !tests/mobileShim.test.ts
 !tests/mobileNativeBootstrap.test.ts
 !tests/mobileNativeAdapter.test.ts
+!tests/mobilePushNotifications.test.ts
 !tests/mobileNativeBack.test.ts
 !tests/mobileModePrompt.test.ts
 !tests/mobileRechargePolicy.test.tsx

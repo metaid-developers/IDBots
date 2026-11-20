@@ -24,4 +24,8 @@
     <string name="update_failed_title">更新下载失败</string>
     <string name="update_failed_message">请检查网络连接后重试。你当前使用的版本不会受到影响。</string>
     <string name="update_retry">重试</string>
+    <string name="notification_channel_work">任务结果</string>
+    <string name="notification_channel_action">需要你处理</string>
+    <string name="notification_channel_report">每日汇报</string>
+    <string name="notification_channel_system">账号与系统</string>
 </resources>

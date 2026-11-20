@@ -3,6 +3,8 @@ import { t } from '../../../i18n';
 import { logout, requestAccountDeletion } from '../../../login/loginApi';
 import { BottomSheet } from '../../components/BottomSheet';
 import { SecondaryPageShell } from './SecondaryPageShell';
+import { createPushDeviceApi, unregisterCurrentInstallation } from '../../../native/pushNotifications';
+import { getNativeAdapter } from '../../../native/nativeAdapter';
 
 /**
  * account secondary page (IA-PLAN v1 §4.9): logout + account deletion only.
@@ -19,6 +21,9 @@ export function AccountPage(props: { onBack: () => void }): JSX.Element {
   const doLogout = async () => {
     setBusy(true);
     try {
+      if (getNativeAdapter().getCapabilities().pushNotifications) {
+        await unregisterCurrentInstallation(createPushDeviceApi(), window);
+      }
       await logout();
       window.location.assign('/login');
     } finally {

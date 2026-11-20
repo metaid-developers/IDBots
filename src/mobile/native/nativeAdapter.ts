@@ -9,6 +9,7 @@ const CAPABILITY_KEYS = [
   'backButton',
   'externalUrls',
   'secureScreen',
+  'pushNotifications',
 ] as const;
 
 const WEB_CAPABILITIES: MobileNativeCapabilities = Object.freeze({
@@ -20,6 +21,7 @@ const WEB_CAPABILITIES: MobileNativeCapabilities = Object.freeze({
   backButton: false,
   externalUrls: false,
   secureScreen: false,
+  pushNotifications: false,
 });
 
 export interface MobileNativeAdapter {
@@ -32,6 +34,11 @@ export interface MobileNativeAdapter {
   openExternal(url: string): Promise<void>;
   onAppStateChange(callback: (active: boolean) => void): () => void;
   onBackButton(callback: () => boolean): () => void;
+  getPushPermission(): Promise<'granted' | 'denied' | 'prompt' | 'unavailable'>;
+  requestPushPermission(): Promise<'granted' | 'denied' | 'prompt' | 'unavailable'>;
+  registerForPush(): Promise<string>;
+  onPushNotificationOpen(callback: (eventId: string) => void): () => void;
+  openNotificationSettings(): Promise<void>;
 }
 
 export type MobileNativeErrorCode = 'CANCELLED' | 'PERMISSION_DENIED' | 'UNAVAILABLE' | 'TOO_LARGE' | 'NATIVE_FAILED';
@@ -173,6 +180,48 @@ export function createNativeAdapter(target: Window): MobileNativeAdapter {
       } catch {
         return unavailable();
       }
+    },
+    getPushPermission: async () => {
+      if (!bridge || !hasCapability('pushNotifications') || typeof bridge.getPushPermission !== 'function') return 'unavailable';
+      try {
+        return await bridge.getPushPermission();
+      } catch (error) {
+        throw normalizeNativeError(error);
+      }
+    },
+    requestPushPermission: async () => {
+      if (!bridge || !hasCapability('pushNotifications') || typeof bridge.requestPushPermission !== 'function') return 'unavailable';
+      try {
+        return await bridge.requestPushPermission();
+      } catch (error) {
+        throw normalizeNativeError(error);
+      }
+    },
+    registerForPush: async () => {
+      if (!bridge || !hasCapability('pushNotifications') || typeof bridge.registerForPush !== 'function') {
+        throw nativeError('UNAVAILABLE', 'Push notifications are unavailable');
+      }
+      try {
+        const token = await bridge.registerForPush();
+        if (typeof token !== 'string' || !token || token.length > 4096) throw nativeError('NATIVE_FAILED', 'Push registration returned no token');
+        return token;
+      } catch (error) {
+        throw normalizeNativeError(error);
+      }
+    },
+    onPushNotificationOpen: (callback) => {
+      if (!bridge || !hasCapability('pushNotifications') || typeof bridge.onPushNotificationOpen !== 'function') return unavailable();
+      try {
+        return bridge.onPushNotificationOpen(callback);
+      } catch {
+        return unavailable();
+      }
+    },
+    openNotificationSettings: async () => {
+      if (!bridge || !hasCapability('pushNotifications') || typeof bridge.openNotificationSettings !== 'function') {
+        throw nativeError('UNAVAILABLE', 'System notification settings are unavailable');
+      }
+      await bridge.openNotificationSettings();
     },
   };
 }

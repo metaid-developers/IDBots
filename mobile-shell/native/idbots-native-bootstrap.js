@@ -81,6 +81,28 @@
       lastModified: Date.now(),
     });
   };
+  const pushPlugin = () => window.Capacitor?.Plugins?.PushNotifications;
+  const hasPush = () => typeof pushPlugin()?.register === 'function' && typeof pushPlugin()?.addListener === 'function';
+  const addPluginListener = (plugin, eventName, listener) => {
+    if (typeof plugin?.addListener !== 'function') return noop;
+    let active = true;
+    let handle = null;
+    try {
+      Promise.resolve(plugin.addListener(eventName, listener)).then((registration) => {
+        if (!active) {
+          void registration.remove().catch(noop);
+          return;
+        }
+        handle = registration;
+      }).catch(noop);
+    } catch {
+      return noop;
+    }
+    return () => {
+      active = false;
+      if (handle) void handle.remove().catch(noop);
+    };
+  };
   const hasAppListeners = () => typeof appPlugin()?.addListener === 'function';
   const exitAndroidApp = () => {
     const plugin = nativeBackPlugin();
@@ -110,6 +132,17 @@
       if (handle) void handle.remove().catch(noop);
     };
   };
+  let pushRegistration = null;
+  let latestPushToken = null;
+  let latestPushError = null;
+  if (hasPush()) {
+    addPluginListener(pushPlugin(), 'registration', (event) => {
+      latestPushToken = typeof event?.value === 'string' ? event.value : null;
+    });
+    addPluginListener(pushPlugin(), 'registrationError', () => {
+      latestPushError = nativeFailure('Push registration failed', 'UNAVAILABLE');
+    });
+  }
   const approvedExternalUrl = (value) => {
     const parsed = new URL(value.trim());
     const allowed = parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'alipays:';
@@ -129,6 +162,7 @@
       backButton: platform === 'android' && hasAppListeners(),
       externalUrls: true,
       secureScreen: hasNativeMethod('setSecureScreen'),
+      pushNotifications: hasPush(),
     }),
     pickPhoto: async (source = 'photos') => {
       if (!hasNativeMethod('pickPhoto')) throw nativeFailure('Native photo selection is unavailable', 'UNAVAILABLE');
@@ -161,6 +195,63 @@
     openExternal: async (value) => {
       const url = approvedExternalUrl(value);
       window.location.assign(url);
+    },
+    getPushPermission: async () => {
+      if (!hasPush()) throw nativeFailure('Push notifications are unavailable', 'UNAVAILABLE');
+      const result = await pushPlugin().checkPermissions();
+      return result?.receive || 'prompt';
+    },
+    requestPushPermission: async () => {
+      if (!hasPush()) throw nativeFailure('Push notifications are unavailable', 'UNAVAILABLE');
+      const result = await pushPlugin().requestPermissions();
+      return result?.receive || 'denied';
+    },
+    registerForPush: async () => {
+      if (!hasPush()) throw nativeFailure('Push notifications are unavailable', 'UNAVAILABLE');
+      if (pushRegistration) return pushRegistration;
+      latestPushToken = null;
+      latestPushError = null;
+      pushRegistration = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          pushRegistration = null;
+          reject(nativeFailure('Push registration timed out', 'UNAVAILABLE'));
+        }, 15000);
+        const offToken = addPluginListener(pushPlugin(), 'registration', (event) => {
+          const token = typeof event?.value === 'string' ? event.value : latestPushToken;
+          if (!token) return;
+          clearTimeout(timeout);
+          offToken();
+          offError();
+          pushRegistration = null;
+          resolve(token);
+        });
+        const offError = addPluginListener(pushPlugin(), 'registrationError', () => {
+          clearTimeout(timeout);
+          offToken();
+          offError();
+          pushRegistration = null;
+          reject(latestPushError || nativeFailure('Push registration failed', 'UNAVAILABLE'));
+        });
+        Promise.resolve(pushPlugin().register()).catch(() => {
+          clearTimeout(timeout);
+          offToken();
+          offError();
+          pushRegistration = null;
+          reject(nativeFailure('Push registration failed', 'UNAVAILABLE'));
+        });
+      });
+      return pushRegistration;
+    },
+    onPushNotificationOpen: (callback) => {
+      if (!hasPush()) return noop;
+      return addPluginListener(pushPlugin(), 'pushNotificationActionPerformed', (event) => {
+        const eventId = event?.notification?.data?.eventId;
+        if (typeof eventId === 'string' && eventId.length > 0 && eventId.length <= 200) callback(eventId);
+      });
+    },
+    openNotificationSettings: async () => {
+      if (!hasNativeMethod('openNotificationSettings')) throw nativeFailure('System notification settings are unavailable', 'UNAVAILABLE');
+      await nativeCapabilitiesPlugin().openNotificationSettings();
     },
     onAppStateChange: (callback) => addAppListener('appStateChange', (event) => {
       callback(event?.isActive === true);
