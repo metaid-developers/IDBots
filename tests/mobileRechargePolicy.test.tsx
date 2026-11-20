@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { isRechargeAllowed } from '../src/mobile/native/rechargePolicy.ts';
 import ChatScreen from '../src/mobile/app/screens/ChatScreen.tsx';
 import MeScreen from '../src/mobile/app/screens/MeScreen.tsx';
+import { UsageCreditsPage } from '../src/mobile/app/screens/me/UsageCreditsPage.tsx';
 import { mobileI18n, t } from '../src/mobile/i18n.ts';
 import type { useChat } from '../src/mobile/app/hooks/useChat.ts';
 
@@ -64,17 +65,21 @@ test('ChatScreen hides only its recharge action when native iOS policy disallows
   assert.ok(visible.includes(rechargeButton));
 });
 
-test('MeScreen shows the S9 points home: free tier sees the top-up lock, no cashier button', () => {
+test('MeScreen shows compact credits; Usage keeps the full hero and free-tier lock', () => {
   mobileI18n.setLanguage('en');
-  const html = renderToStaticMarkup(
+  const primary = renderToStaticMarkup(
     <MeScreen canPurchase onOpenPurchase={() => undefined} />,
   );
-  assert.match(html, /data-testid="me-points-hero"/);
-  assert.match(html, /data-testid="me-topup-locked"/);
-  assert.doesNotMatch(html, /data-testid="me-page-traffic"/);
-  assert.doesNotMatch(html, /data-testid="balance-card"/);
+  assert.match(primary, /data-testid="me-compact-credits"/);
+  assert.doesNotMatch(primary, /data-testid="me-points-hero"/);
+
+  const usage = renderToStaticMarkup(<UsageCreditsPage onBack={() => undefined} />);
+  assert.match(usage, /data-testid="me-points-hero"/);
+  assert.match(usage, /data-testid="me-topup-locked"/);
+  assert.doesNotMatch(usage, /data-testid="me-page-traffic"/);
+  assert.doesNotMatch(usage, /data-testid="balance-card"/);
   // The old traffic recharge/redeem entry pair is retired with the quota UI.
-  assert.ok(!html.includes(t('mobile.me.rechargeEntry')));
+  assert.ok(!usage.includes(t('mobile.me.rechargeEntry')));
 });
 
 test('iOS policy: the purchase surface is display-only in the capacitor iOS shell', () => {

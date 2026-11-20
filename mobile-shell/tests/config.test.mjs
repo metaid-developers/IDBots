@@ -51,14 +51,16 @@ test('Android has API 26 and explicit staging and production variants', () => {
   assert.match(backPlugin, /getBridge\(\)\.getActivity\(\)\.finish\(\)/);
 });
 
-test('production startup uses declarative config, safe lifecycle, version 0.1.5, and branded launcher assets', () => {
+test('production startup uses declarative config, safe lifecycle, version 0.1.6, and branded launcher assets', () => {
   const build = read('../android/app/build.gradle');
-  assert.match(build, /versionCode 7/);
-  assert.match(build, /versionName "0\.1\.5"/);
+  assert.match(build, /versionCode 8/);
+  assert.match(build, /versionName "0\.1\.6"/);
   const iosProject = read('../ios/App/App.xcodeproj/project.pbxproj');
-  assert.equal(iosProject.match(/CURRENT_PROJECT_VERSION = 7;/g)?.length, 2);
-  assert.equal(iosProject.match(/MARKETING_VERSION = 0\.1\.5;/g)?.length, 2);
+  assert.equal(iosProject.match(/CURRENT_PROJECT_VERSION = 8;/g)?.length, 2);
+  assert.equal(iosProject.match(/MARKETING_VERSION = 0\.1\.6;/g)?.length, 2);
   const bootstrap = read('../android/app/src/main/java/com/idbots/world/NativeBootstrap.java');
+  assert.match(bootstrap, /BuildConfig\.VERSION_NAME/);
+  assert.match(bootstrap, /BuildConfig\.VERSION_CODE/);
   assert.doesNotMatch(bootstrap, /readAllBytes\s*\(/);
   assert.match(bootstrap, /ByteArrayOutputStream/);
   const activity = read('../android/app/src/main/java/com/idbots/world/MainActivity.java');

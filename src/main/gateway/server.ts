@@ -531,8 +531,11 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
         filePath = path.join(filePath, 'index.html');
       }
     } catch {
-      sendEmpty(res, 404);
-      return;
+      if (path.extname(relative) === '') filePath = path.join(bundleRoot, 'index.html');
+      else {
+        sendEmpty(res, 404);
+        return;
+      }
     }
     let stat: fs.Stats;
     try {

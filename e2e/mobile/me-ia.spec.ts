@@ -52,6 +52,7 @@ test.describe('A6 settings IA', () => {
     await openMe(page);
     await expect(page.getByTestId('me-tier-cards')).toHaveCount(0);
     await expect(page.getByTestId('me-tiers-empty')).toHaveCount(0);
+    await page.getByTestId('me-compact-credits').click();
     await page.getByRole('button', { name: 'Upgrade plan', exact: true }).click();
     await expect(page.getByTestId('me-purchase-page')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Choose a plan' })).toBeVisible();
@@ -86,16 +87,15 @@ test.describe('A6 settings IA', () => {
     await page.getByTestId('me-secondary-back').click();
     await expect(page.getByTestId('me-primary-page')).toBeVisible();
 
-    await page.getByTestId('me-usage-link').click();
+    await page.getByTestId('me-compact-credits').click();
     await expect(page.getByTestId('me-page-usage')).toBeVisible();
-    await page.getByTestId('me-secondary-back').click();
-    await expect(page.getByTestId('me-primary-page')).toBeVisible();
-
-    // S9: the traffic page and its card are gone; a free-tier account sees
-    // the "plan required" hint and no cashier entry at all.
-    await expect(page.getByTestId('balance-card')).toHaveCount(0);
+    // S9: the full points hero lives on Usage; a free-tier account sees the
+    // "plan required" hint and no cashier entry at all.
     await expect(page.getByTestId('me-topup-locked')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Top up ME' })).toHaveCount(0);
+    await page.getByTestId('me-secondary-back').click();
+    await expect(page.getByTestId('me-primary-page')).toBeVisible();
+    await expect(page.getByTestId('balance-card')).toHaveCount(0);
   });
 
   test('bots list pushes the full botEdit third level and back returns to the list', async ({ page }, testInfo) => {
@@ -167,7 +167,7 @@ test.describe('A6 settings IA', () => {
   test('usage & credits page renders the ME ledger, orders and the multiplier fold', async ({ page }, testInfo) => {
     await openMe(page);
 
-    await page.getByTestId('me-usage-link').click();
+    await page.getByTestId('me-compact-credits').click();
     await expect(page.getByTestId('me-page-usage')).toBeVisible();
 
     // Ledger arrives from the mock ME history (grant/spend/topup/earned/bonus).

@@ -127,10 +127,10 @@ describe('proxy HTTP routes (REQ-B-14, REQ-B-15)', () => {
     assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable');
   });
 
-  test('GET /app/ without a cookie redirects to /login', async () => {
-    const res = await fetch(`${t.cpBase}/app/`, { redirect: 'manual' });
+  test('GET an app deep link without a cookie redirects to login with its return path', async () => {
+    const res = await fetch(`${t.cpBase}/app/notifications/event-1`, { redirect: 'manual' });
     assert.equal(res.status, 302);
-    assert.equal(res.headers.get('location'), '/login');
+    assert.equal(res.headers.get('location'), `/login?returnTo=${encodeURIComponent('/app/notifications/event-1')}`);
   });
 
   test('POST /upload without an Origin is rejected 403', async () => {
@@ -165,6 +165,6 @@ describe('proxy HTTP routes (REQ-B-14, REQ-B-15)', () => {
 
     const appRes = await fetch(`${t.cpBase}/app/`, { headers: { Cookie: t.cookie }, redirect: 'manual' });
     assert.equal(appRes.status, 302);
-    assert.equal(appRes.headers.get('location'), '/login');
+    assert.equal(appRes.headers.get('location'), `/login?returnTo=${encodeURIComponent('/app/')}`);
   });
 });

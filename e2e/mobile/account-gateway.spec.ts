@@ -8,6 +8,7 @@ async function pendingOrderId(page: Page): Promise<string> {
 }
 
 async function chooseMePlan(page: Page, planTestId: string): Promise<void> {
+  await page.getByTestId('me-compact-credits').click();
   await page.locator('[data-testid="me-points-hero"] .me-hero-button-primary').click();
   await expect(page.getByTestId('me-purchase-page')).toBeVisible();
   await page.getByTestId(planTestId).click();
@@ -53,7 +54,7 @@ test.describe('gateway account and daily use', () => {
     await expect(page.locator('.me-checkout-order')).toHaveText(orderId);
     await page.reload();
     await page.getByRole('button', { name: 'Me', exact: true }).click();
-    await page.getByTestId('me-usage-link').click();
+    await page.getByTestId('me-compact-credits').click();
     await page.getByTestId(`usage-resume-${orderId}`).click();
     await expect(page.locator('.me-checkout-order')).toHaveText(orderId);
 

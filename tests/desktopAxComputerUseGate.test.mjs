@@ -155,7 +155,14 @@ test('a bot-less session (metabotId null) sees no AX action tool', () => {
 test('main.ts still composes `computer` from both gate levels, in that order', () => {
   const source = fs.readFileSync(path.join(REPO_ROOT, 'src/main/main.ts'), 'utf8')
   const block = source.slice(source.indexOf('const metabotAutomationProviders = {'))
-  const computer = block.slice(block.indexOf('computer: (metabotId: number | null) => {'), block.indexOf('computer: (metabotId: number | null) => {') + 320)
+  const anchor = 'computer: (metabotId: number | null) => {'
+  const start = block.indexOf(anchor)
+  // Slice the whole factory body (up to its closing `},`) instead of a fixed
+  // char window: the factory grew a server-mode guard plus a comment block,
+  // so a fixed 320-char slice no longer reaches the per-bot gate (2026-11-20).
+  const end = block.indexOf('\n      },', start)
+  const computer = block.slice(start, end)
+  assert.match(computer, /if \(isServerMode\(\)\) return false/)
   assert.match(computer, /if \(!isExperimentalAutomationAllowed\(getStoreOrNull\(\)\)\) return false/)
   assert.match(computer, /return isCoworkComputerUseEnabled\(getMetabotStore\(\), metabotId\)/)
   assert.ok(

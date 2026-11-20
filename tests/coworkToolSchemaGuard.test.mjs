@@ -142,7 +142,10 @@ test('wiring: both hostTools hand-off sites run the guard, old spread order is g
   const source = fs.readFileSync(new URL('../src/main/libs/coworkRunner.ts', import.meta.url), 'utf8');
   const guardCalls = source.match(/guardHostToolSchemas\(/g) ?? [];
   assert.equal(guardCalls.length, 2, 'registry/pre-warm site and runTurn site must both guard');
-  assert.match(source, /const hostToolsGuard = guardHostToolSchemas\(hostToolsBuilt\)/);
+  // The guard runs on the turn-filtered list: 8494fd2b4 inserts the mobile
+  // tool-surface filter (hostToolsForTurn) between build and guard, so the
+  // guarded set is exactly what the turn sends.
+  assert.match(source, /const hostToolsGuard = guardHostToolSchemas\(hostToolsForTurn\)/);
   assert.match(source, /const sendHostToolsGuard = guardHostToolSchemas\(turnOpts\?\.finalizing \? \[\] : hostTools\)/);
   assert.match(source, /coworkLog\('WARN', 'runDshSessionLocal', formatHostToolSchemaGuardWarning\(/);
   assert.equal(

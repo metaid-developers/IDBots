@@ -25,6 +25,7 @@ const WEB_CAPABILITIES: MobileNativeCapabilities = Object.freeze({
 export interface MobileNativeAdapter {
   readonly isNative: boolean;
   getCapabilities(): MobileNativeCapabilities;
+  getAppVersion(): { versionName: string; versionCode: number } | null;
   pickPhoto(source: 'camera' | 'photos'): Promise<File | null>;
   pickFiles(multi: boolean): Promise<File[]>;
   shareArtifact(input: { url: string; filename: string }): Promise<'shared' | 'cancelled'>;
@@ -103,6 +104,13 @@ export function createNativeAdapter(target: Window): MobileNativeAdapter {
   return {
     isNative: bridge !== null,
     getCapabilities: () => readCapabilities(bridge),
+    getAppVersion: () => {
+      const versionName = bridge?.appVersion;
+      const versionCode = bridge?.appVersionCode;
+      if (typeof versionName !== 'string' || versionName.trim() === '') return null;
+      if (typeof versionCode !== 'number' || !Number.isInteger(versionCode) || versionCode <= 0) return null;
+      return { versionName, versionCode };
+    },
     pickPhoto: async (source) => {
       const capability = source === 'camera' ? 'camera' : 'photos';
       if (!bridge || !hasCapability(capability) || typeof bridge.pickPhoto !== 'function') {

@@ -34,7 +34,7 @@ export interface AllowlistEntry {
 }
 
 /** Allowlist version from `02` (frozen at 1.0.0 on 2026-10-15; 1.0.4 = CR-WSE-001). */
-export const ALLOWLIST_VERSION = '1.0.4';
+export const ALLOWLIST_VERSION = '1.1.0';
 
 /** C2 Limits: default invoke timeout. Channel-specific overrides live on entries. */
 export const DEFAULT_INVOKE_TIMEOUT_MS = 120_000;
@@ -366,6 +366,11 @@ const WS_A_NEW_INVOKE: Record<string, AllowlistEntry> = {
   'gateway:file:sign': { tier: 'P1', restrictions: ['R-path'], note: '`02`: C2 File Download; R-path.' },
   'mobile:permission:listPending': { tier: 'P1' },
   'mobile:bootstrap:status': { tier: 'P1' },
+  'notification:list': { tier: 'P1', note: 'CR-WSE-002: durable mobile inbox and deep links.' },
+  'notification:get': { tier: 'P1', note: 'CR-WSE-002: durable mobile inbox and deep links.' },
+  'notification:getUnreadCount': { tier: 'P1', note: 'CR-WSE-002: durable mobile inbox and deep links.' },
+  'notification:markRead': { tier: 'P1', note: 'CR-WSE-002: durable mobile inbox and deep links.' },
+  'notification:markAllRead': { tier: 'P1', note: 'CR-WSE-002: durable mobile inbox and deep links.' },
   'bundle:getPlans': { tier: 'P1' },
   'bundle:createOrder': { tier: 'P1' },
   'bundle:getOrder': { tier: 'P1' },
@@ -482,6 +487,7 @@ export const EVENT_ALLOWLIST: Record<string, AllowlistEntry> = {
   'scheduledTask:runUpdate': { tier: 'P1' },
   'scheduledTask:statusUpdate': { tier: 'P1' },
   'longtermTask:update': { tier: 'P1' },
+  'notification:changed': { tier: 'P1', note: 'CR-WSE-002: unread/notification reconciliation hint.' },
   'llmRelay:quotaNudgeChanged': { tier: 'P1', note: '`02`: banner refresh broadcast.' },
   'skills:changed': { tier: 'P1' },
   'metabot:dreamStatusChanged': { tier: 'P1' },

@@ -1,4 +1,9 @@
-import { MOCK_LOGIN_API } from './buildFlags';
+import { createMobileI18n } from './i18nCore';
+import {
+  loginCommonTranslations,
+  loginEnTranslations,
+  loginZhTranslations,
+} from './login/loginCopy';
 
 /**
  * Standalone mobile i18n service (REQ-E-18).
@@ -16,15 +21,6 @@ import { MOCK_LOGIN_API } from './buildFlags';
 export type MobileLanguage = 'zh' | 'en';
 
 export type MobileDictionary = Record<string, string>;
-
-/**
- * Demo notice values (mobile.login.demoNote). Defined as constants so
- * mobileI18nStatic's dictionary parser can verify the referenced copy is
- * non-empty for the mock mode, while a production build folds
- * `MOCK_LOGIN_API ? copy : ''` to `''` and never ships the notice string.
- */
-const DEMO_NOTE_ZH = MOCK_LOGIN_API ? '演示环境：登录接口为 mock。' : '';
-const DEMO_NOTE_EN = MOCK_LOGIN_API ? 'Demo build: the login API is mocked.' : '';
 
 const zhTranslations: MobileDictionary = {
   'mobile.common.loading': '加载中…',
@@ -48,6 +44,27 @@ const zhTranslations: MobileDictionary = {
   'mobile.tabs.browser': '浏览器',
   'mobile.tabs.tasks': '任务',
   'mobile.tabs.me': '我的',
+  'mobile.notifications.title': '通知',
+  'mobile.notifications.subtitle': '{count} 条未读通知',
+  'mobile.notifications.bellLabel': '通知，{count} 条未读',
+  'mobile.notifications.filters': '通知筛选',
+  'mobile.notifications.filter.unread': '未读',
+  'mobile.notifications.filter.all': '全部',
+  'mobile.notifications.filter.work': '工作',
+  'mobile.notifications.filter.action': '待处理',
+  'mobile.notifications.filter.report': '汇报',
+  'mobile.notifications.filter.system': '系统',
+  'mobile.notifications.category.work': '工作',
+  'mobile.notifications.category.action': '待处理',
+  'mobile.notifications.category.report': '汇报',
+  'mobile.notifications.category.system': '系统',
+  'mobile.notifications.markAllRead': '全部已读',
+  'mobile.notifications.emptyTitle': '没有通知',
+  'mobile.notifications.emptyUnread': '所有通知都已处理。',
+  'mobile.notifications.emptyCategory': '这个分类暂时没有通知。',
+  'mobile.notifications.loadFailed': '通知加载失败',
+  'mobile.me.entry.notifications': '通知',
+  'mobile.me.summary.notificationsUnread': '{count} 条未读',
   'mobile.app.tabBarLabel': '底部导航',
   'mobile.browser.failed': '浏览器暂时无法启动，请稍后重试。',
   'mobile.chat.title': '聊天',
@@ -629,6 +646,10 @@ const zhTranslations: MobileDictionary = {
   'mobile.me.deleteDone': '删除申请已提交',
   'mobile.me.aboutTitle': '关于',
   'mobile.me.appVersion': '应用版本：{version}',
+  'mobile.me.nativeVersion': 'App 版本：{version}（构建 {build}）',
+  'mobile.me.cloudVersion': '云端版本：{version}',
+  'mobile.me.protocolVersion': '通信协议版本：{version}',
+  'mobile.me.protocolHint': '通信协议用于手机与云端服务之间的兼容协商，不是 App 或区块链合约版本。',
   'mobile.me.contractVersion': '合约版本：{version}',
   // A6 settings IA rework (IA-PLAN v1): entries, groups, summaries, pages.
   'mobile.me.back': '返回',
@@ -813,6 +834,12 @@ const zhTranslations: MobileDictionary = {
   'mobile.login.title': '登录 IDBots',
   'mobile.login.subtitle': '使用手机号和验证码登录。',
   'mobile.login.phonePlaceholder': '手机号（带国家码，如 +8613800138000）',
+  'mobile.login.phoneLabel': '手机号',
+  'mobile.login.codeLabel': '短信验证码',
+  'mobile.login.inviteLabel': '邀请码',
+  'mobile.login.displayNameLabel': '显示名称',
+  'mobile.login.sending': '正在发送…',
+  'mobile.login.verifying': '正在登录…',
   'mobile.login.sendCode': '发送验证码',
   'mobile.login.codeSent': '验证码已发送，{sec} 秒后可重发',
   'mobile.login.codePlaceholder': '验证码',
@@ -821,7 +848,6 @@ const zhTranslations: MobileDictionary = {
   'mobile.login.invalidPhone':
     '手机号需带国家码，如 +8613800138000；大陆手机号输入 11 位数字即可自动补 +86。',
   'mobile.login.invalidCode': '验证码不正确，请重试',
-  'mobile.login.demoNote': DEMO_NOTE_ZH,
   'mobile.login.resendIn': '重新发送验证码（{sec} 秒）',
   'mobile.login.invitePlaceholder': '邀请码',
   'mobile.login.inviteRequired': '注册需要邀请码。请输入邀请码后重试。',
@@ -846,6 +872,10 @@ const zhTranslations: MobileDictionary = {
   'mobile.login.preparingNote': '首次开通可能需要几分钟，请保持本页面打开。',
   'mobile.login.preparingFailed': '准备过程中出现问题：{message}',
   'mobile.login.supportContact': '支持联系方式（占位，正式发布前提供）',
+  'mobile.login.supportAction': '联系支持',
+  'mobile.login.preparingElapsed': '已等待 {sec} 秒',
+  'mobile.login.preparingFailedGeneric': '暂时无法开通你的 Bot。请重试，或联系支持。',
+  'mobile.login.preparingPollFailed': '网络连接似乎已中断。正在自动重试，你也可以手动重试。',
   'mobile.login.preparingStatus.provisioning': '正在开通服务',
   'mobile.login.preparingStatus.booting': '正在启动 Bot',
   'mobile.login.preparingStatus.onboarding': '正在初始化工作区',
@@ -890,6 +920,27 @@ const enTranslations: MobileDictionary = {
   'mobile.tabs.browser': 'Browser',
   'mobile.tabs.tasks': 'Tasks',
   'mobile.tabs.me': 'Me',
+  'mobile.notifications.title': 'Notifications',
+  'mobile.notifications.subtitle': '{count} unread notifications',
+  'mobile.notifications.bellLabel': 'Notifications, {count} unread',
+  'mobile.notifications.filters': 'Notification filters',
+  'mobile.notifications.filter.unread': 'Unread',
+  'mobile.notifications.filter.all': 'All',
+  'mobile.notifications.filter.work': 'Work',
+  'mobile.notifications.filter.action': 'Action needed',
+  'mobile.notifications.filter.report': 'Reports',
+  'mobile.notifications.filter.system': 'System',
+  'mobile.notifications.category.work': 'Work',
+  'mobile.notifications.category.action': 'Action needed',
+  'mobile.notifications.category.report': 'Report',
+  'mobile.notifications.category.system': 'System',
+  'mobile.notifications.markAllRead': 'Mark all read',
+  'mobile.notifications.emptyTitle': 'No notifications',
+  'mobile.notifications.emptyUnread': 'You are all caught up.',
+  'mobile.notifications.emptyCategory': 'Nothing in this category yet.',
+  'mobile.notifications.loadFailed': 'Failed to load notifications',
+  'mobile.me.entry.notifications': 'Notifications',
+  'mobile.me.summary.notificationsUnread': '{count} unread',
   'mobile.app.tabBarLabel': 'Bottom navigation',
   'mobile.browser.failed': 'The browser could not start. Try again shortly.',
   'mobile.chat.title': 'Chat',
@@ -1471,6 +1522,10 @@ const enTranslations: MobileDictionary = {
   'mobile.me.deleteDone': 'Deletion request submitted',
   'mobile.me.aboutTitle': 'About',
   'mobile.me.appVersion': 'App version: {version}',
+  'mobile.me.nativeVersion': 'App version: {version} (build {build})',
+  'mobile.me.cloudVersion': 'Cloud version: {version}',
+  'mobile.me.protocolVersion': 'Gateway protocol version: {version}',
+  'mobile.me.protocolHint': 'The gateway protocol negotiates phone-cloud compatibility; it is not an app or blockchain contract version.',
   'mobile.me.contractVersion': 'Contract version: {version}',
   // A6 settings IA rework (IA-PLAN v1): entries, groups, summaries, pages.
   'mobile.me.back': 'Back',
@@ -1655,6 +1710,12 @@ const enTranslations: MobileDictionary = {
   'mobile.login.title': 'Sign in to IDBots',
   'mobile.login.subtitle': 'Sign in with your phone number and SMS code.',
   'mobile.login.phonePlaceholder': 'Phone number (with country code, e.g. +8613800138000)',
+  'mobile.login.phoneLabel': 'Phone number',
+  'mobile.login.codeLabel': 'SMS code',
+  'mobile.login.inviteLabel': 'Invite code',
+  'mobile.login.displayNameLabel': 'Display name',
+  'mobile.login.sending': 'Sending…',
+  'mobile.login.verifying': 'Signing in…',
   'mobile.login.sendCode': 'Send code',
   'mobile.login.codeSent': 'Code sent; you can resend it in {sec}s',
   'mobile.login.codePlaceholder': 'SMS code',
@@ -1663,7 +1724,6 @@ const enTranslations: MobileDictionary = {
   'mobile.login.invalidPhone':
     'Use a phone number with country code, e.g. +8613800138000; typing an 11-digit mainland number auto-adds +86.',
   'mobile.login.invalidCode': 'Invalid code, please try again',
-  'mobile.login.demoNote': DEMO_NOTE_EN,
   'mobile.login.resendIn': 'Resend code ({sec}s)',
   'mobile.login.invitePlaceholder': 'Invite code',
   'mobile.login.inviteRequired': 'An invite code is required to sign up. Enter one and try again.',
@@ -1688,6 +1748,10 @@ const enTranslations: MobileDictionary = {
   'mobile.login.preparingNote': 'First-time setup can take a few minutes. Keep this page open.',
   'mobile.login.preparingFailed': 'Something went wrong while preparing your Bot: {message}',
   'mobile.login.supportContact': 'Support contact (placeholder until launch)',
+  'mobile.login.supportAction': 'Contact support',
+  'mobile.login.preparingElapsed': 'Waiting for {sec}s',
+  'mobile.login.preparingFailedGeneric': 'We could not prepare your Bot right now. Please retry or contact support.',
+  'mobile.login.preparingPollFailed': 'The network appears to be offline. We will keep retrying, or you can retry now.',
   'mobile.login.preparingStatus.provisioning': 'Provisioning your tenant',
   'mobile.login.preparingStatus.booting': 'Starting your Bot',
   'mobile.login.preparingStatus.onboarding': 'Initializing your workspace',
@@ -1710,8 +1774,8 @@ const enTranslations: MobileDictionary = {
 };
 
 const dictionaries: Record<MobileLanguage, MobileDictionary> = {
-  zh: zhTranslations,
-  en: enTranslations,
+  zh: { ...loginCommonTranslations.zh, ...loginZhTranslations, ...zhTranslations },
+  en: { ...loginCommonTranslations.en, ...loginEnTranslations, ...enTranslations },
 };
 
 export function registerMobileTranslations(translations: Record<MobileLanguage, MobileDictionary>): void {
@@ -1719,74 +1783,9 @@ export function registerMobileTranslations(translations: Record<MobileLanguage, 
   Object.assign(dictionaries.en, translations.en);
 }
 
-/** Same locale rule as the desktop inferLanguageFromLocale (services/i18n.ts). */
-export function inferLanguageFromLocale(systemLocale: string): MobileLanguage {
-  const normalized = String(systemLocale || '').trim().replace(/_/g, '-').toLowerCase();
-  if (!normalized) {
-    return 'en';
-  }
-  const tags = normalized.split('-').filter(Boolean);
-  if (tags[0] !== 'zh') {
-    return 'en';
-  }
-  if (tags.includes('hant') || tags[1] === 'tw' || tags[1] === 'hk' || tags[1] === 'mo') {
-    return 'en';
-  }
-  return 'zh';
-}
+export { inferLanguageFromLocale } from './i18nCore';
 
-class MobileI18nService {
-  private currentLanguage: MobileLanguage = 'en';
-  private listeners = new Set<() => void>();
-
-  /** Picks the device language; safe before any bridge exists (no electron calls). */
-  initFromDeviceLocale(locale?: string): MobileLanguage {
-    const source =
-      locale ??
-      (typeof navigator !== 'undefined' && typeof navigator.language === 'string'
-        ? navigator.language
-        : 'en');
-    this.currentLanguage = inferLanguageFromLocale(source);
-    return this.currentLanguage;
-  }
-
-  t(key: string, params?: Record<string, string | number>): string {
-    let translation = dictionaries[this.currentLanguage][key];
-    if (translation === undefined) {
-      // Missing key (e.g. the deleted demo notice outside VITE_MOBILE_MOCK
-      // builds): warn loudly for development, but render nothing — falling
-      // back to the key name would leak an internal identifier into the UI.
-      console.warn(`[mobile-i18n] missing key: ${key} (${this.currentLanguage})`);
-      translation = dictionaries.en[key];
-      if (translation === undefined) return '';
-    }
-    if (params) {
-      translation = translation.replace(/\{(\w+)\}/g, (match, name: string) =>
-        params[name] !== undefined ? String(params[name]) : match,
-      );
-    }
-    return translation;
-  }
-
-  setLanguage(language: MobileLanguage): void {
-    if (this.currentLanguage === language) return;
-    this.currentLanguage = language;
-    for (const listener of [...this.listeners]) listener();
-  }
-
-  getLanguage(): MobileLanguage {
-    return this.currentLanguage;
-  }
-
-  subscribe(listener: () => void): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
-}
-
-export const mobileI18n = new MobileI18nService();
+export const mobileI18n = createMobileI18n(dictionaries);
 
 /** Short alias mirroring the desktop `i18nService.t` call sites. */
 export const t = (key: string, params?: Record<string, string | number>): string =>
