@@ -91,6 +91,7 @@ interface SchedulerDeps {
   emitSessionMessage?: (sessionId: string, message: CoworkMessage) => void;
   /** Owner's UI language ('zh' | 'en') for the copy the scheduler writes into sessions. */
   getAppLanguage?: () => string;
+  onRunTerminal?: (task: ScheduledTask, run: ScheduledTaskRun) => void;
   /** How long a fire waits for its busy standing conversation; tests shrink it. */
   seriesSessionBusyWaitMs?: number;
   /** How often the wait polls for idle; tests shrink it alongside the wait. */
@@ -330,6 +331,7 @@ export class Scheduler {
   private submitToSession: ((input: CoworkSubmitInput) => Promise<SubmitToSessionResult>) | null;
   private emitSessionMessage: ((sessionId: string, message: CoworkMessage) => void) | null;
   private getAppLanguage: (() => string) | null;
+  private onRunTerminal: ((task: ScheduledTask, run: ScheduledTaskRun) => void) | null;
   private readonly practiceRunWatchdogMs: number | null;
   private readonly getPracticeRunWatchdogConfig: (() => unknown) | null;
   private readonly seriesSessionBusyWaitMs: number;
@@ -384,6 +386,7 @@ export class Scheduler {
     this.submitToSession = deps.submitToSession ?? null;
     this.emitSessionMessage = deps.emitSessionMessage ?? null;
     this.getAppLanguage = deps.getAppLanguage ?? null;
+    this.onRunTerminal = deps.onRunTerminal ?? null;
     // An injected budget is an explicit override; absent, the per-category
     // resolution runs at fire time (shipped tier → store/config value).
     this.practiceRunWatchdogMs = deps.practiceRunWatchdogMs ?? null;
@@ -795,6 +798,11 @@ export class Scheduler {
           this.emitTaskStatusUpdate(task.id);
           const updatedRun = this.store.getRun(run.id);
           if (updatedRun) {
+            try {
+              this.onRunTerminal?.(task, updatedRun);
+            } catch (notificationError) {
+              console.warn('[Scheduler] Notification recording failed:', notificationError);
+            }
             this.emitRunUpdate(updatedRun);
           }
         } else {

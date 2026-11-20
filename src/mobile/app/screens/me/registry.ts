@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import {
+  BellIcon,
   ChartBarIcon,
   ChatBubbleLeftEllipsisIcon,
   ChatBubbleLeftRightIcon,
@@ -14,6 +15,7 @@ import {
 import { t } from '../../../i18n';
 
 export type MeRoute =
+  | 'notifications'
   | 'profile'
   | 'usage'
   | 'bots'
@@ -29,6 +31,7 @@ export type MeRoute =
 export type MeEntryGroup = 'bots' | 'general' | 'account';
 
 export interface MeEntrySummaryInput {
+  notificationUnreadCount: number | null;
   botCount: number | null;
   skillsEnabledCount: number | null;
   memoryEnabled: boolean | null;
@@ -49,6 +52,16 @@ export interface MeEntry {
 }
 
 export const ME_ENTRIES: readonly MeEntry[] = [
+  {
+    id: 'notifications',
+    group: 'bots',
+    icon: BellIcon,
+    titleKey: 'mobile.me.entry.notifications',
+    testId: 'me-entry-notifications',
+    summary: (input) => (input.notificationUnreadCount ?? 0) > 0
+      ? t('mobile.me.summary.notificationsUnread', { count: input.notificationUnreadCount! })
+      : null,
+  },
   {
     id: 'bots',
     group: 'bots',

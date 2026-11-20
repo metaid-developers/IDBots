@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.0.0",
-  "allowlistVersion": "1.0.4",
+  "allowlistVersion": "1.1.0",
   "source": "src/main/preload.ts",
   "methods": [
     {
@@ -2704,6 +2704,51 @@
       "args": [
         "status"
       ]
+    },
+    {
+      "path": "notification.get",
+      "kind": "invoke",
+      "channel": "notification:get",
+      "args": [
+        "eventId"
+      ]
+    },
+    {
+      "path": "notification.getUnreadCount",
+      "kind": "invoke",
+      "channel": "notification:getUnreadCount",
+      "args": [
+        "category"
+      ]
+    },
+    {
+      "path": "notification.list",
+      "kind": "invoke",
+      "channel": "notification:list",
+      "args": [
+        "options"
+      ]
+    },
+    {
+      "path": "notification.markAllRead",
+      "kind": "invoke",
+      "channel": "notification:markAllRead",
+      "args": [
+        "category"
+      ]
+    },
+    {
+      "path": "notification.markRead",
+      "kind": "invoke",
+      "channel": "notification:markRead",
+      "args": [
+        "eventIds"
+      ]
+    },
+    {
+      "path": "notification.onChanged",
+      "kind": "on",
+      "channel": "notification:changed"
     },
     {
       "path": "openTeamCollab.getMembers",

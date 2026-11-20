@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRightIcon } from '@heroicons/react/24/outline';
 import { t } from '../../i18n';
 import { getMobileElectron } from '../appBridge';
+import { getNativeAdapter } from '../../native/nativeAdapter';
 import { useIdentity } from '../hooks/useIdentity';
 import { useSettings } from '../hooks/useSettings';
 import { useMemorySettings } from '../hooks/useMemorySettings';
@@ -10,12 +11,11 @@ import { useMetabots } from '../hooks/useMetabots';
 import { BotAvatar } from '../components/BotAvatar';
 import { BottomSheet } from '../components/BottomSheet';
 import { MeBalanceChip } from '../components/MeBalanceChip';
-import { MePointsHero } from '../components/MePointsHero';
+import { MeCompactCreditsRow } from '../components/MeCompactCreditsRow';
 import {
   ensureMeOverview,
   isMeSubscribed,
   meActivePlanId,
-  meSubscriptionExpiryMs,
   meCurrentPlan,
   meFromMilli,
   meSpendableMilli,
@@ -43,15 +43,16 @@ import { GeneralPage } from './me/GeneralPage';
 import { AccountPage } from './me/AccountPage';
 import { WeixinBindPage } from './me/WeixinBindPage';
 import { AboutPage } from './me/AboutPage';
+import NotificationsScreen from './NotificationsScreen';
+import type { AgentNotification } from '@/types/notification';
 
 /**
  * Me tab (REQ-E-14), A6 settings IA rework (IA-PLAN v1) + S9 ME points home.
  *
- * The primary page is now the points home: a merged ME balance hero with the
- * four-bucket ledger, the current plan / weekly progress line and the
- * upgrade/renew path — followed by the registry-rendered settings rows. The
- * full plan catalog stays inside the upgrade panel. The old traffic page is
- * gone; `usage` is the merged Usage & credits page (S9 §3).
+ * The primary page leads with identity and the registry-rendered settings rows.
+ * A compact plan/balance row opens `usage`, where the full ME hero, four-bucket
+ * ledger, weekly progress, and upgrade/renew actions live. The full plan
+ * catalog stays inside the upgrade panel. The old traffic page is gone.
  *
  * Navigation: every entry pushes a secondary page on a local stack riding on
  * history entries, so Android system back / browser back and the top-bar back
@@ -119,6 +120,8 @@ export default function MeScreen(props: {
   onOpenUri?: (uri: string) => void;
   /** Bumped by the shell when a submitted order should open Usage & credits. */
   usageSignal?: number;
+  notificationUnreadCount?: number;
+  onOpenNotification: (item: AgentNotification) => Promise<boolean>;
 }): JSX.Element {
   const identity = useIdentity(props.resyncCounter);
   const [stack, setStack] = useState<MeStackEntry[]>([]);
@@ -134,6 +137,7 @@ export default function MeScreen(props: {
   const memory = useMemorySettings();
   const skills = useSkills();
   const metabots = useMetabots();
+  const nativeApp = typeof window === 'undefined' ? null : getNativeAdapter().getAppVersion();
   const [appVersion, setAppVersion] = useState<string | null>(null);
   useEffect(() => {
     void getMobileElectron()
@@ -159,7 +163,6 @@ export default function MeScreen(props: {
 
   const subscribed = isMeSubscribed(me.subscription);
   const activePlanId = meActivePlanId(me.subscription);
-  const expiryMs = meSubscriptionExpiryMs(me.subscription);
   const currentPlan = useMemo(
     () => meCurrentPlan(me.plans, me.subscription),
     [me.plans, me.subscription],
@@ -192,8 +195,8 @@ export default function MeScreen(props: {
   useEffect(() => {
     if (!props.usageSignal || props.usageSignal === lastUsageSignal.current) return;
     lastUsageSignal.current = props.usageSignal;
-    pushRoute('usage');
-  }, [props.usageSignal, pushRoute]);
+    if (top !== 'usage') pushRoute('usage');
+  }, [props.usageSignal, pushRoute, top]);
 
   const popRoute = useCallback(() => {
     if (top === 'botEdit') setEditingBotId(null);
@@ -252,6 +255,7 @@ export default function MeScreen(props: {
   }, [popRoute]);
 
   const summaryInput: MeEntrySummaryInput = {
+    notificationUnreadCount: props.notificationUnreadCount ?? null,
     botCount: metabots.loading && metabots.bots.length === 0 ? null : metabots.bots.length,
     skillsEnabledCount: skills.skills.length === 0 ? null : skills.skills.filter((skill) => skill.enabled).length,
     memoryEnabled: memory.config ? memory.config.memoryEnabled : null,
@@ -263,7 +267,7 @@ export default function MeScreen(props: {
           ? 'mobile.me.themeDark'
           : 'mobile.me.themeSystem',
     ),
-    appVersion,
+    appVersion: nativeApp?.versionName ?? appVersion,
     meTotal,
   };
 
@@ -285,6 +289,8 @@ export default function MeScreen(props: {
 
   if (top) {
     switch (top) {
+      case 'notifications':
+        return <NotificationsScreen resyncCounter={props.resyncCounter} onBack={requestBack} onOpenNotification={props.onOpenNotification} />;
       case 'profile':
         return (
           <>
@@ -302,9 +308,12 @@ export default function MeScreen(props: {
       case 'usage':
         return (
           <UsageCreditsPage
+            resyncCounter={props.resyncCounter}
             onBack={requestBack}
             canPurchase={props.canPurchase}
             onResumeOrder={(section, subjectId, orderId) => props.onOpenPurchase(section, subjectId, orderId)}
+            onUpgrade={() => openUpgrade(activePlanId || undefined)}
+            onRecharge={openRecharge}
           />
         );
       case 'bots':
@@ -361,18 +370,12 @@ export default function MeScreen(props: {
       </div>
       <div className="twin-scroll space-y-3 p-3" data-testid="me-primary-page">
         <UserCard identity={identity.identity} onOpen={() => pushRoute('profile')} />
-        <MePointsHero
+        <MeCompactCreditsRow
           balance={me.balance}
-          loading={me.balanceLoading}
           error={me.balanceError}
-          featureUnavailable={me.balanceFeatureUnavailable}
           plan={currentPlan}
           subscribed={subscribed}
-          expiryMs={expiryMs}
-          canPurchase={props.canPurchase}
-          onUpgrade={() => openUpgrade(activePlanId || undefined)}
-          onRecharge={openRecharge}
-          onOpenUsage={() => pushRoute('usage')}
+          onOpen={() => pushRoute('usage')}
           onRetry={refreshPoints}
         />
         {ME_ENTRY_GROUPS.map((group) => (

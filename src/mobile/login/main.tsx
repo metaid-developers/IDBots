@@ -23,7 +23,7 @@
 import '../native/installNativeBootstrapFirst';
 import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
-import { mobileI18n, t } from '../i18n';
+import { mobileI18n, t } from './loginI18n';
 import {
   copyTextToClipboard,
   isInAppBrowser,
@@ -31,47 +31,16 @@ import {
   isStandaloneDisplay,
 } from './inAppBrowser';
 import { getMe, logout, sendCode, verifyCode } from './loginApi';
-import type { LoginTenant } from './loginApi';
-import { buildStyles, loginPlaceholderStyleTag } from './loginStyles';
 import { probeSessionRecovery } from './sessionRecovery';
-import { initLoginTheme } from './theme';
+import { mobileLegalUrl } from '../legal';
+import { LoginPlaceholderStyle, useLoginStyles } from './loginStyleHooks';
+
+const PreparingScreen = React.lazy(() => import('./PreparingScreen'));
 
 mobileI18n.initFromDeviceLocale();
 
-// Pre-paint theme resolution: runs before ReactDOM renders, so the
-// documentElement class/background/color-scheme are already correct at first
-// paint (no white flash in dark mode). The inline head script in index.html
-// applies the same resolution during HTML parsing; this re-applies it and
-// wires the live prefers-color-scheme listener for system mode.
-const loginTheme = initLoginTheme();
-
 const DISPLAY_NAME_MIN = 1;
 const DISPLAY_NAME_MAX = 24;
-const PREPARE_POLL_MS = 3000;
-
-/** Subscribes the tree to effective theme changes (OS scheme flip in system mode). */
-function useIsDark(): boolean {
-  const [isDark, setIsDark] = useState(loginTheme.isDark());
-  useEffect(
-    () =>
-      loginTheme.subscribe(() => {
-        setIsDark(loginTheme.isDark());
-      }),
-    [],
-  );
-  return isDark;
-}
-
-function useLoginStyles(): Record<string, React.CSSProperties> {
-  const isDark = useIsDark();
-  return React.useMemo(() => buildStyles(isDark), [isDark]);
-}
-
-/** One themed rule for ::placeholder, which inline styles cannot target. */
-function LoginPlaceholderStyle(): JSX.Element {
-  const isDark = useIsDark();
-  return <style>{loginPlaceholderStyleTag(isDark)}</style>;
-}
 
 function normalizePhone(input: string): string {
   const digits = input.replace(/[\s-]/g, '');
@@ -105,70 +74,6 @@ function verifyErrorText(code: string | undefined): string {
   }
 }
 
-/** Polls `getMe` after a successful verify until the tenant opens the app. */
-function PreparingScreen(props: { onSignOut: () => void }): JSX.Element {
-  const styles = useLoginStyles();
-  const [tenant, setTenant] = useState<LoginTenant | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let navigated = false;
-    const tick = async () => {
-      try {
-        const me = await getMe();
-        if (cancelled || navigated) {
-          return;
-        }
-        setTenant(me.tenant);
-        // `degraded` still opens the app (C3): the tenant serves with
-        // reduced functionality instead of blocking the user.
-        if (me.tenant.status === 'ready' || me.tenant.status === 'degraded') {
-          navigated = true;
-          window.location.replace('/app/');
-        }
-      } catch {
-        // Transient poll failure: the next 3 s tick retries.
-      }
-    };
-    void tick();
-    const timer = window.setInterval(() => {
-      void tick();
-    }, PREPARE_POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, []);
-
-  const failed = tenant?.status === 'failed';
-
-  return (
-    <div style={styles.page}>
-      <img src="/icon-192.png" alt="IDBots" style={styles.logo} />
-      <h1 style={styles.title}>{t('mobile.login.preparingTitle')}</h1>
-      <p style={styles.statusWord}>
-        {t(`mobile.login.preparingStatus.${tenant?.status ?? 'provisioning'}`)}
-      </p>
-      {tenant?.phase && <p style={styles.note}>{tenant.phase}</p>}
-      {!failed && <p style={styles.note}>{t('mobile.login.preparingNote')}</p>}
-      {failed && (
-        <>
-          <p style={styles.error}>
-            {t('mobile.login.preparingFailed', {
-              message: tenant?.error ?? t('mobile.common.error'),
-            })}
-          </p>
-          {/* Placeholder until the owner provides the real support channel. */}
-          <p style={styles.note}>{t('mobile.login.supportContact')}</p>
-        </>
-      )}
-      <button type="button" style={styles.textButton} onClick={props.onSignOut}>
-        {t('mobile.login.signOut')}
-      </button>
-    </div>
-  );
-}
-
 function SessionRecoveryScreen(props: { failed: boolean; onRetry: () => void }): JSX.Element {
   const styles = useLoginStyles();
   return (
@@ -192,6 +97,7 @@ function LoginPage(): JSX.Element {
   const [countdown, setCountdown] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [errorField, setErrorField] = useState<'phone' | 'code' | 'invite' | 'displayName' | 'general'>('general');
   const [inviteVisible, setInviteVisible] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
   const [displayNameVisible, setDisplayNameVisible] = useState(false);
@@ -231,22 +137,32 @@ function LoginPage(): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [countdown]);
 
+  const clearError = () => {
+    setError('');
+    setErrorField('general');
+  };
+  const showError = (message: string, field: 'phone' | 'code' | 'invite' | 'displayName' | 'general' = 'general') => {
+    setError(message);
+    setErrorField(field);
+  };
+
   const normalizedPhone = normalizePhone(phone);
   const displayNameReady = !displayNameVisible || isValidDisplayName(displayName);
   const canSignIn = !busy && code.length > 0 && agreeTerms && hkConsent && displayNameReady;
 
   const onSendCode = async () => {
     setBusy(true);
-    setError('');
+    clearError();
     try {
       const result = await sendCode(normalizedPhone);
       setCodeSent(true);
       setCountdown(result.resendAfterSec);
     } catch (sendError) {
-      setError(
+      showError(
         readErrorCode(sendError) === 'INVALID_PHONE'
           ? t('mobile.login.invalidPhone')
           : t('mobile.login.genericError'),
+        readErrorCode(sendError) === 'INVALID_PHONE' ? 'phone' : 'general',
       );
     } finally {
       setBusy(false);
@@ -258,7 +174,7 @@ function LoginPage(): JSX.Element {
       return;
     }
     setBusy(true);
-    setError('');
+    clearError();
     try {
       await verifyCode(normalizedPhone, code, {
         inviteCode: inviteVisible && inviteCode.trim() ? inviteCode.trim() : undefined,
@@ -273,7 +189,12 @@ function LoginPage(): JSX.Element {
         setInviteVisible(true);
         setDisplayNameVisible(true);
       }
-      setError(verifyErrorText(errorCode));
+      const field = errorCode === 'CODE_INVALID' || errorCode === 'CODE_EXPIRED'
+        ? 'code'
+        : errorCode?.startsWith('INVITE_')
+          ? 'invite'
+          : 'general';
+      showError(verifyErrorText(errorCode), field);
     } finally {
       setBusy(false);
     }
@@ -290,11 +211,13 @@ function LoginPage(): JSX.Element {
 
   if (preparing) {
     return (
-      <PreparingScreen
-        onSignOut={() => {
-          void onSignOut();
-        }}
-      />
+      <React.Suspense fallback={<div style={styles.page}><p style={styles.note}>{t('mobile.login.preparingTitle')}</p></div>}>
+        <PreparingScreen
+          onSignOut={() => {
+            void onSignOut();
+          }}
+        />
+      </React.Suspense>
     );
   }
 
@@ -313,53 +236,90 @@ function LoginPage(): JSX.Element {
       <img src="/icon-192.png" alt="IDBots" style={styles.logo} />
       <h1 style={styles.title}>{t('mobile.login.title')}</h1>
       <p style={styles.subtitle}>{t('mobile.login.subtitle')}</p>
-      <input
-        type="tel"
-        value={phone}
-        onChange={(event) => setPhone(event.target.value)}
-        placeholder={t('mobile.login.phonePlaceholder')}
-        style={styles.input}
-      />
+      <div style={styles.field}>
+        <label htmlFor="login-phone" style={styles.label}>{t('mobile.login.phoneLabel')}</label>
+        <input
+          id="login-phone"
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+          value={phone}
+          onChange={(event) => {
+            setPhone(event.target.value);
+            clearError();
+          }}
+          placeholder={t('mobile.login.phonePlaceholder')}
+          style={styles.input}
+          aria-invalid={errorField === 'phone' && Boolean(error)}
+        />
+        {errorField === 'phone' && error ? <p style={styles.errorLeft} role="alert">{error}</p> : null}
+      </div>
       <button
         type="button"
         onClick={onSendCode}
         disabled={busy || !phone || countdown > 0}
-        style={styles.button}
+        style={{ ...styles.button, ...((busy || !phone || countdown > 0) ? styles.buttonDisabled : null) }}
       >
-        {countdown > 0 ? t('mobile.login.resendIn', { sec: countdown }) : t('mobile.login.sendCode')}
+        {busy ? t('mobile.login.sending') : countdown > 0 ? t('mobile.login.resendIn', { sec: countdown }) : t('mobile.login.sendCode')}
       </button>
       {codeSent && (
         <>
-          <input
-            type="text"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            value={code}
-            onChange={(event) => setCode(event.target.value)}
-            placeholder={t('mobile.login.codePlaceholder')}
-            style={styles.input}
-          />
-          {inviteVisible && (
+          <div style={styles.field}>
+            <label htmlFor="login-code" style={styles.label}>{t('mobile.login.codeLabel')}</label>
             <input
+              id="login-code"
               type="text"
-              value={inviteCode}
-              onChange={(event) => setInviteCode(event.target.value)}
-              placeholder={t('mobile.login.invitePlaceholder')}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={code}
+              onChange={(event) => {
+                setCode(event.target.value.replace(/\D/g, '').slice(0, 6));
+                clearError();
+              }}
+              placeholder={t('mobile.login.codePlaceholder')}
               style={styles.input}
+              aria-invalid={errorField === 'code' && Boolean(error)}
             />
+            {errorField === 'code' && error ? <p style={styles.errorLeft} role="alert">{error}</p> : null}
+          </div>
+          {inviteVisible && (
+            <div style={styles.field}>
+              <label htmlFor="login-invite" style={styles.label}>{t('mobile.login.inviteLabel')}</label>
+              <input
+                id="login-invite"
+                type="text"
+                autoCapitalize="characters"
+                autoCorrect="off"
+                value={inviteCode}
+                onChange={(event) => {
+                  setInviteCode(event.target.value);
+                  clearError();
+                }}
+                placeholder={t('mobile.login.invitePlaceholder')}
+                style={styles.input}
+                aria-invalid={errorField === 'invite' && Boolean(error)}
+              />
+              {errorField === 'invite' && error ? <p style={styles.errorLeft} role="alert">{error}</p> : null}
+            </div>
           )}
           {displayNameVisible && (
-            <>
+            <div style={styles.field}>
+              <label htmlFor="login-display-name" style={styles.label}>{t('mobile.login.displayNameLabel')}</label>
               <input
+                id="login-display-name"
                 type="text"
+                autoComplete="nickname"
+                maxLength={DISPLAY_NAME_MAX}
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
                 placeholder={t('mobile.login.displayNamePlaceholder')}
                 style={styles.input}
+                aria-invalid={!displayNameReady}
               />
               <p style={styles.note}>{t('mobile.login.displayNameNote')}</p>
-              {!displayNameReady && <p style={styles.error}>{t('mobile.login.displayNameInvalid')}</p>}
-            </>
+              {!displayNameReady && <p style={styles.errorLeft} role="alert">{t('mobile.login.displayNameInvalid')}</p>}
+            </div>
           )}
           <label style={styles.checkboxRow}>
             <input
@@ -369,9 +329,8 @@ function LoginPage(): JSX.Element {
             />
             <span>
               {t('mobile.login.termsPrefix')}{' '}
-              {/* Placeholder URLs — the owner provides the final Terms/Privacy links before launch. */}
               <a
-                href="https://staging.idbots.world/terms"
+                href={mobileLegalUrl('terms')}
                 target="_blank"
                 rel="noreferrer"
                 style={styles.link}
@@ -380,7 +339,7 @@ function LoginPage(): JSX.Element {
               </a>{' '}
               {t('mobile.login.conjunction')}{' '}
               <a
-                href="https://staging.idbots.world/privacy"
+                href={mobileLegalUrl('privacy')}
                 target="_blank"
                 rel="noreferrer"
                 style={styles.link}
@@ -398,12 +357,12 @@ function LoginPage(): JSX.Element {
             />
             <span>{t('mobile.login.hkDataConsent')}</span>
           </label>
-          <button type="button" onClick={onVerify} disabled={!canSignIn} style={styles.button}>
-            {t('mobile.login.verify')}
+          <button type="button" onClick={onVerify} disabled={!canSignIn} style={{ ...styles.button, ...(!canSignIn ? styles.buttonDisabled : null) }}>
+            {busy ? t('mobile.login.verifying') : t('mobile.login.verify')}
           </button>
         </>
       )}
-      {error && <p style={styles.error}>{error}</p>}
+      {errorField === 'general' && error ? <p style={styles.error} role="alert">{error}</p> : null}
       <p style={styles.noteSmall}>{t('mobile.login.demoNote')}</p>
       </div>
     </div>

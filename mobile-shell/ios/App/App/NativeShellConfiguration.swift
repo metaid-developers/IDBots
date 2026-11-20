@@ -27,17 +27,25 @@ struct NativeShellConfiguration {
     }
 
     func bootstrapScript() -> String? {
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let appVersionCode = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
         guard let url = Bundle.main.url(forResource: "idbots-native-bootstrap", withExtension: "js"),
               let template = try? String(contentsOf: url, encoding: .utf8),
               let originData = try? JSONEncoder().encode(remoteOrigin),
               let platformData = try? JSONEncoder().encode("ios"),
+              let appVersionData = try? JSONEncoder().encode(appVersion),
+              let appVersionCodeData = try? JSONEncoder().encode(appVersionCode),
               let originJSON = String(data: originData, encoding: .utf8),
-              let platformJSON = String(data: platformData, encoding: .utf8) else {
+              let platformJSON = String(data: platformData, encoding: .utf8),
+              let appVersionJSON = String(data: appVersionData, encoding: .utf8),
+              let appVersionCodeJSON = String(data: appVersionCodeData, encoding: .utf8) else {
             return nil
         }
         return template
             .replacingOccurrences(of: "__IDBOTS_REMOTE_ORIGIN_JSON__", with: originJSON)
             .replacingOccurrences(of: "__IDBOTS_PLATFORM_JSON__", with: platformJSON)
+            .replacingOccurrences(of: "__IDBOTS_APP_VERSION_JSON__", with: appVersionJSON)
+            .replacingOccurrences(of: "__IDBOTS_APP_VERSION_CODE_JSON__", with: appVersionCodeJSON)
     }
 
     func offlineURL(localURL: URL) -> URL? {

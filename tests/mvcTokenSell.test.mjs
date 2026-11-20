@@ -294,15 +294,10 @@ test('verifyMvcTokenSellListing: live listing verifies; price misquote is caught
   assert.equal(misquote.verified, false);
   assert.ok(misquote.problems.some((p) => p.includes('price mismatch')), misquote.problems.join('; '));
 
-  const getMvcFtTokenBalance = service.getMvcFtTokenBalance;
-  const balance = await getMvcFtTokenBalance('1EwGrbMCpfPSpcJi9ixPwLMme5NCAiQAVr', {
-    fetchFtBalance: async () => [
-      { symbol: 'SPACE-X', genesis: 'ab'.repeat(32), codehash: 'cd'.repeat(20), balance: '12345678901234567890', decimal: 8, count: 2 },
-      { symbol: '', genesis: '', balance: 1 }, // skipped row
-    ],
-  });
-  assert.equal(balance.count, 1);
-  assert.equal(balance.tokens[0].balance, '12345678901234567890');
+  // The wallet_token_balance source moved to the metalet v4 balance list
+  // (49f7fefb8): mvcFtTokenBalanceFromAssets plus its incident fixture now
+  // live in tests/mvcFtTokenBalanceSource.test.mjs (test:wallet); the dead
+  // open-api-mvc path this block used to exercise is gone from the service.
 });
 
 // ---------------------------------------------------------------------------

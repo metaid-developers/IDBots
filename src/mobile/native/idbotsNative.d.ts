@@ -25,6 +25,8 @@ type MobileNativePhotoSource = 'camera' | 'photos';
 
 interface IdbotsNativeBridge {
   readonly nativeBridgeVersion: 1;
+  readonly appVersion?: string;
+  readonly appVersionCode?: number;
   readonly bootstrap: {
     readonly phase: 'document-start';
     readonly origin: string;

@@ -2,21 +2,23 @@ import { useEffect, useState } from 'react';
 import { t } from '../../../i18n';
 import { CONTRACT_VERSION } from '../../../bridge/types';
 import { getMobileElectron } from '../../appBridge';
+import { getNativeAdapter } from '../../../native/nativeAdapter';
 import { SecondaryPageShell } from './SecondaryPageShell';
+import { mobileLegalUrl } from '../../../legal';
 
 /**
  * about secondary page (IA-PLAN v1 §4.10): version info + the three legal
  * pages already live behind #8, opened in the system browser. Link URLs
- * follow the login page's placeholder pattern — the owner swaps in the
- * final domains before launch.
+ * follow the deployed environment rather than pinning production users to staging.
  */
-const LEGAL_LINKS: ReadonlyArray<{ key: string; href: string; testId: string }> = [
-  { key: 'mobile.me.about.terms', href: 'https://staging.idbots.world/terms', testId: 'about-link-terms' },
-  { key: 'mobile.me.about.privacy', href: 'https://staging.idbots.world/privacy', testId: 'about-link-privacy' },
-  { key: 'mobile.me.about.custody', href: 'https://staging.idbots.world/custody', testId: 'about-link-custody' },
+const LEGAL_LINKS: ReadonlyArray<{ key: string; document: 'terms' | 'privacy' | 'custody'; testId: string }> = [
+  { key: 'mobile.me.about.terms', document: 'terms', testId: 'about-link-terms' },
+  { key: 'mobile.me.about.privacy', document: 'privacy', testId: 'about-link-privacy' },
+  { key: 'mobile.me.about.custody', document: 'custody', testId: 'about-link-custody' },
 ];
 
 export function AboutPage(props: { onBack: () => void }): JSX.Element {
+  const nativeApp = typeof window === 'undefined' ? null : getNativeAdapter().getAppVersion();
   const [appVersion, setAppVersion] = useState<string | null>(null);
   useEffect(() => {
     void getMobileElectron()
@@ -32,11 +34,19 @@ export function AboutPage(props: { onBack: () => void }): JSX.Element {
           alt="IDBots"
           className="h-16 w-16 rounded-2xl border border-[var(--border-color)] object-cover"
         />
+        {nativeApp ? (
+          <p className="text-sm text-[var(--text-secondary)]" data-testid="about-native-app-version">
+            {t('mobile.me.nativeVersion', { version: nativeApp.versionName, build: nativeApp.versionCode })}
+          </p>
+        ) : null}
         <p className="text-sm text-[var(--text-secondary)]" data-testid="about-app-version">
-          {t('mobile.me.appVersion', { version: appVersion ?? '—' })}
+          {t('mobile.me.cloudVersion', { version: appVersion ?? '—' })}
         </p>
         <p className="text-sm text-[var(--text-secondary)]">
-          {t('mobile.me.contractVersion', { version: CONTRACT_VERSION })}
+          {t('mobile.me.protocolVersion', { version: CONTRACT_VERSION })}
+        </p>
+        <p className="max-w-xs text-center text-xs text-[var(--text-secondary)]">
+          {t('mobile.me.protocolHint')}
         </p>
       </div>
 
@@ -44,7 +54,7 @@ export function AboutPage(props: { onBack: () => void }): JSX.Element {
         {LEGAL_LINKS.map((link) => (
           <a
             key={link.testId}
-            href={link.href}
+            href={mobileLegalUrl(link.document)}
             target="_blank"
             rel="noreferrer"
             data-testid={link.testId}

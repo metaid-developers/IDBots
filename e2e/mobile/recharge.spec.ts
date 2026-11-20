@@ -16,6 +16,7 @@ async function pendingOrderId(page: import('@playwright/test').Page): Promise<st
 }
 
 async function chooseMePlan(page: import('@playwright/test').Page, planTestId: string): Promise<void> {
+  await page.getByTestId('me-compact-credits').click();
   await page.locator('[data-testid="me-points-hero"] .me-hero-button-primary').click();
   await expect(page.getByTestId('me-purchase-page')).toBeVisible();
   await page.getByTestId(planTestId).click();
@@ -50,6 +51,7 @@ test.describe('ME purchase & topup', () => {
   test('free tier has no cashier; a paid subscriber can create and confirm a top-up', async ({ page }, testInfo) => {
     await page.goto('/app/');
     await page.getByRole('button', { name: 'Me' }).click();
+    await page.getByTestId('me-compact-credits').click();
     await expect(page.getByTestId('me-topup-locked')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Top up ME' })).toHaveCount(0);
 
@@ -105,7 +107,7 @@ test.describe('ME purchase & topup', () => {
 
     await page.reload();
     await page.getByRole('button', { name: 'Me' }).click();
-    await page.getByTestId('me-usage-link').click();
+    await page.getByTestId('me-compact-credits').click();
     await page.getByTestId(`usage-resume-${orderId}`).click();
     await expect(page.getByTestId('me-payment-pending')).toBeVisible();
     await expect(page.locator('.me-checkout-order')).toHaveText(orderId);

@@ -13,6 +13,18 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="IDBots" />
     <title>IDBots</title>
+    <script>
+      (function () {
+        var mode = 'system';
+        try {
+          var stored = window.localStorage.getItem('idbots.mobile.app_config.theme.v1');
+          if (stored === 'light' || stored === 'dark') mode = stored;
+        } catch (error) {}
+        var dark = mode === 'dark' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.classList.toggle('dark', dark);
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      })();
+    </script>
     <style>
       .idbots-launch { position: fixed; inset: 0; z-index: 2147483647; overflow: hidden; background: #FEB338; color: #303133; font-family: "Arial Rounded MT Bold", "SF Pro Rounded", ui-rounded, system-ui, sans-serif; }
       .idbots-launch__hero { position: absolute; left: 50%; top: 50%; width: min(296px, 76vw); aspect-ratio: 1; transform: translate(-50%, calc(-50% - 120px)); }
