@@ -75,8 +75,10 @@ export class PushDeliveryService {
     this.db.transaction(() => {
       this.db.prepare('UPDATE user_devices SET enabled = 0, last_seen_at = ? WHERE user_id = ? AND device_id = ?')
         .run(this.now(), userId, deviceId);
-      this.db.prepare("UPDATE push_deliveries SET state = 'cancelled', claimed_at = NULL, updated_at = ? WHERE device_id = ? AND state IN ('pending', 'retry', 'sending')")
-        .run(this.now(), deviceId);
+      this.db.prepare(`UPDATE push_deliveries SET state = 'cancelled', claimed_at = NULL, updated_at = ?
+        WHERE device_id IN (SELECT device_id FROM user_devices WHERE user_id = ? AND device_id = ?)
+          AND state IN ('pending', 'retry', 'sending')`)
+        .run(this.now(), userId, deviceId);
     })();
   }
 

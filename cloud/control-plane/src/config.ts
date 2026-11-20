@@ -102,6 +102,12 @@ function parsePushConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig['push'] {
   if (provider !== 'disabled' && provider !== 'fake' && provider !== 'fcm') {
     throw new ConfigError('CP_PUSH_PROVIDER must be "disabled", "fake", or "fcm"');
   }
+  if (provider === 'fake') {
+    const hostname = new URL(env.CP_PUBLIC_ORIGIN!).hostname;
+    if (!FAKE_SMS_ALLOWED_HOSTNAMES.has(hostname) && hostname.split('.')[0] !== 'staging') {
+      throw new ConfigError('CP_PUSH_PROVIDER=fake is only allowed on localhost or staging origins');
+    }
+  }
   if (provider !== 'fcm') return { provider, fcm: null };
   const raw = env.CP_FCM_SERVICE_ACCOUNT_JSON;
   if (!raw) throw new ConfigError('CP_FCM_SERVICE_ACCOUNT_JSON is required when CP_PUSH_PROVIDER=fcm');

@@ -21,6 +21,20 @@ function baseEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
   };
 }
 
+describe('push provider configuration', () => {
+  test('disabled is the safe default and fake cannot run on a production origin', () => {
+    const config = loadConfig(baseEnv({ CP_SMS_FAKE_ORIGIN_EXPLICIT: 'true' }));
+    assert.equal(config.push.provider, 'disabled');
+    assert.throws(() => loadConfig(baseEnv({ CP_SMS_FAKE_ORIGIN_EXPLICIT: 'true', CP_PUSH_PROVIDER: 'fake' })), /CP_PUSH_PROVIDER=fake is only allowed/);
+  });
+
+  test('fake is allowed in local and staging tests, while FCM requires a service account', () => {
+    assert.equal(loadConfig(baseEnv({ CP_SMS_FAKE_ORIGIN_EXPLICIT: 'true', CP_PUBLIC_ORIGIN: 'http://127.0.0.1:8080', CP_PUSH_PROVIDER: 'fake' })).push.provider, 'fake');
+    assert.equal(loadConfig(baseEnv({ CP_SMS_FAKE_ORIGIN_EXPLICIT: 'true', CP_PUBLIC_ORIGIN: 'https://staging.idbots.world', CP_PUSH_PROVIDER: 'fake' })).push.provider, 'fake');
+    assert.throws(() => loadConfig(baseEnv({ CP_SMS_FAKE_ORIGIN_EXPLICIT: 'true', CP_PUSH_PROVIDER: 'fcm' })), /CP_FCM_SERVICE_ACCOUNT_JSON is required/);
+  });
+});
+
 describe('assertFakeSmsOriginAllowed (default, no explicit flag)', () => {
   test('allows localhost, 127.0.0.1 and [::1] origins in fake mode', () => {
     for (const origin of ['http://localhost:5173/', 'http://127.0.0.1:8080/', 'http://[::1]:8080/']) {

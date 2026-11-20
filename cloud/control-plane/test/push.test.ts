@@ -81,6 +81,27 @@ test('provider retry, invalid-token revocation, preference filtering and unregis
   assert.equal(fake.messages.length, 2);
 });
 
+test('a session cannot claim or revoke another account\'s device or deliveries', async (t) => {
+  const { db, runtime, fake, register, ingest } = await setup(t);
+  seedUserAndTenant(db, { userId: 'user-2', phone: '+8613900000101', tenantId: 'tenant-2', status: 'ready' });
+  db.prepare('INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?)')
+    .run(sha256Hex('other-session'), 'user-2', 1, 1, Date.now() + 60_000);
+  await register('device-1');
+  fake.failure = new PushProviderError('FCM_UNAVAILABLE', true);
+  await ingest('event-pending');
+  const conflicting = await api(runtime.baseUrl, '/api/v1/devices/register', {
+    method: 'POST', cookie: 'idb_session=other-session',
+    body: { deviceId: 'device-1', installationId: 'other-installation', platform: 'android', provider: 'fake', token: 'other-token' },
+  });
+  assert.equal(conflicting.status, 409);
+  await api(runtime.baseUrl, '/api/v1/devices/unregister', {
+    method: 'POST', cookie: 'idb_session=other-session', body: { deviceId: 'device-1' },
+  });
+  runtime.app.push.unregister('user-2', 'device-1');
+  assert.equal(db.prepare("SELECT enabled FROM user_devices WHERE device_id = 'device-1'").get().enabled, 1);
+  assert.equal(db.prepare("SELECT state FROM push_deliveries WHERE event_id = 'event-pending'").get().state, 'retry');
+});
+
 test('tenant ingest requires its own credential and rejects malformed events', async (t) => {
   const { runtime, register, ingest } = await setup(t);
   await register('device-1');
