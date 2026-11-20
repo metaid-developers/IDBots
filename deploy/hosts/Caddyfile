@@ -10,6 +10,14 @@
 	request_body {
 		max_size 26MB
 	}
+	# Legal pages (terms/privacy/custody/support) are plain static HTML kept
+	# out of the replaceable PWA bundles; sources live in deploy/legal/.
+	handle /terms /privacy /custody /support {
+		root * /srv/legal
+		try_files {path} {path}.html
+		file_server
+		header Cache-Control "public, max-age=3600"
+	}
 	# Versioned, signed Android packages live outside the replaceable PWA bundles.
 	handle /downloads/* {
 		root * /srv/mobile-bundles
