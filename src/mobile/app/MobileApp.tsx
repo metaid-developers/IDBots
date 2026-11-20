@@ -1,10 +1,12 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import type { AgentNotification, AgentNotificationTarget } from '@/types/notification';
 import { t } from '../i18n';
 import { getMobileElectron, hasAppBridge } from './appBridge';
 import { resolveTwinMetabotId } from './activity';
 import { useChat } from './hooks/useChat';
 import { useMetabots } from './hooks/useMetabots';
 import { useResync } from './hooks/useResync';
+import { useNotificationReadThrough, useNotificationUnreadCount } from './hooks/useNotifications';
 import { useTerminalBridgeState } from './hooks/useTerminalBridgeState';
 import { getMeStore, isMeSubscribed } from './me/mePointsStore';
 import { BridgeUnavailable } from './components/BridgeUnavailable';
@@ -21,16 +23,13 @@ import { useNativeBackHandler } from './hooks/useNativeBackHandler';
 import { isRechargeAllowed } from '../native/rechargePolicy';
 import type { MobileNftMintRequest } from './me/nftMint';
 import type { MobileBrowserRequest } from './browser/MobileBrowserScreen';
-
-/**
- * App shell (REQ-E-11): connection banner on top, four lazy-loaded tabs,
- * bottom tab bar with safe-area padding, and the ME purchase/recharge flow
- * pushed as a full-screen overlay. No router dependency: state navigation.
- *
- * S9: `isRechargeAllowed` still means "this shell may show the cashier" — the
- * iOS capacitor shell is display-only, so both the subscribe and topup
- * overlays stay closed there and the Me screen shows guidance instead.
- */
+import {
+  notificationCenterPath,
+  notificationTargetPath,
+  parseMobileAppRoute,
+  sanitizeMobileReturnPath,
+} from './notifications/notificationRoutes';
+import type { MobileAppRoute } from './notifications/notificationRoutes';
 
 const ChatScreen = lazy(() => import('./screens/ChatScreen'));
 const TasksScreen = lazy(() => import('./screens/TasksScreen'));
@@ -38,6 +37,7 @@ const MeScreen = lazy(() => import('./screens/MeScreen'));
 const MePurchaseScreen = lazy(() => import('./screens/MePurchaseScreen'));
 const RechargeScreen = lazy(() => import('./screens/RechargeScreen'));
 const MobileBrowserScreen = lazy(() => import('./browser/MobileBrowserScreen'));
+const NotificationsScreen = lazy(() => import('./screens/NotificationsScreen'));
 
 const ACTIVE_TAB_STORAGE_KEY = 'idbots.mobile.activeTab.v1';
 const MOBILE_TABS: readonly MobileTab[] = ['chat', 'browser', 'tasks', 'me'];
@@ -62,6 +62,7 @@ function TabFallback(): JSX.Element {
 }
 
 export default function MobileApp(): JSX.Element {
+  const initialRouteRef = useRef<MobileAppRoute>(parseMobileAppRoute(window.location.pathname));
   const [tab, setTab] = useState<MobileTab>(readActiveTab);
   const [purchase, setPurchase] = useState<{
     section: PurchaseSection;
@@ -74,14 +75,27 @@ export default function MobileApp(): JSX.Element {
   const [browserVisited, setBrowserVisited] = useState(() => tab === 'browser');
   const [browserRequest, setBrowserRequest] = useState<MobileBrowserRequest | null>(null);
   const [taskAttentionCount, setTaskAttentionCount] = useState(0);
+  const [notificationCenterOpen, setNotificationCenterOpen] = useState(initialRouteRef.current.kind === 'notifications');
+  const [taskDeepLink, setTaskDeepLink] = useState<string | undefined>(
+    initialRouteRef.current.kind === 'task' ? initialRouteRef.current.taskId : undefined,
+  );
+  const [scheduledDeepLink, setScheduledDeepLink] = useState<{ taskId: string; runId: string } | undefined>(
+    initialRouteRef.current.kind === 'scheduled_run'
+      ? { taskId: initialRouteRef.current.taskId, runId: initialRouteRef.current.runId }
+      : undefined,
+  );
+
   const selectTab = useCallback((next: MobileTab) => {
     if (next === 'browser') setBrowserVisited(true);
+    setNotificationCenterOpen(false);
+    window.history.replaceState({}, '', '/app/');
     setTab(next);
   }, []);
   const openBrowser = useCallback((uri: string) => {
     setBrowserRequest((current) => ({ uri, nonce: (current?.nonce ?? 0) + 1, newTab: true }));
     setBrowserVisited(true);
     setPurchase(null);
+    setNotificationCenterOpen(false);
     setTab('browser');
   }, []);
   const purchaseAllowed = isRechargeAllowed(window.idbotsMobile);
@@ -93,7 +107,6 @@ export default function MobileApp(): JSX.Element {
       ...(orderId ? { orderId } : {}),
     });
   }, [purchaseAllowed]);
-  // The chat quota card keeps one jump: free tier → upgrade path, paid → topup.
   const openRecharge = useCallback(() => {
     if (!purchaseAllowed) return;
     const subscribed = isMeSubscribed(getMeStore().subscription);
@@ -104,6 +117,7 @@ export default function MobileApp(): JSX.Element {
     setTab('me');
     setUsageSignal((value) => value + 1);
   }, []);
+
   useEffect(() => {
     try {
       window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, tab);
@@ -111,7 +125,7 @@ export default function MobileApp(): JSX.Element {
       return;
     }
   }, [tab]);
-  // Chat state lives at the shell level so switching tabs keeps the stream.
+
   const { bots, error: botsError, reload: reloadBots } = useMetabots();
   useEffect(() => {
     if (tab === 'chat') void reloadBots();
@@ -151,10 +165,8 @@ export default function MobileApp(): JSX.Element {
     setPurchase(null);
     setTab('chat');
   }, [chat.setDraft, chat.setMetabotId, chat.newChat, twinMetabotId]);
-  // Terminal gateway states (REQ-E-2 close codes) replace the whole shell.
+
   const { terminal, versionMismatch } = useTerminalBridgeState();
-  // Reconnect resync (REQ-E-5): refresh on every (re)connect, whichever
-  // bridge is active; the counter drives the tasks/meters/me list refresh.
   const resyncCounter = useResync(
     {
       getOpenSessionId: chat.getOpenSessionId,
@@ -163,17 +175,104 @@ export default function MobileApp(): JSX.Element {
     },
     chat.applyResync,
   );
-  useNativeBackHandler(() => handleMobileRootBack(
-    // `rechargeOpen` is the historical name of "a cashier overlay is open";
-    // the S9 overlay union (subscribe + topup) reuses the same back contract.
-    { rechargeOpen: purchase !== null, tab },
-    { closeRecharge: () => setPurchase(null), showChat: () => setTab('chat') },
-  ));
+  const notificationUnreadCount = useNotificationUnreadCount(resyncCounter);
+  useNotificationReadThrough(
+    chat.sessionId,
+    tab === 'chat' && !notificationCenterOpen && (typeof document === 'undefined' || document.visibilityState === 'visible'),
+  );
 
-  // 4001/4003 unauthorized: the session is no longer valid — sign in again.
+  const openNotificationTarget = useCallback(async (target: AgentNotificationTarget): Promise<boolean> => {
+    if (target.kind === 'session') return openWorkSession(target.sessionId);
+    if (target.kind === 'task') {
+      setTaskDeepLink(target.taskId);
+      setTab('tasks');
+      return true;
+    }
+    setScheduledDeepLink({ taskId: target.taskId, runId: target.runId });
+    setTab('tasks');
+    return true;
+  }, [openWorkSession]);
+
+  const openNotification = useCallback(async (item: AgentNotification): Promise<boolean> => {
+    if (item.readAt === null) await getMobileElectron().notification.markRead([item.eventId]);
+    setNotificationCenterOpen(false);
+    window.history.pushState({ mobileDeepLink: true }, '', notificationTargetPath(item.target));
+    const opened = await openNotificationTarget(item.target);
+    if (!opened) {
+      setNotificationCenterOpen(true);
+      window.history.replaceState({ notificationCenter: true }, '', notificationCenterPath(item.eventId));
+    }
+    return opened;
+  }, [openNotificationTarget]);
+
+  const handleRoute = useCallback(async (route: MobileAppRoute): Promise<void> => {
+    if (route.kind === 'root') {
+      setNotificationCenterOpen(false);
+      return;
+    }
+    if (route.kind === 'notifications') {
+      setNotificationCenterOpen(true);
+      return;
+    }
+    if (route.kind === 'notification') {
+      const result = await getMobileElectron().notification.get(route.eventId);
+      if (result?.success && result.item) await openNotification(result.item);
+      else setNotificationCenterOpen(true);
+      return;
+    }
+    setNotificationCenterOpen(false);
+    if (route.kind === 'session') {
+      setTab('chat');
+      await openWorkSession(route.sessionId);
+      return;
+    }
+    if (route.kind === 'task') {
+      setTaskDeepLink(route.taskId);
+      setTab('tasks');
+      return;
+    }
+    setScheduledDeepLink({ taskId: route.taskId, runId: route.runId });
+    setTab('tasks');
+  }, [openNotification, openWorkSession]);
+
+  const handledInitialRouteRef = useRef(false);
+  useEffect(() => {
+    if (handledInitialRouteRef.current || !chat.isReady) return;
+    handledInitialRouteRef.current = true;
+    void handleRoute(initialRouteRef.current);
+  }, [handleRoute, chat.isReady]);
+
+  useEffect(() => {
+    const onPopState = () => void handleRoute(parseMobileAppRoute(window.location.pathname));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [handleRoute]);
+
+  const openNotificationCenter = useCallback(() => {
+    if (!notificationCenterOpen) window.history.pushState({ notificationCenter: true }, '', notificationCenterPath());
+    setNotificationCenterOpen(true);
+  }, [notificationCenterOpen]);
+  const closeNotificationCenter = useCallback(() => {
+    setNotificationCenterOpen(false);
+    if (window.history.state?.notificationCenter) window.history.back();
+    else window.history.replaceState({}, '', '/app/');
+  }, []);
+
+  useNativeBackHandler(() => {
+    if (notificationCenterOpen) {
+      closeNotificationCenter();
+      return true;
+    }
+    return handleMobileRootBack(
+      { rechargeOpen: purchase !== null, tab },
+      { closeRecharge: () => setPurchase(null), showChat: () => setTab('chat') },
+    );
+  });
+
   useEffect(() => {
     if (terminal === 'unauthorized') {
-      window.location.assign('/login');
+      const returnTo = sanitizeMobileReturnPath(`${window.location.pathname}${window.location.search}`);
+      window.location.assign(`/login?returnTo=${encodeURIComponent(returnTo)}`);
     }
   }, [terminal]);
 
@@ -182,7 +281,6 @@ export default function MobileApp(): JSX.Element {
   }
 
   if (terminal === 'unauthorized') {
-    // Navigating away in the effect above; render nothing meanwhile.
     return <div className="hidden" data-testid="gateway-unauthorized" />;
   }
   if (terminal === 'tenant-unavailable') {
@@ -202,51 +300,71 @@ export default function MobileApp(): JSX.Element {
     >
       <ConnectionBanner />
       <div className="flex min-h-0 flex-1 flex-col">
-        {tab === 'chat' ? (
+        {notificationCenterOpen ? (
           <Suspense fallback={<TabFallback />}>
-            <ChatScreen
-              chat={chat}
-              bots={bots}
-              botsError={botsError}
-              onReloadBots={() => void reloadBots()}
-              onOpenRecharge={openRecharge}
-              onOpenUri={openBrowser}
-              rechargeAllowed={purchaseAllowed}
-            />
-          </Suspense>
-        ) : null}
-        {tab === 'tasks' ? (
-          <Suspense fallback={<TabFallback />}>
-            <TasksScreen
+            <NotificationsScreen
               resyncCounter={resyncCounter}
-              twinMetabotId={twinMetabotId}
-              twinName={twinName}
-              onOpenSession={openWorkSession}
-              onOpenDraft={openTaskDraft}
-              onOpenUri={openBrowser}
-              onAttentionCount={setTaskAttentionCount}
+              onBack={closeNotificationCenter}
+              onOpenNotification={openNotification}
             />
           </Suspense>
-        ) : null}
-        {tab === 'me' ? (
-          <Suspense fallback={<TabFallback />}>
-            <MeScreen
-              resyncCounter={resyncCounter + billingRevision}
-              canPurchase={purchaseAllowed}
-              onOpenPurchase={openPurchase}
-              onMintNft={openMintNft}
-              onOpenUri={openBrowser}
-              usageSignal={usageSignal}
-            />
-          </Suspense>
-        ) : null}
-        {browserVisited ? (
-          <div className="min-h-0 flex-1" style={{ display: tab === 'browser' ? 'flex' : 'none', flexDirection: 'column' }}>
-            <Suspense fallback={<TabFallback />}>
-              <MobileBrowserScreen visible={tab === 'browser'} request={browserRequest} />
-            </Suspense>
-          </div>
-        ) : null}
+        ) : (
+          <>
+            {tab === 'chat' ? (
+              <Suspense fallback={<TabFallback />}>
+                <ChatScreen
+                  chat={chat}
+                  bots={bots}
+                  botsError={botsError}
+                  onReloadBots={() => void reloadBots()}
+                  onOpenRecharge={openRecharge}
+                  onOpenUri={openBrowser}
+                  rechargeAllowed={purchaseAllowed}
+                  notificationUnreadCount={notificationUnreadCount}
+                  onOpenNotifications={openNotificationCenter}
+                />
+              </Suspense>
+            ) : null}
+            {tab === 'tasks' ? (
+              <Suspense fallback={<TabFallback />}>
+                <TasksScreen
+                  resyncCounter={resyncCounter}
+                  twinMetabotId={twinMetabotId}
+                  twinName={twinName}
+                  onOpenSession={openWorkSession}
+                  onOpenDraft={openTaskDraft}
+                  onOpenUri={openBrowser}
+                  onAttentionCount={setTaskAttentionCount}
+                  notificationUnreadCount={notificationUnreadCount}
+                  onOpenNotifications={openNotificationCenter}
+                  requestedTaskId={taskDeepLink}
+                  requestedScheduledRun={scheduledDeepLink}
+                />
+              </Suspense>
+            ) : null}
+            {tab === 'me' ? (
+              <Suspense fallback={<TabFallback />}>
+                <MeScreen
+                  resyncCounter={resyncCounter + billingRevision}
+                  canPurchase={purchaseAllowed}
+                  onOpenPurchase={openPurchase}
+                  onMintNft={openMintNft}
+                  onOpenUri={openBrowser}
+                  usageSignal={usageSignal}
+                  notificationUnreadCount={notificationUnreadCount}
+                  onOpenNotification={openNotification}
+                />
+              </Suspense>
+            ) : null}
+            {browserVisited ? (
+              <div className="min-h-0 flex-1" style={{ display: tab === 'browser' ? 'flex' : 'none', flexDirection: 'column' }}>
+                <Suspense fallback={<TabFallback />}>
+                  <MobileBrowserScreen visible={tab === 'browser'} request={browserRequest} />
+                </Suspense>
+              </div>
+            ) : null}
+          </>
+        )}
       </div>
       <TabBar active={tab} onSelect={selectTab} taskAttentionCount={taskAttentionCount} />
       {purchaseAllowed && purchase ? (

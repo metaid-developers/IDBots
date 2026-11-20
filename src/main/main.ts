@@ -505,6 +505,8 @@ import { SleepGuard, evaluateSleepGuardWork, resolvePreventDeviceSleepEnabled, P
 import { collectSleepGuardWorkFrom } from './sleepGuardWorkSources';
 import { DreamStore } from './dreamStore';
 import { DailyReportStore } from './dailyReportStore';
+import { NotificationStore } from './notificationStore';
+import { NotificationService } from './services/notificationService';
 import { startDailyReportService, stopDailyReportService } from './services/dailyReportService';
 import { collectDailyReportFacts, createDailyReportDbAccessor } from './services/dailyReportCollector';
 import { MessageFeedbackStore } from './messageFeedbackStore';
@@ -3070,6 +3072,7 @@ let store: SqliteStore | null = null;
 let coworkStore: CoworkStore | null = null;
 let dreamStore: DreamStore | null = null;
 let dailyReportStore: DailyReportStore | null = null;
+let notificationService: NotificationService | null = null;
 let dailyReportServiceHandle: import('./services/dailyReportService').DailyReportServiceHandle | null = null;
 let messageFeedbackStore: MessageFeedbackStore | null = null;
 let coworkStoreHeavyMaintenanceScheduled = false;
@@ -6324,6 +6327,39 @@ const getDreamStore = (): DreamStore => {
   return dreamStore;
 };
 
+const getNotificationService = (): NotificationService => {
+  if (!notificationService) {
+    const sqliteStore = getStore();
+    const store = new NotificationStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
+    notificationService = new NotificationService(store, (event) => {
+      broadcastToRenderers('notification:changed', event);
+    });
+  }
+  return notificationService;
+};
+
+const recordCoworkTerminalNotification = (sessionId: string, outcome: 'completed' | 'failed'): void => {
+  try {
+    const session = getCoworkStore().getSessionWithoutMessages(sessionId);
+    if (!session) return;
+    const turn = getCoworkStore().getSessionTurnOutcome(sessionId);
+    const marker = outcome === 'completed' ? turn.lastCompletedAtMs : turn.lastFailedAtMs;
+    const latestMessage = marker === null
+      ? getCoworkStore().getSessionMessagesPage(sessionId, { limit: 1 }).messages.at(-1)
+      : undefined;
+    getNotificationService().recordCoworkTerminal({
+      sessionId,
+      terminalMarker: marker ?? latestMessage?.id ?? Date.now(),
+      outcome,
+      title: session.title,
+      metabotId: session.metabotId ?? null,
+      language: getPersistedAppLanguage(),
+    });
+  } catch (error) {
+    console.warn('[Notification] Failed to record cowork terminal event:', error);
+  }
+};
+
 const getDailyReportStore = (): DailyReportStore => {
   if (!dailyReportStore) {
     const sqliteStore = getStore();
@@ -9372,6 +9408,19 @@ const getCoworkRunner = () => {
       // Mobile pending mirror (REQ-A-24): record exactly what was broadcast so
       // `mobile:permission:listPending` can resync a reconnecting client.
       trackPendingPermission(sessionId, safeRequest);
+      try {
+        const session = getCoworkStore().getSessionWithoutMessages(sessionId);
+        if (typeof safeRequest?.requestId === 'string') {
+          getNotificationService().recordPermissionRequired({
+            sessionId,
+            requestId: safeRequest.requestId,
+            metabotId: session?.metabotId ?? null,
+            language: getPersistedAppLanguage(),
+          });
+        }
+      } catch (error) {
+        console.warn('[Notification] Failed to record permission request:', error);
+      }
       // Studio Live Stage card — dual seats with the overlay (Phase 1 ruling:
       // ask + plain approval on the stage; A2A and delete-safety stay
       // desktop-only). 'busy' queues behind the card that is already showing.
@@ -9401,6 +9450,11 @@ const getCoworkRunner = () => {
     coworkRunner.on('permissionResolved', (sessionId: string, requestId: string) => {
       broadcastToRenderers('cowork:stream:permissionResolved', { sessionId, requestId });
       resolvePendingPermission(sessionId, requestId);
+      try {
+        getNotificationService().resolvePermission(requestId);
+      } catch (error) {
+        console.warn('[Notification] Failed to resolve permission event:', error);
+      }
       if (getStudioLiveStageService().clearInteraction(sessionId, requestId) === 'cleared') {
         broadcastToRenderers('cowork:stream:stageInteraction', { sessionId, requestId, presented: false });
       }
@@ -9463,6 +9517,7 @@ const getCoworkRunner = () => {
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
       }
+      recordCoworkTerminalNotification(sessionId, 'completed');
       broadcastToRenderers('cowork:stream:complete', { sessionId, claudeSessionId });
     });
 
@@ -9479,6 +9534,7 @@ const getCoworkRunner = () => {
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
       }
+      recordCoworkTerminalNotification(sessionId, 'failed');
       // REQ-A-25: metadata.errorCode ('LLM_QUOTA_EXHAUSTED') rides along so
       // the mobile web app can offer recharge without parsing the text.
       broadcastToRenderers('cowork:stream:error', { sessionId, error, ...(metadata ? { metadata } : {}) });
@@ -13045,6 +13101,9 @@ const getScheduler = () => {
         emitCoworkStreamMessage(sessionId, message);
       },
       getAppLanguage: () => getPersistedAppLanguage(),
+      onRunTerminal: (task, run) => {
+        getNotificationService().recordScheduledRun({ task, run, language: getPersistedAppLanguage() });
+      },
     });
   }
   return scheduler;
@@ -21016,6 +21075,54 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   // download token with the RUNNING gateway's secret — on plain desktop it
   // answers a structured "gateway not running" instead of throwing.
   registerIpcHandler('gateway:file:sign', createGatewayFileSignHandler(getActiveGatewayContext));
+
+  registerIpcHandler('notification:list', async (_event, payload: {
+    category?: 'work' | 'action' | 'report' | 'system';
+    unreadOnly?: boolean;
+    limit?: number;
+    before?: { createdAt: number; eventId: string } | null;
+  } = {}) => {
+    try {
+      const category = ['work', 'action', 'report', 'system'].includes(payload.category ?? '')
+        ? payload.category
+        : undefined;
+      const before = payload.before
+        && Number.isFinite(payload.before.createdAt)
+        && typeof payload.before.eventId === 'string'
+        ? payload.before
+        : null;
+      const result = getNotificationService().list({
+        category,
+        unreadOnly: payload.unreadOnly === true,
+        limit: payload.limit,
+        before,
+      });
+      return sanitizeIpcPayload({ success: true, ...result });
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to list notifications' };
+    }
+  });
+
+  registerIpcHandler('notification:get', async (_event, eventId: string) => {
+    if (typeof eventId !== 'string' || !eventId.trim()) return { success: false, error: 'eventId is required' };
+    const item = getNotificationService().get(eventId);
+    return item ? { success: true, item: sanitizeIpcPayload(item) } : { success: false, error: 'Notification not found' };
+  });
+
+  registerIpcHandler('notification:getUnreadCount', async (_event, category?: 'work' | 'action' | 'report' | 'system') => {
+    const accepted = ['work', 'action', 'report', 'system'].includes(category ?? '') ? category : undefined;
+    return { success: true, count: getNotificationService().getUnreadCount(accepted) };
+  });
+
+  registerIpcHandler('notification:markRead', async (_event, eventIds: string[]) => {
+    if (!Array.isArray(eventIds)) return { success: false, error: 'eventIds must be an array' };
+    return { success: true, count: getNotificationService().markRead(eventIds) };
+  });
+
+  registerIpcHandler('notification:markAllRead', async (_event, category?: 'work' | 'action' | 'report' | 'system') => {
+    const accepted = ['work', 'action', 'report', 'system'].includes(category ?? '') ? category : undefined;
+    return { success: true, count: getNotificationService().markAllRead(accepted) };
+  });
 
   // Pending tool-permission mirror for reconnecting mobile clients (C2
   // "Tool Permission Requests"): the tracker records what was broadcast and

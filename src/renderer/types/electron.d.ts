@@ -11,6 +11,13 @@ import type {
   LongTermTaskDetail,
   LongTermTaskUpdateInput,
 } from './longTermTask';
+import type {
+  AgentNotification,
+  AgentNotificationCategory,
+  AgentNotificationChangedEvent,
+  AgentNotificationCursor,
+  AgentNotificationListOptions,
+} from './notification';
 import type { OpenTeamCollabSummary, OpenTeamGuestInvite } from './openTeamCollab';
 import type {
   BrowserCommandResult as CoreBrowserCommandResult,
@@ -1843,6 +1850,14 @@ interface IElectronAPI {
   mobile: {
     listPendingPermissions: () => Promise<Array<{ sessionId: string; request: any; createdAt: number }> | { success: false; error: string }>;
     getBootstrapStatus: () => Promise<Record<string, any> | { success: false; error: string }>;
+  };
+  notification: {
+    list: (options?: AgentNotificationListOptions) => Promise<{ success: boolean; items?: AgentNotification[]; nextCursor?: AgentNotificationCursor | null; error?: string }>;
+    get: (eventId: string) => Promise<{ success: boolean; item?: AgentNotification; error?: string }>;
+    getUnreadCount: (category?: AgentNotificationCategory) => Promise<{ success: boolean; count?: number; error?: string }>;
+    markRead: (eventIds: string[]) => Promise<{ success: boolean; count?: number; error?: string }>;
+    markAllRead: (category?: AgentNotificationCategory) => Promise<{ success: boolean; count?: number; error?: string }>;
+    onChanged: (callback: (payload: AgentNotificationChangedEvent) => void) => () => void;
   };
   bundle: {
     getPlans: () => Promise<{ success: boolean; plans?: BundlePlanInfo[]; error?: string }>;

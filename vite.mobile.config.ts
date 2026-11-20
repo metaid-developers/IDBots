@@ -194,7 +194,8 @@ function mobileDevEntriesPlugin() {
         const url = req.url?.split('?')[0] ?? '';
         // The login page navigates to /app/ after sign-in; serve the app
         // entry there (and at /app) so the flow works on dev:mobile.
-        if (url === '/app' || url === '/app/' || url === '/app/index.html') {
+        const appDeepLink = /^\/app\/(?:notifications|sessions|tasks|scheduled)(?:\/|$)/.test(url);
+        if (url === '/app' || url === '/app/' || url === '/app/index.html' || appDeepLink) {
           req.url = '/src/mobile/app/index.html';
         } else if (url === '/' || url === '/index.html') {
           req.url = '/src/mobile/app/index.html';

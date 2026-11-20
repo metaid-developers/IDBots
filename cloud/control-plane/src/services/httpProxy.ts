@@ -194,7 +194,9 @@ async function proxyUpload(app: AppContext, reqCtx: RequestCtx): Promise<void> {
 }
 
 function redirectToLogin(reqCtx: RequestCtx): void {
-  reqCtx.res.writeHead(302, { Location: '/login' });
+  const original = reqCtx.req?.url ?? '/app/';
+  const returnTo = original.startsWith('/app/') ? original : '/app/';
+  reqCtx.res.writeHead(302, { Location: `/login?returnTo=${encodeURIComponent(returnTo)}` });
   reqCtx.res.end();
 }
 

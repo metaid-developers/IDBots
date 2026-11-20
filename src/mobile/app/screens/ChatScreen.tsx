@@ -29,6 +29,7 @@ import { VoiceButton, VoiceErrorBanner } from '../voice/VoiceButton';
 import { sendVoiceMessage, type HoldCancelReason } from '../voice/holdToSend';
 import { artifactBrowserUri } from '../artifacts';
 import { dismissErrorMessage, filterDismissedErrorMessages } from '../dismissedErrors';
+import { NotificationBell } from '../components/NotificationBell';
 
 type Chat = ReturnType<typeof useChat>;
 
@@ -537,6 +538,8 @@ export default function ChatScreen(props: {
   onOpenRecharge: () => void;
   onOpenUri?: (uri: string) => void;
   rechargeAllowed?: boolean;
+  notificationUnreadCount?: number;
+  onOpenNotifications?: () => void;
 }): JSX.Element {
   const { chat, bots } = props;
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -752,7 +755,7 @@ export default function ChatScreen(props: {
 
   return (
     <div className="twin-page">
-      <div className="twin-topbar">
+      <div className="twin-topbar" style={{ gridTemplateColumns: '64px minmax(0, 1fr) auto' }}>
         <button type="button" onClick={() => setDrawerOpen(true)} aria-label={t('mobile.chat.drawerTitle')} className="twin-icon-button">
           <Bars3Icon className="h-6 w-6" aria-hidden />
         </button>
@@ -765,17 +768,20 @@ export default function ChatScreen(props: {
             </h1>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setPickerOpen(true);
-            props.onReloadBots?.();
-          }}
-          aria-label={t('mobile.chat.newChat')}
-          className="twin-icon-button"
-        >
-          <PlusIcon className="h-6 w-6" aria-hidden />
-        </button>
+        <div className="flex items-center">
+          {props.onOpenNotifications ? <NotificationBell count={props.notificationUnreadCount ?? 0} onClick={props.onOpenNotifications} /> : null}
+          <button
+            type="button"
+            onClick={() => {
+              setPickerOpen(true);
+              props.onReloadBots?.();
+            }}
+            aria-label={t('mobile.chat.newChat')}
+            className="twin-icon-button"
+          >
+            <PlusIcon className="h-6 w-6" aria-hidden />
+          </button>
+        </div>
       </div>
 
       {props.botsError ? (

@@ -1133,6 +1133,11 @@ test('http: /app/* serves the bundle with index no-cache and hashed assets immut
   const traversal = await httpRequest(handle.port, 'GET', `/app/${encodeURIComponent('..')}/${encodeURIComponent('..')}/secret.txt`);
   assert.equal(traversal.status, 404);
 
+  const deepLink = await httpRequest(handle.port, 'GET', '/app/notifications/event-1');
+  assert.equal(deepLink.status, 200);
+  assert.equal(deepLink.headers.get('cache-control'), 'no-cache');
+  assert.equal(await deepLink.text(), '<html><body>mobile</body></html>');
+
   const missing = await httpRequest(handle.port, 'GET', '/app/nope.txt');
   assert.equal(missing.status, 404);
 });

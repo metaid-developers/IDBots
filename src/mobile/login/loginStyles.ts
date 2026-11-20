@@ -141,6 +141,29 @@ export function buildStyles(
       fontSize: 15,
       fontWeight: 650,
     },
+    buttonDisabled: {
+      opacity: 0.52,
+      cursor: 'not-allowed',
+    },
+    field: {
+      width: '100%',
+      maxWidth: 340,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6,
+    },
+    label: {
+      color: p.text,
+      fontSize: 13,
+      fontWeight: 600,
+      lineHeight: 1.4,
+    },
+    preparingActions: {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: 12,
+    },
     textButton: {
       border: 'none',
       backgroundColor: 'transparent',
@@ -162,6 +185,7 @@ export function buildStyles(
     note: { fontSize: 13, color: p.textSecondary, textAlign: 'center', margin: 0 },
     noteSmall: { fontSize: 12, color: p.noteSmall, textAlign: 'center', margin: 0 },
     error: { fontSize: 13, color: p.error, textAlign: 'center', margin: 0 },
+    errorLeft: { fontSize: 13, color: p.error, textAlign: 'left', margin: 0, lineHeight: 1.45 },
     statusWord: { fontSize: 16, fontWeight: 600, margin: 0 },
     a2hsCard: {
       position: 'fixed',

@@ -349,6 +349,27 @@ button:disabled {
   height: 21px;
 }
 
+.twin-notification-button {
+  position: relative;
+}
+
+.twin-notification-badge {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: var(--twin-accent);
+  color: var(--twin-accent-ink);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .twin-icon-button:active:not(:disabled) {
   background: var(--twin-surface-inset);
   color: var(--twin-text-primary);
