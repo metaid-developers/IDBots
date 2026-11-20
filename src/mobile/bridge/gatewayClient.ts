@@ -605,31 +605,33 @@ export class GatewayClient {
         this.cancelFn(pending.offlineHandle);
         pending.offlineHandle = undefined;
       }
-      this.sendPending(pending);
+      // An unusable socket requeues the invoke; stop draining so this loop
+      // cannot spin while the client is still marked online.
+      if (!this.sendPending(pending)) break;
     }
   }
 
-  private sendPending(pending: PendingInvoke): void {
+  private sendPending(pending: PendingInvoke): boolean {
     const ws = this.ws;
     if (!ws || ws.readyState !== WS_OPEN) {
       // Socket not usable (e.g. racing a close): keep it queued for the
       // next connection. Queued-not-yet-sent invokes carry over this way.
       this.queue.unshift(pending);
-      return;
+      return false;
     }
     let payload: string;
     try {
       payload = JSON.stringify({ v: 1, type: 'invoke', id: pending.id, channel: pending.channel, args: pending.args });
     } catch (err) {
       pending.reject(new Error(`invoke "${pending.channel}" args are not JSON-serializable: ${String(err)}`));
-      return;
+      return true;
     }
     try {
       ws.send(payload);
     } catch (err) {
       this.queue.unshift(pending);
       this.logWarn('gateway send failed', err);
-      return;
+      return false;
     }
     this.inFlight.set(pending.id, pending);
     const timeoutMs = this.timeoutFor(pending.channel) + this.timeoutGraceMs;
@@ -642,6 +644,7 @@ export class GatewayClient {
       }
       this.flushQueue();
     }, timeoutMs);
+    return true;
   }
 
   private rejectInFlight(code: string, retryable: boolean, reason: string): void {

@@ -466,6 +466,41 @@ test('33 concurrent invokes: 32 are sent, the 33rd queues until a result frees a
   assert.equal(results.length, 33);
 });
 
+test('a closing socket cannot spin the queue drain while the client still says online', async (t) => {
+  const { client, socket, connect } = setup({ maxInFlight: 1 });
+  t.after(() => client.close());
+  connect();
+
+  const first = client.invoke('demo:first');
+  const second = client.invoke('demo:second');
+  second.catch(() => {});
+  assert.equal(client.getInFlightCount(), 1);
+  assert.equal(client.getQueuedCount(), 1);
+
+  socket().readyState = FakeWebSocket.CLOSING;
+  const firstId = socket().invokeFrames()[0].id as string;
+  socket().doMessage({ v: 1, type: 'result', id: firstId, ok: true, value: 'first' });
+  await first;
+
+  assert.equal(client.getQueuedCount(), 1, 'the queued invoke must survive the unusable socket');
+  assert.equal(client.getInFlightCount(), 0);
+
+  socket().readyState = FakeWebSocket.OPEN;
+  const third = client.invoke('demo:third');
+  third.catch(() => {});
+  assert.deepEqual(
+    socket().invokeFrames().map((frame) => frame.channel),
+    ['demo:first', 'demo:second'],
+  );
+  assert.equal(client.getQueuedCount(), 1, 'the third invoke waits behind the one-slot cap');
+
+  const secondFrame = socket().invokeFrames()[1];
+  socket().doMessage({ v: 1, type: 'result', id: secondFrame.id as string, ok: true, value: secondFrame.channel });
+  const thirdFrame = socket().invokeFrames()[2];
+  socket().doMessage({ v: 1, type: 'result', id: thirdFrame.id as string, ok: true, value: thirdFrame.channel });
+  await Promise.all([second, third]);
+});
+
 // ---------------------------------------------------------------------------
 // 7. channel-aware client timeouts (channel timeout + 10 s grace)
 // ---------------------------------------------------------------------------
