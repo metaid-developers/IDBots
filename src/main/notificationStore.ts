@@ -238,6 +238,7 @@ export class NotificationStore {
         );
       }
       this.db.run('COMMIT');
+      if (rows.length > 0) this.saveDb();
       return rows.map((row) => {
         const item = this.get(row.eventId);
         return item?.readAt === null ? { ...item, attemptCount: row.attemptCount } : null;

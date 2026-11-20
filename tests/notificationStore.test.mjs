@@ -92,6 +92,18 @@ test('outbox claims survive retry delays and process restart recovery', (t) => {
   assert.deepEqual(store.listPendingOutbox(), []);
 });
 
+test('claimed delivery state is persisted before the external request', (t) => {
+  const { db } = setup(t);
+  let saves = 0;
+  const store = new NotificationStore(db, () => { saves += 1; });
+  store.record(input('event-1'));
+  assert.equal(saves, 1);
+  assert.equal(store.claimPendingOutbox(1000).length, 1);
+  assert.equal(saves, 2);
+  assert.equal(store.claimPendingOutbox(1001).length, 0);
+  assert.equal(saves, 2);
+});
+
 test('an abandoned claim is recovered and read events are never claimed', (t) => {
   const { store } = setup(t);
   store.record(input('event-1'));
