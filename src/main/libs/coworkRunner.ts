@@ -6931,7 +6931,7 @@ export class CoworkRunner extends EventEmitter {
     return isMobileOwnerChatSessionProfile({
       serverMode: isServerMode(),
       session: this.store.getSession(sessionId),
-      sourceChannel: this.store.getConversationSourceContextBySession(sessionId).sourceChannel,
+      sourceChannel: this.store.getConversationSourceContextBySession(sessionId)?.sourceChannel,
     });
   }
 
