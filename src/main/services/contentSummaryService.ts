@@ -72,6 +72,7 @@ export type SummaryPerformChat = (
     fallbackLlmProvider?: string | null;
     /** Per-attempt timeout: primary and fallback each get a fresh window. */
     attemptTimeoutMs?: number;
+    attemptTimeoutKind?: 'total' | 'idle';
     throwOnEmptyContent?: boolean;
     thinking?: 'enabled' | 'disabled';
     webSearch?: boolean;
@@ -150,6 +151,10 @@ export class OrchestratorSummarizerProvider implements SummarizerProvider {
       // Per-attempt window: the fallback brain gets its own fresh timeout
       // instead of inheriting the primary's spent signal.
       attemptTimeoutMs: this.deps.llmTimeoutMs ?? SUMMARY_LLM_TIMEOUT_MS,
+      // Streaming transport: attemptTimeoutMs bounds stream SILENCE (idle),
+      // not the whole generation — long summaries survive while bytes flow
+      // (the 2026-11-20 ABS relay handoff).
+      attemptTimeoutKind: 'idle',
       maxTokens: SUMMARY_MAX_TOKENS,
       llmProvider: brain.llmProvider,
       fallbackLlmId: brain.fallbackLlmId,

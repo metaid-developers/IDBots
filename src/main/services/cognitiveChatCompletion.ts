@@ -265,6 +265,19 @@ export interface ChatCompletionOptions {
    */
   attemptTimeoutMs?: number;
   /**
+   * What attemptTimeoutMs bounds for the streaming transport:
+   *  - 'total' (default): wall-clock budget for the whole attempt — exactly
+   *    the pre-streaming semantics. Callers that use attemptTimeoutMs as a
+   *    wall-budget clamp (dream: min(ladder, remaining run budget) with no
+   *    caller signal) keep this so an attempt can never outlive the value.
+   *  - 'idle': no-progress budget — the attempt aborts when the SSE stream
+   *    carries no bytes for this long, and the total budget grows to
+   *    min(idle×8, 600s) (never below the idle value) so a steadily flowing
+   *    long generation finishes instead of being cut (the 2026-11-20 ABS
+   *    relay handoff: glm non-stream avg 45.6s against 45-60s total caps).
+   */
+  attemptTimeoutKind?: 'total' | 'idle';
+  /**
    * Called after the system-rescue rung (llmFallback.runWithSystemRescue)
    * answers a call whose configured brains all failed terminally — passive
    * scenarios (private chat, group tasks) use it to surface the silent
@@ -288,7 +301,15 @@ export async function chatCompletionWithTools(
   options: ChatCompletionOptions = {}
 ): Promise<ChatCompletionResult> {
   return runWithSystemRescue(
-    options,
+    {
+      ...options,
+      // The per-attempt deadline (caller signal + total cap + streaming idle
+      // watchdog) is built inside chatCompletionSingleAttempt from
+      // attemptTimeoutMs; llmFallback must not double-wrap the caller signal
+      // with AbortSignal.timeout, which would re-impose the old total-only
+      // semantics on the streaming transport.
+      streamingTransport: true,
+    },
     (attemptOptions) => chatCompletionSingleAttempt(messages, attemptOptions),
     {
       resolveRescue: (tried) => resolveSystemRescueBrain({
@@ -354,6 +375,15 @@ async function chatCompletionSingleAttempt(
       );
     }
 
+    // Per-attempt deadline: caller cancellation + total cap + (streaming
+    // branch only) the idle watchdog. Built here — not by
+    // llmFallback.withPerAttemptSignal, which skips when streamingTransport
+    // is set — so all three wire styles share one deadline and the idle
+    // semantics never leak into the non-streaming ones.
+    const attemptDeadline = buildOneShotAttemptDeadline(
+      resolveOneShotStreamDeadline(options),
+      options.signal
+    );
     try {
       let result: ChatCompletionResult;
       if (useDeepSeekResponses && config.upstreamBaseURL) {
@@ -363,7 +393,7 @@ async function chatCompletionSingleAttempt(
           config.apiKey ?? '',
           messages,
           options.tools,
-          options.signal,
+          attemptDeadline.signal,
           options.maxTokens,
           options.temperature,
           thinking,
@@ -377,11 +407,12 @@ async function chatCompletionSingleAttempt(
           config.apiKey ?? '',
           messages,
           options.tools,
-          options.signal,
+          attemptDeadline.signal,
           options.maxTokens,
           options.temperature,
           thinking,
-          effort
+          effort,
+          { streaming: ONE_SHOT_STREAMING_ENABLED, deadline: attemptDeadline }
         );
       } else {
         result = await callOpenAIStyleWithTools(
@@ -390,7 +421,7 @@ async function chatCompletionSingleAttempt(
           config.apiKey ?? '',
           messages,
           options.tools,
-          options.signal,
+          attemptDeadline.signal,
           options.maxTokens,
           options.temperature,
           thinking,
@@ -408,6 +439,8 @@ async function chatCompletionSingleAttempt(
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[Orchestrator] chatCompletionWithTools failed:', msg);
       throw err;
+    } finally {
+      attemptDeadline.cleanup();
     }
   } finally {
     clearCoworkSessionUpstream(pinKey);
@@ -436,6 +469,8 @@ export async function performChatCompletionForOrchestrator(
     webSearch?: boolean;
     /** Per-attempt timeout in ms; primary and fallback each get a fresh window. */
     attemptTimeoutMs?: number;
+    /** See ChatCompletionOptions.attemptTimeoutKind — what attemptTimeoutMs bounds. */
+    attemptTimeoutKind?: 'total' | 'idle';
     /** Called after the system-rescue rung answers a terminally-failed call. */
     onBrainRescue?: (info: BrainRescueInfo) => void;
   } = {}
@@ -457,6 +492,7 @@ export async function performChatCompletionForOrchestrator(
     thinking: options.thinking,
     webSearch: options.webSearch,
     attemptTimeoutMs: options.attemptTimeoutMs,
+    attemptTimeoutKind: options.attemptTimeoutKind,
     onBrainRescue: options.onBrainRescue,
   });
   const content = result.content?.trim() ?? '';
@@ -485,9 +521,300 @@ function toOpenAIMessages(messages: ChatMessage[]): Array<Record<string, unknown
   });
 }
 
+// ── Streaming transport (2026-11-20 ABS relay handoff) ─────────────────────
+// One-shot calls historically sent no `stream` field, so the upstream relay
+// generated the ENTIRE reply before the first byte reached us (glm-5.3-flash
+// non-stream avg 45.6s, max 952s) and per-caller total caps (45-60s) cut the
+// long tail — the relay logged those cuts as client_gone (96.7% of its
+// apparent failures). The transport now requests `stream: true` on the
+// Anthropic wire — which covers BOTH real Anthropic upstreams and every
+// openai-format provider via the local OpenAI-compat proxy, whose SSE
+// passthrough is the same path kernel sessions already stream on — and
+// re-arms an idle watchdog on every arriving chunk. Bytes flowing = progress,
+// so a long generation survives as long as the upstream keeps answering; the
+// relay's 15s SSE heartbeat (`: ping` comment frames, ignored per the SSE
+// spec) keeps healthy streams alive so they are never cut mid-generation.
+
+/** Kill switch: IDBOTS_ONESHOT_NONSTREAM=1 restores the pre-streaming transport. */
+const ONE_SHOT_STREAMING_ENABLED = process.env.IDBOTS_ONESHOT_NONSTREAM !== '1';
+
+/** Idle budget when a caller passes no attemptTimeoutMs: such callers
+ *  previously waited unbounded on a hung request; a silent stream now aborts
+ *  into the fallback attempt (relay heartbeats keep healthy streams alive). */
+const DEFAULT_ONE_SHOT_STREAM_IDLE_MS = 120_000;
+
+/** Total-budget ceiling for attemptTimeoutKind:'idle' attempts — bounds the
+ *  pathological "heartbeats keep flowing, no data" case without shrinking any
+ *  caller's existing window (a value at or above the ceiling keeps itself). */
+const ONE_SHOT_STREAM_TOTAL_CEILING_MS = 600_000;
+
+interface OneShotStreamDeadline {
+  /** Abort when the SSE stream is silent for this long (re-armed per chunk). */
+  idleMs: number;
+  /** Wall-clock cap for the whole attempt; null = unbounded (caller signal governs). */
+  totalMs: number | null;
+}
+
+function resolveOneShotStreamDeadline(options: ChatCompletionOptions): OneShotStreamDeadline {
+  const idleMs = options.attemptTimeoutMs && options.attemptTimeoutMs > 0
+    ? options.attemptTimeoutMs
+    : DEFAULT_ONE_SHOT_STREAM_IDLE_MS;
+  if ((options.attemptTimeoutKind ?? 'total') === 'total') {
+    return {
+      idleMs,
+      totalMs: options.attemptTimeoutMs && options.attemptTimeoutMs > 0 ? options.attemptTimeoutMs : null,
+    };
+  }
+  return {
+    idleMs,
+    totalMs: Math.max(idleMs, Math.min(idleMs * 8, ONE_SHOT_STREAM_TOTAL_CEILING_MS)),
+  };
+}
+
+/** Timeout-flavored abort reason so downstream classification sees the same
+ *  TimeoutError name AbortSignal.timeout produced before this transport. */
+function streamDeadlineError(kind: 'idle' | 'total', ms: number): DOMException {
+  const label = kind === 'idle' ? 'LLM stream idle timeout' : 'LLM stream deadline exceeded';
+  return new DOMException(`${label} after ${Math.round(ms / 1000)}s`, 'TimeoutError');
+}
+
+/** Per-attempt deadline shared by all three wire styles. The total timer
+ *  mirrors the old AbortSignal.timeout semantics; the idle watchdog arms
+ *  only in the streaming SSE reader (re-armed per arriving chunk), so the
+ *  non-streaming styles keep exactly their pre-streaming behavior. */
+interface OneShotAttemptDeadline {
+  signal: AbortSignal;
+  /** Arm the idle watchdog once before the fetch (covers time-to-first-byte). */
+  enableIdle(): void;
+  /** Re-arm the idle watchdog; no-op until enableIdle. */
+  armIdle(): void;
+  cleanup(): void;
+}
+
+function buildOneShotAttemptDeadline(
+  deadline: OneShotStreamDeadline,
+  callerSignal: AbortSignal | undefined
+): OneShotAttemptDeadline {
+  const controller = new AbortController();
+  let idleEnabled = false;
+  let idleTimer: NodeJS.Timeout | null = null;
+  const armIdle = () => {
+    if (!idleEnabled) return;
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(
+      () => controller.abort(streamDeadlineError('idle', deadline.idleMs)),
+      deadline.idleMs
+    );
+    idleTimer.unref?.();
+  };
+  const onCallerAbort = () => controller.abort(callerSignal?.reason);
+  if (callerSignal) {
+    if (callerSignal.aborted) onCallerAbort();
+    else callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+  }
+  const totalTimer = deadline.totalMs != null
+    ? setTimeout(() => controller.abort(streamDeadlineError('total', deadline.totalMs as number)), deadline.totalMs)
+    : null;
+  totalTimer?.unref?.();
+  return {
+    signal: controller.signal,
+    enableIdle: () => {
+      idleEnabled = true;
+      armIdle();
+    },
+    armIdle,
+    cleanup: () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      if (totalTimer) clearTimeout(totalTimer);
+      callerSignal?.removeEventListener('abort', onCallerAbort);
+    },
+  };
+}
+
+/** Shape shared by the non-streaming JSON body and the folded SSE stream, so
+ *  one assembly path serves both transports. */
+interface AnthropicWireShaped {
+  content?: Array<{ type?: string; text?: string; thinking?: string; id?: string; name?: string; input?: unknown }>;
+  stop_reason?: string | null;
+  usage?: { input_tokens?: number; output_tokens?: number };
+}
+
 /**
  * Anthropic-style API with optional tools. Returns content and tool_use blocks as tool_calls.
  */
+/** Fold an Anthropic-wire SSE stream (real Anthropic upstream, or the local
+ *  OpenAI-compat proxy's stream conversion of an OpenAI-format upstream) into
+ *  the same shape the non-streaming JSON body has. Comment frames — the
+ *  relay's 15s `: ping` keep-alive heartbeat — are ignored per the SSE spec,
+ *  and every arriving byte re-arms the idle watchdog. */
+async function readAnthropicSseCompletion(
+  response: Response,
+  transport: { deadline: OneShotAttemptDeadline }
+): Promise<AnthropicWireShaped> {
+  const deadline = transport.deadline;
+  if (!response.body) {
+    throw new Error('LLM stream returned an empty body');
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const textByIndex = new Map<number, string>();
+  const thinkingByIndex = new Map<number, string>();
+  const toolByIndex = new Map<number, { id: string; name: string; json: string }>();
+  let stopReason: string | null = null;
+  let inputTokens: number | null = null;
+  let outputTokens: number | null = null;
+  let sawEvent = false;
+  let sawTerminal = false;
+  let buffer = '';
+
+  type SsePayload = Record<string, unknown>;
+  const applyEvent = (rawEvent: string): void => {
+    let eventName = '';
+    const dataLines: string[] = [];
+    for (const line of rawEvent.split(/\r?\n/)) {
+      if (!line || line.startsWith(':')) continue; // comment/heartbeat frame
+      if (line.startsWith('event:')) eventName = line.slice('event:'.length).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice('data:'.length).trimStart());
+    }
+    if (dataLines.length === 0) return;
+    sawEvent = true;
+    const dataText = dataLines.join('\n');
+    if (dataText === '[DONE]') return; // OpenAI-style sentinel; not on the Anthropic wire
+    let payload: SsePayload;
+    try {
+      payload = JSON.parse(dataText) as SsePayload;
+    } catch {
+      return; // malformed frame — later frames carry the stream state
+    }
+    const type = typeof payload.type === 'string' && payload.type ? payload.type : eventName;
+    if (type === 'message_start') {
+      const usage = (payload.message as { usage?: { input_tokens?: number } } | undefined)?.usage;
+      if (typeof usage?.input_tokens === 'number') inputTokens = usage.input_tokens;
+    } else if (type === 'content_block_start') {
+      const index = typeof payload.index === 'number' ? payload.index : 0;
+      const block = payload.content_block as { type?: string; id?: string; name?: string } | undefined;
+      if (block?.type === 'tool_use') {
+        toolByIndex.set(index, { id: block.id ?? '', name: block.name ?? '', json: '' });
+      }
+    } else if (type === 'content_block_delta') {
+      const index = typeof payload.index === 'number' ? payload.index : 0;
+      const delta = payload.delta as { type?: string; text?: string; thinking?: string; partial_json?: string } | undefined;
+      if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+        textByIndex.set(index, (textByIndex.get(index) ?? '') + delta.text);
+      } else if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+        thinkingByIndex.set(index, (thinkingByIndex.get(index) ?? '') + delta.thinking);
+      } else if (delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
+        const tool = toolByIndex.get(index);
+        if (tool) tool.json += delta.partial_json;
+      }
+    } else if (type === 'message_delta') {
+      const delta = payload.delta as { stop_reason?: string | null } | undefined;
+      if (delta?.stop_reason !== undefined) stopReason = delta.stop_reason;
+      const usage = payload.usage as { output_tokens?: number } | undefined;
+      if (typeof usage?.output_tokens === 'number') outputTokens = usage.output_tokens;
+    } else if (type === 'message_stop') {
+      sawTerminal = true;
+    } else if (type === 'error') {
+      const err = payload.error as { message?: string } | undefined;
+      throw new Error(`LLM stream error: ${err?.message ?? dataText.slice(0, 300)}`);
+    }
+  };
+
+  deadline.enableIdle(); // covers time-to-first-byte, re-armed per chunk
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (deadline.signal.aborted) {
+        throw deadline.signal.reason ?? new DOMException('LLM stream aborted', 'AbortError');
+      }
+      if (done) break;
+      deadline.armIdle();
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = buffer.search(/\r?\n\r?\n/);
+      while (boundary !== -1 && !sawTerminal) {
+        const rawEvent = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary).replace(/^\r?\n\r?\n/, '');
+        applyEvent(rawEvent);
+        boundary = buffer.search(/\r?\n\r?\n/);
+      }
+      if (sawTerminal) break;
+    }
+  } finally {
+    try { await reader.cancel(); } catch { /* best-effort release of the upstream connection */ }
+  }
+
+  if (!sawEvent) {
+    throw new Error('LLM stream returned no events');
+  }
+  if (!sawTerminal) {
+    throw new Error('LLM stream ended without message_stop');
+  }
+
+  const content: NonNullable<AnthropicWireShaped['content']> = [];
+  const indices = [...new Set([...textByIndex.keys(), ...thinkingByIndex.keys(), ...toolByIndex.keys()])]
+    .sort((a, b) => a - b);
+  for (const index of indices) {
+    const text = textByIndex.get(index);
+    if (text) content.push({ type: 'text', text });
+    const thinking = thinkingByIndex.get(index);
+    if (thinking) content.push({ type: 'thinking', thinking });
+    const tool = toolByIndex.get(index);
+    if (tool) content.push({ type: 'tool_use', id: tool.id, name: tool.name, input: tool.json });
+  }
+  return {
+    content,
+    stop_reason: stopReason,
+    usage: { input_tokens: inputTokens ?? undefined, output_tokens: outputTokens ?? undefined },
+  };
+}
+
+/** Shared assembly for both transports: turn the shaped Anthropic-wire
+ *  response (JSON body or folded SSE stream) into a ChatCompletionResult.
+ *  Behavior is byte-for-byte the pre-streaming JSON assembly. */
+function assembleAnthropicResult(shaped: AnthropicWireShaped, model: string): ChatCompletionResult {
+  const contentBlocks = shaped.content ?? [];
+  const out: ChatCompletionResult = {
+    responseMetadata: {
+      apiType: 'anthropic',
+      stopReason: shaped.stop_reason ?? null,
+      contentBlockTypes: contentBlocks.map((block) => block.type ?? 'unknown'),
+      inputTokens: shaped.usage?.input_tokens ?? null,
+      outputTokens: shaped.usage?.output_tokens ?? null,
+    },
+  };
+  const toolCalls: ToolCallResult[] = [];
+  let thinkingText = '';
+  for (const block of contentBlocks) {
+    if (block.type === 'text' && block.text) {
+      out.content = (out.content ?? '') + block.text;
+    } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
+      // DeepSeek thinking 等模型把推理放 thinking 块、text 可能为空；先收着做回退。
+      thinkingText += extractAnthropicThinkingText(block);
+    }
+    if (block.type === 'tool_use' && block.id && block.name) {
+      const args =
+        typeof (block as { input?: unknown }).input === 'string'
+          ? (block as { input: string }).input
+          : JSON.stringify((block as { input?: unknown }).input ?? {});
+      toolCalls.push({ id: block.id, name: block.name, arguments: args });
+    }
+  }
+  if (out.content) out.content = out.content.trim();
+  if (!out.content && thinkingText.trim() && allowThinkingFallbackPromotion(model)) {
+    // 没有 text 块时回退到 thinking 文本，避免上层把「空 content」误判为 llm_unavailable。
+    // （browser.llm.complete / 象棋走子：LLM 答案可能只在推理里，解析层能从中提取合法着法。）
+    // GLM 家族不回退（allowThinkingFallbackPromotion）：thinking-only 意味着预算耗在
+    // 隐藏推理里，提升只会把思维碎片当答案泄露（2026-10-23 ack 气泡 / 2026-11-07 日报）。
+    out.content = thinkingText.trim();
+    out.responseMetadata.contentBlockTypes = [
+      ...(out.responseMetadata.contentBlockTypes ?? []),
+      'reasoning-fallback',
+    ];
+  }
+  if (toolCalls.length) out.tool_calls = toolCalls;
+  return out;
+}
+
 async function callAnthropicStyleWithTools(
   baseURL: string,
   model: string,
@@ -498,7 +825,8 @@ async function callAnthropicStyleWithTools(
   maxTokens?: number,
   temperature?: number,
   thinking?: 'enabled' | 'disabled',
-  effort?: LlmEffortLevel | null
+  effort?: LlmEffortLevel | null,
+  transport?: { streaming: boolean; deadline: OneShotAttemptDeadline }
 ): Promise<ChatCompletionResult> {
   const url = `${baseURL.replace(/\/+$/, '')}/v1/messages`;
   const systemParts: string[] = [];
@@ -571,6 +899,10 @@ async function callAnthropicStyleWithTools(
     );
   }
 
+  if (transport?.streaming) {
+    body.stream = true;
+  }
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'anthropic-version': '2023-06-01',
@@ -580,66 +912,33 @@ async function callAnthropicStyleWithTools(
   }
   Object.assign(headers, buildOpenCodeGoHeaders(url));
 
-  const response = await fetchLlmPost('anthropic', url, headers, JSON.stringify(body), signal);
-  const text = await response.text();
-  if (!response.ok) {
-    console.error('[Orchestrator] LLM Anthropic error:', response.status, text.slice(0, 500));
-    throw new Error(`LLM request failed: ${response.status} ${text.slice(0, 300)}`);
-  }
-
-  let data: {
-    content?: Array<{ type?: string; text?: string; thinking?: string; id?: string; name?: string; input?: string }>;
-    stop_reason?: string | null;
-    usage?: { input_tokens?: number; output_tokens?: number };
-  };
-  try {
-    data = JSON.parse(text) as typeof data;
-  } catch {
-    console.error('[Orchestrator] LLM Anthropic invalid JSON:', text.slice(0, 300));
-    throw new Error('LLM response was not valid JSON');
-  }
-
-  const contentBlocks = data.content ?? [];
-  const out: ChatCompletionResult = {
-    responseMetadata: {
-      apiType: 'anthropic',
-      stopReason: data.stop_reason ?? null,
-      contentBlockTypes: contentBlocks.map((block) => block.type ?? 'unknown'),
-      inputTokens: data.usage?.input_tokens ?? null,
-      outputTokens: data.usage?.output_tokens ?? null,
-    },
-  };
-  const toolCalls: ToolCallResult[] = [];
-  let thinkingText = '';
-  for (const block of contentBlocks) {
-    if (block.type === 'text' && block.text) {
-      out.content = (out.content ?? '') + block.text;
-    } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
-      // DeepSeek thinking 等模型把推理放 thinking 块、text 可能为空；先收着做回退。
-      thinkingText += extractAnthropicThinkingText(block);
+  const response = await fetchLlmPost(
+    'anthropic',
+    url,
+    headers,
+    JSON.stringify(body),
+    transport?.deadline.signal ?? signal
+  );
+  const contentType = response.headers.get('content-type') ?? '';
+  let shaped: AnthropicWireShaped;
+  if (transport?.streaming && response.ok && contentType.includes('text/event-stream')) {
+    shaped = await readAnthropicSseCompletion(response, transport);
+  } else {
+    // Non-streaming reply: the pre-streaming transport, the kill switch, or a
+    // provider that ignores stream:true and answers with a JSON body.
+    const text = await response.text();
+    if (!response.ok) {
+      console.error('[Orchestrator] LLM Anthropic error:', response.status, text.slice(0, 500));
+      throw new Error(`LLM request failed: ${response.status} ${text.slice(0, 300)}`);
     }
-    if (block.type === 'tool_use' && block.id && block.name) {
-      const args =
-        typeof (block as { input?: unknown }).input === 'string'
-          ? (block as { input: string }).input
-          : JSON.stringify((block as { input?: unknown }).input ?? {});
-      toolCalls.push({ id: block.id, name: block.name, arguments: args });
+    try {
+      shaped = JSON.parse(text) as AnthropicWireShaped;
+    } catch {
+      console.error('[Orchestrator] LLM Anthropic invalid JSON:', text.slice(0, 300));
+      throw new Error('LLM response was not valid JSON');
     }
   }
-  if (out.content) out.content = out.content.trim();
-  if (!out.content && thinkingText.trim() && allowThinkingFallbackPromotion(model)) {
-    // 没有 text 块时回退到 thinking 文本，避免上层把「空 content」误判为 llm_unavailable。
-    // （browser.llm.complete / 象棋走子：LLM 答案可能只在推理里，解析层能从中提取合法着法。）
-    // GLM 家族不回退（allowThinkingFallbackPromotion）：thinking-only 意味着预算耗在
-    // 隐藏推理里，提升只会把思维碎片当答案泄露（2026-10-23 ack 气泡 / 2026-11-07 日报）。
-    out.content = thinkingText.trim();
-    out.responseMetadata.contentBlockTypes = [
-      ...(out.responseMetadata.contentBlockTypes ?? []),
-      'reasoning-fallback',
-    ];
-  }
-  if (toolCalls.length) out.tool_calls = toolCalls;
-  return out;
+  return assembleAnthropicResult(shaped, model);
 }
 
 export const __cognitiveChatCompletionTestUtils = {
@@ -653,6 +952,10 @@ export const __cognitiveChatCompletionTestUtils = {
   resolveDefaultMaxOutputTokens,
   remapAnthropicThinkingForModel,
   allowThinkingFallbackPromotion,
+  readAnthropicSseCompletion,
+  assembleAnthropicResult,
+  resolveOneShotStreamDeadline,
+  buildOneShotAttemptDeadline,
 };
 
 /**

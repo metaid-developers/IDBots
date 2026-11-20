@@ -2821,7 +2821,7 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
     // Per-attempt window (attemptTimeoutMs): the primary and the fallback
     // brain each get their own fresh timeout — a wedged primary no longer
     // leaves the fallback retry a dead shared signal.
-    const merged = { ...(options ?? {}), attemptTimeoutMs: plainTurnTimeoutMs };
+    const merged = { ...(options ?? {}), attemptTimeoutMs: plainTurnTimeoutMs, attemptTimeoutKind: 'idle' };
     return deps.performChat(systemPrompt, userMessage, llmId, merged);
   };
 
