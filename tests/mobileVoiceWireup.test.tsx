@@ -336,6 +336,16 @@ test('ChatScreen wires hold-to-send: final text bypasses the composer and goes t
   assert.match(source, /data-testid="voice-hint"/);
 });
 
+test('text and voice sends dismiss the composer keyboard without blocking a failed admission', () => {
+  const source = readSource('../src/mobile/app/screens/ChatScreen.tsx');
+  const submit = source.match(/const submit = \(\) => \{[\s\S]*?\n {2}\};/);
+  assert.ok(submit, 'submit handler exists');
+  assert.match(submit[0], /if \(!canSubmit\) return;\s*dismissComposerKeyboard\(\);/);
+  assert.match(submit[0], /dismissComposerKeyboard\(\);[\s\S]*chat\.send\(draft, attachments\)/);
+  assert.match(source, /onFinalText: \(text\) => \{[\s\S]*?if \(outcome === 'sent'\) dismissComposerKeyboard\(\);/);
+  assert.match(source, /const dismissComposerKeyboard = useCallback\(\(\) => \{\s*textareaRef\.current\?\.blur\(\);/);
+});
+
 // ---------------------------------------------------------------------------
 // Worklet processor source contract
 // ---------------------------------------------------------------------------

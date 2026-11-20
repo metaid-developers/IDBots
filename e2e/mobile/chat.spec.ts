@@ -74,6 +74,7 @@ test.describe('chat', () => {
     await attachScreen(testInfo, page, 'chat-wide-composer');
     await composer.press('Enter');
     await expect(page.getByTestId('chat-user-message').last()).toHaveText('first line\nsecond line');
+    await expect(composer).not.toBeFocused();
   });
 
   test('IME confirmation Enter stays in the composer instead of sending', async ({ page }) => {

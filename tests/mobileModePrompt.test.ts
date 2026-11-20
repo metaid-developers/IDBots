@@ -9,7 +9,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
   if (request === 'electron') {
     return { app: { getPreferredSystemLanguages: () => ['en-US'] } };
   }
-  return originalLoad.apply(this, arguments);
+  return originalLoad.call(this, request, parent, isMain);
 };
 const {
   buildMobileModePrompt,
