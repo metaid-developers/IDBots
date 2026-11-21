@@ -9,6 +9,10 @@ import type {
   StudioDecisionQueueItem,
   StudioDecisionQueueStore,
 } from '../studioDecisionQueueStore';
+import type {
+  ProactiveFollowUpItem,
+  ProactiveFollowUpStore,
+} from '../proactiveFollowUpStore';
 import {
   deriveStudioPresenceState,
   StudioPresenceTracker,
@@ -73,6 +77,7 @@ export interface StudioChiefOfStaffSessionStore {
     updatedAt?: number;
     archivedAt?: number | null;
     autoOrigin?: string | null;
+    hiddenFromSessionList?: boolean;
   }>;
   createSession(
     title: string,
@@ -159,6 +164,16 @@ export interface StudioChiefOfStaffDeps {
   getTaskWatermark?: () => string;
   /** Live Worker progress checkpoint recorded on a Managed Task (`progress_note`). */
   getTaskProgressNote?: (longtermTaskId: string | null | undefined) => string | null;
+  /** Lightweight 3-tier Proactive Follow-Up queue (`inform` / `light_decision` / `task_proposal`). */
+  followUpStore?: () => ProactiveFollowUpStore;
+  /** True when running as a 24/7 headless Cloud Tenant (`IDBots --server`). */
+  isServerMode?: () => boolean;
+  /** Fired once a Proactive Follow-Up briefing turn completes cleanly in the primary Twin stream. */
+  onProactiveFollowUpDeliveredToSession?: (input: {
+    item: ProactiveFollowUpItem;
+    sessionId: string;
+    isPrimaryNonStudioFallback: boolean;
+  }) => void;
   now?: () => number;
   emitLog?: (line: string) => void;
 }
@@ -324,6 +339,102 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
   ].join('\n');
 }
 
+export function buildProactiveFollowUpBriefingPrompt(
+  item: ProactiveFollowUpItem,
+  remainingQueuedCount: number,
+  language: 'zh' | 'en',
+): string {
+  const optionsText = item.options.length > 0
+    ? item.options
+        .map((opt, index) => `${index + 1}. ${opt.recommended ? '[Recommended] ' : ''}${opt.label}${opt.description ? ` — ${opt.description}` : ''}`)
+        .join('\n')
+    : '';
+  const actorLineZh = [
+    item.localMetabotName ? `涉及本地角色: ${item.localMetabotName}${item.localMetabotId ? ` (metabotId=${item.localMetabotId})` : ''}` : null,
+    item.peerName || item.peerGlobalMetaId ? `远端对象: ${item.peerName || item.peerGlobalMetaId}` : null,
+    item.sourceSessionId ? `关联 A2A 会话: IDBots://${item.sourceSessionId}` : null,
+    item.workerSessionId ? `关联 Worker 会话: IDBots://${item.workerSessionId}` : null,
+    item.coalescedCount > 1 ? `已合并同源动态轮数: ${item.coalescedCount}` : null,
+  ].filter(Boolean).join(' | ');
+
+  const actorLineEn = [
+    item.localMetabotName ? `Local bot: ${item.localMetabotName}${item.localMetabotId ? ` (metabotId=${item.localMetabotId})` : ''}` : null,
+    item.peerName || item.peerGlobalMetaId ? `Remote peer: ${item.peerName || item.peerGlobalMetaId}` : null,
+    item.sourceSessionId ? `Origin A2A session: IDBots://${item.sourceSessionId}` : null,
+    item.workerSessionId ? `Worker session: IDBots://${item.workerSessionId}` : null,
+    item.coalescedCount > 1 ? `Coalesced updates: ${item.coalescedCount}` : null,
+  ].filter(Boolean).join(' | ');
+
+  if (language === 'zh') {
+    const tierHeadline =
+      item.tier === 'inform'
+        ? `已办妥告知 (${item.informOutcome === 'declined' ? '已代拒/婉拒' : item.informOutcome === 'observed' ? '重要观察同步' : '已自动处理完成'})`
+        : item.tier === 'task_proposal'
+          ? '提议转正式任务 (task_proposal)'
+          : '一轮轻拍板 (light_decision)';
+
+    const tierDirective =
+      item.tier === 'inform'
+        ? [
+            `3. **零回合自然知会（${item.informOutcome === 'declined' ? '告知已代为婉拒' : '告知已办妥'}）**：用 2–4 句像真人助理一样自然简练的话，直接告诉主人刚才谁联系了咱们哪位 Bot、发生了什么、${item.informOutcome === 'declined' ? '我们已经按边界代为拒绝/挡回及原因' : '我们已经如何处理妥当'}，最后轻轻带一句「不需要你额外操作，除非你想改口或追加交代」即可。**不要反问主人 Yes/No，本轮结束后宿主会自动将该告知标记为已送达（无需调 followup_resolve）**。`,
+          ]
+        : item.tier === 'task_proposal'
+          ? [
+              `3. **自然对话提议转任务**：用 3–5 句自然简练的话交代清楚来龙去脉（谁联系了谁、为什么这件事涉及多步或多角色协作），明确给出你的建议，并自然询问主人是否立项推进（或婉拒对方），然后**直接结束本轮等待主人在聊天框自然回复**（保持 presenting 状态，本轮不要提前调 followup_resolve）。主人同意后下一轮再调 \`followup_promote_to_task\` 立项并同步回复对方。`,
+            ]
+          : [
+              `3. **一轮轻拍板自然请示**：用 3–5 句自然简练的话把背景、Worker 排查结论或对方诉求说清楚，给出你的明确建议或清晰可选项，让主人在聊天框一句话拍板即可，然后**直接结束本轮等待主人回复**（保持 presenting 状态，本轮不要提前调 followup_resolve）。主人回复后下一轮用 \`followup_reply_a2a\`（及必要的 Worker 授权）一步落实。`,
+            ];
+
+    return [
+      '<studio_proactive_briefing>',
+      '你现在作为主人的唯一数字分身（TwinBot），趁当前会话空闲，主动向主人同步一条来自 AI 网络 / 团队协作的跟进事项。',
+      '注意：本触发块对主人不可见，主人只会看到你接下来自然说出的话。',
+      `FollowUp ID: ${item.id} | 分级: ${tierHeadline} | 来源域: ${item.sourceDomain} | 后续排队数: ${remainingQueuedCount}`,
+      ...(actorLineZh ? [actorLineZh] : []),
+      `事项标题: ${item.title}`,
+      `摘要详情: ${item.summary}`,
+      ...(item.question ? [`待主人确认/拍板点: ${item.question}`] : []),
+      ...(optionsText ? [`可选方向:\n${optionsText}`] : []),
+      ...(item.recommendation ? [`建议口径: ${item.recommendation}`] : []),
+      ...(item.nextStep ? [`拍板后动作: ${item.nextStep}`] : []),
+      '',
+      '硬性交互铁律：',
+      `1. **防重收口**：如果主人在此前几轮对话里已经明确对这件事表过态，立即调用 \`followup_resolve({ followUpId: "${item.id}", resolutionNote: "..." })\` 静默收口，严禁重复打扰。`,
+      '2. **严禁机械弹窗 & 严禁投屏重页面**：**绝对禁止调用 `ask_user_question`**，也**不要生成或投屏右侧 HTML 汇报页**！全程像熟悉主人的首席幕僚一样在聊天流里自然开口。',
+      ...tierDirective,
+      '</studio_proactive_briefing>',
+    ].join('\n');
+  }
+
+  const tierInstructionEn =
+    item.tier === 'inform'
+      ? `3. **Zero-turn natural FYI (${item.informOutcome === 'declined' ? 'auto-declined notice' : 'handled notice'})**: In 2–4 natural conversational sentences, tell the owner which peer contacted which local Bot, what happened, and ${item.informOutcome === 'declined' ? 'that we already politely declined/blocked it and why' : 'how it was handled'}, noting that no action is needed unless they want to override. **Do NOT ask a Yes/No question; the host will automatically mark this inform item delivered as soon as your turn ends.**`
+      : item.tier === 'task_proposal'
+        ? '3. **Conversational task proposal**: In 3–5 natural sentences, explain who reached out and why this spans multiple steps/bots, share your recommendation, and ask naturally in chat whether to take it on as a formal Task (or decline). Keep the item in `presenting` and end your turn cleanly.'
+        : '3. **One-turn light decision**: In 3–5 natural sentences, state the situation, verified Worker/A2A context, and your concrete recommendation so the owner can rule in a single chat reply. Keep the item in `presenting` and end your turn cleanly.';
+
+  return [
+    '<studio_proactive_briefing>',
+    'You are speaking proactively as the owner\'s single TwinBot funnel while the primary conversation is idle.',
+    'Note: this trigger block is invisible to the owner; they only see your natural chat message.',
+    `FollowUp ID: ${item.id} | Tier: ${item.tier}${item.informOutcome ? ` (${item.informOutcome})` : ''} | Domain: ${item.sourceDomain} | Queued behind this: ${remainingQueuedCount}`,
+    ...(actorLineEn ? [actorLineEn] : []),
+    `Title: ${item.title}`,
+    `Summary: ${item.summary}`,
+    ...(item.question ? [`Question for owner: ${item.question}`] : []),
+    ...(optionsText ? [`Options:\n${optionsText}`] : []),
+    ...(item.recommendation ? [`Recommendation: ${item.recommendation}`] : []),
+    ...(item.nextStep ? [`Next step: ${item.nextStep}`] : []),
+    '',
+    'Hard UX rules:',
+    `1. **Deduplication**: If the owner already ruled on this in recent turns, call \`followup_resolve({ followUpId: "${item.id}", resolutionNote: "..." })\` immediately and do not re-ask.`,
+    '2. **NO modal popups & NO right-screen HTML projection**: **NEVER call `ask_user_question`**, and do NOT write or project any right-screen showcase HTML page for lightweight FollowUp events! Speak naturally in the chat stream.',
+    tierInstructionEn,
+    '</studio_proactive_briefing>',
+  ].join('\n');
+}
+
 export class StudioChiefOfStaffService {
   readonly presenceTracker = new StudioPresenceTracker();
   private readonly pendingBatches = new Map<string, PendingSupervisionBatch>();
@@ -447,6 +558,28 @@ export class StudioChiefOfStaffService {
     return session.sessionType === 'browser' && session.assistantMode === true;
   }
 
+  /**
+   * Omnichannel primary Twin owner conversation check: matches both Desktop
+   * Studio (`browser` + `assistantMode: true`) AND Cloud/Mobile interactive
+   * primary Twin sessions (`standard`, non-`autoOrigin`, non-archived, non-hidden,
+   * bound to `twinMetabotId`).
+   */
+  isTwinOwnerFrontOfficeSession(sessionId: string | null | undefined): boolean {
+    if (!sessionId || !sessionId.trim()) return false;
+    if (this.isStudioOwnerSession(sessionId)) return true;
+    const twinId = this.deps.resolveTwinMetabotId();
+    if (twinId == null) return false;
+    const session = this.deps.coworkStore().getSession(sessionId.trim()) as (CoworkSession & {
+      archivedAt?: number | null;
+      hiddenFromSessionList?: boolean;
+    }) | null;
+    if (!session) return false;
+    if (session.archivedAt || session.autoOrigin || session.hiddenFromSessionList) return false;
+    const st = session.sessionType ?? 'standard';
+    if (st !== 'standard' && st !== 'browser') return false;
+    return session.metabotId === twinId;
+  }
+
   resolveActiveStudioSessionId(twinMetabotId: number | null = this.deps.resolveTwinMetabotId()): string | null {
     if (twinMetabotId == null) return null;
     const store = this.deps.coworkStore();
@@ -476,6 +609,64 @@ export class StudioChiefOfStaffService {
     return candidates[0]?.id ?? null;
   }
 
+  /**
+   * Resolves the unified primary Twin conversation stream across Desktop Studio
+   * and Cloud/Mobile:
+   *  1. Active Desktop Studio session (`browser` + `assistantMode: true`) when present.
+   *  2. Most recently updated interactive Twin `standard` session (the same stream
+   *     `CoworkSessionController.restore(twinId)` opens on Mobile/BotWorks).
+   *  3. On headless 24/7 Cloud Tenants (`isServerMode()`), optionally creates a
+   *     clean primary Twin `standard` session if none exists yet so TwinBot can
+   *     speak first and deep-link a mobile push notification.
+   */
+  resolvePrimaryTwinOwnerSession(
+    twinMetabotId: number | null = this.deps.resolveTwinMetabotId(),
+    options?: { createIfMissingInServerMode?: boolean },
+  ): { sessionId: string | null; isPrimaryNonStudioFallback: boolean } {
+    if (twinMetabotId == null) {
+      return { sessionId: null, isPrimaryNonStudioFallback: false };
+    }
+    const studioId = this.resolveActiveStudioSessionId(twinMetabotId);
+    if (studioId) {
+      return { sessionId: studioId, isPrimaryNonStudioFallback: false };
+    }
+    const store = this.deps.coworkStore();
+    const all = store.listSessions?.() ?? [];
+    const standardCandidates = all
+      .filter((entry) =>
+        !entry.archivedAt
+        && !entry.autoOrigin
+        && !entry.hiddenFromSessionList
+        && (!entry.sessionType || entry.sessionType === 'standard')
+        && entry.metabotId === twinMetabotId,
+      )
+      .sort((a, b) => Number(b.updatedAt ?? 0) - Number(a.updatedAt ?? 0));
+    if (standardCandidates[0]?.id) {
+      return {
+        sessionId: standardCandidates[0].id,
+        isPrimaryNonStudioFallback: true,
+      };
+    }
+    if (options?.createIfMissingInServerMode && this.deps.isServerMode?.()) {
+      const workspace = this.deps.resolveTwinWorkspace(twinMetabotId);
+      const language = this.deps.getAppLanguage?.() ?? 'zh';
+      const created = store.createSession(
+        language === 'zh' ? '主对话' : 'Primary Chat',
+        workspace,
+        this.deps.getBaseSystemPrompt?.() ?? '',
+        'local',
+        [],
+        twinMetabotId,
+        'standard',
+      );
+      return {
+        sessionId: created.id,
+        isPrimaryNonStudioFallback: true,
+      };
+    }
+    return { sessionId: null, isPrimaryNonStudioFallback: false };
+  }
+
   getPresenceSnapshot(nowMs: number = this.now()): StudioTwinPresenceSnapshot {
     const twinId = this.deps.resolveTwinMetabotId();
     if (twinId == null) {
@@ -483,17 +674,30 @@ export class StudioChiefOfStaffService {
         mode: 'idle',
         reason: 'no Twin Bot configured',
         activeStudioSessionId: null,
+        primaryTwinSessionId: null,
         presentingItem: null,
+        presentingFollowUpItem: null,
         queuedCount: 0,
+        followUpQueuedCount: 0,
       };
     }
     const activeStudioSessionId = this.resolveActiveStudioSessionId(twinId);
+    const primaryTwinSessionId = activeStudioSessionId ?? this.resolvePrimaryTwinOwnerSession(twinId).sessionId;
+    const trackedSessionId = activeStudioSessionId ?? primaryTwinSessionId;
+
     const openItems = this.deps.decisionQueueStore().listOpen(twinId);
     const presentingItem = openItems.find((item) => item.status === 'presenting') ?? null;
     const queuedCount = openItems.filter((item) => item.status === 'queued').length;
-    const briefingTurnRunning = this.presenceTracker.isBriefingTurnRunning(activeStudioSessionId);
-    const studioTurnRunning = activeStudioSessionId
-      ? this.deps.coworkRunner().isSessionActive(activeStudioSessionId) && !briefingTurnRunning
+
+    const openFollowUps = this.deps.followUpStore?.().listOpen(twinId) ?? [];
+    const presentingFollowUpItem = openFollowUps.find((item) => item.status === 'presenting') ?? null;
+    const followUpQueuedCount = openFollowUps.filter(
+      (item) => item.status === 'queued' && item.reportingGranularity === 'immediate',
+    ).length;
+
+    const briefingTurnRunning = this.presenceTracker.isBriefingTurnRunning(trackedSessionId);
+    const studioTurnRunning = trackedSessionId
+      ? this.deps.coworkRunner().isSessionActive(trackedSessionId) && !briefingTurnRunning
       : false;
     const hasDefiningDraftInStudio = activeStudioSessionId
       ? Boolean(this.deps.hasDefiningDraftForSession?.(activeStudioSessionId))
@@ -503,7 +707,7 @@ export class StudioChiefOfStaffService {
       : [];
     const activeSupervision = this.getActiveSupervisionForSession(activeStudioSessionId);
     const explicitShapingHoldReason = this.presenceTracker.getActiveShapingHoldReason(
-      activeStudioSessionId,
+      trackedSessionId,
       nowMs,
     ) ?? (
       openWorkers.length > 0
@@ -513,30 +717,39 @@ export class StudioChiefOfStaffService {
           : null
     );
     const lastNonBriefingTurnEndedAtMs = this.presenceTracker.getLastNonBriefingTurnEndedAtMs(
-      activeStudioSessionId,
+      trackedSessionId,
     );
 
     return deriveStudioPresenceState({
       activeStudioSessionId,
+      primaryTwinSessionId,
       studioTurnRunning,
       briefingTurnRunning,
       hasDefiningDraftInStudio,
       explicitShapingHoldReason,
       lastNonBriefingTurnEndedAtMs,
       presentingItem,
+      presentingFollowUpItem,
       queuedCount,
+      followUpQueuedCount,
       nowMs,
       idleDebounceMs: this.deps.idleDebounceMs,
     });
   }
 
   buildVolatileTurnContext(sessionId: string): string {
-    if (!this.isStudioOwnerSession(sessionId)) return '';
+    const isStudio = this.isStudioOwnerSession(sessionId);
+    if (!isStudio && !this.isTwinOwnerFrontOfficeSession(sessionId)) return '';
     const twinId = this.deps.resolveTwinMetabotId();
     if (twinId == null) return '';
+    const blocks: string[] = [];
+
+    if (!isStudio) {
+      return this.appendFollowUpVolatileBlocks(twinId, blocks).join('\n\n');
+    }
+
     const openItems = this.deps.decisionQueueStore().listOpen(twinId);
     const openWorkers = this.deps.listOpenSiblingDelegations?.(sessionId) ?? [];
-    const blocks: string[] = [];
 
     let continuity: StudioContinuitySnapshot | null = null;
     try {
@@ -631,7 +844,40 @@ export class StudioChiefOfStaffService {
       );
     }
 
-    return blocks.join('\n\n');
+    return this.appendFollowUpVolatileBlocks(twinId, blocks).join('\n\n');
+  }
+
+  private appendFollowUpVolatileBlocks(twinId: number, blocks: string[]): string[] {
+    if (!this.deps.followUpStore) return blocks;
+    const openFollowUps = this.deps.followUpStore().listOpen(twinId);
+    const presentingFollowUp = openFollowUps.find((item) => item.status === 'presenting') ?? null;
+    const queuedFollowUpCount = openFollowUps.filter(
+      (item) => item.status === 'queued' && item.reportingGranularity === 'immediate',
+    ).length;
+
+    if (presentingFollowUp) {
+      blocks.push([
+        '<active_followup_briefing>',
+        `You are currently awaiting the owner's natural chat reply on Proactive Follow-Up Event "${presentingFollowUp.id}" (tier=${presentingFollowUp.tier}, domain=${presentingFollowUp.sourceDomain}): "${presentingFollowUp.title}".`,
+        `Summary: ${presentingFollowUp.summary}`,
+        ...(presentingFollowUp.question ? [`Question asked: ${presentingFollowUp.question}`] : []),
+        ...(presentingFollowUp.sourceSessionId ? [`Linked A2A session: IDBots://${presentingFollowUp.sourceSessionId}`] : []),
+        ...(presentingFollowUp.workerSessionId ? [`Linked Worker session: IDBots://${presentingFollowUp.workerSessionId}`] : []),
+        `Queued follow-ups waiting behind this one: ${queuedFollowUpCount}`,
+        'Routing rules for THIS owner message (NEVER call `ask_user_question`):',
+        `- If the owner is answering, ruling on, approving, or declining "${presentingFollowUp.title}":`,
+        `  1. When promoting to a multi-step Managed Task (owner agreed to take on a \`task_proposal\` or multi-step effort): call \`followup_promote_to_task({ followUpId: "${presentingFollowUp.id}", ... })\` (pass \`peerReplyGuidance\` if an A2A session is linked so the remote peer receives a natural acknowledgement too).`,
+        `  2. When steering/replying to the linked A2A conversation with the owner's ruling (without creating a heavy Managed Task): call \`followup_reply_a2a({ followUpId: "${presentingFollowUp.id}", guidance: "...", resolutionNote: "..." })\` — and if a waiting Worker session (\`IDBots://${presentingFollowUp.workerSessionId ?? '...'}\`) also needs authorization to execute the approved action, send that authorization via \`local_worker_delegate\` or \`idbots_session_insert_user_message\`.`,
+        `  3. Otherwise (pure local decision/acknowledgement with no A2A reply needed): call \`followup_resolve({ followUpId: "${presentingFollowUp.id}", resolutionNote: "..." })\`.`,
+        `- ONLY call \`followup_defer({ followUpId: "${presentingFollowUp.id}" })\` when the owner completely ignores "${presentingFollowUp.title}" to start an UNRELATED topic!`,
+        '</active_followup_briefing>',
+      ].join('\n'));
+    } else if (queuedFollowUpCount > 0) {
+      blocks.push(
+        `<followup_queue_awareness>There are currently ${queuedFollowUpCount} lightweight Proactive Follow-Up Event(s) queued in \`followup_list\` (from Twin/Worker A2A chats or Worker escalations). Hold them quietly while handling the owner's active topic — the idle heartbeat will weave them into conversation naturally once this topic settles, UNLESS the owner asks for new messages/updates right now.</followup_queue_awareness>`,
+      );
+    }
+    return blocks;
   }
 
   private rememberSupervisionLink(supervisionSessionId: string, originStudioSessionId: string): void {
@@ -973,6 +1219,7 @@ export class StudioChiefOfStaffService {
 
   async runHeartbeatTick(nowMs: number = this.now()): Promise<{
     presentedItemId: string | null;
+    presentedFollowUpId?: string | null;
     reassuranceMessageId?: string | null;
     taskWatermarkChanged?: boolean;
     presence: StudioTwinPresenceSnapshot;
@@ -1004,12 +1251,18 @@ export class StudioChiefOfStaffService {
       };
     }
     const twinId = this.deps.resolveTwinMetabotId();
-    if (
-      twinId == null
-      || snapshot.mode !== 'idle'
-      || snapshot.queuedCount === 0
-      || !snapshot.activeStudioSessionId
-    ) {
+    if (twinId == null || snapshot.mode !== 'idle') {
+      return {
+        presentedItemId: null,
+        ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
+        presence: snapshot,
+      };
+    }
+
+    if (snapshot.queuedCount === 0 || !snapshot.activeStudioSessionId) {
+      if ((snapshot.followUpQueuedCount ?? 0) > 0 && this.deps.followUpStore) {
+        return this.deliverNextProactiveFollowUp(twinId, nowMs, taskWatermarkChanged);
+      }
       return {
         presentedItemId: null,
         ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
@@ -1150,6 +1403,162 @@ export class StudioChiefOfStaffService {
       this.presenceTracker.setBriefingTurnRunning(studioSessionId, false);
       this.heartbeatInFlight = false;
       this.deps.onStateChanged?.('briefing_settled');
+    }
+  }
+
+  private async deliverNextProactiveFollowUp(
+    twinId: number,
+    nowMs: number,
+    taskWatermarkChanged: boolean,
+  ): Promise<{
+    presentedItemId: string | null;
+    presentedFollowUpId?: string | null;
+    taskWatermarkChanged?: boolean;
+    presence: StudioTwinPresenceSnapshot;
+  }> {
+    const followUpStore = this.deps.followUpStore?.();
+    if (!followUpStore) {
+      return {
+        presentedItemId: null,
+        ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
+        presence: this.getPresenceSnapshot(nowMs),
+      };
+    }
+
+    const target = this.resolvePrimaryTwinOwnerSession(twinId, {
+      createIfMissingInServerMode: true,
+    });
+    if (!target.sessionId) {
+      return {
+        presentedItemId: null,
+        ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
+        presence: this.getPresenceSnapshot(nowMs),
+      };
+    }
+    const targetSessionId = target.sessionId;
+
+    if (this.deps.coworkRunner().isSessionActive(targetSessionId)) {
+      return {
+        presentedItemId: null,
+        ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
+        presence: this.getPresenceSnapshot(nowMs),
+      };
+    }
+
+    const claimed = followUpStore.claimNextForPresentation(
+      twinId,
+      targetSessionId,
+      new Date(nowMs).toISOString(),
+    );
+    if (!claimed) {
+      return {
+        presentedItemId: null,
+        ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
+        presence: this.getPresenceSnapshot(nowMs),
+      };
+    }
+
+    this.heartbeatInFlight = true;
+    this.presenceTracker.setBriefingTurnRunning(targetSessionId, true);
+    this.deps.onStateChanged?.('followup_briefing_started');
+
+    try {
+      const turnStartedMs = this.now();
+      const remainingQueued = followUpStore
+        .listOpen(twinId)
+        .filter((item) => item.status === 'queued' && item.reportingGranularity === 'immediate').length;
+      const language = this.deps.getAppLanguage?.() ?? 'zh';
+      const briefingPrompt = buildProactiveFollowUpBriefingPrompt(claimed, remainingQueued, language);
+
+      const store = this.deps.coworkStore();
+      store.updateSession(targetSessionId, { status: 'running' });
+      const triggerMsg = store.addMessage(targetSessionId, {
+        type: 'user',
+        content: briefingPrompt,
+        metadata: {
+          isDelegationInternal: true,
+          origin: 'studio_briefing',
+          followUpId: claimed.id,
+        } as CoworkMessage['metadata'],
+      });
+      this.deps.emitSessionMessage?.(targetSessionId, triggerMsg);
+
+      await this.deps.coworkRunner().startSession(targetSessionId, briefingPrompt, {
+        skipInitialUserMessage: true,
+        acknowledgeOwner: false,
+      });
+
+      const postTurnSession = store.getSession(targetSessionId) as (CoworkSession & {
+        lastTurnFailedAtMs?: number | null;
+        lastTurnCompletedAtMs?: number | null;
+      }) | null;
+      let postTurnItem = followUpStore.getById(claimed.id);
+      if (
+        postTurnItem?.status === 'presenting'
+        && typeof postTurnSession?.lastTurnFailedAtMs === 'number'
+        && postTurnSession.lastTurnFailedAtMs >= turnStartedMs
+        && (postTurnSession.lastTurnCompletedAtMs ?? 0) < postTurnSession.lastTurnFailedAtMs
+      ) {
+        this.emitLog(
+          `[StudioChiefOfStaff] Proactive follow-up briefing turn failed (${claimed.id}); deferring back to queue`,
+        );
+        followUpStore.deferPresenting(claimed.id);
+        this.presenceTracker.setBriefingTurnRunning(targetSessionId, false);
+        return {
+          presentedItemId: null,
+          presentedFollowUpId: null,
+          ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
+          presence: this.getPresenceSnapshot(this.now()),
+        };
+      }
+
+      // Zero-turn FYI (`inform`, including both `handled` and `declined`) must
+      // release the presentation lock immediately once spoken so subsequent
+      // queued items are never blocked awaiting a redundant owner reply!
+      let wasSpokenToOwner = false;
+      if (postTurnItem?.status === 'presenting' && postTurnItem.tier === 'inform') {
+        postTurnItem = followUpStore.markDelivered(
+          claimed.id,
+          'delivered naturally in Twin chat stream',
+          new Date(this.now()).toISOString(),
+        );
+        wasSpokenToOwner = true;
+      } else if (postTurnItem?.status === 'presenting') {
+        wasSpokenToOwner = true;
+      }
+
+      if (wasSpokenToOwner && postTurnItem) {
+        this.deps.onProactiveFollowUpDeliveredToSession?.({
+          item: postTurnItem,
+          sessionId: targetSessionId,
+          isPrimaryNonStudioFallback: target.isPrimaryNonStudioFallback,
+        });
+      }
+
+      this.presenceTracker.setBriefingTurnRunning(targetSessionId, false);
+      return {
+        presentedItemId: wasSpokenToOwner ? claimed.id : null,
+        presentedFollowUpId: wasSpokenToOwner ? claimed.id : null,
+        ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
+        presence: this.getPresenceSnapshot(this.now()),
+      };
+    } catch (error) {
+      this.emitLog(
+        `[StudioChiefOfStaff] Proactive follow-up briefing turn threw (${claimed.id}); deferring back to queue: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+      followUpStore.deferPresenting(claimed.id);
+      this.presenceTracker.setBriefingTurnRunning(targetSessionId, false);
+      return {
+        presentedItemId: null,
+        presentedFollowUpId: null,
+        ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
+        presence: this.getPresenceSnapshot(this.now()),
+      };
+    } finally {
+      this.presenceTracker.setBriefingTurnRunning(targetSessionId, false);
+      this.heartbeatInFlight = false;
+      this.deps.onStateChanged?.('followup_briefing_settled');
     }
   }
 

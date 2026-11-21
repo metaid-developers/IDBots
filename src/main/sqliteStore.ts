@@ -27,6 +27,7 @@ import { ensureChainContentHistorySchema } from './chainContentHistoryStore';
 import { ensureBotWalletTransferSchema } from './services/botWalletTransferStore';
 import { ensureNftSwapClientOrderSchema } from './services/swapOrderTrackerService';
 import { ensureMeNftSellerFulfillmentsSchema } from './services/sellerAutoFulfillDaemon';
+import { ensureProactiveFollowUpSchema } from './proactiveFollowUpStore';
 
 type ChangePayload<T = unknown> = {
   key: string;
@@ -3111,6 +3112,9 @@ export class SqliteStore {
     // WS-D seller auto-fulfill ledger (me_nft_seller_fulfillments): crash-safe
     // idempotency for ME points escrow auto-delivery.
     ensureMeNftSellerFulfillmentsSchema(this.db);
+    // Proactive Follow-Up Events (proactive_follow_ups + settle points):
+    // lightweight world/A2A awareness, 1-turn owner rulings, and task proposals.
+    ensureProactiveFollowUpSchema(this.db);
 
     this.save();
   }

@@ -168,6 +168,20 @@ export interface TwinOrchestrationServiceDeps {
     notifySummaryText: string;
   }) => boolean;
   /**
+   * World-perception intercept for Worker delegations spawned from an A2A
+   * conversation (`task.sourceSessionId` is an `'a2a'` session). Prevents the
+   * `WRITE_NOT_ALLOWED_FOR_A2A` cross-session black hole and routes Worker
+   * findings/owner-ruling requests into the Twin Follow-Up pipeline.
+   */
+  onA2AWorkerTerminalState?: (event: {
+    task: OrchestrationTask;
+    attempt: OrchestrationAttempt;
+    workerName: string;
+    outcome: 'completed' | 'failed';
+    detail?: string | null;
+    notifySummaryText: string;
+  }) => boolean;
+  /**
    * Round-4 r6: secondary, fast-path terminal-notification marker (kv key
    * `orch_notify:<taskId>:<attemptId>:<status>`). The durable arbiter is the
    * `orchestration_notifications` row claimed by
@@ -359,6 +373,18 @@ export class TwinOrchestrationService {
       })) {
         this.deps.kv?.set(guardKey, '1');
         console.log(`[TwinOrchestration] Studio back-office supervision notified (${task.id} → ${outcome})`);
+        return;
+      }
+      if (this.deps.onA2AWorkerTerminalState?.({
+        task,
+        attempt,
+        workerName,
+        outcome,
+        detail,
+        notifySummaryText: text,
+      })) {
+        this.deps.kv?.set(guardKey, '1');
+        console.log(`[TwinOrchestration] A2A world-perception settlement captured (${task.id} → ${outcome})`);
         return;
       }
       const result = this.insertCrossSession({

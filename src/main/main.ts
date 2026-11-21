@@ -144,6 +144,8 @@ import { OpenTeamMembershipStore } from './openTeamMembershipStore';
 import { DialogueCognitionStore } from './dialogueCognitionStore';
 import { OrchestrationStore } from './orchestrationStore';
 import { StudioDecisionQueueStore } from './studioDecisionQueueStore';
+import { ProactiveFollowUpStore } from './proactiveFollowUpStore';
+import { ProactiveWorldPerceptionService } from './services/proactiveWorldPerceptionService';
 import { TwinTodoStore } from './twinTodoStore';
 import { inferProjectKeyFromWorkspace } from './libs/twinTodoAgentTools';
 import {
@@ -5224,6 +5226,7 @@ const startStartupMessageTier = (): void => {
       };
     })(),
     getSellerAutoFulfillDaemon(),
+    (a2aEvent) => getProactiveWorldPerceptionService().observeA2ATurn(a2aEvent).then(() => undefined),
   );
   getSwapOrderTrackerService().startPolling();
   getSellerAutoFulfillDaemon().startPolling();
@@ -8502,6 +8505,180 @@ const getCoworkRunner = () => {
         },
         store: () => getTwinTodoStore(),
       },
+      onWorkerCrossSessionToA2AEscalation: (escalation) =>
+        getProactiveWorldPerceptionService().onDirectWorkerReportToA2ASession(escalation),
+      proactiveFollowUpTools: {
+        isTwinSession: (sid) => {
+          const metabotId = getCoworkStore().getMetabotIdForSession(sid);
+          if (metabotId == null) return false;
+          const bot = getMetabotStore().getMetabotById(metabotId);
+          return Boolean(bot && bot.enabled && bot.metabot_type === 'twin');
+        },
+        listOpenFollowUps: (_sid, options) => {
+          const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+          if (!twin) return { open: [], recentClosed: [] };
+          const followStore = getProactiveFollowUpStore();
+          return {
+            open: followStore.listOpen(twin.id),
+            recentClosed: options?.includeRecentClosed
+              ? followStore.listRecentlyDeliveredOrResolved(twin.id)
+              : [],
+          };
+        },
+        enqueueFollowUp: (_sid, input) => {
+          const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+          if (!twin) return { ok: false, error: 'TWIN_NOT_FOUND' };
+          const res = getProactiveFollowUpStore().enqueue({
+            ...input,
+            twinMetabotId: twin.id,
+          });
+          return { ok: true, ...res };
+        },
+        resolveFollowUp: (_sid, followUpId, resolutionNote) => {
+          const resolved = getProactiveFollowUpStore().resolve(followUpId, resolutionNote);
+          if (!resolved) return { ok: false, error: 'FOLLOW_UP_NOT_FOUND' };
+          return { ok: true, item: resolved };
+        },
+        deferFollowUp: (_sid, followUpId) => {
+          const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+          if (!twin) return { ok: false, error: 'TWIN_NOT_FOUND' };
+          const deferred = getProactiveFollowUpStore().deferPresenting(followUpId || twin.id);
+          if (!deferred) return { ok: false, error: 'NO_PRESENTING_FOLLOW_UP' };
+          return { ok: true, item: deferred };
+        },
+        replyA2A: async (_sid, input) => {
+          const followStore = getProactiveFollowUpStore();
+          const existing = input.followUpId ? followStore.getById(input.followUpId) : null;
+          const targetA2ASessionId = (input.a2aSessionId || existing?.sourceSessionId || '').trim();
+          if (!targetA2ASessionId) {
+            return { ok: false, error: 'A2A_SESSION_ID_REQUIRED' };
+          }
+          const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+          if (twin) {
+            followStore.recordSettlePoint({
+              twinMetabotId: twin.id,
+              canonicalKey: ProactiveWorldPerceptionService.buildA2ACanonicalKey(targetA2ASessionId),
+              settledMarker: existing?.sourceMarker ?? null,
+              settleWindowMs: 45_000,
+              reason: 'owner_a2a_reply',
+            });
+          }
+          try {
+            const dispatched = await dispatchA2AGuidanceInMain({
+              sessionId: targetA2ASessionId,
+              guidance: input.guidance,
+            });
+            let resolvedFollowUpId: string | null = null;
+            if (existing) {
+              const resolved = followStore.resolve(
+                existing.id,
+                input.resolutionNote?.trim() || `replied to A2A (${dispatched.mode}): ${input.guidance.slice(0, 120)}`,
+              );
+              resolvedFollowUpId = resolved?.id ?? null;
+            }
+            return {
+              ok: true,
+              a2aSessionId: targetA2ASessionId,
+              mode: dispatched.mode,
+              messageId: dispatched.messageId,
+              resolvedFollowUpId,
+            };
+          } catch (error) {
+            return {
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        },
+        promoteFollowUpToTask: async (sid, input) => {
+          const followStore = getProactiveFollowUpStore();
+          const existing = followStore.getById(input.followUpId);
+          if (!existing) {
+            return { ok: false, error: 'FOLLOW_UP_NOT_FOUND' };
+          }
+          const ltStore = getLongTermTaskStore();
+          const taskTitle = (input.title?.trim() || existing.title).slice(0, 140);
+          const taskGoal = [
+            input.goal?.trim() || existing.summary,
+            existing.sourceSessionId ? `Origin A2A session: IDBots://${existing.sourceSessionId}` : '',
+            existing.workerSessionId ? `Worker session: IDBots://${existing.workerSessionId}` : '',
+          ].filter(Boolean).join('\n');
+          const defaultAssignee = input.assigneeMetabotId ?? existing.localMetabotId ?? null;
+          const originChannel = getStudioChiefOfStaffService().isStudioOwnerSession(sid)
+            ? 'studio'
+            : isServerMode()
+              ? 'mobile'
+              : 'botworks';
+          const created = ltStore.createUnifiedTask(
+            {
+              title: taskTitle,
+              goal: taskGoal,
+              acceptanceCriteria: input.acceptanceCriteria,
+              subtasks: input.subtasks && input.subtasks.length > 0
+                ? input.subtasks
+                : [
+                    {
+                      title: taskTitle,
+                      description: taskGoal,
+                      acceptanceCriteria: input.acceptanceCriteria ?? [],
+                      preferredChannel: 'delegate_bot',
+                      assigneeMetabotId: defaultAssignee,
+                    },
+                  ],
+              activateImmediately: input.activateImmediately !== false,
+              originSessionId: sid,
+              originChannel,
+            },
+            'twin',
+          );
+          if (!created.ok || !created.value) {
+            return { ok: false, error: created.error ?? 'CREATE_TASK_FAILED' };
+          }
+          const createdTask = created.value;
+          if (existing.sourceSessionId) {
+            ltStore.linkSession(createdTask.id, existing.sourceSessionId, {
+              role: 'channel_bridge',
+              channel: 'a2a',
+            });
+          }
+          if (existing.workerSessionId) {
+            ltStore.linkSession(createdTask.id, existing.workerSessionId, {
+              role: 'worker_exec',
+              subtaskId: createdTask.subtasks[0]?.id ?? null,
+            });
+          }
+          followStore.markPromotedToTask(
+            existing.id,
+            createdTask.id,
+            input.resolutionNote?.trim() || `promoted to task ${createdTask.id}`,
+          );
+          if (getStudioChiefOfStaffService().isStudioOwnerSession(sid)) {
+            getStudioChiefOfStaffService().focusTask(sid, createdTask.id);
+          }
+          broadcastLongTermTaskUpdate([createdTask.id], 'followup_promoted_to_task');
+
+          let peerGuidanceMode: 'queued' | 'restart_started' | null = null;
+          if (input.peerReplyGuidance?.trim() && existing.sourceSessionId) {
+            try {
+              const guided = await dispatchA2AGuidanceInMain({
+                sessionId: existing.sourceSessionId,
+                guidance: input.peerReplyGuidance,
+              });
+              peerGuidanceMode = guided.mode;
+            } catch (err) {
+              console.warn('[ProactiveFollowUp] Optional peerReplyGuidance on task promotion failed:', err);
+            }
+          }
+          return {
+            ok: true,
+            taskId: createdTask.id,
+            taskTitle: createdTask.title,
+            stage: createdTask.stage,
+            followUpId: existing.id,
+            peerGuidanceMode,
+          };
+        },
+      },
       getStudioVolatileContextPrompt: (sid) =>
         getStudioChiefOfStaffService().buildVolatileTurnContext(sid),
       getActiveTasksRadarPrompt: (sid) => {
@@ -9797,6 +9974,8 @@ const getCoworkRunner = () => {
       if (getStudioChiefOfStaffService().isStudioOwnerSession(sessionId)) {
         getStudioChiefOfStaffService().presenceTracker.recordNonBriefingTurnEnd(sessionId);
         broadcastLongTermTaskUpdate([], 'studio_turn_completed');
+      } else if (getStudioChiefOfStaffService().isTwinOwnerFrontOfficeSession(sessionId)) {
+        getStudioChiefOfStaffService().presenceTracker.recordNonBriefingTurnEnd(sessionId);
       } else if (getStudioChiefOfStaffService().getOriginStudioSessionForSupervision(sessionId)) {
         broadcastLongTermTaskUpdate([], 'studio_supervision_turn_completed');
       }
@@ -11326,6 +11505,8 @@ const broadcastLongTermTaskUpdate = (taskIds: string[], reason: string): void =>
 };
 
 let studioDecisionQueueStore: StudioDecisionQueueStore | null = null;
+let proactiveFollowUpStore: ProactiveFollowUpStore | null = null;
+let proactiveWorldPerceptionService: ProactiveWorldPerceptionService | null = null;
 let twinTodoStore: TwinTodoStore | null = null;
 let preferredStudioOpenSessionId: string | null = null;
 const lastStudioProjectionAtMs = new Map<string, number>();
@@ -11352,12 +11533,350 @@ const getStudioDecisionQueueStore = () => {
   }
   return studioDecisionQueueStore;
 };
+const getProactiveFollowUpStore = () => {
+  if (!proactiveFollowUpStore) {
+    const sqliteStore = getStore();
+    proactiveFollowUpStore = new ProactiveFollowUpStore(
+      sqliteStore.getDatabase(),
+      sqliteStore.getSaveFunction(),
+    );
+    proactiveFollowUpStore.onChange((event) => {
+      broadcastLongTermTaskUpdate([], `proactive_followup_${event.reason}`);
+    });
+  }
+  return proactiveFollowUpStore;
+};
+
+const dispatchA2AGuidanceInMain = async (rawInput: {
+  sessionId: string;
+  guidance: string;
+}): Promise<{ mode: 'queued' | 'restart_started'; messageId?: string }> => {
+  const sessionId = toSafeString(rawInput.sessionId).trim();
+  const guidance = normalizeA2AGuidanceText(rawInput.guidance);
+  if (!sessionId) throw new Error('A2A session id is required');
+
+  const coworkStoreInst = getCoworkStore();
+  const session = coworkStoreInst.getSession(sessionId);
+  if (!session) throw new Error('A2A session not found');
+  if (session.sessionType !== 'a2a') throw new Error('Only A2A sessions support guided dialogue');
+  if (typeof session.metabotId !== 'number') throw new Error('A2A session has no local MetaBot id');
+
+  const sourceContext = coworkStoreInst.getConversationSourceContextBySession(sessionId);
+  if (sourceContext.sourceChannel !== 'metaweb_private' || !sourceContext.externalConversationId) {
+    throw new Error('Only MetaWeb private-chat A2A sessions support guided dialogue');
+  }
+  const currentMapping = sourceContext.sourceChannel === 'metaweb_private' && sourceContext.externalConversationId
+    ? coworkStoreInst.getConversationMapping(
+        'metaweb_private',
+        sourceContext.externalConversationId,
+        session.metabotId,
+      )
+    : null;
+  const currentMetadata = parseJsonRecord(currentMapping?.metadataJson);
+
+  if (detectMutualFriendInviteIntent(guidance)) {
+    const guidanceMetabot = getMetabotStore().getMetabotById(session.metabotId);
+    const guidancePeerGlobalMetaId = toSafeString(
+      session.peerGlobalMetaId || currentMetadata.peerGlobalMetaId,
+    ).trim();
+    triggerFriendActionFromGuidance({
+      coworkStore: coworkStoreInst,
+      sessionId,
+      externalConversationId: sourceContext.externalConversationId,
+      metabot: guidanceMetabot
+        ? {
+            id: guidanceMetabot.id,
+            name: guidanceMetabot.name,
+            globalmetaid: guidanceMetabot.globalmetaid ?? '',
+          }
+        : { id: session.metabotId, name: session.metabotName ?? '', globalmetaid: '' },
+      peerGlobalMetaId: guidancePeerGlobalMetaId,
+      peerName: session.peerName ?? null,
+      action: 'invite',
+      createPin: (metabotStoreArg, metabot_id, payload, options) => createPin(
+        metabotStoreArg,
+        metabot_id,
+        payload,
+        { ...options, feeRate: getGlobalFeeRate('mvc') },
+      ),
+      metabotStore: getMetabotStore(),
+      requestFriendActionApproval: requestDaemonFriendActionApproval,
+      resolveFriendPairState: resolveDaemonFriendPairState,
+      emitLog: (msg) => console.log(msg),
+      emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+    });
+  }
+
+  const shouldRestart = shouldRestartA2APrivateChatForGuidance({
+    session,
+    sourceChannel: sourceContext.sourceChannel,
+    mappingMetadata: currentMetadata,
+  });
+  if (!shouldRestart) {
+    a2aGuidanceQueue.queue({ sessionId, metabotId: session.metabotId, guidance });
+    const interruptedPrivateChatTurn = interruptPrivateChatA2AGuidanceTurnBeforeOutput(sessionId);
+    const interruptedRunnerTurn = getCoworkRunner().interruptActiveTurnBeforeAssistantOutput(sessionId);
+    if (interruptedPrivateChatTurn || interruptedRunnerTurn) {
+      console.log(
+        `[A2A Guidance] Queued guidance for ${sessionId} and interrupted current silent local turn.`,
+      );
+    }
+    return { mode: 'queued' as const };
+  }
+  if (!currentMapping) throw new Error('Private chat conversation mapping not found');
+
+  const metabotStoreInst = getMetabotStore();
+  const metabot = metabotStoreInst.getMetabotById(session.metabotId);
+  const wallet = metabotStoreInst.getMetabotWalletByMetabotId(session.metabotId);
+  const peerGlobalMetaId = toSafeString(
+    session.peerGlobalMetaId || currentMetadata.peerGlobalMetaId,
+  ).trim();
+  const localGlobalMetaId = toSafeString(metabot?.globalmetaid).trim();
+  if (!metabot || !wallet?.mnemonic?.trim() || !localGlobalMetaId) {
+    throw new Error('Local MetaBot wallet is not ready for encrypted A2A guidance restart');
+  }
+  if (!peerGlobalMetaId) throw new Error('A2A peer GlobalMetaID is missing');
+
+  const db = getStore().getDatabase();
+  const latestPeerKey = db.exec(
+    `SELECT from_chat_pubkey, reply_pin
+     FROM private_chat_messages
+     WHERE (from_global_metaid = ? OR from_metaid = ?)
+       AND (to_global_metaid = ? OR to_metaid = ?)
+       AND from_chat_pubkey IS NOT NULL
+       AND TRIM(from_chat_pubkey) != ''
+     ORDER BY id DESC
+     LIMIT 1`,
+    [peerGlobalMetaId, peerGlobalMetaId, localGlobalMetaId, localGlobalMetaId],
+  );
+  const row = latestPeerKey[0]?.values?.[0] ?? [];
+  let chatPubkey = toSafeString(row[0]).trim();
+  const replyPin = toSafeString(row[1]).trim();
+  if (!chatPubkey) {
+    chatPubkey = await resolveChatPubkeyForProvider(peerGlobalMetaId) ?? '';
+  }
+  if (!chatPubkey) throw new Error('Peer chat public key is unavailable');
+
+  const prompts = buildA2AGuidanceRestartPrompt({
+    localName: metabot.name || session.metabotName || 'Local Bot',
+    peerName: session.peerName || 'Remote Bot',
+    guidance,
+    messages: session.messages,
+  });
+  try {
+    const replyText = await generateA2AGuidanceRestartMessage({
+      systemPrompt: prompts.systemPrompt,
+      userPrompt: prompts.userPrompt,
+      llmId: metabot.llm_id ?? undefined,
+      performChat: async (systemPrompt, userMessage, llmId, options) => {
+        const brain = metabotBrainOptions(metabot);
+        return performChatCompletionForOrchestrator(systemPrompt, userMessage, llmId, {
+          ...options,
+          llmProvider: brain.llmProvider ?? undefined,
+          fallbackLlmId: brain.fallbackLlmId,
+          fallbackLlmProvider: brain.fallbackLlmProvider ?? undefined,
+          effort: brain.effort ?? undefined,
+          fallbackEffort: brain.fallbackEffort ?? undefined,
+          throwOnEmptyContent: true,
+        });
+      },
+    });
+    if (!replyText) throw new Error('Local MetaBot did not generate a restart message');
+
+    const restartDelivery = composeA2AGuidanceRestartDelivery(replyText);
+
+    const sent = await sendEncryptedSimplemsg({
+      metabotId: session.metabotId,
+      wallet,
+      peerGlobalMetaId,
+      peerChatPubkey: chatPubkey,
+      plaintext: restartDelivery.text,
+      replyPin,
+      createPin: async (metabotId, payload) => createPin(metabotStoreInst, metabotId, payload, { feeRate: getGlobalFeeRate('mvc') }),
+    });
+
+    if (restartDelivery.friendAction) {
+      triggerFriendActionFromGuidance({
+        coworkStore: coworkStoreInst,
+        sessionId,
+        externalConversationId: sourceContext.externalConversationId,
+        metabot: {
+          id: metabot.id,
+          name: metabot.name,
+          globalmetaid: metabot.globalmetaid ?? '',
+        },
+        peerGlobalMetaId,
+        peerName: session.peerName ?? null,
+        action: restartDelivery.friendAction,
+        createPin: (metabotStoreArg, metabot_id, payload, options) => createPin(
+          metabotStoreArg,
+          metabot_id,
+          payload,
+          { ...options, feeRate: getGlobalFeeRate('mvc') },
+        ),
+        metabotStore: metabotStoreInst,
+        requestFriendActionApproval: requestDaemonFriendActionApproval,
+        resolveFriendPairState: resolveDaemonFriendPairState,
+        emitLog: (msg) => console.log(msg),
+        emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+      });
+    }
+
+    coworkStoreInst.updateConversationMappingMetadata(
+      'metaweb_private',
+      sourceContext.externalConversationId,
+      session.metabotId,
+      {
+        ...currentMetadata,
+        byeSent: false,
+        endedByHuman: false,
+        endedByAutoPolicy: false,
+        restartedAt: Date.now(),
+        peerGlobalMetaId,
+      },
+    );
+
+    const message = coworkStoreInst.addMessage(sessionId, {
+      type: 'assistant',
+      content: replyText,
+      metadata: {
+        sourceChannel: 'metaweb_private',
+        externalConversationId: sourceContext.externalConversationId,
+        direction: 'outgoing',
+        a2aConversationRestarted: true,
+        suppressRunningStatus: true,
+        ...buildA2AChainMetadata({
+          txids: sent.txids,
+          pinId: sent.pinId,
+        }),
+      },
+    });
+    emitCoworkStreamMessage(sessionId, message);
+    coworkStoreInst.updateSession(sessionId, { status: 'completed' });
+    a2aGuidanceQueue.clear(sessionId, session.metabotId);
+    coworkLog('INFO', 'A2A Guidance', 'Guided restart delivered', {
+      sessionId,
+      metabotId: session.metabotId,
+      messageId: message.id,
+      pinId: sent.pinId,
+    });
+
+    return { mode: 'restart_started' as const, messageId: message.id };
+  } catch (restartError) {
+    try {
+      a2aGuidanceQueue.queue({ sessionId, metabotId: session.metabotId, guidance });
+    } catch (queueError) {
+      console.warn(
+        `[A2A Guidance] Failed to preserve guidance after restart failure: ${
+          queueError instanceof Error ? queueError.message : String(queueError)
+        }`,
+      );
+    }
+    const restartFailureReason = restartError instanceof Error
+      ? restartError.message
+      : String(restartError);
+    coworkLog('ERROR', 'A2A Guidance', 'Guided restart failed; guidance preserved for the next local turn', {
+      sessionId,
+      metabotId: session.metabotId,
+      error: restartFailureReason,
+    });
+    try {
+      const guidanceFailureNotice = tApp(
+        `引导对话失败：${restartFailureReason}。指引已保留，下次本机回合（例如对方再来消息或再次点引导对话）会继续带上。`,
+        `Guided dialogue failed: ${restartFailureReason}. The guidance was preserved and will ride the next local turn (for example the next peer message, or another guided attempt).`,
+      );
+      const message = coworkStoreInst.addMessage(sessionId, {
+        type: 'system',
+        content: guidanceFailureNotice,
+        metadata: {
+          error: guidanceFailureNotice,
+          a2aGuidanceFailed: true,
+        },
+      });
+      emitCoworkStreamMessage(sessionId, message);
+    } catch (noticeError) {
+      if (isSqliteWasmBoundsError(noticeError)) throw noticeError;
+      coworkLog('WARN', 'A2A Guidance', 'Failed to append the guided-restart failure notice to the transcript', {
+        sessionId,
+        error: noticeError instanceof Error ? noticeError.message : String(noticeError),
+      });
+    }
+    throw restartError;
+  }
+};
+
+const getProactiveWorldPerceptionService = () => {
+  if (!proactiveWorldPerceptionService) {
+    proactiveWorldPerceptionService = new ProactiveWorldPerceptionService({
+      followUpStore: () => getProactiveFollowUpStore(),
+      resolveTwinMetabotId: () => {
+        const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+        return twin?.id ?? null;
+      },
+      getSession: (sid) => getCoworkStore().getSession(sid),
+      getLatestWorkerAssistantText: (workerSid) => {
+        const session = getCoworkStore().getSession(workerSid);
+        if (!session) return null;
+        for (let i = session.messages.length - 1; i >= 0; i -= 1) {
+          const msg = session.messages[i];
+          if (msg?.type === 'assistant' && !msg.metadata?.isThinking && msg.content.trim()) {
+            return msg.content.trim();
+          }
+        }
+        return null;
+      },
+      hasActiveWorkerDelegationForSourceSession: (sourceSid) =>
+        listRawOpenStudioDelegations(sourceSid).length > 0,
+      resolveCerebellum: () => resolveCerebellumCallContext(),
+      autoSteerCleanA2AWorkerCompletion: async ({ a2aSessionId, workerName, summaryText }) => {
+        const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+        if (twin) {
+          getProactiveFollowUpStore().recordSettlePoint({
+            twinMetabotId: twin.id,
+            canonicalKey: ProactiveWorldPerceptionService.buildA2ACanonicalKey(a2aSessionId),
+            settledMarker: null,
+            settleWindowMs: 45_000,
+            reason: 'auto_steer_clean_worker_completion',
+          });
+        }
+        await dispatchA2AGuidanceInMain({
+          sessionId: a2aSessionId,
+          guidance: `内部同事 ${workerName} 已完成核查，结果如下（请结合上下文用你自己的自然语气回复对方，不要暴露内部委派格式）：${summaryText}`.slice(0, 1900),
+        });
+      },
+    });
+  }
+  return proactiveWorldPerceptionService;
+};
 
 let studioChiefOfStaffService: StudioChiefOfStaffService | null = null;
 const getStudioChiefOfStaffService = () => {
   if (!studioChiefOfStaffService) {
     studioChiefOfStaffService = new StudioChiefOfStaffService({
       decisionQueueStore: () => getStudioDecisionQueueStore(),
+      followUpStore: () => getProactiveFollowUpStore(),
+      isServerMode: () => isServerMode(),
+      onProactiveFollowUpDeliveredToSession: ({ item, sessionId, isPrimaryNonStudioFallback }) => {
+        const windowForeground = Boolean(
+          mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused(),
+        );
+        if (isServerMode() || isPrimaryNonStudioFallback || !windowForeground) {
+          try {
+            getNotificationService().recordProactiveFollowUp({
+              followUpId: item.id,
+              tier: item.tier,
+              informOutcome: item.informOutcome ?? null,
+              title: item.title,
+              body: item.summary,
+              metabotId: item.twinMetabotId,
+              sessionId,
+              language: getPersistedAppLanguage(),
+            });
+          } catch (error) {
+            console.warn('[Notification] Failed to record proactive follow-up notification:', error);
+          }
+        }
+      },
       coworkStore: () => getCoworkStore(),
       coworkRunner: () => getCoworkRunner(),
       resolveTwinMetabotId: () => {
@@ -11493,6 +12012,8 @@ const getTwinOrchestrationService = () => new TwinOrchestrationService({
   getRecentDecisionTaskForSession: (sid) => getStudioChiefOfStaffService().getRecentDecisionTask(sid),
   onStudioWorkerTerminalState: (event) =>
     getStudioChiefOfStaffService().onStudioWorkerTerminalState(event),
+  onA2AWorkerTerminalState: (event) =>
+    getProactiveWorldPerceptionService().onWorkerSettledForA2ASession(event),
   directory: {
     getSession: (id) => getCoworkStore().getSession(id),
     listMetabots: () => getMetabotStore().listMetabots(),
@@ -15536,290 +16057,11 @@ if (!gotTheLock) {
   }) => {
     return withSqliteRecovery('cowork:session:queueA2AGuidance', async () => {
       try {
-        const sessionId = toSafeString(input?.sessionId).trim();
-        const guidance = normalizeA2AGuidanceText(input?.guidance);
-        if (!sessionId) throw new Error('A2A session id is required');
-
-        const coworkStoreInst = getCoworkStore();
-        const session = coworkStoreInst.getSession(sessionId);
-        if (!session) throw new Error('A2A session not found');
-        if (session.sessionType !== 'a2a') throw new Error('Only A2A sessions support guided dialogue');
-        if (typeof session.metabotId !== 'number') throw new Error('A2A session has no local MetaBot id');
-
-        const sourceContext = coworkStoreInst.getConversationSourceContextBySession(sessionId);
-        if (sourceContext.sourceChannel !== 'metaweb_private' || !sourceContext.externalConversationId) {
-          throw new Error('Only MetaWeb private-chat A2A sessions support guided dialogue');
-        }
-        const currentMapping = sourceContext.sourceChannel === 'metaweb_private' && sourceContext.externalConversationId
-          ? coworkStoreInst.getConversationMapping(
-              'metaweb_private',
-              sourceContext.externalConversationId,
-              session.metabotId
-            )
-          : null;
-        const currentMetadata = parseJsonRecord(currentMapping?.metadataJson);
-
-        // S6 final-verification defect #4: an explicit owner mutual-friend
-        // instruction (「请完成互相关注」) must reach the S5 owner-authorization
-        // chain deterministically. Neither guidance delivery path could do it
-        // alone — the queued path only applies inside the next inbound peer
-        // message turn (in the followsMe=true endgame the peer has just
-        // followed and stays silent), and the restart path is a one-shot
-        // composer with no friend-tag protocol. Fire the card here, then let
-        // the guidance continue through its normal queued/restart delivery.
-        if (detectMutualFriendInviteIntent(guidance)) {
-          const guidanceMetabot = getMetabotStore().getMetabotById(session.metabotId);
-          const guidancePeerGlobalMetaId = toSafeString(
-            session.peerGlobalMetaId || currentMetadata.peerGlobalMetaId
-          ).trim();
-          triggerFriendActionFromGuidance({
-            coworkStore: coworkStoreInst,
-            sessionId,
-            externalConversationId: sourceContext.externalConversationId,
-            metabot: guidanceMetabot
-              ? {
-                id: guidanceMetabot.id,
-                name: guidanceMetabot.name,
-                globalmetaid: guidanceMetabot.globalmetaid ?? '',
-              }
-              : { id: session.metabotId, name: session.metabotName ?? '', globalmetaid: '' },
-            peerGlobalMetaId: guidancePeerGlobalMetaId,
-            peerName: session.peerName ?? null,
-            action: 'invite',
-            createPin: (metabotStore, metabot_id, payload, options) => createPin(
-              metabotStore,
-              metabot_id,
-              payload,
-              { ...options, feeRate: getGlobalFeeRate('mvc') }
-            ),
-            metabotStore: getMetabotStore(),
-            requestFriendActionApproval: requestDaemonFriendActionApproval,
-            resolveFriendPairState: resolveDaemonFriendPairState,
-            emitLog: (msg) => console.log(msg),
-            emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
-          });
-        }
-
-        const shouldRestart = shouldRestartA2APrivateChatForGuidance({
-          session,
-          sourceChannel: sourceContext.sourceChannel,
-          mappingMetadata: currentMetadata,
+        const dispatched = await dispatchA2AGuidanceInMain({
+          sessionId: toSafeString(input?.sessionId).trim(),
+          guidance: toSafeString(input?.guidance),
         });
-        if (!shouldRestart) {
-          a2aGuidanceQueue.queue({ sessionId, metabotId: session.metabotId, guidance });
-          const interruptedPrivateChatTurn = interruptPrivateChatA2AGuidanceTurnBeforeOutput(sessionId);
-          const interruptedRunnerTurn = getCoworkRunner().interruptActiveTurnBeforeAssistantOutput(sessionId);
-          if (interruptedPrivateChatTurn || interruptedRunnerTurn) {
-            console.log(
-              `[A2A Guidance] Queued guidance for ${sessionId} and interrupted current silent local turn.`
-            );
-          }
-          return { success: true, mode: 'queued' as const };
-        }
-        if (!currentMapping) throw new Error('Private chat conversation mapping not found');
-
-        const metabotStoreInst = getMetabotStore();
-        const metabot = metabotStoreInst.getMetabotById(session.metabotId);
-        const wallet = metabotStoreInst.getMetabotWalletByMetabotId(session.metabotId);
-        const peerGlobalMetaId = toSafeString(
-          session.peerGlobalMetaId || currentMetadata.peerGlobalMetaId
-        ).trim();
-        const localGlobalMetaId = toSafeString(metabot?.globalmetaid).trim();
-        if (!metabot || !wallet?.mnemonic?.trim() || !localGlobalMetaId) {
-          throw new Error('Local MetaBot wallet is not ready for encrypted A2A guidance restart');
-        }
-        if (!peerGlobalMetaId) throw new Error('A2A peer GlobalMetaID is missing');
-
-        const db = getStore().getDatabase();
-        const latestPeerKey = db.exec(
-          `SELECT from_chat_pubkey, reply_pin
-           FROM private_chat_messages
-           WHERE (from_global_metaid = ? OR from_metaid = ?)
-             AND (to_global_metaid = ? OR to_metaid = ?)
-             AND from_chat_pubkey IS NOT NULL
-             AND TRIM(from_chat_pubkey) != ''
-           ORDER BY id DESC
-           LIMIT 1`,
-          [peerGlobalMetaId, peerGlobalMetaId, localGlobalMetaId, localGlobalMetaId]
-        );
-        const row = latestPeerKey[0]?.values?.[0] ?? [];
-        let chatPubkey = toSafeString(row[0]).trim();
-        const replyPin = toSafeString(row[1]).trim();
-        if (!chatPubkey) {
-          chatPubkey = await resolveChatPubkeyForProvider(peerGlobalMetaId) ?? '';
-        }
-        if (!chatPubkey) throw new Error('Peer chat public key is unavailable');
-
-        const prompts = buildA2AGuidanceRestartPrompt({
-          localName: metabot.name || session.metabotName || 'Local Bot',
-          peerName: session.peerName || 'Remote Bot',
-          guidance,
-          messages: session.messages,
-        });
-        try {
-          const replyText = await generateA2AGuidanceRestartMessage({
-            systemPrompt: prompts.systemPrompt,
-            userPrompt: prompts.userPrompt,
-            llmId: metabot.llm_id ?? undefined,
-            performChat: async (systemPrompt, userMessage, llmId, options) => {
-              // throwOnEmptyContent makes an empty completion throw inside the
-              // fallback-wrapped attempt, so the configured fallback brain gets
-              // a chance (runWithLlmFallback only retries on throw); when the
-              // fallback is also empty the error reaches the outer retry loop.
-              const brain = metabotBrainOptions(metabot);
-              return performChatCompletionForOrchestrator(systemPrompt, userMessage, llmId, {
-                ...options,
-                llmProvider: brain.llmProvider ?? undefined,
-                fallbackLlmId: brain.fallbackLlmId,
-                fallbackLlmProvider: brain.fallbackLlmProvider ?? undefined,
-                effort: brain.effort ?? undefined,
-                fallbackEffort: brain.fallbackEffort ?? undefined,
-                throwOnEmptyContent: true,
-              });
-            },
-          });
-          if (!replyText) throw new Error('Local MetaBot did not generate a restart message');
-
-          // S6 defect #4 hardening: the restart prompt carries no friend-tag
-          // protocol, so a tag here means the model echoed one from the
-          // embedded recent-message context. Never deliver it verbatim —
-          // strip it and route the action through the owner-authorization
-          // flow exactly like the daemon's reply chain does.
-          const restartDelivery = composeA2AGuidanceRestartDelivery(replyText);
-
-          const sent = await sendEncryptedSimplemsg({
-            metabotId: session.metabotId,
-            wallet,
-            peerGlobalMetaId,
-            peerChatPubkey: chatPubkey,
-            plaintext: restartDelivery.text,
-            replyPin,
-            createPin: async (metabotId, payload) => createPin(metabotStoreInst, metabotId, payload, { feeRate: getGlobalFeeRate('mvc') }),
-          });
-
-          if (restartDelivery.friendAction) {
-            triggerFriendActionFromGuidance({
-              coworkStore: coworkStoreInst,
-              sessionId,
-              externalConversationId: sourceContext.externalConversationId,
-              metabot: {
-                id: metabot.id,
-                name: metabot.name,
-                globalmetaid: metabot.globalmetaid ?? '',
-              },
-              peerGlobalMetaId,
-              peerName: session.peerName ?? null,
-              action: restartDelivery.friendAction,
-              createPin: (metabotStore, metabot_id, payload, options) => createPin(
-                metabotStore,
-                metabot_id,
-                payload,
-                { ...options, feeRate: getGlobalFeeRate('mvc') }
-              ),
-              metabotStore: metabotStoreInst,
-              requestFriendActionApproval: requestDaemonFriendActionApproval,
-              resolveFriendPairState: resolveDaemonFriendPairState,
-              emitLog: (msg) => console.log(msg),
-              emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
-            });
-          }
-
-          coworkStoreInst.updateConversationMappingMetadata(
-            'metaweb_private',
-            sourceContext.externalConversationId,
-            session.metabotId,
-            {
-              ...currentMetadata,
-              byeSent: false,
-              endedByHuman: false,
-              endedByAutoPolicy: false,
-              restartedAt: Date.now(),
-              peerGlobalMetaId,
-            },
-          );
-
-          const message = coworkStoreInst.addMessage(sessionId, {
-            type: 'assistant',
-            content: replyText,
-            metadata: {
-              sourceChannel: 'metaweb_private',
-              externalConversationId: sourceContext.externalConversationId,
-              direction: 'outgoing',
-              a2aConversationRestarted: true,
-              suppressRunningStatus: true,
-              ...buildA2AChainMetadata({
-                txids: sent.txids,
-                pinId: sent.pinId,
-              }),
-            },
-          });
-          emitCoworkStreamMessage(sessionId, message);
-          coworkStoreInst.updateSession(sessionId, { status: 'completed' });
-          a2aGuidanceQueue.clear(sessionId, session.metabotId);
-          coworkLog('INFO', 'A2A Guidance', 'Guided restart delivered', {
-            sessionId,
-            metabotId: session.metabotId,
-            messageId: message.id,
-            pinId: sent.pinId,
-          });
-
-          return { success: true, mode: 'restart_started' as const, messageId: message.id };
-        } catch (restartError) {
-          // Preserve the operator's guidance so a later local turn (for example
-          // after the conversation reopens) can still consume it instead of
-          // silently dropping it when the restart fails.
-          try {
-            a2aGuidanceQueue.queue({ sessionId, metabotId: session.metabotId, guidance });
-          } catch (queueError) {
-            console.warn(
-              `[A2A Guidance] Failed to preserve guidance after restart failure: ${
-                queueError instanceof Error ? queueError.message : String(queueError)
-              }`
-            );
-          }
-          // §visibility: a failed guided restart used to surface only as a
-          // small red status line while nothing landed in the transcript or
-          // cowork.log — indistinguishable from "no reaction" (2026-09-14 A2A
-          // stall post-mortem, where the bot brain still pointed at a
-          // credit-exhausted provider). Mirror turn errors: durable transcript
-          // notice + cowork.log entry, so the failure reason and the fact the
-          // guidance was preserved for the next local turn are both visible.
-          const restartFailureReason = restartError instanceof Error
-            ? restartError.message
-            : String(restartError);
-          coworkLog('ERROR', 'A2A Guidance', 'Guided restart failed; guidance preserved for the next local turn', {
-            sessionId,
-            metabotId: session.metabotId,
-            error: restartFailureReason,
-          });
-          try {
-            const guidanceFailureNotice = tApp(
-              `引导对话失败：${restartFailureReason}。指引已保留，下次本机回合（例如对方再来消息或再次点引导对话）会继续带上。`,
-              `Guided dialogue failed: ${restartFailureReason}. The guidance was preserved and will ride the next local turn (for example the next peer message, or another guided attempt).`
-            );
-            // metadata.error carries the full notice (not just the raw reason)
-            // because the A2A error banner — the only surface for system
-            // messages in A2A sessions — reads metadata.error first.
-            const message = coworkStoreInst.addMessage(sessionId, {
-              type: 'system',
-              content: guidanceFailureNotice,
-              metadata: {
-                error: guidanceFailureNotice,
-                a2aGuidanceFailed: true,
-              },
-            });
-            emitCoworkStreamMessage(sessionId, message);
-          } catch (noticeError) {
-            // Bounds errors from the notice write must reach the sqlite
-            // recovery wrapper, not be swallowed as a logging failure.
-            if (isSqliteWasmBoundsError(noticeError)) throw noticeError;
-            coworkLog('WARN', 'A2A Guidance', 'Failed to append the guided-restart failure notice to the transcript', {
-              sessionId,
-              error: noticeError instanceof Error ? noticeError.message : String(noticeError),
-            });
-          }
-          throw restartError;
-        }
+        return { success: true, ...dispatched };
       } catch (error) {
         if (isSqliteWasmBoundsError(error)) throw error;
         return {

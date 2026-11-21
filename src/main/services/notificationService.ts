@@ -245,6 +245,38 @@ export class NotificationService {
     });
   }
 
+  recordProactiveFollowUp(input: {
+    followUpId: string;
+    tier: 'inform' | 'light_decision' | 'task_proposal';
+    informOutcome?: 'handled' | 'declined' | 'observed' | null;
+    title: string;
+    body: string;
+    metabotId: number | null;
+    sessionId: string;
+    language?: string;
+  }): boolean {
+    const isZh = language(input.language) === 'zh';
+    const needsDecision = input.tier !== 'inform';
+    const header = needsDecision
+      ? (isZh ? '分身有事找你确认' : 'Your Twin needs a quick call')
+      : input.informOutcome === 'declined'
+        ? (isZh ? '分身已代为回绝一项请求' : 'Your Twin declined a request')
+        : (isZh ? '分身同步了一项进展' : 'Update from your Twin');
+    return this.record({
+      eventId: `followup:${input.followUpId}`,
+      type: `followup.${input.tier}`,
+      category: needsDecision ? 'action' : 'work',
+      metabotId: input.metabotId,
+      sessionId: input.sessionId,
+      taskId: null,
+      runId: null,
+      title: text(input.title || header, 180),
+      body: text(input.body || header, 360),
+      priority: needsDecision ? 'high' : 'normal',
+      target: { kind: 'session', sessionId: input.sessionId },
+    });
+  }
+
   resolvePermission(requestId: string): number {
     const changed = this.store.markRead([`permission:${requestId}`]);
     if (changed > 0) this.onChanged({ eventId: `permission:${requestId}` });
