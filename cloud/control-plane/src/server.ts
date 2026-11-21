@@ -45,7 +45,18 @@ function matchPath(pattern: string, pathname: string): Record<string, string> | 
   const params: Record<string, string> = {};
   for (let i = 0; i < pSeg.length; i += 1) {
     if (pSeg[i].startsWith(':')) {
-      params[pSeg[i].slice(1)] = decodeURIComponent(uSeg[i]);
+      // decodeURIComponent throws URIError synchronously on malformed input
+      // ('%zz', a lone '%', a truncated UTF-8 sequence). That throw used to
+      // escape through handle()'s catch-all as a 500 INTERNAL; it is a client
+      // mistake, so it reads as one — 400, same posture as the tenant
+      // gateway's decodePathSegment (PR #175).
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(uSeg[i]);
+      } catch {
+        throw new HttpError(400, 'BAD_REQUEST', 'malformed percent encoding in the path');
+      }
+      params[pSeg[i].slice(1)] = decoded;
     } else if (pSeg[i] !== uSeg[i]) {
       return null;
     }

@@ -1,0 +1,75 @@
+{
+  "ownerGlobalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+  "shopName": "老藏家清仓小铺",
+  "slogan": "积分拍下 24 小时自动秒发 · 老藏品免费升级盘活",
+  "theme": "dark",
+  "apiBaseUrl": "https://so.metaid.io",
+  "lang": "zh",
+  "featuredItemPinIds": [
+    "1e288800fdec1a5911a169e0cb499a3bc63e6083e5f035f5d552f73c601f2cf2i0"
+  ],
+  "mockSnapshot": {
+    "owner": {
+      "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+      "name": "小林的Twin",
+      "avatar": ""
+    },
+    "presence": "online",
+    "listings": [
+      {
+        "itemPinId": "1e288800fdec1a5911a169e0cb499a3bc63e6083e5f035f5d552f73c601f2cf2i0",
+        "collectionPinId": "77da77280b9b218cf1edd62f658ca2be561dd7e377f3980182e280487ec38c56i0",
+        "collectionName": "metabot-avatar",
+        "caVerified": true,
+        "itemName": "MetaBot Avatar - 金框墨镜 #1310",
+        "cover": "",
+        "prices": {
+          "me": { "amountMilli": 15000 },
+          "fiat": { "currency": "CNY", "amountCents": 990 }
+        },
+        "autoFulfillMe": true,
+        "negotiable": true,
+        "shopMetaAppPinId": "",
+        "seller": {
+          "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+          "name": "小林的Twin",
+          "isOnline": true
+        },
+        "listedAt": 1795200000,
+        "confirmed": true
+      },
+      {
+        "itemPinId": "a84159688af3ca37a4be05a0d422b94451b2e24e000000000000000000000000i0",
+        "collectionPinId": "77da77280b9b218cf1edd62f658ca2be561dd7e377f3980182e280487ec38c56i0",
+        "collectionName": "metabot-avatar",
+        "caVerified": true,
+        "itemName": "MetaBot Avatar - 星空斗篷 #0721",
+        "cover": "",
+        "prices": {
+          "me": { "amountMilli": 9900 },
+          "fiat": { "currency": "CNY", "amountCents": 660 }
+        },
+        "autoFulfillMe": true,
+        "negotiable": false,
+        "shopMetaAppPinId": "",
+        "seller": {
+          "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+          "name": "小林的Twin",
+          "isOnline": true
+        },
+        "listedAt": 1795100000,
+        "confirmed": true
+      }
+    ],
+    "holdings": [
+      {
+        "itemPinId": "b11b902cb710a353ff058421b949f6cab97bb6e4a46a885b20a945ff2a9464a0i0",
+        "collectionName": "metabot-avatar",
+        "itemName": "MetaBot Avatar - 初代头像 #0001",
+        "cover": "",
+        "genesis": "075a1d198772e71ad2ca8fd5fb5f0fb1bd7fd680",
+        "listed": false
+      }
+    ]
+  }
+}

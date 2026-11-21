@@ -83,6 +83,20 @@ jobs:
       - name: Build mobile production bundles
         run: pnpm run build:mobile
 
+      - name: Inject google-services.json for FCM
+        env:
+          GOOGLE_SERVICES_JSON_B64: ${{ secrets.STAGING_GOOGLE_SERVICES_JSON_B64 }}
+        run: |
+          # Fail fast (name only, never the value) when CI lacks the Firebase
+          # Android config — an APK built without it silently ships without
+          # push (the gradle google-services plugin is applied only when the
+          # file exists).
+          if [ -z "$GOOGLE_SERVICES_JSON_B64" ]; then
+            echo "::error::missing CI configuration (names only): secrets.STAGING_GOOGLE_SERVICES_JSON_B64"
+            exit 1
+          fi
+          echo "$GOOGLE_SERVICES_JSON_B64" | base64 --decode > mobile-shell/android/app/google-services.json
+
       - name: Build Android staging APK
         working-directory: mobile-shell
         run: pnpm run build:android:staging

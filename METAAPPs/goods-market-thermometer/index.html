@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>行情温度计 · 只读</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="thermo-header">
+    <div class="thermo-title-row">
+      <h1 class="thermo-title" data-i18n="title"></h1>
+      <span class="readonly-badge" data-i18n="readonlyBadge"></span>
+      <button id="btn-lang" class="btn-lang" type="button">EN / 中文</button>
+    </div>
+    <p class="thermo-subtitle" data-i18n="subtitle"></p>
+  </header>
+
+  <main id="board" class="board"></main>
+  <div id="board-empty" class="empty" hidden></div>
+
+  <div id="drawer-mask" class="drawer-mask" hidden></div>
+  <aside id="drawer" class="drawer" hidden>
+    <button id="drawer-close" class="drawer-close" type="button" aria-label="close">✕</button>
+    <h2 id="drawer-title" class="drawer-title"></h2>
+    <div id="drawer-stats" class="drawer-stats"></div>
+
+    <section class="drawer-section">
+      <h3 data-i18n="sectionListings"></h3>
+      <div id="drawer-listings" class="listings"></div>
+    </section>
+
+    <section class="drawer-section">
+      <h3 data-i18n="sectionTrades"></h3>
+      <div id="drawer-trades" class="trades"></div>
+    </section>
+
+    <section class="drawer-section">
+      <h3 data-i18n="sectionHolders"></h3>
+      <div id="drawer-holders" class="holders"></div>
+    </section>
+  </aside>
+
+  <footer class="thermo-footer">
+    <span data-i18n="footerNote"></span>
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>

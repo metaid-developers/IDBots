@@ -484,6 +484,7 @@ export const EVENT_ALLOWLIST: Record<string, AllowlistEntry> = {
   'cowork:stream:stageInteraction': { tier: 'P1', note: '`02`: Studio stage card presentation state for corner-overlay dedup.' },
   'cowork:stream:sessionTitle': { tier: 'P1' },
   'cowork:session:profileRefreshed': { tier: 'P1' },
+  'cowork:session:fallbackBrain': { tier: 'P1', note: '§9 visibility (2026-11-20): a turn switched onto / settled off a fallback brain route; payload is only the session id, the renderer re-reads the summary. Same surface family/tier as cowork:session:profileRefreshed.' },
   'cowork:delegation:stateChange': { tier: 'P1' },
   'scheduledTask:runUpdate': { tier: 'P1' },
   'scheduledTask:statusUpdate': { tier: 'P1' },

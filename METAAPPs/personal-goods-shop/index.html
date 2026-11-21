@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>数字商品小店</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header id="shop-header" class="shop-header">
+    <div class="owner-row">
+      <img id="owner-avatar" class="owner-avatar" alt="" hidden />
+      <span id="owner-avatar-fallback" class="owner-avatar owner-avatar-fallback">◆</span>
+      <div class="owner-meta">
+        <div class="owner-name-row">
+          <span id="owner-name" class="owner-name">…</span>
+          <span id="owner-presence" class="presence-dot presence-unknown" title=""></span>
+        </div>
+        <div id="owner-id" class="owner-id mono"></div>
+        <div id="shop-slogan" class="shop-slogan"></div>
+      </div>
+      <div class="owner-actions">
+        <button id="btn-add-friend" class="btn btn-ghost" type="button"></button>
+        <button id="btn-message" class="btn btn-ghost" type="button"></button>
+      </div>
+    </div>
+    <div id="owner-bar" class="owner-bar" hidden>
+      <button id="btn-promo-pack" class="btn btn-accent" type="button">🎁 <span data-i18n="ownerPromoPack"></span></button>
+      <span class="owner-bar-hint" data-i18n="ownerBarHint"></span>
+    </div>
+    <div class="lang-row">
+      <button id="btn-lang" class="btn btn-lang" type="button">EN / 中文</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button id="tab-listings" class="tab active" role="tab" type="button"></button>
+    <button id="tab-holdings" class="tab" role="tab" type="button"></button>
+  </nav>
+
+  <main id="shop-main" class="shop-main">
+    <section id="panel-listings" class="panel">
+      <div id="listings-grid" class="grid"></div>
+    </section>
+    <section id="panel-holdings" class="panel" hidden>
+      <div id="holdings-grid" class="grid"></div>
+    </section>
+    <div id="empty-state" class="empty" hidden></div>
+  </main>
+
+  <!-- 商品详情抽屉 -->
+  <div id="drawer-mask" class="drawer-mask" hidden></div>
+  <aside id="drawer" class="drawer" hidden>
+    <button id="drawer-close" class="drawer-close" type="button" aria-label="close">✕</button>
+    <img id="drawer-cover" class="drawer-cover" alt="" hidden />
+    <div id="drawer-cover-fallback" class="drawer-cover drawer-cover-fallback"></div>
+    <h2 id="drawer-name" class="drawer-name"></h2>
+    <div id="drawer-collection" class="drawer-collection"></div>
+    <div id="drawer-prices" class="drawer-prices"></div>
+    <div id="drawer-badges" class="drawer-badges"></div>
+    <div id="drawer-actions" class="drawer-actions"></div>
+    <div id="drawer-note" class="drawer-note"></div>
+  </aside>
+
+  <!-- 外部浏览器降级引导卡 -->
+  <div id="guide-mask" class="drawer-mask" hidden></div>
+  <div id="guide-card" class="guide-card" hidden>
+    <button id="guide-close" class="drawer-close" type="button" aria-label="close">✕</button>
+    <h3 data-i18n="guideTitle"></h3>
+    <p data-i18n="guideBody"></p>
+    <div class="guide-snippet">
+      <code id="guide-command" class="mono"></code>
+    </div>
+    <div class="guide-row">
+      <button id="guide-copy" class="btn btn-accent" type="button"></button>
+    </div>
+    <p class="guide-download" data-i18n="guideDownload"></p>
+  </div>
+
+  <footer class="shop-footer">
+    <span data-i18n="footerNote"></span>
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>

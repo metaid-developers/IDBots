@@ -349,6 +349,72 @@ async function openMessageConfirmation(to, content) {
 - `metaid.pin.write` 不是私信 API。MetaApp **不得**通过 `/protocols/simplemsg` 构造私信、解析 / 解析对端 chat 公钥、加密、签名、广播、绕过 Browser 确认或直接调用宿主发送路径——这些始终是宿主的职责。
 - `map://simplemsg/conversation?peer=<globalMetaId>` 是**已有会话的导航 URI**，只用于“打开 / 查看会话”这种意图，**不要**用作发送按钮，也不要标成“在 IDChat 打开”或当成外部 Web 链接。
 
+## 9.5 商业与社交受控唤起方法（REQ-E-01）
+
+三个纯「UI 意图唤起」方法，MetaApp 用标准 `AgentBrowser.request` 调用；宿主会先弹**宿主原生确认卡**，用户点击确认后才分发下游事件。它们**永远不签名、不扣款、不发消息**——参数经 `commerceBridgeContract` 双端清洗，写链与支付始终是宿主的职责。
+
+### `browser.commerce.askTwinToBuy`
+
+买家在小店点「购买 / 议价 / 求购」时调用，宿主把购买意图交给用户自己的 AI（后续确认在 WS-D 的购买确认流里完成）：
+
+```js
+await window.AgentBrowser.request({
+  method: 'browser.commerce.askTwinToBuy',
+  params: {
+    itemPinId: '1e288800fdec1a5911a169e0cb499a3bc63e6083e5f035f5d552f73c601f2cf2i0', // 必填 64hex+iN
+    collectionId: '77da77280b9b218cf1edd62f658ca2be561dd7e377f3980182e280487ec38c56i0',
+    collectionName: 'metabot-avatar',
+    itemName: 'MetaBot Avatar - 金框墨镜 #1310',   // 必填
+    tokenIndex: '1310',
+    sellerGlobalMetaId: 'idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47', // 必填
+    sellerName: '小林的Twin',
+    priceMeMilli: 15000,          // 非负整数（milli-ME）
+    priceCnyCents: 990,           // 非负整数（人民币分）
+    mode: 'buy_me',               // 'buy_me' | 'negotiate' | 'inquire_unlisted'，默认 buy_me
+    shopMetaAppPinId: '...'       // 可选 64hex+iN
+  }
+});
+// 成功 → { opened: true }（确认卡已打开，不代表已付款）
+// 取消 → error { code: 'user_cancelled' }
+```
+
+### `browser.social.addFriendPrompt`
+
+```js
+await window.AgentBrowser.request({
+  method: 'browser.social.addFriendPrompt',
+  params: { targetGlobalMetaId: 'idq1…', targetName: '小林', greeting: '你好' }
+});
+// 宿主确认后打开受控加好友/私聊流程 → { opened: true }
+```
+
+### `browser.commerce.openPromoPack`
+
+**仅店主本人可用**（当前 Actor `globalMetaId` 必须等于 `shopOwnerGlobalMetaId`，否则返回 `{ code: 'forbidden' }`）：
+
+```js
+await window.AgentBrowser.request({
+  method: 'browser.commerce.openPromoPack',
+  params: {
+    shopOwnerGlobalMetaId: 'idq1…',   // 必填
+    shopOwnerName: '小林',
+    shopSlogan: '一句话店招',
+    shopMetaAppPinId: '...',
+    featuredItems: [                  // 最多 6 项，海报取前 3
+      { itemPinId: '…', itemName: '#1310 金框墨镜', coverUrl: 'metafile://…', priceMeMilli: 15000, priceCnyCents: 990 }
+    ]
+  }
+});
+// 成功弹出分销弹药包（海报 + 合规话术）→ { opened: true }
+```
+
+### 实现要点（宿主双端）
+
+- Bot Browser：iframe 桥在 capture 阶段拦截这 3 个 method（ABC 会把未知 method 回 `unsupported_method`，必须 `stopImmediatePropagation` 抢先声明），中继给 `BotBrowserSurface`；中继只搬运参数，**权威清洗与确认 UI 全部在宿主渲染层**（`commerceBridgeContract.ts`）。
+- Inline 气泡：`InlineMetaAppBlock` 直接走块内确认卡（kind `commerce`），语义一致。
+- 其余 ABC 方法一律原样放行，不受影响。
+- 展示口径：积分价 `⚡ X ME`（`priceMeMilli/1000`）、人民币参考价 `¥X.XX`（`priceCnyCents/100`）；**UI 禁止出现 SPACE/BTC 等加密货币计价**。
+
 ## 10. 安全边界
 
 MetaApp 可以拿到的，是：

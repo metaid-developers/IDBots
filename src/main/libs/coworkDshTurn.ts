@@ -28,6 +28,7 @@ import {
   METAID_RPC_AUTHFILE_ENV,
 } from '../services/metaidRpcEndpoint'
 import { DshKernel, isSessionEncodingMismatchError } from './dshKernel/dshKernel'
+import { writeFileAtomicSync } from './atomicFile'
 import { dshSessionColdRootFor, restoreDshSessionDir } from './dshSessionRetention'
 import { DshShutdownError } from './dshShutdownError'
 
@@ -1797,9 +1798,13 @@ export class DshTurnHub {
     try {
       const dir = this.routeHintDir()
       fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(
+      // Atomic replace (temp + rename): the hint sits in the dsh-sessions tree
+      // beside the logs, and a reader concurrent with a torn write would parse
+      // half a JSON object. A lost hint is self-healing (undefined → the turn
+      // re-pins and rewrites it), a corrupt one must never exist on disk.
+      writeFileAtomicSync(
         join(dir, `${dshSessionId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`),
-        JSON.stringify(route),
+        Buffer.from(JSON.stringify(route), 'utf8'),
       )
     } catch (error) {
       this.opts.log?.('warn', 'dshTurnHub.routeHintWriteFailed', {

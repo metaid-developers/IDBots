@@ -85,12 +85,21 @@ tests/*
 !tests/unwired-exclusions.json
 !tests/dataGuard.test.mjs
 !tests/privateChatFileMessage.test.mjs
+!tests/privateChatWaitNoticeCancel.test.mjs
+!tests/privateChatWaitNoticeAnchor.test.ts
 !tests/a2aPendingAskBridge.test.mjs
 !tests/friendAgentTools.test.mjs
 !tests/friendRelationshipService.test.mjs
 !tests/friendWiringIntegration.test.mjs
 !tests/friendInviteFlow.test.mjs
 !tests/privateChatApprovalFlow.test.mjs
+!tests/commerceBridgeContract.test.ts
+!tests/commerceQrEncoder.test.ts
+!tests/commerceMetaApps.test.mjs
+!tests/commerceBannedWords.test.mjs
+!tests/commercePublishScript.test.mjs
+!tests/commerceBridgeRelay.test.ts
+!tests/commercePromoModal.test.tsx
 !tests/a2aApprovalUi.test.tsx
 !tests/friendInviteOverlayChain.test.mjs
 !tests/friendGuidanceIntent.test.ts
@@ -141,6 +150,7 @@ tests/*
 !tests/relayCatalogFreshness.test.mjs
 !tests/mobileSettings.test.ts
 !tests/mobileModelSettings.test.tsx
+!tests/mobileOpenPage.test.mjs
 !tests/mobileRechargeRecovery.test.ts
 !tests/mobileBotLifecycle.test.ts
 !tests/mobileBotEditor.test.tsx
@@ -431,6 +441,10 @@ SKILLs/edge-tts-mf/
 
 # Local MetaApp installs/generated apps (bundled buzz/chat remain tracked)
 METAAPPs/*
+!METAAPPs/personal-goods-shop/
+!METAAPPs/personal-goods-shop/**
+!METAAPPs/goods-market-thermometer/
+!METAAPPs/goods-market-thermometer/**
 !METAAPPs/buzz/
 !METAAPPs/buzz/**
 !METAAPPs/chat/
@@ -816,6 +830,9 @@ man_base_data_pebble/
 !tests/scheduledRunOutcome.test.mjs
 !tests/scheduledRunReceiptWritePath.test.mjs
 !tests/dshSessionLogGuard.test.mjs
+!tests/dshSessionLogAtomicity.test.mjs
+!tests/fallbackBrainStatus.test.mjs
+!tests/fallbackBrainSessionRow.test.tsx
 !tests/settingsUnarchiveRefreshStatic.test.mjs
 !tests/settingsInputContextMenu.test.tsx
 !tests/coworkDshSessionTitle.test.mjs
@@ -914,6 +931,7 @@ deploy/hosts/prometheus.yml
 !tests/mobileUpload.test.ts
 !tests/mobileChatAttachments.test.ts
 !tests/mobileArtifactPreview.test.ts
+!tests/mobilePageCardMarkdown.test.tsx
 !tests/mobileBackgroundTasks.test.ts
 !tests/mobileActivity.test.ts
 !tests/mobileUnifiedTasks.test.tsx

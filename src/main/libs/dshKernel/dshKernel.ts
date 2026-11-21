@@ -18,9 +18,10 @@
 // produces for the Claude kernel.
 
 import { app } from 'electron'
-import { existsSync, mkdirSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
+import { writeFileAtomicSync } from '../atomicFile'
 import { resolveElectronExecutablePath } from '../runtimePaths'
 import { mergeDshRuntimeProcessEnv } from '../windowsPathEnv'
 import { DshEventMapper } from './dshEventMapper'
@@ -264,7 +265,12 @@ export class DshKernel {
       log: (level, event, data) => this.opts.log?.(level, `dshKernel.${event}`, data),
     })
     const configPath = join(config.sessionRoot, dshRuntimeConfigFileName(config.runtimeId))
-    writeFileSync(configPath, JSON.stringify(generateRuntimeConfig(config), null, 2))
+    // Atomic replace (temp + rename): this file lives INSIDE the session root
+    // and the runtime parses it at spawn, so a torn write (crash mid-write, or
+    // a second slot booting over the same runtime id) would leave an
+    // unparseable config behind and wedge the next boot. Never truncate the
+    // live file in place.
+    writeFileAtomicSync(configPath, Buffer.from(JSON.stringify(generateRuntimeConfig(config), null, 2), 'utf8'))
     this.runtimeConfig = config
 
     const clientUrl = pathToFileURL(join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh-sdk-client', 'lib', 'index.js')).href

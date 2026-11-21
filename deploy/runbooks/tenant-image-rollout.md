@@ -18,6 +18,18 @@ becomes ready and `org.idbots.rollback-safe-to` allows it.
     --format '{{ json .Image.Config.Labels }}'
   ```
 
+## 0b. Pull the image on the host first (mandatory)
+
+The upgrade CLI verifies the image exists **locally on the host** and marks a
+tenant `failed` when it does not (incident 2026-11-21: a fleet upgrade with an
+unpulled image flagged all 18 staging tenants failed in one pass; containers
+kept running but had to be status-restored before the retry). Always:
+
+```bash
+docker pull {REGISTRY}/idbots/tenant:{tag}
+docker images | grep {tag}     # confirm present before any upgrade
+```
+
 ## 1. Canary on one staging tenant
 
 ```bash

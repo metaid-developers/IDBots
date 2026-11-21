@@ -33,6 +33,18 @@ export const INLINE_METAAPP_SUPPORTED_METHODS = new Set([
 ]);
 
 /**
+ * Commerce/social intent methods (REQ-E-01): the embedder re-validates params
+ * via commerceBridgeContract, asks the user through a host-owned confirmation
+ * card, then dispatches a window event — it NEVER signs, pays, transfers or
+ * sends anything from the bridge itself.
+ */
+export const INLINE_METAAPP_COMMERCE_METHODS = new Set([
+  'browser.commerce.askTwinToBuy',
+  'browser.social.addFriendPrompt',
+  'browser.commerce.openPromoPack',
+]);
+
+/**
  * Bridge methods that exist in the Bot Browser but need surfaces the bubble
  * does not have (compose modals, Agent-Game session panels). They fail with an
  * explicit "open in Bot Browser" message instead of silently hanging.

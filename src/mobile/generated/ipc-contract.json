@@ -881,6 +881,11 @@
       "channel": "cowork:sandbox:downloadProgress"
     },
     {
+      "path": "cowork.onSessionFallbackBrain",
+      "kind": "on",
+      "channel": "cowork:session:fallbackBrain"
+    },
+    {
       "path": "cowork.onSessionProfileRefreshed",
       "kind": "on",
       "channel": "cowork:session:profileRefreshed"
