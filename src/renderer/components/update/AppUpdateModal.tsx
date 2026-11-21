@@ -5,7 +5,13 @@ import type { AppUpdateInfo, AppUpdateDownloadProgress } from '../../services/ap
 import { isDownloadComplete } from '../../services/appUpdateUi';
 import { formatBytes, formatSpeed } from './format';
 
-export type UpdateModalState = 'info' | 'downloading' | 'installing' | 'error' | 'restart';
+/**
+ * info      — normal "update available / downloaded" panel (auto behaviour).
+ * prompt    — auto-check is OFF: offer the update, download only on Confirm.
+ * downloading / installing — silent or manual work in flight.
+ * error / restart — retry, or wait for the user to relaunch.
+ */
+export type UpdateModalState = 'info' | 'prompt' | 'downloading' | 'installing' | 'error' | 'restart';
 
 interface AppUpdateModalProps {
   updateInfo: AppUpdateInfo;
@@ -40,7 +46,7 @@ const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
   const { latestVersion, date, changeLog } = updateInfo;
   const lang = i18nService.getLanguage();
   const currentLog = changeLog?.[lang] ?? { title: '', content: [] };
-  const isDismissible = modalState === 'info' || modalState === 'error' || modalState === 'restart';
+  const isDismissible = modalState === 'info' || modalState === 'prompt' || modalState === 'error' || modalState === 'restart';
   const downloadComplete = isDownloadComplete(downloadProgress);
   // downloading/installing have no Cancel-style escape (background work must
   // survive), so they get the hide-only X instead.
@@ -116,6 +122,60 @@ const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
                 className="btn-idchat-primary-filled text-sm"
               >
                 {readyToInstall ? i18nService.t('updateInstallNow') : i18nService.t('updateAvailableConfirm')}
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Prompt state — the user's auto-check switch is OFF: the update is
+            only OFFERED here; nothing downloads until Confirm (owner order
+            2026-11-21). "Not now" closes the panel and leaves the badge as the
+            manual entry point. */}
+        {modalState === 'prompt' && (
+          <>
+            <div className="px-5 pt-5 pb-4">
+              <h3 className="text-base font-semibold dark:text-claude-darkText text-claude-text">
+                {i18nService.t('updatePromptTitle').replace('{version}', latestVersion)}
+              </h3>
+              <p className="mt-1.5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                v{latestVersion}{date ? ` · ${date}` : ''}
+              </p>
+              <p className="mt-3 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('updatePromptMessage')}
+              </p>
+
+              {currentLog.title && (
+                <p className="mt-3 text-sm font-medium dark:text-claude-darkText text-claude-text">
+                  {currentLog.title}
+                </p>
+              )}
+
+              {currentLog.content.length > 0 && (
+                <ul className="mt-2 space-y-1.5 max-h-48 overflow-y-auto">
+                  {currentLog.content.map((item, index) => (
+                    <li key={index} className="flex items-start gap-2 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-claude-accent/60" />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="px-5 pb-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={onCancel}
+                className="px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+              >
+                {i18nService.t('updatePromptLater')}
+              </button>
+              <button
+                type="button"
+                onClick={onConfirm}
+                className="btn-idchat-primary-filled text-sm"
+              >
+                {i18nService.t('updatePromptNow')}
               </button>
             </div>
           </>

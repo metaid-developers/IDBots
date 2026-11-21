@@ -664,6 +664,7 @@ man_base_data_pebble/
 !tests/appUpdateSilentFlowStatic.test.mjs
 !tests/appUpdateResumableDownload.test.mjs
 !tests/appUpdateUi.test.mjs
+!tests/appUpdateUserControl.test.mjs
 !tests/appUpdateVersionCompare.test.mjs
 !tests/windowsInstallerReliability.test.mjs
 !tests/deepseekResponses.test.mjs

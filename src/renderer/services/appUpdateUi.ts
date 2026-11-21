@@ -8,7 +8,7 @@
 
 export type UpdatePhase = 'idle' | 'downloading' | 'ready' | 'applying' | 'restartReady';
 
-export type UpdateModalState = 'info' | 'downloading' | 'installing' | 'error' | 'restart';
+export type UpdateModalState = 'info' | 'prompt' | 'downloading' | 'installing' | 'error' | 'restart';
 
 export function isDownloadComplete(
   progress: { percent?: number | null } | null | undefined,
