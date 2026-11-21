@@ -243,6 +243,7 @@ import {
   createMrc721Mint,
   fetchMrc721CollectionInfo,
   fetchMrc721ItemInfo,
+  fetchMrc721ItemVerify,
   isMrc721PinId,
   listMrc721MySellOrders,
   mrc721SellOrdersFromSqlite,
@@ -21315,8 +21316,26 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       }
 
       const sellerBotAddress = item.ownerAddress;
-      const collectionPinId = item.collectionPinId
-        || (typeof input.collectionPinId === 'string' && input.collectionPinId.trim() ? input.collectionPinId.trim().toLowerCase() : undefined);
+      let collectionPinId = (
+        item.collectionPinId
+        || (item as { collectionid?: string }).collectionid
+        || item.activeListing?.collectionPinId
+        || (typeof input.collectionPinId === 'string' ? input.collectionPinId : '')
+      ).trim().toLowerCase();
+      if (!isMrc721PinId(collectionPinId)) {
+        try {
+          const verify = await fetchMrc721ItemVerify({ pinId: itemPinId });
+          const verifiedCollectionId = String(verify?.collectionPinId || verify?.collectionid || '').trim().toLowerCase();
+          if (isMrc721PinId(verifiedCollectionId)) {
+            collectionPinId = verifiedCollectionId;
+          }
+        } catch {
+          // Handled by missing collectionPinId check below
+        }
+      }
+      if (!isMrc721PinId(collectionPinId)) {
+        throw new Error(`Could not resolve collectionPinId for item ${itemPinId}`);
+      }
       const listingPinId = item.activeListing?.intentPinId
         || (typeof input.listingPinId === 'string' && input.listingPinId.trim() ? input.listingPinId.trim().toLowerCase() : undefined);
       const sellerMetaId = (typeof input.sellerGlobalMetaId === 'string' && input.sellerGlobalMetaId.trim())

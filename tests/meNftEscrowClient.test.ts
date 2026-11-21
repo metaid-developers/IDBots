@@ -458,4 +458,71 @@ test('goods_buy_with_me, goods_send_inquiry, and goods_accept_inquiry align with
   assert.match(sentMessages[2].content, /"agreedCurrency":\s*"me"/);
   assert.match(sentMessages[2].content, /"agreedAmountMilli":\s*4500/);
   assert.match(sentMessages[2].content, /"sellerBotAddress"/);
+
+  // 7. goods_buy_with_me falls back to fetchItemVerify for collectionPinId and refuses when unresolvable
+  let capturedOrderCollectionPinId = '';
+  let verifyCollectionPinId: string | undefined = COLLECTION_PIN_ID;
+  const fallbackTools = buildGoodsTradeAgentTools({
+    tool: makeSdkTool as any,
+    sessionId: 'sess-buyer-fallback',
+    resolveMetabotId: () => 2,
+    confirmGoodsPurchase: async () => true,
+    control: {
+      getMetabotIdentity: () => ({ name: 'BuyerBot', mvcAddress: BOT_ADDRESS, globalMetaId: BUYER_METAID }),
+      getTradeBalance: async () => ({
+        botAddress: BOT_ADDRESS,
+        tradeSpendableMilli: 10000,
+        frozenMilli: 0,
+        totalAvailableMilli: 10000,
+        weeklyRemainingMilli: 0,
+        earnedMilli: 10000,
+        topupMilli: 0,
+        bonusMilli: 0,
+        raw: {},
+      }),
+      createEscrowOrder: async (input: any) => {
+        capturedOrderCollectionPinId = input.collectionPinId;
+        return {
+          orderId: input.orderId,
+          itemPinId: input.itemPinId,
+          collectionPinId: input.collectionPinId,
+          buyerNftAddress: input.buyerNftAddress,
+          buyerAddress: input.buyerNftAddress,
+          sellerBotAddress: input.sellerBotAddress,
+          sellerAddress: input.sellerBotAddress,
+          amountMilli: input.amountMilli,
+          status: 'SETTLED',
+          statusCode: 3,
+          statusName: 'SETTLED',
+          raw: {},
+        };
+      },
+      getEscrowOrder: async () => { throw new Error('unused'); },
+      sendTradeMessage: async () => ({ txids: ['tx_1'], pinId: `${'ee'.repeat(32)}i0` }),
+      fetchItemInfo: async () => ({
+        itemPinId: ITEM_PIN_ID,
+        // Intentionally omit collectionPinId to exercise fetchItemVerify fallback
+        name: 'Unindexed Collection Field Item',
+        ownerAddress: SELLER_ADDRESS,
+        ownerMetaId: SELLER_METAID,
+        burned: false,
+      }),
+      fetchItemVerify: async () => ({
+        itemPinId: ITEM_PIN_ID,
+        collectionid: verifyCollectionPinId,
+      }),
+      fetchMarketListings: async () => ({ items: [] }),
+      fetchSellIntents: async () => ({ items: [], total: 0 }),
+      pollDelaysMs: [0],
+    },
+  }) as Array<{ name: string; handler: (args: any) => Promise<any> }>;
+  const fallbackBuy = fallbackTools.find((t) => t.name === 'goods_buy_with_me')!;
+  const fallbackOk = await fallbackBuy.handler({ item_pin_id: ITEM_PIN_ID, amount_me: 2, order_id: 'ord_fb_1' });
+  assert.equal(fallbackOk.isError, undefined);
+  assert.equal(capturedOrderCollectionPinId, COLLECTION_PIN_ID);
+
+  verifyCollectionPinId = undefined;
+  const fallbackMissing = await fallbackBuy.handler({ item_pin_id: ITEM_PIN_ID, amount_me: 2, order_id: 'ord_fb_2' });
+  assert.equal(fallbackMissing.isError, true);
+  assert.match(fallbackMissing.content[0].text, /collectionPinId/);
 });

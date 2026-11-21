@@ -195,28 +195,43 @@ test('WS-D Commerce UI components SSR cleanly with expected conversion actions',
 });
 
 test('WS-E commerce-intent (askTwinToBuy) and social-friend-prompt resolve correctly', () => {
-  // 1. WS-E buy_me with priceMeMilli > 0 and omitted sellerAddress -> open_confirm_modal
+  const COLLECTION_PIN_ID = `${'cc'.repeat(32)}i0`;
+
+  // 1. WS-E standard nested params buy_me with priceMeMilli > 0 -> open_confirm_modal with mapped collectionPinId & series
   const buyAction = resolveCommerceIntentAction({
     intent: 'askTwinToBuy',
-    mode: 'buy_me',
-    itemPinId: ITEM_PIN_ID,
-    itemName: 'Avatar #42',
-    priceMeMilli: 4000,
-    sellerGlobalMetaId: SELLER_METAID,
+    source: 'bot-browser',
+    params: {
+      mode: 'buy_me',
+      itemPinId: ITEM_PIN_ID,
+      collectionId: COLLECTION_PIN_ID,
+      collectionName: 'Pixel Cats',
+      itemName: 'Avatar #42',
+      sellerGlobalMetaId: SELLER_METAID,
+      sellerAddress: undefined,
+      priceMeMilli: 4000,
+    },
   });
   assert.equal(buyAction?.kind, 'open_confirm_modal');
   if (buyAction?.kind === 'open_confirm_modal') {
     assert.equal(buyAction.target.itemPinId, ITEM_PIN_ID);
+    assert.equal(buyAction.target.collectionPinId, COLLECTION_PIN_ID);
+    assert.equal(buyAction.target.series, 'Pixel Cats');
     assert.equal(buyAction.target.priceMeMilli, 4000);
     assert.equal(buyAction.target.sellerAddress, undefined);
   }
 
-  // 2. WS-E buy_me without ME price -> draft_chat guiding goods_send_inquiry
+  // 2. WS-E nested params buy_me without ME price -> draft_chat guiding goods_send_inquiry
   const noPriceAction = resolveCommerceIntentAction({
     intent: 'askTwinToBuy',
-    mode: 'buy_me',
-    itemPinId: ITEM_PIN_ID,
-    sellerGlobalMetaId: SELLER_METAID,
+    source: 'inline-metaapp',
+    params: {
+      mode: 'buy_me',
+      itemPinId: ITEM_PIN_ID,
+      collectionName: 'Pixel Cats',
+      itemName: 'Avatar #42',
+      sellerGlobalMetaId: SELLER_METAID,
+    },
   });
   assert.equal(noPriceAction?.kind, 'draft_chat');
   if (noPriceAction?.kind === 'draft_chat') {
@@ -224,13 +239,18 @@ test('WS-E commerce-intent (askTwinToBuy) and social-friend-prompt resolve corre
     assert.match(noPriceAction.text, new RegExp(ITEM_PIN_ID));
   }
 
-  // 3. WS-E negotiate and inquire_unlisted -> draft_chat guiding goods_send_inquiry
+  // 3. WS-E nested params negotiate and inquire_unlisted -> draft_chat guiding goods_send_inquiry
   const negotiateAction = resolveCommerceIntentAction({
     intent: 'askTwinToBuy',
-    mode: 'negotiate',
-    itemPinId: ITEM_PIN_ID,
-    priceMeMilli: 4000,
-    sellerGlobalMetaId: SELLER_METAID,
+    source: 'bot-browser',
+    params: {
+      mode: 'negotiate',
+      itemPinId: ITEM_PIN_ID,
+      collectionName: 'Pixel Cats',
+      itemName: 'Avatar #42',
+      priceMeMilli: 4000,
+      sellerGlobalMetaId: SELLER_METAID,
+    },
   });
   assert.equal(negotiateAction?.kind, 'draft_chat');
   if (negotiateAction?.kind === 'draft_chat') {
@@ -239,21 +259,48 @@ test('WS-E commerce-intent (askTwinToBuy) and social-friend-prompt resolve corre
 
   const unlistedAction = resolveCommerceIntentAction({
     intent: 'askTwinToBuy',
-    mode: 'inquire_unlisted',
-    itemPinId: ITEM_PIN_ID,
-    sellerGlobalMetaId: SELLER_METAID,
+    source: 'bot-browser',
+    params: {
+      mode: 'inquire_unlisted',
+      itemPinId: ITEM_PIN_ID,
+      collectionName: 'Pixel Cats',
+      itemName: 'Avatar #42',
+      sellerGlobalMetaId: SELLER_METAID,
+    },
   });
   assert.equal(unlistedAction?.kind, 'draft_chat');
   if (unlistedAction?.kind === 'draft_chat') {
     assert.match(unlistedAction.text, /goods_send_inquiry/);
+    assert.doesNotMatch(unlistedAction.text, /Send a求购/);
   }
 
-  // 4. social-friend-prompt addFriendPrompt -> draft referencing targetGlobalMetaId
+  // 4. Flat payload compatibility fallback still works
+  const flatBuyAction = resolveCommerceIntentAction({
+    intent: 'askTwinToBuy',
+    mode: 'buy_me',
+    itemPinId: ITEM_PIN_ID,
+    collectionPinId: COLLECTION_PIN_ID,
+    series: 'Flat Series',
+    priceMeMilli: 2500,
+    sellerGlobalMetaId: SELLER_METAID,
+  });
+  assert.equal(flatBuyAction?.kind, 'open_confirm_modal');
+  if (flatBuyAction?.kind === 'open_confirm_modal') {
+    assert.equal(flatBuyAction.target.collectionPinId, COLLECTION_PIN_ID);
+    assert.equal(flatBuyAction.target.series, 'Flat Series');
+  }
+
+  // 5. social-friend-prompt nested params addFriendPrompt -> draft referencing targetGlobalMetaId and greeting
   const friendDraft = buildSocialFriendPromptDraft({
     intent: 'addFriendPrompt',
-    targetGlobalMetaId: SELLER_METAID,
-    targetName: 'SellerBot',
+    source: 'inline-metaapp',
+    params: {
+      targetGlobalMetaId: SELLER_METAID,
+      targetName: 'SellerBot',
+      greeting: 'Hi there, interested in your Pixel Cats collection!',
+    },
   });
   assert.ok(friendDraft);
   assert.match(friendDraft, new RegExp(SELLER_METAID));
+  assert.match(friendDraft, /Hi there, interested in your Pixel Cats collection!/);
 });

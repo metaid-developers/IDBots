@@ -3,13 +3,15 @@ import { ct, formatMeDisplay } from './commerceTradeI18n';
 export const IDBOTS_COMMERCE_INTENT_EVENT = 'idbots:commerce-intent';
 export const IDBOTS_SOCIAL_FRIEND_PROMPT_EVENT = 'idbots:social-friend-prompt';
 
-export interface AskTwinToBuyIntentDetail {
-  intent: 'askTwinToBuy';
+export interface AskTwinToBuyParams {
   mode: 'buy_me' | 'negotiate' | 'inquire_unlisted';
   itemPinId: string;
   itemName?: string;
   series?: string;
+  collectionName?: string;
   collectionPinId?: string;
+  collectionId?: string;
+  tokenIndex?: string;
   priceMeMilli?: number;
   priceCnyCents?: number;
   priceSats?: number;
@@ -20,14 +22,39 @@ export interface AskTwinToBuyIntentDetail {
   note?: string;
 }
 
-export interface SocialFriendPromptDetail {
-  intent: 'addFriendPrompt';
+export type AskTwinToBuyIntentDetail =
+  | ({
+      intent: 'askTwinToBuy';
+      source?: string;
+      actorId?: string;
+      params: AskTwinToBuyParams;
+    })
+  | ({
+      intent: 'askTwinToBuy';
+      source?: string;
+      actorId?: string;
+    } & AskTwinToBuyParams);
+
+export interface SocialFriendPromptParams {
   targetGlobalMetaId: string;
   targetName?: string;
   targetAddress?: string;
-  source?: string;
   note?: string;
+  greeting?: string;
 }
+
+export type SocialFriendPromptDetail =
+  | ({
+      intent: 'addFriendPrompt';
+      source?: string;
+      actorId?: string;
+      params: SocialFriendPromptParams;
+    })
+  | ({
+      intent: 'addFriendPrompt';
+      source?: string;
+      actorId?: string;
+    } & SocialFriendPromptParams);
 
 export type CommerceIntentDetail =
   | {
@@ -82,6 +109,20 @@ export type ResolvedCommerceIntentAction =
   | { kind: 'open_confirm_modal'; target: GoodsPurchaseConfirmTargetPayload }
   | { kind: 'draft_chat'; text: string };
 
+function unwrapAskTwinToBuyParams(detail: AskTwinToBuyIntentDetail): AskTwinToBuyParams {
+  if ('params' in detail && detail.params && typeof detail.params === 'object') {
+    return detail.params;
+  }
+  return detail as AskTwinToBuyParams;
+}
+
+function unwrapSocialFriendPromptParams(detail: SocialFriendPromptDetail): SocialFriendPromptParams {
+  if ('params' in detail && detail.params && typeof detail.params === 'object') {
+    return detail.params;
+  }
+  return detail as SocialFriendPromptParams;
+}
+
 export function resolveCommerceIntentAction(
   detail: CommerceIntentDetail | null | undefined,
 ): ResolvedCommerceIntentAction | null {
@@ -95,31 +136,42 @@ export function resolveCommerceIntentAction(
     };
   }
 
+  const askParams = 'intent' in detail && detail.intent === 'askTwinToBuy'
+    ? unwrapAskTwinToBuyParams(detail)
+    : null;
+
   const isBuyWithMe =
     ('type' in detail && detail.type === 'buy_with_me')
-    || ('intent' in detail && detail.intent === 'askTwinToBuy' && detail.mode === 'buy_me');
+    || (askParams?.mode === 'buy_me');
 
   if (isBuyWithMe) {
-    const itemPinId = detail.itemPinId?.trim();
+    const payload = askParams ?? (detail as Extract<CommerceIntentDetail, { type: 'buy_with_me' }>);
+    const itemPinId = payload.itemPinId?.trim();
     if (!itemPinId) return null;
-    if (detail.priceMeMilli != null && detail.priceMeMilli > 0) {
+    const collectionPinId = payload.collectionPinId
+      || (askParams?.collectionId ? askParams.collectionId : undefined)
+      || undefined;
+    const series = payload.series
+      || (askParams?.collectionName ? askParams.collectionName : undefined)
+      || undefined;
+    if (payload.priceMeMilli != null && payload.priceMeMilli > 0) {
       return {
         kind: 'open_confirm_modal',
         target: {
           itemPinId,
-          itemName: detail.itemName,
-          series: detail.series,
-          collectionPinId: 'collectionPinId' in detail ? detail.collectionPinId : undefined,
-          priceMeMilli: detail.priceMeMilli,
-          priceCnyCents: detail.priceCnyCents,
-          sellerAddress: detail.sellerAddress,
-          sellerGlobalMetaId: detail.sellerGlobalMetaId,
-          sellerName: detail.sellerName,
-          shopMetaAppPinId: detail.shopMetaAppPinId,
+          itemName: payload.itemName,
+          series,
+          collectionPinId,
+          priceMeMilli: payload.priceMeMilli,
+          priceCnyCents: payload.priceCnyCents,
+          sellerAddress: payload.sellerAddress,
+          sellerGlobalMetaId: payload.sellerGlobalMetaId,
+          sellerName: payload.sellerName,
+          shopMetaAppPinId: payload.shopMetaAppPinId,
         },
       };
     }
-    const targetRef = detail.sellerGlobalMetaId || detail.sellerAddress || '';
+    const targetRef = payload.sellerGlobalMetaId || payload.sellerAddress || '';
     const draft = ct(
       `Send an inquiry via goods_send_inquiry for digital item ${itemPinId}${targetRef ? ` to seller ${targetRef}` : ''} to ask for an ME price quote.`,
       `请使用 goods_send_inquiry 向卖家 ${targetRef} 询价数字商品 ${itemPinId}，确认 ME 积分报价。`,
@@ -129,21 +181,18 @@ export function resolveCommerceIntentAction(
 
   const isInquiryOrNegotiate =
     ('type' in detail && detail.type === 'negotiate')
-    || (
-      'intent' in detail
-      && detail.intent === 'askTwinToBuy'
-      && (detail.mode === 'negotiate' || detail.mode === 'inquire_unlisted')
-    );
+    || (askParams?.mode === 'negotiate' || askParams?.mode === 'inquire_unlisted');
 
   if (isInquiryOrNegotiate) {
-    const itemPinId = detail.itemPinId?.trim();
+    const payload = askParams ?? (detail as Extract<CommerceIntentDetail, { type: 'negotiate' }>);
+    const itemPinId = payload.itemPinId?.trim();
     if (!itemPinId) return null;
-    const priceHint = detail.priceMeMilli != null ? ` (${formatMeDisplay(detail.priceMeMilli)})` : '';
-    const targetRef = detail.sellerGlobalMetaId || detail.sellerAddress || '';
-    const isUnlisted = 'intent' in detail && detail.intent === 'askTwinToBuy' && detail.mode === 'inquire_unlisted';
+    const priceHint = payload.priceMeMilli != null ? ` (${formatMeDisplay(payload.priceMeMilli)})` : '';
+    const targetRef = payload.sellerGlobalMetaId || payload.sellerAddress || '';
+    const isUnlisted = askParams?.mode === 'inquire_unlisted';
     const draft = isUnlisted
       ? ct(
-          `Send a求购/unlisted purchase inquiry via goods_send_inquiry for digital item ${itemPinId}${targetRef ? ` to holder ${targetRef}` : ''}${priceHint}.`,
+          `Send an unlisted purchase inquiry via goods_send_inquiry for digital item ${itemPinId}${targetRef ? ` to holder ${targetRef}` : ''}${priceHint}.`,
           `请使用 goods_send_inquiry 向持有人 ${targetRef} 发起未上架数字商品 ${itemPinId} 的求购询价${priceHint}。`,
         )
       : ct(
@@ -160,10 +209,12 @@ export function buildSocialFriendPromptDraft(
   detail: SocialFriendPromptDetail | null | undefined,
 ): string | null {
   if (!detail || detail.intent !== 'addFriendPrompt') return null;
-  const targetGlobalMetaId = detail.targetGlobalMetaId?.trim();
+  const params = unwrapSocialFriendPromptParams(detail);
+  const targetGlobalMetaId = params.targetGlobalMetaId?.trim();
   if (!targetGlobalMetaId) return null;
-  const label = detail.targetName ? `${detail.targetName} (${targetGlobalMetaId})` : targetGlobalMetaId;
-  const noteSuffix = detail.note?.trim() ? ` Note: ${detail.note.trim()}` : '';
+  const label = params.targetName ? `${params.targetName} (${targetGlobalMetaId})` : targetGlobalMetaId;
+  const noteText = (params.note || params.greeting || '').trim();
+  const noteSuffix = noteText ? ` Note: ${noteText}` : '';
   return ct(
     `Say hello and send a friend request to ${label} (GlobalMetaID: ${targetGlobalMetaId}).${noteSuffix}`,
     `请向 ${label}（GlobalMetaID: ${targetGlobalMetaId}）打个招呼并发送好友请求。${noteSuffix}`,

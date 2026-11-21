@@ -7,6 +7,7 @@ import {
   fetchMrc721CollectionHolders,
   fetchMrc721CollectionInfo,
   fetchMrc721ItemInfo,
+  fetchMrc721ItemVerify,
   fetchMrc721MarketCollections,
   fetchMrc721MarketCollectionSummary,
   fetchMrc721MarketListings,
@@ -124,6 +125,7 @@ export interface GoodsTradeToolsControl {
   fetchMarketTrades?: typeof fetchMrc721MarketTrades;
   fetchCaRegistry?: typeof fetchMrc721CaRegistry;
   fetchItemInfo?: typeof fetchMrc721ItemInfo;
+  fetchItemVerify?: typeof fetchMrc721ItemVerify;
   fetchAddressCollections?: typeof fetchMrc721AddressCollections;
   fetchAddressItems?: typeof fetchMrc721AddressItems;
   fetchSellIntents?: typeof fetchMrc721SellIntents;
@@ -194,6 +196,7 @@ export function buildGoodsTradeAgentTools(deps: {
   const getMarketTrades = control.fetchMarketTrades ?? fetchMrc721MarketTrades;
   const getCaRegistry = control.fetchCaRegistry ?? fetchMrc721CaRegistry;
   const getItemInfo = control.fetchItemInfo ?? fetchMrc721ItemInfo;
+  const getItemVerify = control.fetchItemVerify ?? fetchMrc721ItemVerify;
   const getAddressCollections = control.fetchAddressCollections ?? fetchMrc721AddressCollections;
   const getAddressItems = control.fetchAddressItems ?? fetchMrc721AddressItems;
   const getSellIntents = control.fetchSellIntents ?? fetchMrc721SellIntents;
@@ -683,6 +686,31 @@ export function buildGoodsTradeAgentTools(deps: {
         || item.ownerMetaId;
       const sellerName = activeListing?.seller?.name;
 
+      let collectionPinId = (
+        item.collectionPinId
+        || (item as { collectionid?: string }).collectionid
+        || item.activeListing?.collectionPinId
+        || activeListing?.collectionPinId
+        || ''
+      ).trim().toLowerCase();
+      if (!isMrc721PinId(collectionPinId)) {
+        try {
+          const verify = await getItemVerify({ pinId: itemPinId });
+          const verifiedCollectionId = String(verify?.collectionPinId || verify?.collectionid || '').trim().toLowerCase();
+          if (isMrc721PinId(verifiedCollectionId)) {
+            collectionPinId = verifiedCollectionId;
+          }
+        } catch {
+          // Handled by missing collectionPinId check below
+        }
+      }
+      if (!isMrc721PinId(collectionPinId)) {
+        return textResult(
+          `goods_buy_with_me: could not resolve collectionPinId for item ${itemPinId}; cannot lock ME escrow without a valid collectionPinId.`,
+          true,
+        );
+      }
+
       const approved = await confirmGoodsPurchase({
         metabotId,
         metabotName: buyerIdentity.name,
@@ -699,7 +727,6 @@ export function buildGoodsTradeAgentTools(deps: {
         return textResult('goods_buy_with_me cancelled: owner did not confirm the ME escrow purchase.', true);
       }
 
-      const collectionPinId = item.collectionPinId || activeListing?.collectionPinId || undefined;
       const listingPinId = activeListing?.intentPinId || fallbackIntentMeta.sellPinId || undefined;
 
       let order: MeNftEscrowOrder;
