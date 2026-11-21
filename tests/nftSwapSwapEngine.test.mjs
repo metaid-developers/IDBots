@@ -568,6 +568,39 @@ test('official-mint verification mismatch halts with the pin kept in mint_pendin
   });
 });
 
+test('createHostAdapter loads dist-electron cleanly under plain Node CLI without Electron main process', async () => {
+  const { existsSync } = await import('node:fs');
+  const { createHostAdapter, distMainPath } = await import('../SKILLs/nft-swap/cli/lib/host-adapter.mjs');
+  if (!existsSync(path.join(distMainPath(), 'sqliteStore.js'))) {
+    // test:nft-swap also runs in lightweight mode without compile:electron; skip only if unbuilt.
+    return;
+  }
+  const dir = mkdtempSync(path.join(tmpdir(), 'nft-swap-host-adapter-'));
+  let host = null;
+  try {
+    host = await createHostAdapter({ userDataPath: dir, metabotId: 1 });
+    const est = await host.estimateMintPins({
+      collectionName: 'metabot-avatar',
+      itemPath: 'item-1310',
+      display: buildItemDisplay({
+        album: ALBUM,
+        tokenIndex: 1310,
+        legacyName: 'MetaBot Avatar #1310',
+        cover: `metafile://${MINT_PIN}`,
+        depositTxid: uniqueHex(),
+      }),
+    });
+    assert.ok(est.totalSats > 0, `expected positive fee estimate, got ${JSON.stringify(est)}`);
+  } finally {
+    host?.close?.();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Windows-tolerant cleanup
+    }
+  }
+});
+
 test('fee ceiling pauses BEFORE the mint broadcast', async () => {
   await withTempLedger('mint-fee', async (ledger) => {
     const { row, txid } = claim(ledger, 836);

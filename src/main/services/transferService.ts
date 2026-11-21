@@ -335,7 +335,7 @@ async function runMvcTransferWorker(params: {
   excludeOutpoints?: string[];
   preferredFundingUtxos?: MvcCachedFundingUtxo[];
 }): Promise<MvcTransferWorkerSuccess | MvcTransferWorkerFailure> {
-  const appPath = app.getAppPath();
+  const appPath = app?.getAppPath?.() ?? process.cwd();
   const workerBasename = 'transferMvcWorker.js';
   const candidatePaths = getMainWorkerCandidatePaths({
     moduleDir: __dirname,
@@ -368,7 +368,7 @@ async function runMvcTransferWorker(params: {
     console.error('[Transfer] Electron executable not found for worker');
     return { success: false, error: 'Electron executable not found' };
   }
-  const spawnCwd = app.getPath('userData');
+  const spawnCwd = app?.getPath?.('userData') ?? process.cwd();
   const payloadStr = JSON.stringify({
     toAddress: params.toAddress,
     amountSats: params.amountSats,

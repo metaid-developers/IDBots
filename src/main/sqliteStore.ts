@@ -112,7 +112,7 @@ export function resolveSqlJsWasmPath(input?: {
   appPath?: string;
   resourcesPath?: string;
 }): string {
-  const packaged = input?.isPackaged ?? app.isPackaged;
+  const packaged = input?.isPackaged ?? Boolean(app?.isPackaged);
   if (packaged) {
     // In production, the wasm file is in the unpacked resources
     return path.join(
@@ -121,7 +121,7 @@ export function resolveSqlJsWasmPath(input?: {
     );
   }
 
-  const appPath = input?.appPath ?? app.getAppPath();
+  const appPath = input?.appPath ?? app?.getAppPath?.() ?? process.cwd();
   const resolvedFromAncestors = findNearestExistingFile(appPath, SQL_JS_WASM_RELATIVE_PATH);
   if (resolvedFromAncestors) {
     return resolvedFromAncestors;
@@ -351,7 +351,7 @@ export class SqliteStore {
   }
 
   static async create(userDataPath?: string): Promise<SqliteStore> {
-    const basePath = userDataPath ?? app.getPath('userData');
+    const basePath = userDataPath ?? app?.getPath?.('userData') ?? process.cwd();
     const dbPath = path.join(basePath, DB_FILENAME);
     fs.mkdirSync(basePath, { recursive: true });
 

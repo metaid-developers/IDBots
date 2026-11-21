@@ -41,8 +41,35 @@ function feeFromRawTx(rawTx) {
  * Open the host store + services for one CLI run.
  * @param {{userDataPath: string, metabotId: number, repoRoot?: string}} args
  */
+/**
+ * When nft-swap CLIs run under plain Node.js (e.g. Cowork Bash), `require('electron')`
+ * resolves to the npm launcher string (path to Electron binary) rather than `{ app }`.
+ * Populate a minimal CJS `app` shim before loading `dist-electron/main/*` modules.
+ */
+function ensurePlainNodeElectronAppShim({ userDataPath, repoRoot }) {
+  try {
+    const electronModuleId = require.resolve('electron', { paths: [repoRoot, __dirname] });
+    const rawElectron = require(electronModuleId);
+    if (typeof rawElectron === 'string' && rawElectron.length > 0) {
+      const cached = require.cache[electronModuleId];
+      if (cached) {
+        cached.exports = {
+          app: {
+            isPackaged: false,
+            getAppPath: () => repoRoot,
+            getPath: (name) => (name === 'exe' ? rawElectron : userDataPath),
+          },
+        };
+      }
+    }
+  } catch {
+    // Running inside Electron main process or without local electron package; service fallbacks apply.
+  }
+}
+
 export async function createHostAdapter({ userDataPath, metabotId, repoRoot = REPO_ROOT, feeRate = 1 }) {
   const distMain = distMainPath(repoRoot);
+  ensurePlainNodeElectronAppShim({ userDataPath, repoRoot });
   let SqliteStore;
   let MetabotStore;
   let mrc721;

@@ -502,7 +502,7 @@ async function runWorker<T extends WorkerTransferResult = WorkerTransferResult>(
   env: NodeJS.ProcessEnv,
   options?: { requireTxHex?: boolean },
 ): Promise<T> {
-  const appPath = app.getAppPath();
+  const appPath = app?.getAppPath?.() ?? process.cwd();
   const candidatePaths = getMainWorkerCandidatePaths({
     moduleDir: __dirname,
     appPath,
@@ -529,7 +529,7 @@ async function runWorker<T extends WorkerTransferResult = WorkerTransferResult>(
 
   return await new Promise<T>((resolve, reject) => {
     const child = spawn(electronExe, [workerPath], {
-      cwd: app.getPath('userData'),
+      cwd: app?.getPath?.('userData') ?? process.cwd(),
       env: {
         ...baseEnv,
         ...env,
