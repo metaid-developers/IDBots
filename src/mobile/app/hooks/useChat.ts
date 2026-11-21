@@ -17,7 +17,7 @@ import {
   resolveDefaultMetabotId,
 } from '@/services/coworkSessionStart';
 import { getMobileElectron, hasAppBridge } from '../appBridge';
-import type { MockMetabot } from '../../bridge/types';
+import type { CoworkSessionSummary, MockMetabot } from '../../bridge/types';
 import { projectChatMessages } from '../chatProjection';
 import {
   LLM_QUOTA_EXHAUSTED_CODE,
@@ -331,6 +331,30 @@ export function useChat(bots: MockMetabot[] = []) {
     return true;
   }, [controller, sessionId]);
 
+  const unarchiveSession = useCallback(async (id: string): Promise<boolean> => {
+    const cowork = hasAppBridge() ? getMobileElectron().cowork : undefined;
+    if (!cowork?.unarchiveSession) return false;
+    try {
+      const result = await cowork.unarchiveSession(id);
+      if (!result?.success) return false;
+    } catch {
+      return false;
+    }
+    await controller?.reloadSessions();
+    return true;
+  }, [controller]);
+
+  const listArchivedSessions = useCallback(async (): Promise<CoworkSessionSummary[]> => {
+    const cowork = hasAppBridge() ? getMobileElectron().cowork : undefined;
+    if (!cowork?.listArchivedSessions) return [];
+    try {
+      const result = await cowork.listArchivedSessions();
+      return result?.sessions ?? [];
+    } catch {
+      return [];
+    }
+  }, []);
+
   const applyResync = useCallback((resync: CoworkResyncSnapshot): void => {
     controller?.applyResync(resync);
   }, [controller]);
@@ -380,6 +404,8 @@ export function useChat(bots: MockMetabot[] = []) {
     openSession,
     renameSession,
     archiveSession,
+    unarchiveSession,
+    listArchivedSessions,
     newChat: () => controller?.newChat(),
     send,
     stop: async (): Promise<CoworkActionResult> => (
