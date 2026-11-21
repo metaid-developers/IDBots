@@ -25,7 +25,17 @@
         "cover": "",
         "prices": {
           "me": { "amountMilli": 15000 },
-          "fiat": { "currency": "CNY", "amountCents": 990 }
+          "fiat": { "currency": "CNY", "amountCents": 990 },
+          "tokens": [
+            {
+              "assetKey": "mrc20:4f92000000000000000000000000000000000000000000000000000000000001i0",
+              "standard": "mrc20",
+              "symbol": "METAID",
+              "decimals": 8,
+              "amountBase": "20000000000",
+              "amountDisplay": "200"
+            }
+          ]
         },
         "autoFulfillMe": true,
         "negotiable": true,

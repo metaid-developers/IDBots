@@ -59,8 +59,8 @@ export class SanitizeFailure {
 
 export type SanitizeResult<T> = T | SanitizeFailure;
 
-export type AskTwinToBuyMode = 'buy_me' | 'negotiate' | 'inquire_unlisted';
-export const ASK_TWIN_TO_BUY_MODES: readonly AskTwinToBuyMode[] = ['buy_me', 'negotiate', 'inquire_unlisted'];
+export type AskTwinToBuyMode = 'buy_me' | 'buy_token' | 'negotiate' | 'inquire_unlisted';
+export const ASK_TWIN_TO_BUY_MODES: readonly AskTwinToBuyMode[] = ['buy_me', 'buy_token', 'negotiate', 'inquire_unlisted'];
 
 export interface AskTwinToBuyParams {
   itemPinId: string;
@@ -74,6 +74,11 @@ export interface AskTwinToBuyParams {
   sellerName?: string;
   priceMeMilli?: number;
   priceCnyCents?: number;
+  paymentAssetKey?: string;
+  paymentSymbol?: string;
+  paymentAmountDisplay?: string;
+  paymentAmountBase?: string;
+  paymentChain?: 'btc' | 'mvc';
   mode: AskTwinToBuyMode;
   shopMetaAppPinId?: string;
 }
@@ -151,11 +156,22 @@ export function normalizeGlobalMetaId(value: unknown): string {
 
 /** MVC mainnet addresses are `1`-prefixed base58 (no 0OIl); case matters, never lowercased. */
 const MVC_ADDRESS_RE = /^1[a-km-zA-HJ-NP-Z1-9]{25,34}$/;
+const MRC20_ASSET_KEY_RE = /^mrc20:[0-9a-z_-]{3,80}$/i;
+const MVC_FT_ASSET_KEY_RE = /^mvc-ft:[0-9a-f]{40}:(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 
 export function normalizeMvcAddress(value: unknown): string {
   if (typeof value !== 'string') return '';
   const raw = value.trim();
   return MVC_ADDRESS_RE.test(raw) ? raw : '';
+}
+
+export function normalizePaymentAssetKey(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const raw = value.trim().toLowerCase();
+  if (MRC20_ASSET_KEY_RE.test(raw) || MVC_FT_ASSET_KEY_RE.test(raw)) {
+    return raw;
+  }
+  return '';
 }
 
 /** Truthiness-friendly price validation: undefined when acceptable. */
@@ -206,6 +222,19 @@ export function sanitizeAskTwinToBuy(value: unknown): SanitizeResult<AskTwinToBu
   const collectionId = normalizeItemPinId(value.collectionId) || '';
   const shopMetaAppPinId = normalizeShopMetaAppPinId(value.shopMetaAppPinId) || '';
   const tokenIndexRaw = cleanCommerceText(value.tokenIndex, TEXT_CAPS.tokenIndex);
+  const mode = sanitizeMode(value.mode);
+  const paymentAssetKey = normalizePaymentAssetKey(value.paymentAssetKey);
+  if (mode === 'buy_token' && !paymentAssetKey) {
+    return new SanitizeFailure({ code: 'invalid_asset_key', message: 'paymentAssetKey is required for buy_token mode.' });
+  }
+  const paymentSymbol = cleanCommerceText(value.paymentSymbol, 24) || undefined;
+  const paymentAmountDisplayRaw = cleanCommerceText(value.paymentAmountDisplay, 40);
+  const paymentAmountDisplay = /^(?:\d+)(?:\.\d+)?$/.test(paymentAmountDisplayRaw) ? paymentAmountDisplayRaw : undefined;
+  const paymentAmountBaseRaw = typeof value.paymentAmountBase === 'string' ? value.paymentAmountBase.trim() : '';
+  const paymentAmountBase = /^[1-9]\d*$/.test(paymentAmountBaseRaw) ? paymentAmountBaseRaw : undefined;
+  const paymentChain: 'btc' | 'mvc' | undefined = paymentAssetKey
+    ? (paymentAssetKey.startsWith('mrc20:') ? 'btc' : 'mvc')
+    : undefined;
   return {
     itemPinId,
     collectionName: cleanCommerceText(value.collectionName, TEXT_CAPS.shortName) || '',
@@ -218,7 +247,12 @@ export function sanitizeAskTwinToBuy(value: unknown): SanitizeResult<AskTwinToBu
     shopMetaAppPinId: shopMetaAppPinId || undefined,
     priceMeMilli: normalizePrice(value.priceMeMilli),
     priceCnyCents: normalizePrice(value.priceCnyCents),
-    mode: sanitizeMode(value.mode),
+    ...(paymentAssetKey ? { paymentAssetKey } : {}),
+    ...(paymentSymbol ? { paymentSymbol } : {}),
+    ...(paymentAmountDisplay ? { paymentAmountDisplay } : {}),
+    ...(paymentAmountBase ? { paymentAmountBase } : {}),
+    ...(paymentChain ? { paymentChain } : {}),
+    mode,
   };
 }
 

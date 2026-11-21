@@ -280,9 +280,24 @@ export interface Mrc721MarketPriceFiat {
   amountCents: number;
 }
 
+export interface Mrc721MarketPriceToken {
+  assetKey: string;
+  chain: 'btc' | 'mvc';
+  standard: 'mrc20' | 'metacontract-ft';
+  mrc20Id?: string;
+  codehash?: string;
+  genesis?: string;
+  symbol: string;
+  decimals: number;
+  amountBase: string;
+  amountDisplay: string;
+  sellerReceiveAddress: string;
+}
+
 export interface Mrc721MarketPrices {
   me?: Mrc721MarketPriceMe;
   fiat?: Mrc721MarketPriceFiat;
+  tokens?: Mrc721MarketPriceToken[];
 }
 
 export interface Mrc721SellerProfile {
@@ -307,6 +322,7 @@ export interface Mrc721MarketListing {
   prices?: Mrc721MarketPrices;
   priceHintSats?: number;
   autoFulfillMe?: boolean;
+  autoFulfillTokens?: boolean;
   negotiable?: boolean;
   acceptedCurrencies: string[];
   settlement: string[];
@@ -2031,7 +2047,8 @@ export async function fetchMrc721MarketListings(params?: {
   collectionPinId?: string;
   seller?: string;
   itemPinId?: string;
-  currency?: 'me' | 'fiat:CNY' | 'any';
+  currency?: 'me' | 'fiat:CNY' | 'any' | `ft:${string}`;
+  tokenAssetKey?: string;
   minPrice?: number;
   maxPrice?: number;
   onlineOnly?: boolean;
@@ -2046,6 +2063,7 @@ export async function fetchMrc721MarketListings(params?: {
     seller: params?.seller,
     itemPinId: params?.itemPinId,
     currency: params?.currency,
+    tokenAssetKey: params?.tokenAssetKey,
     minPrice: params?.minPrice,
     maxPrice: params?.maxPrice,
     onlineOnly: params?.onlineOnly,

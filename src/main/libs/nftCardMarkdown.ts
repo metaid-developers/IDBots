@@ -28,6 +28,16 @@ export const NFT_CARD_RESULT_HINT =
 
 export type NftCardEmitFormat = 'metacontract' | 'mrc721';
 
+export interface NftCardPriceToken {
+  assetKey: string;
+  chain: 'btc' | 'mvc';
+  symbol: string;
+  decimals: number;
+  amountBase: string;
+  amountDisplay: string;
+  sellerReceiveAddress?: string;
+}
+
 export interface NftCardEmitFields {
   format?: NftCardEmitFormat;
   /** MRC-721 item pinId (required for mrc721 cards). */
@@ -49,6 +59,7 @@ export interface NftCardEmitFields {
   priceSats?: number;
   priceMeMilli?: number;
   priceCnyCents?: number;
+  priceTokens?: NftCardPriceToken[];
   sellerGlobalMetaId?: string;
   sellerName?: string;
   sellerOnline?: boolean;
@@ -66,7 +77,7 @@ export interface NftCardEmitFields {
 const NFT_CARD_KEY_ORDER: Array<keyof NftCardEmitFields> = [
   'format', 'pinId', 'genesis', 'codehash', 'tokenIndex', 'number', 'name',
   'series', 'imgUrl', 'icon', 'owner', 'ownerLabel', 'issuer', 'issuerLabel',
-  'priceSats', 'priceMeMilli', 'priceCnyCents', 'sellerGlobalMetaId',
+  'priceSats', 'priceMeMilli', 'priceCnyCents', 'priceTokens', 'sellerGlobalMetaId',
   'sellerName', 'sellerOnline', 'shopMetaAppPinId', 'caVerified', 'action', 'hostStamp',
 ];
 
@@ -172,6 +183,7 @@ export const buildMrc721CardFields = (input: {
   priceSats?: number;
   priceMeMilli?: number;
   priceCnyCents?: number;
+  priceTokens?: NftCardPriceToken[];
   sellerGlobalMetaId?: string;
   sellerName?: string;
   sellerOnline?: boolean;
@@ -208,6 +220,21 @@ export const buildMrc721CardFields = (input: {
   }
   if (input.priceCnyCents != null && Number.isInteger(input.priceCnyCents) && input.priceCnyCents >= 0) {
     fields.priceCnyCents = input.priceCnyCents;
+  }
+  if (Array.isArray(input.priceTokens) && input.priceTokens.length > 0) {
+    fields.priceTokens = input.priceTokens
+      .filter((t) => t && t.assetKey && t.symbol && t.amountBase && t.amountDisplay)
+      .slice(0, 6)
+      .map((t) => ({
+        assetKey: String(t.assetKey).trim().toLowerCase(),
+        chain: t.chain === 'btc' ? 'btc' : 'mvc',
+        symbol: cleanOptional(t.symbol, 24) || 'TOKEN',
+        decimals: Number.isInteger(Number(t.decimals)) ? Number(t.decimals) : 0,
+        amountBase: String(t.amountBase).trim(),
+        amountDisplay: String(t.amountDisplay).trim(),
+        ...(t.sellerReceiveAddress ? { sellerReceiveAddress: String(t.sellerReceiveAddress).trim() } : {}),
+      }));
+    if (fields.priceTokens.length === 0) delete fields.priceTokens;
   }
   const sellerGlobalMetaId = cleanOptional(input.sellerGlobalMetaId, 128);
   if (sellerGlobalMetaId) fields.sellerGlobalMetaId = sellerGlobalMetaId;

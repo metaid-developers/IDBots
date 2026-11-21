@@ -97,6 +97,94 @@ export interface MeFtEscrowRejectedMessageV1 {
   reason: string;
 }
 
+export interface FtGoodsAtomicProposalMessageV1 {
+  type: 'FT_GOODS_ATOMIC_PROPOSAL_V1';
+  proposalId: string;
+  itemPinId: string;
+  assetKey: string;
+  amountBase: string;
+  buyerNftAddress: string;
+  sellerReceiveAddress: string;
+  amountCheckRawTx: string;
+  partialTx: string;
+  buyerGlobalMetaId?: string;
+  expiresAt?: number;
+}
+
+export interface FtGoodsAtomicSettledMessageV1 {
+  type: 'FT_GOODS_ATOMIC_SETTLED_V1';
+  proposalId?: string;
+  itemPinId: string;
+  txId: string;
+  assetKey?: string;
+  amountBase?: string;
+  buyerNftAddress?: string;
+  sellerMetaId?: string;
+}
+
+export interface FtGoodsAtomicRejectedMessageV1 {
+  type: 'FT_GOODS_ATOMIC_REJECTED_V1';
+  proposalId?: string;
+  itemPinId: string;
+  reason: string;
+}
+
+export interface TokenGoodsReserveMessageV1 {
+  type: 'TOKEN_GOODS_RESERVE_V1';
+  reserveRequestId?: string;
+  itemPinId: string;
+  assetKey: string;
+  buyerNftAddress: string;
+  buyerGlobalMetaId?: string;
+}
+
+export interface TokenGoodsReservedMessageV1 {
+  type: 'TOKEN_GOODS_RESERVED_V1';
+  reserveRequestId?: string;
+  reservationId: string;
+  itemPinId: string;
+  assetKey: string;
+  sellerReceiveAddress: string;
+  amountBase: string;
+  expiresAt: number;
+  sellerMetaId?: string;
+}
+
+export interface TokenGoodsReserveRejectedMessageV1 {
+  type: 'TOKEN_GOODS_RESERVE_REJECTED_V1';
+  reserveRequestId?: string;
+  itemPinId: string;
+  assetKey?: string;
+  reason: string;
+}
+
+export interface TokenGoodsPaidMessageV1 {
+  type: 'TOKEN_GOODS_PAID_V1';
+  reservationId: string;
+  itemPinId?: string;
+  assetKey?: string;
+  paymentTxId: string;
+  buyerNftAddress?: string;
+}
+
+export interface TokenGoodsDeliveredMessageV1 {
+  type: 'TOKEN_GOODS_DELIVERED_V1';
+  reservationId: string;
+  itemPinId?: string;
+  nftDeliveryTxId: string;
+  paymentTxId?: string;
+  assetKey?: string;
+  amountBase?: string;
+  sellerMetaId?: string;
+}
+
+export interface TokenGoodsDeliveryRejectedMessageV1 {
+  type: 'TOKEN_GOODS_DELIVERY_REJECTED_V1';
+  reservationId: string;
+  itemPinId?: string;
+  reason: string;
+}
+
 export type GoodsTradeWireMessageV1 =
   | MeEscrowLockedMessageV1
   | MeDeliveryDoneMessageV1
@@ -105,7 +193,16 @@ export type GoodsTradeWireMessageV1 =
   | GoodsQuoteAcceptMessageV1
   | MeFtEscrowLockedMessageV1
   | MeFtDeliveryDoneMessageV1
-  | MeFtEscrowRejectedMessageV1;
+  | MeFtEscrowRejectedMessageV1
+  | FtGoodsAtomicProposalMessageV1
+  | FtGoodsAtomicSettledMessageV1
+  | FtGoodsAtomicRejectedMessageV1
+  | TokenGoodsReserveMessageV1
+  | TokenGoodsReservedMessageV1
+  | TokenGoodsReserveRejectedMessageV1
+  | TokenGoodsPaidMessageV1
+  | TokenGoodsDeliveredMessageV1
+  | TokenGoodsDeliveryRejectedMessageV1;
 
 export function formatGoodsTradeWireMessage(payload: GoodsTradeWireMessageV1): string {
   return `\`\`\`${GOODS_TRADE_WIRE_FENCE_TAG}\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
@@ -244,6 +341,188 @@ export function parseGoodsTradeWireMessage(
         type: 'ME_FT_ESCROW_REJECTED_V1',
         orderId,
         assetKey,
+        reason,
+      };
+    }
+
+    // --- Token-for-Goods (Contract C5.2) A2A Wire Messages ---
+    if (type === 'FT_GOODS_ATOMIC_PROPOSAL_V1') {
+      const proposalId = pickNonEmptyString(obj.proposalId ?? obj.proposal_id);
+      const itemPinId = pickNonEmptyString(obj.itemPinId ?? obj.item_pin_id).toLowerCase();
+      const assetKey = pickNonEmptyString(obj.assetKey ?? obj.asset_key).toLowerCase();
+      const amountBase = pickNonEmptyString(
+        obj.amountBase !== undefined ? String(obj.amountBase) : (obj.amount_base !== undefined ? String(obj.amount_base) : ''),
+      );
+      const buyerNftAddress = pickNonEmptyString(obj.buyerNftAddress ?? obj.buyer_nft_address);
+      const sellerReceiveAddress = pickNonEmptyString(obj.sellerReceiveAddress ?? obj.seller_receive_address);
+      const amountCheckRawTx = pickNonEmptyString(obj.amountCheckRawTx ?? obj.amount_check_raw_tx);
+      const partialTx = pickNonEmptyString(obj.partialTx ?? obj.partial_tx);
+      if (
+        !proposalId || !itemPinId || !assetKey || !/^[1-9]\d*$/.test(amountBase)
+        || !buyerNftAddress || !sellerReceiveAddress || !amountCheckRawTx || !partialTx
+      ) {
+        continue;
+      }
+      const buyerGlobalMetaId = pickNonEmptyString(obj.buyerGlobalMetaId ?? obj.buyer_global_metaid) || undefined;
+      const expiresAt = pickFiniteNumber(obj.expiresAt ?? obj.expires_at);
+      return {
+        type: 'FT_GOODS_ATOMIC_PROPOSAL_V1',
+        proposalId,
+        itemPinId,
+        assetKey,
+        amountBase,
+        buyerNftAddress,
+        sellerReceiveAddress,
+        amountCheckRawTx,
+        partialTx,
+        ...(buyerGlobalMetaId ? { buyerGlobalMetaId } : {}),
+        ...(expiresAt != null ? { expiresAt } : {}),
+      };
+    }
+
+    if (type === 'FT_GOODS_ATOMIC_SETTLED_V1') {
+      const itemPinId = pickNonEmptyString(obj.itemPinId ?? obj.item_pin_id).toLowerCase();
+      const txId = pickNonEmptyString(obj.txId ?? obj.tx_id);
+      if (!itemPinId || !txId) continue;
+      const proposalId = pickNonEmptyString(obj.proposalId ?? obj.proposal_id) || undefined;
+      const assetKey = pickNonEmptyString(obj.assetKey ?? obj.asset_key).toLowerCase() || undefined;
+      const amountBase = pickNonEmptyString(obj.amountBase ?? obj.amount_base) || undefined;
+      const buyerNftAddress = pickNonEmptyString(obj.buyerNftAddress ?? obj.buyer_nft_address) || undefined;
+      const sellerMetaId = pickNonEmptyString(obj.sellerMetaId ?? obj.seller_metaid) || undefined;
+      return {
+        type: 'FT_GOODS_ATOMIC_SETTLED_V1',
+        ...(proposalId ? { proposalId } : {}),
+        itemPinId,
+        txId,
+        ...(assetKey ? { assetKey } : {}),
+        ...(amountBase ? { amountBase } : {}),
+        ...(buyerNftAddress ? { buyerNftAddress } : {}),
+        ...(sellerMetaId ? { sellerMetaId } : {}),
+      };
+    }
+
+    if (type === 'FT_GOODS_ATOMIC_REJECTED_V1') {
+      const itemPinId = pickNonEmptyString(obj.itemPinId ?? obj.item_pin_id).toLowerCase();
+      const reason = pickNonEmptyString(obj.reason) || 'rejected_by_seller';
+      const proposalId = pickNonEmptyString(obj.proposalId ?? obj.proposal_id) || undefined;
+      if (!itemPinId) continue;
+      return {
+        type: 'FT_GOODS_ATOMIC_REJECTED_V1',
+        ...(proposalId ? { proposalId } : {}),
+        itemPinId,
+        reason,
+      };
+    }
+
+    if (type === 'TOKEN_GOODS_RESERVE_V1') {
+      const itemPinId = pickNonEmptyString(obj.itemPinId ?? obj.item_pin_id).toLowerCase();
+      const assetKey = pickNonEmptyString(obj.assetKey ?? obj.asset_key).toLowerCase();
+      const buyerNftAddress = pickNonEmptyString(obj.buyerNftAddress ?? obj.buyer_nft_address);
+      if (!itemPinId || !assetKey || !buyerNftAddress) continue;
+      const reserveRequestId = pickNonEmptyString(obj.reserveRequestId ?? obj.reserve_request_id) || undefined;
+      const buyerGlobalMetaId = pickNonEmptyString(obj.buyerGlobalMetaId ?? obj.buyer_global_metaid) || undefined;
+      return {
+        type: 'TOKEN_GOODS_RESERVE_V1',
+        ...(reserveRequestId ? { reserveRequestId } : {}),
+        itemPinId,
+        assetKey,
+        buyerNftAddress,
+        ...(buyerGlobalMetaId ? { buyerGlobalMetaId } : {}),
+      };
+    }
+
+    if (type === 'TOKEN_GOODS_RESERVED_V1') {
+      const reservationId = pickNonEmptyString(obj.reservationId ?? obj.reservation_id);
+      const itemPinId = pickNonEmptyString(obj.itemPinId ?? obj.item_pin_id).toLowerCase();
+      const assetKey = pickNonEmptyString(obj.assetKey ?? obj.asset_key).toLowerCase();
+      const sellerReceiveAddress = pickNonEmptyString(obj.sellerReceiveAddress ?? obj.seller_receive_address);
+      const amountBase = pickNonEmptyString(
+        obj.amountBase !== undefined ? String(obj.amountBase) : (obj.amount_base !== undefined ? String(obj.amount_base) : ''),
+      );
+      const expiresAt = pickFiniteNumber(obj.expiresAt ?? obj.expires_at);
+      if (
+        !reservationId || !itemPinId || !assetKey || !sellerReceiveAddress
+        || !/^[1-9]\d*$/.test(amountBase) || expiresAt == null || expiresAt <= 0
+      ) {
+        continue;
+      }
+      const reserveRequestId = pickNonEmptyString(obj.reserveRequestId ?? obj.reserve_request_id) || undefined;
+      const sellerMetaId = pickNonEmptyString(obj.sellerMetaId ?? obj.seller_metaid) || undefined;
+      return {
+        type: 'TOKEN_GOODS_RESERVED_V1',
+        ...(reserveRequestId ? { reserveRequestId } : {}),
+        reservationId,
+        itemPinId,
+        assetKey,
+        sellerReceiveAddress,
+        amountBase,
+        expiresAt,
+        ...(sellerMetaId ? { sellerMetaId } : {}),
+      };
+    }
+
+    if (type === 'TOKEN_GOODS_RESERVE_REJECTED_V1') {
+      const itemPinId = pickNonEmptyString(obj.itemPinId ?? obj.item_pin_id).toLowerCase();
+      const reason = pickNonEmptyString(obj.reason) || 'item_unavailable';
+      const reserveRequestId = pickNonEmptyString(obj.reserveRequestId ?? obj.reserve_request_id) || undefined;
+      const assetKey = pickNonEmptyString(obj.assetKey ?? obj.asset_key).toLowerCase() || undefined;
+      if (!itemPinId) continue;
+      return {
+        type: 'TOKEN_GOODS_RESERVE_REJECTED_V1',
+        ...(reserveRequestId ? { reserveRequestId } : {}),
+        itemPinId,
+        ...(assetKey ? { assetKey } : {}),
+        reason,
+      };
+    }
+
+    if (type === 'TOKEN_GOODS_PAID_V1') {
+      const reservationId = pickNonEmptyString(obj.reservationId ?? obj.reservation_id);
+      const paymentTxId = pickNonEmptyString(obj.paymentTxId ?? obj.payment_tx_id ?? obj.revealTxId ?? obj.reveal_tx_id);
+      if (!reservationId || !paymentTxId) continue;
+      const itemPinId = pickNonEmptyString(obj.itemPinId ?? obj.item_pin_id).toLowerCase() || undefined;
+      const assetKey = pickNonEmptyString(obj.assetKey ?? obj.asset_key).toLowerCase() || undefined;
+      const buyerNftAddress = pickNonEmptyString(obj.buyerNftAddress ?? obj.buyer_nft_address) || undefined;
+      return {
+        type: 'TOKEN_GOODS_PAID_V1',
+        reservationId,
+        ...(itemPinId ? { itemPinId } : {}),
+        ...(assetKey ? { assetKey } : {}),
+        paymentTxId,
+        ...(buyerNftAddress ? { buyerNftAddress } : {}),
+      };
+    }
+
+    if (type === 'TOKEN_GOODS_DELIVERED_V1') {
+      const reservationId = pickNonEmptyString(obj.reservationId ?? obj.reservation_id);
+      const nftDeliveryTxId = pickNonEmptyString(obj.nftDeliveryTxId ?? obj.nft_delivery_tx_id ?? obj.deliveryTxId ?? obj.delivery_tx_id);
+      if (!reservationId || !nftDeliveryTxId) continue;
+      const itemPinId = pickNonEmptyString(obj.itemPinId ?? obj.item_pin_id).toLowerCase() || undefined;
+      const paymentTxId = pickNonEmptyString(obj.paymentTxId ?? obj.payment_tx_id) || undefined;
+      const assetKey = pickNonEmptyString(obj.assetKey ?? obj.asset_key).toLowerCase() || undefined;
+      const amountBase = pickNonEmptyString(obj.amountBase ?? obj.amount_base) || undefined;
+      const sellerMetaId = pickNonEmptyString(obj.sellerMetaId ?? obj.seller_metaid) || undefined;
+      return {
+        type: 'TOKEN_GOODS_DELIVERED_V1',
+        reservationId,
+        ...(itemPinId ? { itemPinId } : {}),
+        nftDeliveryTxId,
+        ...(paymentTxId ? { paymentTxId } : {}),
+        ...(assetKey ? { assetKey } : {}),
+        ...(amountBase ? { amountBase } : {}),
+        ...(sellerMetaId ? { sellerMetaId } : {}),
+      };
+    }
+
+    if (type === 'TOKEN_GOODS_DELIVERY_REJECTED_V1') {
+      const reservationId = pickNonEmptyString(obj.reservationId ?? obj.reservation_id);
+      const reason = pickNonEmptyString(obj.reason) || 'delivery_rejected';
+      const itemPinId = pickNonEmptyString(obj.itemPinId ?? obj.item_pin_id).toLowerCase() || undefined;
+      if (!reservationId) continue;
+      return {
+        type: 'TOKEN_GOODS_DELIVERY_REJECTED_V1',
+        reservationId,
+        ...(itemPinId ? { itemPinId } : {}),
         reason,
       };
     }

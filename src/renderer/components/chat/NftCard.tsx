@@ -182,6 +182,10 @@ const formatCardRowPrice = (data: NftCardData): string | null => {
   if (data.priceMeMilli != null && data.priceMeMilli > 0) {
     return formatMeDisplay(data.priceMeMilli);
   }
+  if (data.priceTokens && data.priceTokens.length > 0) {
+    const first = data.priceTokens[0];
+    return `${first.amountDisplay} $${first.symbol}`;
+  }
   if (data.priceCnyCents != null && data.priceCnyCents > 0) {
     return formatCnyDisplay(data.priceCnyCents);
   }
@@ -350,6 +354,14 @@ const buildDetailFields = (data: NftCardData): DetailField[] => {
   if (data.priceMeMilli != null && data.priceMeMilli > 0) {
     fields.push({ label: ct('ME Price', 'ME 价格'), value: formatMeDisplay(data.priceMeMilli) });
   }
+  if (data.priceTokens && data.priceTokens.length > 0) {
+    for (const tok of data.priceTokens) {
+      fields.push({
+        label: ct(`Token Price ($${tok.symbol})`, `代币价格 ($${tok.symbol})`),
+        value: `${tok.amountDisplay} $${tok.symbol} (${tok.assetKey})`,
+      });
+    }
+  }
   if (data.priceCnyCents != null && data.priceCnyCents > 0) {
     fields.push({ label: ct('CNY Reference', '人民币参考价'), value: formatCnyDisplay(data.priceCnyCents) });
   }
@@ -499,10 +511,15 @@ const NftCard: React.FC<{ data: NftCardData; className?: string }> = ({ data, cl
     : null;
   const identityLine = healed.format === 'mrc721' ? healed.pinId : healed.genesis;
   const ownerDisplayLabel = healed.ownerLabel || healed.sellerName;
-  const showBuyCapsule = Boolean(healed.pinId && (healed.priceMeMilli != null || healed.action === 'selling'));
+  const tokenPrices = healed.priceTokens ?? [];
+  const showBuyCapsule = Boolean(
+    healed.pinId
+    && (healed.priceMeMilli != null || (tokenPrices.length === 0 && healed.action === 'selling')),
+  );
+  const showTokenCapsules = Boolean(healed.pinId && tokenPrices.length > 0);
   const showNegotiateCapsule = Boolean(healed.pinId && (healed.sellerGlobalMetaId || healed.action === 'selling'));
   const showShopCapsule = Boolean(healed.shopMetaAppPinId);
-  const hasCommerceActions = showBuyCapsule || showNegotiateCapsule || showShopCapsule;
+  const hasCommerceActions = showBuyCapsule || showTokenCapsules || showNegotiateCapsule || showShopCapsule;
 
   return (
     <>
@@ -644,6 +661,39 @@ const NftCard: React.FC<{ data: NftCardData; className?: string }> = ({ data, cl
                   {ct('Buy with ME', 'ME 购买')}
                 </button>
               )}
+              {showTokenCapsules && healed.pinId && tokenPrices.map((tok) => (
+                <button
+                  key={tok.assetKey}
+                  type="button"
+                  data-nft-action="buy-token"
+                  data-asset-key={tok.assetKey}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    dispatchCommerceIntent({
+                      type: 'buy_with_token',
+                      itemPinId: healed.pinId!,
+                      paymentAssetKey: tok.assetKey,
+                      tokenSymbol: tok.symbol,
+                      tokenAmountDisplay: tok.amountDisplay,
+                      tokenAmountBase: tok.amountBase,
+                      tokenChain: tok.chain,
+                      sellerReceiveAddress: tok.sellerReceiveAddress,
+                      itemName: healed.name,
+                      series: healed.series,
+                      priceMeMilli: healed.priceMeMilli,
+                      priceCnyCents: healed.priceCnyCents,
+                      sellerAddress: healed.owner,
+                      sellerGlobalMetaId: healed.sellerGlobalMetaId,
+                      sellerName: ownerDisplayLabel,
+                      shopMetaAppPinId: healed.shopMetaAppPinId,
+                    });
+                  }}
+                  title={`${tok.amountDisplay} $${tok.symbol} (${tok.assetKey})`}
+                  className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/25 dark:text-emerald-300"
+                >
+                  {`${tok.amountDisplay} $${tok.symbol}`}
+                </button>
+              ))}
               {showNegotiateCapsule && healed.pinId && (
                 <button
                   type="button"

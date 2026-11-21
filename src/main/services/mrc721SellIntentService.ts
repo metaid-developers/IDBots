@@ -3,10 +3,16 @@ import {
   broadcastMrc721Pin,
   fetchMetasoJson,
   fetchMrc721ItemInfo,
+  fetchMrc721RawPin,
   isMvcAddress,
   isMrc721PinId,
   type Mrc721CreatePinFn,
+  type Mrc721MarketListing,
+  type Mrc721MarketPrices,
+  type Mrc721MarketPriceToken,
 } from './mrc721Service';
+import { listMrc20Assets } from './mrc20Service';
+import { listMvcFtAssets } from './mvcFtService';
 import type { MetabotStore } from '../metabotStore';
 
 /**
@@ -38,6 +44,15 @@ export const MRC721_TRADE_RECEIPT_PATH = '/protocols/mrc721trade';
 export const MRC721_SELL_MIN_ME_MILLI = 1000;
 export const MRC721_SELL_MIN_CNY_CENTS = 100;
 
+export type Mrc721SellIntentPriceToken = Mrc721MarketPriceToken;
+
+export interface Mrc721SellIntentPriceTokenInput {
+  assetKey: string;
+  amountDisplay: string;
+  symbol?: string;
+  decimals?: number;
+}
+
 export interface Mrc721SellIntentPrices {
   me?: {
     amountMilli: number;
@@ -46,6 +61,7 @@ export interface Mrc721SellIntentPrices {
     currency: 'CNY';
     amountCents: number;
   };
+  tokens?: Mrc721SellIntentPriceToken[];
 }
 
 export interface Mrc721SellIntentContent {
@@ -58,6 +74,7 @@ export interface Mrc721SellIntentContent {
   sellerMetaId?: string;
   prices?: Mrc721SellIntentPrices;
   autoFulfillMe?: boolean;
+  autoFulfillTokens?: boolean;
   negotiable?: boolean;
   shopMetaAppPinId?: string;
   priceHintSats?: number;
@@ -78,6 +95,7 @@ export interface Mrc721SellIntentRecord {
   status: 'active' | 'cancelled' | 'sold';
   /** Local authorization mirror for SellerAutoFulfillDaemon. */
   autoFulfillMe?: boolean;
+  autoFulfillTokens?: boolean;
   soldOrderId?: string;
   soldTxId?: string;
   soldAt?: number;
@@ -144,6 +162,143 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};
 }
 
+export interface ParsedFtAssetKey {
+  assetKey: string;
+  chain: 'btc' | 'mvc';
+  standard: 'mrc20' | 'metacontract-ft';
+  mrc20Id?: string;
+  codehash?: string;
+  genesis?: string;
+}
+
+const MRC20_ID_RE = /^[0-9a-f]{64}i\d+$/i;
+const HEX_40_RE = /^[0-9a-f]{40}$/i;
+const HEX_40_OR_64_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
+
+export function parseCanonicalFtAssetKey(rawAssetKey: unknown): ParsedFtAssetKey {
+  const raw = String(rawAssetKey ?? '').trim().toLowerCase();
+  if (!raw) {
+    throw new Error('assetKey is required');
+  }
+  if (raw.startsWith('mrc20:')) {
+    const mrc20Id = raw.slice('mrc20:'.length).trim();
+    if (!mrc20Id || /\s/.test(mrc20Id) || (!MRC20_ID_RE.test(mrc20Id) && mrc20Id.length < 3)) {
+      throw new Error(`invalid MRC-20 assetKey "${raw}" (expected mrc20:<mrc20Id>)`);
+    }
+    return {
+      assetKey: `mrc20:${mrc20Id}`,
+      chain: 'btc',
+      standard: 'mrc20',
+      mrc20Id,
+    };
+  }
+  if (raw.startsWith('mvc-ft:')) {
+    const parts = raw.slice('mvc-ft:'.length).split(':');
+    if (parts.length !== 2) {
+      throw new Error(`invalid MVC FT assetKey "${raw}" (expected mvc-ft:<codehash>:<genesis>)`);
+    }
+    const [codehash, genesis] = parts.map((p) => p.trim());
+    if (!HEX_40_RE.test(codehash) || !HEX_40_OR_64_RE.test(genesis)) {
+      throw new Error(`invalid MVC FT assetKey "${raw}" (codehash must be 40 hex, genesis 40/64 hex)`);
+    }
+    return {
+      assetKey: `mvc-ft:${codehash}:${genesis}`,
+      chain: 'mvc',
+      standard: 'metacontract-ft',
+      codehash,
+      genesis,
+    };
+  }
+  throw new Error(`unsupported assetKey "${raw}" (expected mrc20:<id> or mvc-ft:<codehash>:<genesis>)`);
+}
+
+export function decimalDisplayToBaseUnits(amountDisplay: string, decimals: number): string {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new Error(`decimals must be an integer between 0 and 36 (got ${decimals})`);
+  }
+  const text = String(amountDisplay ?? '').trim();
+  if (!/^(?:\d+)(?:\.\d+)?$/.test(text)) {
+    throw new Error(`amount_display "${text}" must be a positive decimal string`);
+  }
+  const [intPartRaw, fracPart = ''] = text.split('.');
+  if (fracPart.length > decimals) {
+    throw new Error(`amount_display "${text}" exceeds token precision (${decimals} decimals)`);
+  }
+  const intPart = intPartRaw.replace(/^0+(?=\d)/, '') || '0';
+  const paddedFrac = fracPart.padEnd(decimals, '0');
+  const combined = `${intPart}${paddedFrac}`.replace(/^0+/, '') || '0';
+  const base = BigInt(combined);
+  if (base <= 0n) {
+    throw new Error('amount_display must be greater than zero');
+  }
+  return base.toString();
+}
+
+export function baseUnitsToDecimalDisplay(amountBase: string, decimals: number): string {
+  if (!/^[1-9]\d*$/.test(String(amountBase ?? '').trim())) {
+    throw new Error(`amountBase must be a positive integer string (got ${amountBase})`);
+  }
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new Error(`decimals must be an integer between 0 and 36 (got ${decimals})`);
+  }
+  const base = BigInt(amountBase);
+  if (decimals === 0) return base.toString();
+  const scale = 10n ** BigInt(decimals);
+  const whole = base / scale;
+  const frac = (base % scale).toString().padStart(decimals, '0').replace(/0+$/, '');
+  return frac ? `${whole.toString()}.${frac}` : whole.toString();
+}
+
+function isLikelyBtcReceiveAddress(address: string): boolean {
+  const trimmed = String(address ?? '').trim();
+  if (!trimmed) return false;
+  if (/^(bc1|tb1|bcrt1)[ac-hj-np-z02-9]{11,90}$/i.test(trimmed)) return true;
+  return /^[13mn2][1-9A-HJ-NP-Za-km-z]{25,62}$/.test(trimmed);
+}
+
+function parsePriceTokenEntry(raw: unknown): Mrc721SellIntentPriceToken {
+  const obj = asRecord(raw);
+  const parsedKey = parseCanonicalFtAssetKey(obj.assetKey ?? obj.asset_key);
+  const decimals = Number(obj.decimals ?? 0);
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new Error(`prices.tokens[${parsedKey.assetKey}].decimals must be an integer in [0, 36]`);
+  }
+  const symbol = String(obj.symbol ?? '').trim();
+  if (!symbol) {
+    throw new Error(`prices.tokens[${parsedKey.assetKey}].symbol is required`);
+  }
+  let amountBase = String(obj.amountBase ?? obj.amount_base ?? '').trim();
+  const rawDisplay = String(obj.amountDisplay ?? obj.amount_display ?? '').trim();
+  if (!amountBase && rawDisplay) {
+    amountBase = decimalDisplayToBaseUnits(rawDisplay, decimals);
+  }
+  if (!/^[1-9]\d*$/.test(amountBase)) {
+    throw new Error(`prices.tokens[${parsedKey.assetKey}].amountBase must be a positive integer string`);
+  }
+  const amountDisplay = rawDisplay || baseUnitsToDecimalDisplay(amountBase, decimals);
+  const sellerReceiveAddress = String(obj.sellerReceiveAddress ?? obj.seller_receive_address ?? '').trim();
+  if (parsedKey.chain === 'btc') {
+    if (!isLikelyBtcReceiveAddress(sellerReceiveAddress)) {
+      throw new Error(`prices.tokens[${parsedKey.assetKey}].sellerReceiveAddress must be a valid BTC address`);
+    }
+  } else if (!isMvcAddress(sellerReceiveAddress)) {
+    throw new Error(`prices.tokens[${parsedKey.assetKey}].sellerReceiveAddress must be a valid MVC address`);
+  }
+  return {
+    assetKey: parsedKey.assetKey,
+    chain: parsedKey.chain,
+    standard: parsedKey.standard,
+    ...(parsedKey.mrc20Id ? { mrc20Id: parsedKey.mrc20Id } : {}),
+    ...(parsedKey.codehash ? { codehash: parsedKey.codehash } : {}),
+    ...(parsedKey.genesis ? { genesis: parsedKey.genesis } : {}),
+    symbol,
+    decimals,
+    amountBase,
+    amountDisplay,
+    sellerReceiveAddress,
+  };
+}
+
 function parsePricesInput(raw: unknown): Mrc721SellIntentPrices | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const obj = raw as Record<string, unknown>;
@@ -167,7 +322,20 @@ function parsePricesInput(raw: unknown): Mrc721SellIntentPrices | undefined {
     }
     prices.fiat = { currency: 'CNY', amountCents };
   }
-  return prices.me || prices.fiat ? prices : undefined;
+  if (Array.isArray(obj.tokens) && obj.tokens.length > 0) {
+    const seen = new Set<string>();
+    const tokens: Mrc721SellIntentPriceToken[] = [];
+    for (const entry of obj.tokens) {
+      const parsed = parsePriceTokenEntry(entry);
+      if (seen.has(parsed.assetKey)) {
+        throw new Error(`duplicate assetKey in prices.tokens: ${parsed.assetKey}`);
+      }
+      seen.add(parsed.assetKey);
+      tokens.push(parsed);
+    }
+    prices.tokens = tokens;
+  }
+  return prices.me || prices.fiat || (prices.tokens && prices.tokens.length > 0) ? prices : undefined;
 }
 
 function mergeTermsWithPrices(
@@ -185,6 +353,13 @@ function mergeTermsWithPrices(
   if (prices?.fiat) {
     currencies.add(`fiat:${prices.fiat.currency}`);
     settlement.add('fiat-escrow');
+  }
+  if (prices?.tokens?.length) {
+    for (const token of prices.tokens) {
+      currencies.add(`ft:${token.assetKey}`);
+      if (token.chain === 'mvc') settlement.add('atomic-swap');
+      else settlement.add('token-direct');
+    }
   }
   if (hasPriceHintSats) {
     if (!currencies.size) currencies.add('space');
@@ -241,6 +416,7 @@ export function parseMrc721SellIntent(input: unknown): Mrc721SellIntentContent {
     sellerMetaId: typeof record.sellerMetaId === 'string' && record.sellerMetaId.trim() ? record.sellerMetaId.trim() : undefined,
     ...(prices ? { prices } : {}),
     ...(typeof record.autoFulfillMe === 'boolean' ? { autoFulfillMe: record.autoFulfillMe } : {}),
+    ...(typeof record.autoFulfillTokens === 'boolean' ? { autoFulfillTokens: record.autoFulfillTokens } : {}),
     ...(typeof record.negotiable === 'boolean' ? { negotiable: record.negotiable } : {}),
     ...(shopMetaAppPinId ? { shopMetaAppPinId } : {}),
     priceHintSats,
@@ -274,7 +450,9 @@ export interface Mrc721SellIntentDeclareInput {
   priceMeMilli?: number;
   priceCnyYuan?: number;
   priceCnyCents?: number;
+  priceTokens?: Mrc721SellIntentPriceTokenInput[];
   autoFulfillMe?: boolean;
+  autoFulfillTokens?: boolean;
   negotiable?: boolean;
   shopMetaAppPinId?: string;
   priceHintSats?: number;
@@ -294,7 +472,84 @@ export interface Mrc721SellIntentWriteResult {
   intent: Mrc721SellIntentContent;
 }
 
-function resolveDeclarePrices(input: Mrc721SellIntentDeclareInput): Mrc721SellIntentPrices | undefined {
+export interface TokenMetadataResolverResult {
+  symbol: string;
+  decimals: number;
+}
+
+async function resolveDefaultTokenMetadata(params: {
+  parsedKey: ParsedFtAssetKey;
+  btcAddress?: string;
+  mvcAddress?: string;
+}): Promise<TokenMetadataResolverResult | null> {
+  const { parsedKey, btcAddress, mvcAddress } = params;
+  if (parsedKey.chain === 'btc' && parsedKey.mrc20Id) {
+    try {
+      const res = await fetch(
+        `https://api.metaid.market/api-market/api/v1/common/mrc20/tick/info?tickId=${encodeURIComponent(parsedKey.mrc20Id)}`,
+        { signal: AbortSignal.timeout(8_000) },
+      );
+      if (res.ok) {
+        const json = await res.json() as { code?: number; data?: { tick?: string; decimals?: number | string } };
+        const data = json?.data ?? (json as { tick?: string; decimals?: number | string });
+        if (data?.tick != null && data?.decimals != null && Number.isInteger(Number(data.decimals))) {
+          return { symbol: String(data.tick).trim(), decimals: Number(data.decimals) };
+        }
+      }
+    } catch {
+      // Fall back to wallet asset list
+    }
+    if (btcAddress) {
+      try {
+        const assets = await listMrc20Assets(btcAddress);
+        const hit = assets.find((a) => a.mrc20Id.toLowerCase() === parsedKey.mrc20Id);
+        if (hit) return { symbol: hit.symbol, decimals: hit.decimal };
+      } catch {
+        // Ignore fallback lookup errors
+      }
+    }
+    return null;
+  }
+
+  if (parsedKey.chain === 'mvc' && parsedKey.codehash && parsedKey.genesis) {
+    if (mvcAddress) {
+      try {
+        const assets = await listMvcFtAssets(mvcAddress);
+        const hit = assets.find(
+          (a) =>
+            a.codeHash.toLowerCase() === parsedKey.codehash
+            && a.genesis.toLowerCase() === parsedKey.genesis,
+        );
+        if (hit) return { symbol: hit.symbol, decimals: hit.decimal };
+      } catch {
+        // Fall through to Metalet token info endpoint
+      }
+    }
+    try {
+      const res = await fetch(
+        `https://www.metalet.space/wallet-api/v4/mvc/contract/ft/info?net=livenet&codeHash=${encodeURIComponent(parsedKey.codehash)}&genesis=${encodeURIComponent(parsedKey.genesis)}`,
+        { signal: AbortSignal.timeout(8_000) },
+      );
+      if (res.ok) {
+        const json = await res.json() as { data?: { symbol?: string; decimal?: number | string; decimals?: number | string } };
+        const row = json?.data;
+        const dec = Number(row?.decimal ?? row?.decimals);
+        if (row?.symbol && Number.isInteger(dec) && dec >= 0) {
+          return { symbol: String(row.symbol).trim(), decimals: dec };
+        }
+      }
+    } catch {
+      // Ignore
+    }
+  }
+  return null;
+}
+
+async function resolveDeclarePrices(
+  input: Mrc721SellIntentDeclareInput,
+  metabot: { mvc_address: string; btc_address?: string | null },
+  resolveTokenMeta?: (params: { assetKey: string; metabotId: number }) => Promise<TokenMetadataResolverResult | null>,
+): Promise<Mrc721SellIntentPrices | undefined> {
   const prices: Mrc721SellIntentPrices = {};
   if (input.priceMeMilli != null || input.priceMe != null) {
     let amountMilli: number;
@@ -342,7 +597,70 @@ function resolveDeclarePrices(input: Mrc721SellIntentDeclareInput): Mrc721SellIn
     prices.fiat = { currency: 'CNY', amountCents };
   }
 
-  return prices.me || prices.fiat ? prices : undefined;
+  if (Array.isArray(input.priceTokens) && input.priceTokens.length > 0) {
+    const seen = new Set<string>();
+    const resolvedTokens: Mrc721SellIntentPriceToken[] = [];
+    for (const rawEntry of input.priceTokens) {
+      const parsedKey = parseCanonicalFtAssetKey(rawEntry.assetKey);
+      if (seen.has(parsedKey.assetKey)) {
+        throw new Error(`duplicate asset_key in price_tokens: ${parsedKey.assetKey}`);
+      }
+      seen.add(parsedKey.assetKey);
+
+      const sellerReceiveAddress = parsedKey.chain === 'btc'
+        ? String(metabot.btc_address ?? '').trim()
+        : String(metabot.mvc_address ?? '').trim();
+      if (parsedKey.chain === 'btc' && !isLikelyBtcReceiveAddress(sellerReceiveAddress)) {
+        throw new Error(`declaring bot has no valid BTC address to receive MRC-20 token ${parsedKey.assetKey}`);
+      }
+      if (parsedKey.chain === 'mvc' && !isMvcAddress(sellerReceiveAddress)) {
+        throw new Error(`declaring bot has no valid MVC address to receive FT ${parsedKey.assetKey}`);
+      }
+
+      let symbol = typeof rawEntry.symbol === 'string' ? rawEntry.symbol.trim() : '';
+      let decimals = rawEntry.decimals != null && Number.isInteger(Number(rawEntry.decimals))
+        ? Number(rawEntry.decimals)
+        : undefined;
+      if (!symbol || decimals === undefined) {
+        const fetched = resolveTokenMeta
+          ? await resolveTokenMeta({ assetKey: parsedKey.assetKey, metabotId: input.metabotId })
+          : await resolveDefaultTokenMetadata({
+              parsedKey,
+              btcAddress: metabot.btc_address ?? undefined,
+              mvcAddress: metabot.mvc_address,
+            });
+        if (fetched) {
+          if (!symbol) symbol = fetched.symbol;
+          if (decimals === undefined) decimals = fetched.decimals;
+        }
+      }
+      if (!symbol) {
+        throw new Error(`could not resolve token symbol for ${parsedKey.assetKey}; pass symbol explicitly`);
+      }
+      if (decimals === undefined || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+        throw new Error(`could not resolve valid decimals for ${parsedKey.assetKey}; pass decimals explicitly`);
+      }
+
+      const amountBase = decimalDisplayToBaseUnits(rawEntry.amountDisplay, decimals);
+      const amountDisplay = baseUnitsToDecimalDisplay(amountBase, decimals);
+      resolvedTokens.push({
+        assetKey: parsedKey.assetKey,
+        chain: parsedKey.chain,
+        standard: parsedKey.standard,
+        ...(parsedKey.mrc20Id ? { mrc20Id: parsedKey.mrc20Id } : {}),
+        ...(parsedKey.codehash ? { codehash: parsedKey.codehash } : {}),
+        ...(parsedKey.genesis ? { genesis: parsedKey.genesis } : {}),
+        symbol,
+        decimals,
+        amountBase,
+        amountDisplay,
+        sellerReceiveAddress,
+      });
+    }
+    prices.tokens = resolvedTokens;
+  }
+
+  return prices.me || prices.fiat || (prices.tokens && prices.tokens.length > 0) ? prices : undefined;
 }
 
 /**
@@ -351,7 +669,10 @@ function resolveDeclarePrices(input: Mrc721SellIntentDeclareInput): Mrc721SellIn
  * declaration for an item you do not hold is refused at the source.
  */
 export async function declareMrc721SellIntent(
-  deps: { createPin: Mrc721CreatePinFn },
+  deps: {
+    createPin: Mrc721CreatePinFn;
+    resolveTokenMeta?: (params: { assetKey: string; metabotId: number }) => Promise<TokenMetadataResolverResult | null>;
+  },
   input: Mrc721SellIntentDeclareInput & { store: MetabotStore; intents: SellIntentKv },
 ): Promise<Mrc721SellIntentWriteResult> {
   const itemPinId = String(input.itemPinId ?? '').trim().toLowerCase();
@@ -361,7 +682,6 @@ export async function declareMrc721SellIntent(
   if (input.priceHintSats != null && (!Number.isInteger(input.priceHintSats) || input.priceHintSats <= 0)) {
     throw new Error('priceHintSats must be a positive integer');
   }
-  const prices = resolveDeclarePrices(input);
   const shopMetaAppPinIdRaw = typeof input.shopMetaAppPinId === 'string' ? input.shopMetaAppPinId.trim().toLowerCase() : '';
   if (shopMetaAppPinIdRaw && !isMrc721PinId(shopMetaAppPinIdRaw)) {
     throw new Error('shopMetaAppPinId must be a valid pinId (<64hex>i<index>)');
@@ -370,6 +690,7 @@ export async function declareMrc721SellIntent(
   if (!metabot?.mvc_address) {
     throw new Error('declaring bot has no MVC address');
   }
+  const prices = await resolveDeclarePrices(input, metabot, deps.resolveTokenMeta);
   const item = await fetchMrc721ItemInfo({ pinId: itemPinId });
   if (!item) {
     throw new Error(`item ${itemPinId} is not indexed (yet) — the holder view is the only sell-authority source, so an unindexed item cannot be declared for sale`);
@@ -386,6 +707,7 @@ export async function declareMrc721SellIntent(
   // convention); the local book's updatedAt stays ms (local bookkeeping only).
   const nowSeconds = Math.floor(nowMs / 1000);
   const autoFulfillMe = input.autoFulfillMe ?? true;
+  const autoFulfillTokens = input.autoFulfillTokens ?? true;
   const negotiable = input.negotiable ?? true;
   const mergedTerms = mergeTermsWithPrices(
     prices,
@@ -409,6 +731,7 @@ export async function declareMrc721SellIntent(
     sellerMetaId: metabot.globalmetaid ?? undefined,
     ...(prices ? { prices } : {}),
     autoFulfillMe,
+    ...(prices?.tokens?.length || input.autoFulfillTokens !== undefined ? { autoFulfillTokens } : {}),
     negotiable,
     ...(shopMetaAppPinIdRaw ? { shopMetaAppPinId: shopMetaAppPinIdRaw } : {}),
     priceHintSats: input.priceHintSats,
@@ -444,6 +767,7 @@ export async function declareMrc721SellIntent(
     sellPinId: broadcast.pinId,
     status: 'active',
     autoFulfillMe,
+    autoFulfillTokens,
     updatedAt: nowMs,
   };
   // Re-read AFTER the await: a concurrent tool call may have written the book
@@ -732,12 +1056,15 @@ export async function broadcastMrc721TradeReceipt(
     sellerMetaId?: string;
     buyerAddress: string;
     buyerMetaId?: string;
-    currency: 'me' | 'fiat:CNY' | 'space';
+    currency: 'me' | 'fiat:CNY' | 'space' | `ft:${string}`;
     amountMilli?: number;
     amountCents?: number;
     priceSats?: number;
+    assetKey?: string;
+    amountBase?: string;
+    amountDisplay?: string;
     settledAt?: number;
-    verifiedSource?: 'abs_escrow' | 'chain_offer' | 'escrow_bot';
+    verifiedSource?: 'abs_escrow' | 'chain_offer' | 'escrow_bot' | 'atomic_ft_swap' | 'token_verify';
     network?: 'mvc' | 'btc';
   },
 ): Promise<{ pinId: string; txids: string[] }> {
@@ -754,6 +1081,9 @@ export async function broadcastMrc721TradeReceipt(
     ...(input.amountMilli != null ? { amountMilli: input.amountMilli } : {}),
     ...(input.amountCents != null ? { amountCents: input.amountCents } : {}),
     ...(input.priceSats != null ? { priceSats: input.priceSats } : {}),
+    ...(input.assetKey ? { assetKey: input.assetKey } : {}),
+    ...(input.amountBase ? { amountBase: input.amountBase } : {}),
+    ...(input.amountDisplay ? { amountDisplay: input.amountDisplay } : {}),
     settledAt: input.settledAt ?? Math.floor(Date.now() / 1000),
     verifiedSource: input.verifiedSource ?? 'abs_escrow',
   };
@@ -829,6 +1159,7 @@ export interface Mrc721SellIntentRow {
   sellerMetaId?: string;
   prices?: Mrc721SellIntentPrices;
   autoFulfillMe?: boolean;
+  autoFulfillTokens?: boolean;
   negotiable?: boolean;
   shopMetaAppPinId?: string;
   priceHintSats?: number;
@@ -867,6 +1198,7 @@ function sellIntentRowFrom(raw: unknown): Mrc721SellIntentRow {
   row.chainName = pickString('chainName', 'chainname');
   row.txId = pickString('txId', 'txid');
   if (typeof record.autoFulfillMe === 'boolean') row.autoFulfillMe = record.autoFulfillMe;
+  if (typeof record.autoFulfillTokens === 'boolean') row.autoFulfillTokens = record.autoFulfillTokens;
   if (typeof record.negotiable === 'boolean') row.negotiable = record.negotiable;
   try {
     const parsedPrices = parsePricesInput(record.prices);
@@ -897,6 +1229,61 @@ function sellIntentRowFrom(raw: unknown): Mrc721SellIntentRow {
   return row;
 }
 
+/**
+ * Backward-compatible fallback: if an older MetaSo-P2P indexer omits
+ * `prices.tokens` on a v2.2 `/protocols/mrc721sell` listing/intent, read the
+ * raw pin body and extract `prices.tokens` + `autoFulfillTokens`.
+ */
+export async function hydrateTokenPricesFromRawPin<
+  T extends {
+    sellPinId?: string;
+    intentPinId?: string;
+    prices?: Mrc721MarketPrices;
+    autoFulfillTokens?: boolean;
+    acceptedCurrencies?: string[];
+  },
+>(
+  row: T,
+  fetchRawPinFn: typeof fetchMrc721RawPin = fetchMrc721RawPin,
+): Promise<T> {
+  if (row.prices?.tokens && row.prices.tokens.length > 0) return row;
+  const pinId = String(row.sellPinId ?? row.intentPinId ?? '').trim().toLowerCase();
+  if (!isMrc721PinId(pinId)) return row;
+  const mentionsFt = Array.isArray(row.acceptedCurrencies)
+    && row.acceptedCurrencies.some((c) => c.startsWith('ft:'));
+  if (!mentionsFt && row.prices?.me) {
+    // Only probe raw pin when acceptedCurrencies hints ft: or prices is completely empty
+    return row;
+  }
+  try {
+    const raw = await fetchRawPinFn(pinId);
+    if (!raw?.content) return row;
+    const parsedJson = JSON.parse(raw.content) as Record<string, unknown>;
+    const parsedPrices = parsePricesInput(parsedJson.prices);
+    if (!parsedPrices?.tokens?.length) return row;
+    return {
+      ...row,
+      prices: {
+        ...(row.prices ?? {}),
+        ...parsedPrices,
+        tokens: parsedPrices.tokens,
+      },
+      ...(typeof parsedJson.autoFulfillTokens === 'boolean' && row.autoFulfillTokens === undefined
+        ? { autoFulfillTokens: parsedJson.autoFulfillTokens }
+        : {}),
+    };
+  } catch {
+    return row;
+  }
+}
+
+export async function hydrateMarketListingTokens(
+  listing: Mrc721MarketListing,
+  fetchRawPinFn: typeof fetchMrc721RawPin = fetchMrc721RawPin,
+): Promise<Mrc721MarketListing> {
+  return hydrateTokenPricesFromRawPin<Mrc721MarketListing>(listing, fetchRawPinFn);
+}
+
 export interface Mrc721SellIntentPage {
   items: Mrc721SellIntentRow[];
   total?: number;
@@ -913,6 +1300,7 @@ export async function fetchMrc721SellIntents(params: {
   collectionName?: string;
   itemPinId?: string;
   sellerAddress?: string;
+  tokenAssetKey?: string;
   active?: boolean;
   cursor?: string | number;
   size?: number;
@@ -926,14 +1314,19 @@ export async function fetchMrc721SellIntents(params: {
     collectionName: params.collectionName,
     itemPinId: params.itemPinId,
     sellerAddress: params.sellerAddress,
+    tokenAssetKey: params.tokenAssetKey,
     active: params.active == null ? undefined : (params.active ? 'true' : 'false'),
     cursor: params.cursor,
     size: params.size,
   };
   const data = await fetchMetasoJson('/api/mrc721/sell/intents', query) as { list?: unknown; total?: unknown; cursor?: unknown } | null;
-  const items = Array.isArray(data?.list) ? data.list.map(sellIntentRowFrom) : [];
+  const rawItems = Array.isArray(data?.list) ? data.list.map(sellIntentRowFrom) : [];
+  const items = await Promise.all(rawItems.map((row) => hydrateTokenPricesFromRawPin(row)));
+  const filtered = params.tokenAssetKey
+    ? items.filter((row) => row.prices?.tokens?.some((t) => t.assetKey === params.tokenAssetKey?.trim().toLowerCase()))
+    : items;
   return {
-    items,
+    items: filtered,
     total: Number.isFinite(Number(data?.total)) ? Number(data?.total) : undefined,
     cursor: typeof data?.cursor === 'string' && data.cursor ? data.cursor : undefined,
   };
@@ -945,7 +1338,7 @@ export async function fetchMrc721SellIntentInfo(params: {
 }): Promise<Mrc721SellIntentRow | null> {
   try {
     const data = await fetchMetasoJson('/api/mrc721/sell/intent/info', { itemPinId: params.itemPinId });
-    return data ? sellIntentRowFrom(data) : null;
+    return data ? await hydrateTokenPricesFromRawPin(sellIntentRowFrom(data)) : null;
   } catch (error) {
     const status = (error as { mrc721Status?: number }).mrc721Status;
     const code = (error as { mrc721Code?: unknown }).mrc721Code;

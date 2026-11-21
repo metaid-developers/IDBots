@@ -589,6 +589,7 @@ man_base_data_pebble/
 !tests/botWorkspace.test.mjs
 !tests/coworkSessionMetabotFilter.test.mjs
 !tests/coworkSessionProjectBinding.test.mjs
+!tests/tokenForGoods.test.tsx
 !tests/metabotAttribution.test.mjs
 !tests/dreamStore.test.mjs
 !tests/dreamMemoryWrites.test.mjs

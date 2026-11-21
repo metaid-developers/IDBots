@@ -18,8 +18,16 @@ import {
 } from '../services/mrc721Service';
 import {
   fetchMrc721SellIntents,
+  hydrateMarketListingTokens,
   type GoodsAcceptedQuoteRecord,
 } from '../services/mrc721SellIntentService';
+import {
+  baseUnitsToDecimalDisplay,
+  decimalDisplayToBaseUnits,
+  defaultTokenGoodsWaiters,
+  parseCanonicalFtAssetKey,
+  type TokenGoodsWireWaiterEvent,
+} from '../services/tokenForGoodsService';
 import {
   assertEscrowMvcAddress,
   describeMeNftEscrowError,
@@ -77,10 +85,29 @@ export interface GoodsPurchaseSettledEvent {
   shopMetaAppPinId?: string;
 }
 
+export interface GoodsTokenPurchaseConfirmationInfo {
+  metabotId: number;
+  metabotName?: string;
+  itemPinId: string;
+  itemName?: string;
+  collectionName?: string;
+  assetKey: string;
+  chain: 'btc' | 'mvc';
+  symbol: string;
+  amountDisplay: string;
+  amountBase: string;
+  sellerAddress: string;
+  sellerReceiveAddress: string;
+  sellerName?: string;
+  sellerGlobalMetaId?: string;
+  settlementMode: 'atomic_swap' | 'reserved_verify';
+}
+
 export interface GoodsTradeToolsControl {
   getMetabotIdentity(metabotId: number): {
     name: string;
     mvcAddress: string;
+    btcAddress?: string;
     globalMetaId: string;
   } | null;
   getTradeBalance(metabotId: number): Promise<MeBotTradeBalance>;
@@ -116,6 +143,29 @@ export interface GoodsTradeToolsControl {
     quote: Omit<GoodsAcceptedQuoteRecord, 'status' | 'createdAt' | 'updatedAt'>,
   ): GoodsAcceptedQuoteRecord;
   onPurchaseSettled?(event: GoodsPurchaseSettledEvent): void;
+  // WS-4 Token-for-Goods capabilities
+  checkSellerOnline?(sellerGlobalMetaId: string): Promise<boolean>;
+  getTokenBalanceBase?(metabotId: number, assetKey: string): Promise<{ balanceBase: string; symbol?: string; decimals?: number }>;
+  buildMvcFtGoodsAtomicProposal?(input: {
+    metabotId: number;
+    itemPinId: string;
+    itemOutpoint: { txid: string; vout: number; satoshis: number };
+    sellerMvcAddress: string;
+    codehash: string;
+    genesis: string;
+    amountBase: string;
+    buyerNftAddress: string;
+  }): Promise<{ proposalId: string; amountCheckRawTx: string; partialTx: string }>;
+  transferBtcMrc20?(input: {
+    metabotId: number;
+    mrc20Id: string;
+    decimal: number;
+    symbol: string;
+    toAddress: string;
+    amountDisplay: string;
+  }): Promise<{ revealTxId: string; commitTxId?: string }>;
+  waitForTokenGoodsEvent?(key: string, timeoutMs: number): Promise<TokenGoodsWireWaiterEvent | null>;
+  hydrateMarketListingTokens?: typeof hydrateMarketListingTokens;
   // Optional overrides for deterministic unit testing
   fetchMarketCollections?: typeof fetchMrc721MarketCollections;
   fetchMarketCollectionSummary?: typeof fetchMrc721MarketCollectionSummary;
@@ -162,6 +212,9 @@ function formatListingPrice(listing: Pick<Mrc721MarketListing, 'prices' | 'price
   if (listing.prices?.fiat?.amountCents != null && listing.prices.fiat.amountCents > 0) {
     parts.push(formatCny(listing.prices.fiat.amountCents));
   }
+  for (const tok of listing.prices?.tokens ?? []) {
+    parts.push(`${tok.amountDisplay} $${tok.symbol}`);
+  }
   if (listing.priceHintSats != null && listing.priceHintSats > 0) {
     parts.push(`${listing.priceHintSats} sats`);
   }
@@ -178,6 +231,7 @@ export function buildGoodsTradeAgentTools(deps: {
   sessionId: string;
   resolveMetabotId: (sessionId: string) => number | undefined;
   confirmGoodsPurchase: (info: GoodsPurchaseConfirmationInfo) => Promise<boolean>;
+  confirmGoodsTokenPurchase?: (info: GoodsTokenPurchaseConfirmationInfo) => Promise<boolean>;
   confirmGoodsQuoteAcceptance?: (info: GoodsQuoteAcceptConfirmationInfo) => Promise<boolean>;
 }): unknown[] {
   const {
@@ -186,6 +240,7 @@ export function buildGoodsTradeAgentTools(deps: {
     sessionId,
     resolveMetabotId,
     confirmGoodsPurchase,
+    confirmGoodsTokenPurchase,
     confirmGoodsQuoteAcceptance,
   } = deps;
   const getMarketCollections = control.fetchMarketCollections ?? fetchMrc721MarketCollections;
@@ -347,6 +402,7 @@ export function buildGoodsTradeAgentTools(deps: {
       collection_name: z.string().optional().describe('Filter by collection name (resolved to collectionPinId if omitted).'),
       seller: z.string().optional().describe('Filter by seller MVC address or GlobalMetaID.'),
       currency: z.enum(['me', 'fiat:CNY', 'any']).optional().describe('Filter by accepted currency.'),
+      token_asset_key: z.string().optional().describe('Filter to items purchasable with this token assetKey (mrc20:<id> or mvc-ft:<codehash>:<genesis>).'),
       sort: z.enum(['newest', 'price_me_asc', 'price_me_desc', 'price_cny_asc', 'price_cny_desc']).optional().describe('Sort order (default newest).'),
       min_me: z.number().nonnegative().optional().describe('Minimum price in ME.'),
       max_me: z.number().positive().optional().describe('Maximum price in ME.'),
@@ -361,6 +417,7 @@ export function buildGoodsTradeAgentTools(deps: {
       collection_name?: string;
       seller?: string;
       currency?: 'me' | 'fiat:CNY' | 'any';
+      token_asset_key?: string;
       sort?: 'newest' | 'price_me_asc' | 'price_me_desc' | 'price_cny_asc' | 'price_cny_desc';
       min_me?: number;
       max_me?: number;
@@ -377,12 +434,14 @@ export function buildGoodsTradeAgentTools(deps: {
           const info = await getCollectionInfo({ name: collectionName }).catch(() => null);
           if (info?.pinId) collectionPinId = info.pinId;
         }
+        const tokenAssetKey = asString(args.token_asset_key).toLowerCase() || undefined;
 
         const [page, verifiedSet] = await Promise.all([
           getMarketListings({
             collectionPinId: collectionPinId || undefined,
             seller: asString(args.seller) || undefined,
-            currency: args.currency ?? 'any',
+            currency: tokenAssetKey ? (`ft:${tokenAssetKey}` as const) : (args.currency ?? 'any'),
+            tokenAssetKey,
             sort: args.sort ?? 'newest',
             minPrice: args.min_me != null ? Math.round(args.min_me * 1000) : undefined,
             maxPrice: args.max_me != null ? Math.round(args.max_me * 1000) : undefined,
@@ -395,12 +454,20 @@ export function buildGoodsTradeAgentTools(deps: {
           loadCaVerifiedSet(),
         ]);
 
-        if (!page.items.length) {
+        const hydrateListing = control.hydrateMarketListingTokens ?? hydrateMarketListingTokens;
+        const hydratedItems = await Promise.all(page.items.map((item) => hydrateListing(item)));
+        const filteredItems = tokenAssetKey
+          ? hydratedItems.filter((item) =>
+            item.prices?.tokens?.some((t) => t.assetKey.toLowerCase() === tokenAssetKey)
+            || item.acceptedCurrencies?.some((c) => c.toLowerCase() === `ft:${tokenAssetKey}`))
+          : hydratedItems;
+
+        if (!filteredItems.length) {
           return textResult('No active digital goods listings match your filters.');
         }
 
-        const lines = [`Found ${page.items.length} active digital goods listing(s):`];
-        for (const item of page.items) {
+        const lines = [`Found ${filteredItems.length} active digital goods listing(s):`];
+        for (const item of filteredItems) {
           const verified = item.caVerified === true
             || (item.collectionPinId ? verifiedSet.has(item.collectionPinId.toLowerCase()) : false)
             || (item.collectionName ? verifiedSet.has(item.collectionName.toLowerCase()) : false);
@@ -415,7 +482,7 @@ export function buildGoodsTradeAgentTools(deps: {
         if (page.cursor) lines.push(`- next cursor: ${page.cursor}`);
         let output = lines.join('\n');
 
-        const cardsToRender = page.items.slice(0, 6);
+        const cardsToRender = filteredItems.slice(0, 6);
         for (const listing of cardsToRender) {
           const verified = listing.caVerified === true
             || (listing.collectionPinId ? verifiedSet.has(listing.collectionPinId.toLowerCase()) : false)
@@ -434,6 +501,7 @@ export function buildGoodsTradeAgentTools(deps: {
             priceSats: listing.priceHintSats,
             priceMeMilli: listing.prices?.me?.amountMilli,
             priceCnyCents: listing.prices?.fiat?.amountCents,
+            priceTokens: listing.prices?.tokens,
             sellerGlobalMetaId: listing.seller?.globalMetaId,
             sellerName: listing.seller?.name,
             sellerOnline: listing.seller?.isOnline,
@@ -1091,11 +1159,445 @@ export function buildGoodsTradeAgentTools(deps: {
     },
   );
 
+  // -------------------------------------------------------------------------
+  // 7. goods_buy_with_token (REQ-4-02 / Contract C5.2)
+  // -------------------------------------------------------------------------
+  const goodsBuyWithToken = tool(
+    'goods_buy_with_token',
+    [
+      'Buy an MRC-721 digital item directly using a fungible token accepted by the seller (/protocols/mrc721sell v2.2 prices.tokens).',
+      'Supports two escrowless delivery modes: Path A (MVC same-chain MetaContract FT -> single atomic swap tx signed by buyer then co-signed & broadcast by seller daemon) and Path B (cross-chain BTC MRC-20 -> 5-minute exclusive reservation lock, on-chain MRC-20 transfer, authoritative man-p2p verification, and instant MRC-721 delivery).',
+      'Always enforces max_token_amount ceiling, verifies exact assetKey (preventing ticker spoofing), checks seller presence, and requires single owner confirmation before spending.',
+    ].join(' '),
+    {
+      item_pin_id: z.string().min(1).describe('Item pinId to buy (64-hex txid + "i" + index).'),
+      asset_key: z.string().min(1).describe('Canonical token assetKey: mrc20:<mrc20Id> or mvc-ft:<codehash>:<genesis>.'),
+      max_token_amount: z.string().min(1).describe('Owner-confirmed maximum token display amount willing to spend (e.g. "200").'),
+      seller_address: z.string().optional().describe('Optional expected seller MVC address cross-checked against live owner.'),
+    },
+    async (args: {
+      item_pin_id: string;
+      asset_key: string;
+      max_token_amount: string;
+      seller_address?: string;
+    }) => {
+      const metabotId = requireSessionMetabot('goods_buy_with_token');
+      if (typeof metabotId === 'string') return textResult(metabotId, true);
+
+      const itemPinId = asString(args.item_pin_id).toLowerCase();
+      if (!isMrc721PinId(itemPinId)) {
+        return textResult('goods_buy_with_token: invalid item_pin_id (expected <64hex>i<index>).', true);
+      }
+
+      let parsedKey: ReturnType<typeof parseCanonicalFtAssetKey>;
+      try {
+        parsedKey = parseCanonicalFtAssetKey(args.asset_key);
+      } catch (err) {
+        return textResult(`goods_buy_with_token: ${err instanceof Error ? err.message : String(err)}`, true);
+      }
+
+      const buyerIdentity = control.getMetabotIdentity(metabotId);
+      if (!buyerIdentity?.mvcAddress) {
+        return textResult('goods_buy_with_token: session MetaBot has no MVC address.', true);
+      }
+
+      let item: Mrc721ItemSummary | null;
+      try {
+        item = await getItemInfo({ pinId: itemPinId });
+      } catch (err) {
+        return textResult(`goods_buy_with_token: failed to verify item on-chain: ${err instanceof Error ? err.message : String(err)}`, true);
+      }
+      if (!item) {
+        return textResult(`goods_buy_with_token: item ${itemPinId} does not exist in the indexer.`, true);
+      }
+      if (item.burned) {
+        return textResult(`goods_buy_with_token: item ${itemPinId} is burned and cannot be purchased.`, true);
+      }
+      if (!item.ownerAddress) {
+        return textResult(`goods_buy_with_token: could not verify current owner of item ${itemPinId}.`, true);
+      }
+      if (item.ownerAddress.toLowerCase() === buyerIdentity.mvcAddress.toLowerCase()) {
+        return textResult(`goods_buy_with_token: this MetaBot (${buyerIdentity.mvcAddress}) already owns item ${itemPinId}.`, true);
+      }
+      const requestedSeller = asString(args.seller_address);
+      if (requestedSeller && requestedSeller.toLowerCase() !== item.ownerAddress.toLowerCase()) {
+        return textResult(
+          `goods_buy_with_token: seller_address (${requestedSeller}) does not match live owner (${item.ownerAddress}).`,
+          true,
+        );
+      }
+
+      const hydrateListing = control.hydrateMarketListingTokens ?? hydrateMarketListingTokens;
+      let matchedListing: Mrc721MarketListing | null = null;
+      try {
+        const marketPage = await getMarketListings({ itemPinId, size: 5 });
+        const raw = marketPage.items.find((x) => x.itemPinId.toLowerCase() === itemPinId) ?? null;
+        if (raw) matchedListing = await hydrateListing(raw);
+      } catch {
+        // Fallback to sell-intents
+      }
+
+      let fallbackIntent: {
+        sellerMetaId?: string;
+        prices?: { tokens?: NonNullable<Mrc721MarketListing['prices']>['tokens'] };
+        autoFulfillTokens?: boolean;
+      } | null = null;
+      if (!matchedListing?.prices?.tokens?.length) {
+        try {
+          const intentsPage = await getSellIntents({ itemPinId, active: true, size: 5 });
+          const rawIntent = intentsPage.items.find((x) => x.itemPinId.toLowerCase() === itemPinId && x.active !== false);
+          if (rawIntent) fallbackIntent = rawIntent;
+        } catch {
+          // Best-effort
+        }
+      }
+
+      const tokenPrices = matchedListing?.prices?.tokens ?? fallbackIntent?.prices?.tokens ?? [];
+      const tokenPrice = tokenPrices.find((t) => t.assetKey.toLowerCase() === parsedKey.assetKey);
+      if (!tokenPrice) {
+        return textResult(
+          `goods_buy_with_token: item ${itemPinId} does not declare a price in ${parsedKey.assetKey}.`,
+          true,
+        );
+      }
+      if (matchedListing?.autoFulfillTokens === false || fallbackIntent?.autoFulfillTokens === false) {
+        return textResult(
+          `goods_buy_with_token: seller disabled auto-fulfillment for token purchases on ${itemPinId}.`,
+          true,
+        );
+      }
+
+      let maxTokenBase: bigint;
+      try {
+        maxTokenBase = BigInt(decimalDisplayToBaseUnits(args.max_token_amount, tokenPrice.decimals));
+      } catch (err) {
+        return textResult(`goods_buy_with_token: invalid max_token_amount: ${err instanceof Error ? err.message : String(err)}`, true);
+      }
+      const requiredBase = BigInt(tokenPrice.amountBase);
+      if (requiredBase > maxTokenBase) {
+        return textResult(
+          `goods_buy_with_token: listing price (${tokenPrice.amountDisplay} $${tokenPrice.symbol}) exceeds max_token_amount (${args.max_token_amount}).`,
+          true,
+        );
+      }
+
+      if (control.getTokenBalanceBase) {
+        const bal = await control.getTokenBalanceBase(metabotId, parsedKey.assetKey);
+        if (BigInt(bal.balanceBase || '0') < requiredBase) {
+          const haveDisplay = bal.balanceBase && BigInt(bal.balanceBase) > 0n
+            ? baseUnitsToDecimalDisplay(bal.balanceBase, tokenPrice.decimals)
+            : '0';
+          return textResult(
+            `INSUFFICIENT_TOKEN_BALANCE: have ${haveDisplay} $${tokenPrice.symbol}, need ${tokenPrice.amountDisplay} $${tokenPrice.symbol} (${parsedKey.assetKey}).`,
+            true,
+          );
+        }
+      }
+
+      const sellerMetaId = matchedListing?.seller?.globalMetaId
+        || fallbackIntent?.sellerMetaId
+        || item.ownerMetaId;
+      if (!sellerMetaId) {
+        return textResult(
+          `goods_buy_with_token: could not resolve seller GlobalMetaID for item ${itemPinId}; cannot send A2A delivery protocol.`,
+          true,
+        );
+      }
+
+      // Check seller presence before reserving or proposing
+      if (control.checkSellerOnline) {
+        const isOnline = await control.checkSellerOnline(sellerMetaId).catch(() => false);
+        if (!isOnline) {
+          return textResult(
+            `SELLER_OFFLINE: seller ${sellerMetaId} is currently offline; direct token settlement requires the seller daemon to be online.`,
+            true,
+          );
+        }
+      } else if (matchedListing?.seller?.isOnline === false) {
+        return textResult(
+          `SELLER_OFFLINE: seller ${sellerMetaId} is currently offline; direct token settlement requires the seller daemon to be online.`,
+          true,
+        );
+      }
+
+      const waitEvent = control.waitForTokenGoodsEvent
+        ?? ((key: string, timeoutMs: number) => defaultTokenGoodsWaiters.waitFor(key, timeoutMs));
+      const confirmTokenFn = confirmGoodsTokenPurchase
+        ?? (async (info: GoodsTokenPurchaseConfirmationInfo) => confirmGoodsPurchase({
+          metabotId: info.metabotId,
+          metabotName: info.metabotName,
+          orderId: `tok_${randomBytes(6).toString('hex')}`,
+          itemPinId: info.itemPinId,
+          itemName: `${info.itemName || info.itemPinId} [${info.amountDisplay} $${info.symbol}]`,
+          collectionName: info.collectionName,
+          amountMilli: 0,
+          sellerAddress: info.sellerReceiveAddress,
+          sellerName: info.sellerName,
+          sellerGlobalMetaId: info.sellerGlobalMetaId,
+        }));
+
+      // =====================================================================
+      // Path A: MVC Same-Chain MetaContract FT <-> MRC-721 Single Atomic Swap
+      // =====================================================================
+      if (parsedKey.chain === 'mvc') {
+        if (!parsedKey.codehash || !parsedKey.genesis) {
+          return textResult('goods_buy_with_token: malformed mvc-ft assetKey.', true);
+        }
+        if (!control.buildMvcFtGoodsAtomicProposal) {
+          return textResult('goods_buy_with_token: MVC FT atomic swap builder unavailable.', true);
+        }
+        const outMatch = /^([0-9a-fA-F]{64}):(\d+)$/.exec(String(item.output ?? '').trim());
+        const outSat = Number(item.outputValue);
+        if (!outMatch || !Number.isInteger(outSat) || outSat <= 0) {
+          return textResult(`goods_buy_with_token: item ${itemPinId} has no valid current UTXO outpoint.`, true);
+        }
+
+        const approved = await confirmTokenFn({
+          metabotId,
+          metabotName: buyerIdentity.name,
+          itemPinId,
+          itemName: item.name || matchedListing?.itemName,
+          collectionName: item.collectionName || matchedListing?.collectionName,
+          assetKey: parsedKey.assetKey,
+          chain: 'mvc',
+          symbol: tokenPrice.symbol,
+          amountDisplay: tokenPrice.amountDisplay,
+          amountBase: tokenPrice.amountBase,
+          sellerAddress: item.ownerAddress,
+          sellerReceiveAddress: tokenPrice.sellerReceiveAddress || item.ownerAddress,
+          sellerName: matchedListing?.seller?.name,
+          sellerGlobalMetaId: sellerMetaId,
+          settlementMode: 'atomic_swap',
+        });
+        if (!approved) {
+          return textResult('goods_buy_with_token cancelled: owner did not confirm the atomic token purchase.', true);
+        }
+
+        const proposal = await control.buildMvcFtGoodsAtomicProposal({
+          metabotId,
+          itemPinId,
+          itemOutpoint: {
+            txid: outMatch[1].toLowerCase(),
+            vout: Number(outMatch[2]),
+            satoshis: outSat,
+          },
+          sellerMvcAddress: tokenPrice.sellerReceiveAddress || item.ownerAddress,
+          codehash: parsedKey.codehash,
+          genesis: parsedKey.genesis,
+          amountBase: tokenPrice.amountBase,
+          buyerNftAddress: buyerIdentity.mvcAddress,
+        });
+
+        const waiterPromise = waitEvent(`atomic:${proposal.proposalId}`, 25_000);
+        const wire = formatGoodsTradeWireMessage({
+          type: 'FT_GOODS_ATOMIC_PROPOSAL_V1',
+          proposalId: proposal.proposalId,
+          itemPinId,
+          assetKey: parsedKey.assetKey,
+          amountBase: tokenPrice.amountBase,
+          buyerNftAddress: buyerIdentity.mvcAddress,
+          sellerReceiveAddress: tokenPrice.sellerReceiveAddress || item.ownerAddress,
+          amountCheckRawTx: proposal.amountCheckRawTx,
+          partialTx: proposal.partialTx,
+          buyerGlobalMetaId: buyerIdentity.globalMetaId || undefined,
+        });
+
+        await control.sendTradeMessage({
+          metabotId,
+          toGlobalMetaId: sellerMetaId,
+          content: `${wire}\n\n[Atomic FT Proposal] Offering ${tokenPrice.amountDisplay} $${tokenPrice.symbol} for ${itemPinId}.`,
+        });
+
+        const reply = await waiterPromise;
+        if (reply?.kind === 'atomic_rejected') {
+          return textResult(`goods_buy_with_token rejected by seller: ${reply.reason}`, true);
+        }
+        if (reply?.kind === 'atomic_settled') {
+          control.onPurchaseSettled?.({
+            metabotId,
+            sessionId,
+            orderId: proposal.proposalId,
+            itemPinId,
+            deliveryTxId: reply.txId,
+            amountMilli: 0,
+            sellerAddress: item.ownerAddress,
+            sellerGlobalMetaId: sellerMetaId,
+            itemName: item.name || matchedListing?.itemName,
+            collectionName: item.collectionName || matchedListing?.collectionName,
+            shopMetaAppPinId: matchedListing?.shopMetaAppPinId,
+          });
+          return textResult([
+            'Atomic FT-for-Goods swap SETTLED on-chain.',
+            `- item: ${item.name || itemPinId} (${itemPinId})`,
+            `- paid: ${tokenPrice.amountDisplay} $${tokenPrice.symbol} (${parsedKey.assetKey})`,
+            `- atomic txId: ${reply.txId}`,
+            `- buyer address: ${buyerIdentity.mvcAddress}`,
+          ].join('\n'));
+        }
+
+        // Fallback short-check if reply DM lagged
+        const refreshed = await getItemInfo({ pinId: itemPinId }).catch(() => null);
+        if (refreshed?.ownerAddress?.toLowerCase() === buyerIdentity.mvcAddress.toLowerCase()) {
+          return textResult([
+            'Atomic FT-for-Goods swap SETTLED (confirmed via item ownership).',
+            `- item: ${item.name || itemPinId} (${itemPinId})`,
+            `- paid: ${tokenPrice.amountDisplay} $${tokenPrice.symbol} (${parsedKey.assetKey})`,
+            `- proposalId: ${proposal.proposalId}`,
+          ].join('\n'));
+        }
+        return textResult([
+          'Atomic FT-for-Goods proposal sent to seller; awaiting settlement confirmation.',
+          `- proposalId: ${proposal.proposalId}`,
+          `- item: ${itemPinId}`,
+          `- amount: ${tokenPrice.amountDisplay} $${tokenPrice.symbol}`,
+        ].join('\n'));
+      }
+
+      // =====================================================================
+      // Path B: Cross-Chain BTC MRC-20 -> 5-Min Exclusive Lock + Verify + Deliver
+      // =====================================================================
+      if (!parsedKey.mrc20Id) {
+        return textResult('goods_buy_with_token: malformed mrc20 assetKey.', true);
+      }
+      if (!control.transferBtcMrc20) {
+        return textResult('goods_buy_with_token: BTC MRC-20 transfer service unavailable.', true);
+      }
+
+      const reserveRequestId = `tgresreq_${randomBytes(8).toString('hex')}`;
+      const reserveWaiter = waitEvent(`reserve:${reserveRequestId}`, 25_000);
+      const reserveWire = formatGoodsTradeWireMessage({
+        type: 'TOKEN_GOODS_RESERVE_V1',
+        reserveRequestId,
+        itemPinId,
+        assetKey: parsedKey.assetKey,
+        buyerNftAddress: buyerIdentity.mvcAddress,
+        buyerGlobalMetaId: buyerIdentity.globalMetaId || undefined,
+      });
+
+      await control.sendTradeMessage({
+        metabotId,
+        toGlobalMetaId: sellerMetaId,
+        content: `${reserveWire}\n\n[Token Reserve Request] Requesting 5-minute lock on ${itemPinId} for ${tokenPrice.amountDisplay} $${tokenPrice.symbol}.`,
+      });
+
+      const reserveReply = await reserveWaiter;
+      if (!reserveReply) {
+        return textResult(
+          `goods_buy_with_token: timed out waiting for seller 5-minute reservation lock on ${itemPinId}; no tokens were spent.`,
+          true,
+        );
+      }
+      if (reserveReply.kind === 'reserve_rejected') {
+        return textResult(
+          `goods_buy_with_token: seller refused reservation lock (${reserveReply.reason}); no tokens were spent.`,
+          true,
+        );
+      }
+      if (reserveReply.kind !== 'reserved') {
+        return textResult('goods_buy_with_token: unexpected reservation response; no tokens were spent.', true);
+      }
+
+      const reservedBase = BigInt(reserveReply.amountBase);
+      if (reservedBase > maxTokenBase) {
+        return textResult(
+          `goods_buy_with_token: reserved price (${reservedBase.toString()} base) exceeds max_token_amount (${maxTokenBase.toString()}); aborted before transfer.`,
+          true,
+        );
+      }
+
+      const reservedDisplay = baseUnitsToDecimalDisplay(reserveReply.amountBase, tokenPrice.decimals);
+      const approved = await confirmTokenFn({
+        metabotId,
+        metabotName: buyerIdentity.name,
+        itemPinId,
+        itemName: item.name || matchedListing?.itemName,
+        collectionName: item.collectionName || matchedListing?.collectionName,
+        assetKey: parsedKey.assetKey,
+        chain: 'btc',
+        symbol: tokenPrice.symbol,
+        amountDisplay: reservedDisplay,
+        amountBase: reserveReply.amountBase,
+        sellerAddress: item.ownerAddress,
+        sellerReceiveAddress: reserveReply.sellerReceiveAddress,
+        sellerName: matchedListing?.seller?.name,
+        sellerGlobalMetaId: sellerMetaId,
+        settlementMode: 'reserved_verify',
+      });
+      if (!approved) {
+        return textResult('goods_buy_with_token cancelled: owner did not confirm the MRC-20 token transfer.', true);
+      }
+
+      const transferRes = await control.transferBtcMrc20({
+        metabotId,
+        mrc20Id: parsedKey.mrc20Id,
+        decimal: tokenPrice.decimals,
+        symbol: tokenPrice.symbol,
+        toAddress: reserveReply.sellerReceiveAddress,
+        amountDisplay: reservedDisplay,
+      });
+
+      const deliverWaiter = waitEvent(`deliver:${reserveReply.reservationId}`, 30_000);
+      const paidWire = formatGoodsTradeWireMessage({
+        type: 'TOKEN_GOODS_PAID_V1',
+        reservationId: reserveReply.reservationId,
+        itemPinId,
+        assetKey: parsedKey.assetKey,
+        paymentTxId: transferRes.revealTxId,
+        buyerNftAddress: buyerIdentity.mvcAddress,
+      });
+
+      await control.sendTradeMessage({
+        metabotId,
+        toGlobalMetaId: sellerMetaId,
+        content: `${paidWire}\n\n[Token Paid] Sent ${reservedDisplay} $${tokenPrice.symbol} in tx ${transferRes.revealTxId} for reservation ${reserveReply.reservationId}.`,
+      });
+
+      const deliverReply = await deliverWaiter;
+      if (deliverReply?.kind === 'delivery_rejected') {
+        return textResult(
+          `goods_buy_with_token: MRC-20 payment sent (${transferRes.revealTxId}), but seller rejected delivery: ${deliverReply.reason}`,
+          true,
+        );
+      }
+      if (deliverReply?.kind === 'delivered') {
+        control.onPurchaseSettled?.({
+          metabotId,
+          sessionId,
+          orderId: reserveReply.reservationId,
+          itemPinId,
+          deliveryTxId: deliverReply.nftDeliveryTxId,
+          amountMilli: 0,
+          sellerAddress: item.ownerAddress,
+          sellerGlobalMetaId: sellerMetaId,
+          itemName: item.name || matchedListing?.itemName,
+          collectionName: item.collectionName || matchedListing?.collectionName,
+          shopMetaAppPinId: matchedListing?.shopMetaAppPinId,
+        });
+        return textResult([
+          'Cross-chain Token-for-Goods purchase DELIVERED.',
+          `- item: ${item.name || itemPinId} (${itemPinId})`,
+          `- paid: ${reservedDisplay} $${tokenPrice.symbol} (${parsedKey.assetKey})`,
+          `- payment revealTxId: ${transferRes.revealTxId}`,
+          `- NFT delivery txId: ${deliverReply.nftDeliveryTxId}`,
+          `- reservationId: ${reserveReply.reservationId}`,
+        ].join('\n'));
+      }
+
+      return textResult([
+        'Cross-chain MRC-20 payment broadcast and TOKEN_GOODS_PAID_V1 dispatched; waiting for seller NFT delivery.',
+        `- reservationId: ${reserveReply.reservationId}`,
+        `- payment revealTxId: ${transferRes.revealTxId}`,
+        `- item: ${itemPinId}`,
+      ].join('\n'));
+    },
+  );
+
   return [
     goodsMarketSummary,
     goodsMarketSearch,
     goodsHolderLookup,
     goodsBuyWithMe,
+    goodsBuyWithToken,
     goodsSendInquiry,
     goodsAcceptInquiry,
   ];

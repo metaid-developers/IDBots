@@ -4,7 +4,7 @@ export const IDBOTS_COMMERCE_INTENT_EVENT = 'idbots:commerce-intent';
 export const IDBOTS_SOCIAL_FRIEND_PROMPT_EVENT = 'idbots:social-friend-prompt';
 
 export interface AskTwinToBuyParams {
-  mode: 'buy_me' | 'negotiate' | 'inquire_unlisted';
+  mode: 'buy_me' | 'buy_token' | 'negotiate' | 'inquire_unlisted';
   itemPinId: string;
   itemName?: string;
   series?: string;
@@ -15,6 +15,11 @@ export interface AskTwinToBuyParams {
   priceMeMilli?: number;
   priceCnyCents?: number;
   priceSats?: number;
+  paymentAssetKey?: string;
+  paymentSymbol?: string;
+  paymentAmountDisplay?: string;
+  paymentAmountBase?: string;
+  paymentChain?: 'btc' | 'mvc';
   sellerAddress?: string;
   sellerGlobalMetaId?: string;
   sellerName?: string;
@@ -74,6 +79,25 @@ export type CommerceIntentDetail =
     imgUrl?: string;
   }
   | {
+    type: 'buy_with_token';
+    itemPinId: string;
+    paymentAssetKey: string;
+    tokenSymbol?: string;
+    tokenAmountDisplay?: string;
+    tokenAmountBase?: string;
+    tokenChain?: 'btc' | 'mvc';
+    sellerReceiveAddress?: string;
+    itemName?: string;
+    series?: string;
+    collectionPinId?: string;
+    priceMeMilli?: number;
+    priceCnyCents?: number;
+    sellerAddress?: string;
+    sellerGlobalMetaId?: string;
+    sellerName?: string;
+    shopMetaAppPinId?: string;
+  }
+  | {
     type: 'negotiate';
     itemPinId: string;
     itemName?: string;
@@ -91,6 +115,15 @@ export type CommerceIntentDetail =
   }
   | AskTwinToBuyIntentDetail;
 
+export interface SelectedTokenPaymentTarget {
+  assetKey: string;
+  chain?: 'btc' | 'mvc';
+  symbol: string;
+  amountDisplay: string;
+  amountBase?: string;
+  sellerReceiveAddress?: string;
+}
+
 export interface GoodsPurchaseConfirmTargetPayload {
   itemPinId: string;
   itemName?: string;
@@ -98,6 +131,8 @@ export interface GoodsPurchaseConfirmTargetPayload {
   collectionPinId?: string;
   priceMeMilli: number;
   priceCnyCents?: number;
+  paymentAssetKey?: string;
+  selectedToken?: SelectedTokenPaymentTarget;
   sellerAddress?: string;
   sellerGlobalMetaId?: string;
   sellerName?: string;
@@ -139,6 +174,73 @@ export function resolveCommerceIntentAction(
   const askParams = 'intent' in detail && detail.intent === 'askTwinToBuy'
     ? unwrapAskTwinToBuyParams(detail)
     : null;
+
+  const isBuyWithToken =
+    ('type' in detail && detail.type === 'buy_with_token')
+    || Boolean(askParams && (askParams.mode === 'buy_token' || askParams.paymentAssetKey));
+
+  if (isBuyWithToken) {
+    if (askParams) {
+      const itemPinId = askParams.itemPinId?.trim();
+      const paymentAssetKey = askParams.paymentAssetKey?.trim().toLowerCase();
+      if (!itemPinId || !paymentAssetKey) return null;
+      const collectionPinId = askParams.collectionPinId || askParams.collectionId || undefined;
+      const series = askParams.series || askParams.collectionName || undefined;
+      const chain: 'btc' | 'mvc' = askParams.paymentChain || (paymentAssetKey.startsWith('mrc20:') ? 'btc' : 'mvc');
+      return {
+        kind: 'open_confirm_modal',
+        target: {
+          itemPinId,
+          itemName: askParams.itemName,
+          series,
+          collectionPinId,
+          priceMeMilli: askParams.priceMeMilli ?? 0,
+          priceCnyCents: askParams.priceCnyCents,
+          paymentAssetKey,
+          selectedToken: {
+            assetKey: paymentAssetKey,
+            chain,
+            symbol: askParams.paymentSymbol || 'TOKEN',
+            amountDisplay: askParams.paymentAmountDisplay || '',
+            amountBase: askParams.paymentAmountBase,
+          },
+          sellerAddress: askParams.sellerAddress,
+          sellerGlobalMetaId: askParams.sellerGlobalMetaId,
+          sellerName: askParams.sellerName,
+          shopMetaAppPinId: askParams.shopMetaAppPinId,
+        },
+      };
+    }
+    const payload = detail as Extract<CommerceIntentDetail, { type: 'buy_with_token' }>;
+    const itemPinId = payload.itemPinId?.trim();
+    const paymentAssetKey = payload.paymentAssetKey?.trim().toLowerCase();
+    if (!itemPinId || !paymentAssetKey) return null;
+    const chain: 'btc' | 'mvc' = payload.tokenChain || (paymentAssetKey.startsWith('mrc20:') ? 'btc' : 'mvc');
+    return {
+      kind: 'open_confirm_modal',
+      target: {
+        itemPinId,
+        itemName: payload.itemName,
+        series: payload.series,
+        collectionPinId: payload.collectionPinId,
+        priceMeMilli: payload.priceMeMilli ?? 0,
+        priceCnyCents: payload.priceCnyCents,
+        paymentAssetKey,
+        selectedToken: {
+          assetKey: paymentAssetKey,
+          chain,
+          symbol: payload.tokenSymbol || 'TOKEN',
+          amountDisplay: payload.tokenAmountDisplay || '',
+          amountBase: payload.tokenAmountBase,
+          sellerReceiveAddress: payload.sellerReceiveAddress,
+        },
+        sellerAddress: payload.sellerAddress,
+        sellerGlobalMetaId: payload.sellerGlobalMetaId,
+        sellerName: payload.sellerName,
+        shopMetaAppPinId: payload.shopMetaAppPinId,
+      },
+    };
+  }
 
   const isBuyWithMe =
     ('type' in detail && detail.type === 'buy_with_me')

@@ -19,6 +19,8 @@
       ownerPromoPack: '领分销弹药包',
       ownerBarHint: '店主本人：也可对店招直接说「一句话改店招 / 上下架」。',
       buyWithMe: '用 ME 积分购买',
+      buyWithTokenPrefix: '用 ',
+      buyWithTokenSuffix: ' 购买',
       negotiate: '找店主 AI 议价',
       inquire: '私聊求购 / 询价',
       autoFulfill: '24h 自动秒发',
@@ -46,6 +48,8 @@
       ownerPromoPack: 'Get promo ammo pack',
       ownerBarHint: 'Shop owner: you can also just tell your AI "change the slogan / list or delist".',
       buyWithMe: 'Buy with ME points',
+      buyWithTokenPrefix: 'Buy with ',
+      buyWithTokenSuffix: '',
       negotiate: 'Negotiate with owner AI',
       inquire: 'Inquire / make an offer',
       autoFulfill: '24h auto delivery',
@@ -118,6 +122,31 @@
   function formatCny(amountCents) {
     if (typeof amountCents !== 'number' || !isFinite(amountCents) || amountCents < 0) return '';
     return '¥' + (amountCents / 100).toFixed(2);
+  }
+
+  function sanitizeTokenPrices(item) {
+    var tokens = item && item.prices && Array.isArray(item.prices.tokens) ? item.prices.tokens : [];
+    var out = [];
+    for (var i = 0; i < tokens.length && out.length < 6; i += 1) {
+      var tok = tokens[i];
+      if (!tok || typeof tok !== 'object') continue;
+      var assetKey = cleanText(tok.assetKey || '', 140).toLowerCase();
+      var symbol = cleanText(tok.symbol || '', 24);
+      var amountDisplay = cleanText(tok.amountDisplay != null ? String(tok.amountDisplay) : '', 40);
+      var amountBase = tok.amountBase != null ? cleanText(String(tok.amountBase), 64) : '';
+      if (!assetKey || !symbol || !amountDisplay) continue;
+      out.push({
+        assetKey: assetKey,
+        symbol: symbol,
+        amountDisplay: amountDisplay,
+        amountBase: amountBase
+      });
+    }
+    return out;
+  }
+
+  function formatTokenLabel(tok) {
+    return tok.amountDisplay + ' $' + tok.symbol;
   }
 
   /* MetaFile image resolution per agent-browser-metaapp.md §8 (static attr
@@ -435,6 +464,10 @@
       || (item.collectionPinId && state.caSet[String(item.collectionPinId).toLowerCase()] === true);
     var priceMe = item.prices && item.prices.me ? formatMe(item.prices.me.amountMilli) : '';
     var priceCny = item.prices && item.prices.fiat ? formatCny(item.prices.fiat.amountCents) : '';
+    var tokens = sanitizeTokenPrices(item);
+    var tokenHtml = tokens.map(function (tok) {
+      return '<span class="price-token" data-asset-key="' + escapeHtml(tok.assetKey) + '">' + escapeHtml(formatTokenLabel(tok)) + '</span>';
+    }).join('');
     var name = cleanText(item.itemName || item.name, 120) || '#' + String(item.itemPinId).slice(-6);
     var collection = cleanText(item.collectionName, 80);
     var badges = '';
@@ -451,9 +484,10 @@
       + '<div class="item-body">'
       + '<div class="item-name">' + escapeHtml(name) + '</div>'
       + (collection ? '<div class="item-collection">' + escapeHtml(collection) + '</div>' : '')
-      + ((priceMe || priceCny)
+      + ((priceMe || priceCny || tokenHtml)
         ? '<div class="item-prices">'
           + (priceMe ? '<span class="price-me">' + escapeHtml(priceMe) + '</span>' : '')
+          + tokenHtml
           + (priceCny ? '<span class="price-cny">' + escapeHtml(priceCny) + '</span>' : '')
           + '</div>'
         : '')
@@ -494,8 +528,13 @@
     setCover($('drawer-cover'), $('drawer-cover-fallback'), item.cover || item.image || '');
     var priceMe = item.prices && item.prices.me ? formatMe(item.prices.me.amountMilli) : '';
     var priceCny = item.prices && item.prices.fiat ? formatCny(item.prices.fiat.amountCents) : '';
+    var tokens = sanitizeTokenPrices(item);
+    var tokenHtml = tokens.map(function (tok) {
+      return '<span class="price-token" data-asset-key="' + escapeHtml(tok.assetKey) + '">' + escapeHtml(formatTokenLabel(tok)) + '</span>';
+    }).join('');
     $('drawer-prices').innerHTML = ''
       + (priceMe ? '<span class="price-me">' + escapeHtml(priceMe) + '</span>' : '')
+      + tokenHtml
       + (priceCny ? '<span class="price-cny">' + escapeHtml(priceCny) + '</span>' : '');
     var badges = '';
     var caVerified = item.caVerified === true
@@ -509,6 +548,15 @@
       if (item.prices && item.prices.me) {
         actions.appendChild(actionButton(t('buyWithMe'), 'btn-accent', function () { askTwin(item, 'buy_me'); }));
       }
+      tokens.forEach(function (tok) {
+        var btn = actionButton(
+          t('buyWithTokenPrefix') + formatTokenLabel(tok) + t('buyWithTokenSuffix'),
+          'btn-token',
+          function () { askTwin(item, 'buy_token', tok); }
+        );
+        btn.setAttribute('data-payment-asset-key', tok.assetKey);
+        actions.appendChild(btn);
+      });
       if (item.negotiable === true) {
         actions.appendChild(actionButton(t('negotiate'), '', function () { askTwin(item, 'negotiate'); }));
       }
@@ -538,7 +586,7 @@
 
   /* ---------- commerce actions ---------- */
 
-  function askTwin(item, mode) {
+  function askTwin(item, mode, selectedToken) {
     var prices = item.prices || {};
     var seller = item.seller || {};
     var payload = {
@@ -552,6 +600,10 @@
       sellerName: cleanText(state.owner.name, 80) || undefined,
       priceMeMilli: prices.me && typeof prices.me.amountMilli === 'number' ? prices.me.amountMilli : undefined,
       priceCnyCents: prices.fiat && typeof prices.fiat.amountCents === 'number' ? prices.fiat.amountCents : undefined,
+      paymentAssetKey: selectedToken && selectedToken.assetKey ? selectedToken.assetKey : undefined,
+      paymentSymbol: selectedToken && selectedToken.symbol ? selectedToken.symbol : undefined,
+      paymentAmountDisplay: selectedToken && selectedToken.amountDisplay ? selectedToken.amountDisplay : undefined,
+      paymentAmountBase: selectedToken && selectedToken.amountBase ? selectedToken.amountBase : undefined,
       mode: mode,
       shopMetaAppPinId: isValidPinId(item.shopMetaAppPinId) ? String(item.shopMetaAppPinId).toLowerCase() : undefined
     };
