@@ -1,17 +1,11 @@
 import type { BrowserPageDefinition } from '@openagentinternet/agent-browser-ui/browser';
 import { buildLegacyWebViewUrlCompatibilityScript } from './legacyWebViewUrl';
-import { buildBrowserTabDragScript } from './browserTabDragScript';
-import { i18nService } from '../../services/i18n';
 
 export const BROWSER_INIT_MARKER = "if (document.readyState === 'loading') {";
 
 export function buildBrowserIframeBridgeScript(): string {
   return `
 ${buildLegacyWebViewUrlCompatibilityScript()}
-${buildBrowserTabDragScript({
-  dragHint: i18nService.t('botBrowserTabDragHint'),
-  armedHint: i18nService.t('botBrowserTabDragArmedHint'),
-})}
 (function installIdbotsBrowserIframeBridge() {
   var BRIDGE_SOURCE = 'idbots-browser-iframe-bridge';
   var PARENT_SOURCE = 'idbots-browser-surface';
