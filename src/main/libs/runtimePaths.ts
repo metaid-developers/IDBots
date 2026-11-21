@@ -35,7 +35,7 @@ export function findNearestExistingFile(startDir: string, relativeFilePath: stri
  */
 export function resolveElectronExecutablePath(): string {
   try {
-    const electronExe = app.getPath('exe');
+    const electronExe = app?.getPath?.('exe');
     if (electronExe && fs.existsSync(electronExe) && fs.statSync(electronExe).isFile()) {
       return electronExe;
     }
@@ -82,7 +82,7 @@ export function resolveMetabotDistModulePath(
     appPath?: string;
   },
 ): string {
-  const baseDir = input?.startDir ?? input?.appPath ?? app.getAppPath();
+  const baseDir = input?.startDir ?? input?.appPath ?? app?.getAppPath?.() ?? process.cwd();
   const metabotRelativePath = path.join('metabot', 'dist', relativePath);
   const resolvedFromAncestors = findNearestExistingFile(baseDir, metabotRelativePath);
   if (resolvedFromAncestors) {

@@ -35,7 +35,7 @@ function loadMetaFileUploadShared(): {
 } {
   const modulePath = resolveMetaFileUploadSharedModulePath({
     moduleDir: __dirname,
-    appPath: app.getAppPath(),
+    appPath: app?.getAppPath?.() ?? path.resolve(__dirname, '../../..'),
     exists: fs.existsSync,
   });
   if (!modulePath) {

@@ -70,7 +70,10 @@ const PINID_ATTEMPT_PREFIX_RE = /^[0-9a-fA-F]{8}/;
  * schemes out of the scan (`preview-metaapp://` is a local-preview scheme,
  * not an on-chain pin reference).
  */
-const PIN_URI_SCAN_RE = /(?<![a-z0-9-])(pin|metafile|metaapp):\/\/([^\s"'<>)\]},;{]*)/gi;
+// Stop at `\`, quotes, backticks, whitespace, angle/square/curly brackets, and
+// list delimiters: nested JSON strings (such as MRC-721 `item_desc` descriptors)
+// serialize the closing quote after `metafile://<pinId>` as `\"`.
+const PIN_URI_SCAN_RE = /(?<![a-z0-9-])(pin|metafile|metaapp):\/\/([^\s"'\\`<>)\]},;{]*)/gi;
 /**
  * `metafile://<pinId>.<ext>` is the MetaFile protocol's typed form (built-in
  * avatars, uploaded attachments): the extension is part of the URI, not of

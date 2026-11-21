@@ -589,7 +589,7 @@ export async function spawnCreatePinWorker(params: SpawnCreatePinWorkerParams): 
   assertChainWritePinRefs(metaidData);
 
   // Worker lives under dist-electron/main/libs in Vite dev builds; keep legacy fallbacks for packaging.
-  const appPath = app.getAppPath();
+  const appPath = app?.getAppPath?.() ?? process.cwd();
   const workerBasename = 'createPinWorker.js';
   const candidatePaths = getMainWorkerCandidatePaths({
     moduleDir: __dirname,
@@ -662,7 +662,7 @@ export async function spawnCreatePinWorker(params: SpawnCreatePinWorkerParams): 
 
   // Never use app.getAppPath() as cwd in packaged mode (it may be app.asar file).
   // A file cwd makes spawn fail with ENOENT/ENOTDIR on Windows first-run paths.
-  const spawnCwd = app.getPath('userData');
+  const spawnCwd = app?.getPath?.('userData') ?? process.cwd();
   return new Promise<CreatePinWorkerSuccess>((resolve, reject) => {
     const child = spawn(electronExe, [workerPath], {
       cwd: spawnCwd,

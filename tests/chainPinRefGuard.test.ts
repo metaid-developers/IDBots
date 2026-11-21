@@ -202,3 +202,33 @@ test('scanPinUriViolations: metafile:// typed extensions are part of the URI, no
   assert.equal(scanPinUriViolations(`metafile://${VALID_PIN.slice(0, 60)}.png`).length, 1, 'truncated + extension stays blocked');
   assert.equal(scanPinUriViolations(`pin://${VALID_PIN}.png`).length, 1, 'only metafile:// carries an extension');
 });
+
+test('validateChainWritePinRefs: nested JSON-stringified URIs in MRC-721 item_desc pass while broken ones stay blocked', () => {
+  // Mainnet regression (#1310 swap): buildMrc721ItemDescContent serializes each
+  // item descriptor as a JSON string inside the outer JSON object, turning the
+  // closing quote after `metafile://<pinId>` into `\"`.
+  const innerClean = JSON.stringify({
+    name: 'MetaBot Avatar #1310',
+    cover: `metafile://${VALID_PIN}`,
+    desc: '1:1 swapped from legacy MetaContract #1310',
+  });
+  const outerClean = JSON.stringify({ [VALID_PIN]: innerClean });
+  assert.equal(
+    validateChainWritePinRefs({
+      path: '/nft/mrc721/metabot-avatar/item_desc',
+      payload: outerClean,
+    }),
+    null,
+  );
+
+  const innerBroken = JSON.stringify({
+    name: 'Broken Cover',
+    cover: `metafile://${NO_I0}`,
+  });
+  const outerBroken = JSON.stringify({ [VALID_PIN]: innerBroken });
+  const err = validateChainWritePinRefs({
+    path: '/nft/mrc721/metabot-avatar/item_desc',
+    payload: outerBroken,
+  });
+  assert.match(err ?? '', /missing the output suffix/);
+});
