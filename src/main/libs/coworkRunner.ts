@@ -369,6 +369,7 @@ import {
 import {
   buildGoodsTradeAgentTools,
   type GoodsPurchaseConfirmationInfo,
+  type GoodsQuoteAcceptConfirmationInfo,
   type GoodsTradeToolsControl,
 } from './goodsTradeAgentTools';
 import {
@@ -9234,6 +9235,49 @@ export class CoworkRunner extends EventEmitter {
     return outcome === 'approved';
   }
 
+  private async confirmGoodsQuoteAcceptance(
+    sessionId: string,
+    info: GoodsQuoteAcceptConfirmationInfo,
+  ): Promise<boolean> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (!activeSession) {
+      return false;
+    }
+    const meAmount = `${(info.agreedAmountMilli / 1000).toFixed(3).replace(/\.?0+$/, '')} ME`;
+    const question = tApp(
+      `Agent 准备同意买家议价并授权自动发货：\n` +
+      `- 商品: ${info.itemName || info.itemPinId} (${info.itemPinId})\n` +
+      `- 成交价格: ${meAmount}\n` +
+      `- 买家 GlobalMetaID: ${info.buyerGlobalMetaId}\n` +
+      `- 询价单号: ${info.inquiryId}\n` +
+      `确认向买家发送报价确认并在买家锁定对应 ME 托管后自动转出该商品吗？（需要你本人确认；60 秒内未回答视为拒绝）`,
+      `The agent is about to accept a buyer quote and authorize auto-fulfillment:\n` +
+      `- Item: ${info.itemName || info.itemPinId} (${info.itemPinId})\n` +
+      `- Agreed Price: ${meAmount}\n` +
+      `- Buyer GlobalMetaID: ${info.buyerGlobalMetaId}\n` +
+      `- Inquiry ID: ${info.inquiryId}\n` +
+      `Confirm sending this quote acceptance and auto-transferring the item once ME escrow is locked? (owner confirmation required; unanswered after 60s = denied)`,
+    );
+    const outcome = await this.requestSafetyApproval(
+      sessionId,
+      activeSession.abortController.signal,
+      activeSession,
+      question,
+      'goods_accept_inquiry',
+      {
+        inquiry_id: info.inquiryId,
+        item_pin_id: info.itemPinId,
+        agreed_amount_milli: info.agreedAmountMilli,
+        buyer_global_metaid: info.buyerGlobalMetaId,
+        ...(info.buyerNftAddress ? { buyer_nft_address: info.buyerNftAddress } : {}),
+        valid_until: info.validUntil,
+      } as Record<string, unknown>,
+      'deny',
+      { ownerOnly: true },
+    );
+    return outcome === 'approved';
+  }
+
   /**
    * Owner gate for multisig signing and broadcast. Timeout is deny: an
    * unanswered prompt must not attach a signature or publish a transaction.
@@ -16128,6 +16172,7 @@ export class CoworkRunner extends EventEmitter {
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
           confirmGoodsPurchase: (info) => this.confirmGoodsPurchase(sessionId, info),
+          confirmGoodsQuoteAcceptance: (info) => this.confirmGoodsQuoteAcceptance(sessionId, info),
         })
       );
     }

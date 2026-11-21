@@ -4,10 +4,13 @@ import type {
   GoodsTradePurchaseSettledEvent,
 } from '../../types/electron';
 import {
+  buildSocialFriendPromptDraft,
   IDBOTS_COMMERCE_INTENT_EVENT,
+  IDBOTS_SOCIAL_FRIEND_PROMPT_EVENT,
+  resolveCommerceIntentAction,
   type CommerceIntentDetail,
+  type SocialFriendPromptDetail,
 } from './commerceTradeEvents';
-import { ct, formatMeDisplay } from './commerceTradeI18n';
 import GoodsPurchaseConfirmModal, { type GoodsPurchaseConfirmTarget } from './GoodsPurchaseConfirmModal';
 import PurchaseSuccessActionCard from './PurchaseSuccessActionCard';
 import SwapCompleteShopPromptCard from './SwapCompleteShopPromptCard';
@@ -20,48 +23,38 @@ const CommerceTradeCoordinator: React.FC = () => {
   useEffect(() => {
     const onIntent = (event: Event) => {
       const detail = (event as CustomEvent<CommerceIntentDetail>).detail;
-      if (!detail) return;
-      if (detail.type === 'visit_shop') {
+      const action = resolveCommerceIntentAction(detail);
+      if (!action) return;
+      if (action.kind === 'open_uri') {
         window.dispatchEvent(
           new CustomEvent('botBrowser:openUri', {
-            detail: { uri: `metaapp://${detail.shopMetaAppPinId}`, newTab: true },
+            detail: { uri: action.uri, newTab: true },
           }),
         );
         return;
       }
-      if (detail.type === 'negotiate') {
-        const priceHint = detail.priceMeMilli != null ? ` (${formatMeDisplay(detail.priceMeMilli)})` : '';
-        const draft = ct(
-          `Send an inquiry/negotiation via goods_send_inquiry for digital item ${detail.itemPinId}${priceHint} to seller ${detail.sellerGlobalMetaId || detail.sellerAddress || 'owner'}.`,
-          `请使用 goods_send_inquiry 向卖家 ${detail.sellerGlobalMetaId || detail.sellerAddress || ''} 询价/议价数字商品 ${detail.itemPinId}${priceHint}。`,
-        );
-        window.dispatchEvent(new CustomEvent('cowork:newChatWithDraft', { detail: { text: draft } }));
+      if (action.kind === 'draft_chat') {
+        window.dispatchEvent(new CustomEvent('cowork:newChatWithDraft', { detail: { text: action.text } }));
         return;
       }
-      if (detail.type === 'buy_with_me') {
-        if (!detail.sellerAddress || detail.priceMeMilli == null || detail.priceMeMilli <= 0) {
-          const draft = ct(
-            `Please buy digital item ${detail.itemPinId} using goods_buy_with_me.`,
-            `请使用 goods_buy_with_me 购买数字商品 ${detail.itemPinId}。`,
-          );
-          window.dispatchEvent(new CustomEvent('cowork:newChatWithDraft', { detail: { text: draft } }));
-          return;
-        }
-        setConfirmTarget({
-          itemPinId: detail.itemPinId,
-          itemName: detail.itemName,
-          series: detail.series,
-          priceMeMilli: detail.priceMeMilli,
-          priceCnyCents: detail.priceCnyCents,
-          sellerAddress: detail.sellerAddress,
-          sellerGlobalMetaId: detail.sellerGlobalMetaId,
-          sellerName: detail.sellerName,
-          shopMetaAppPinId: detail.shopMetaAppPinId,
-        });
+      if (action.kind === 'open_confirm_modal') {
+        setConfirmTarget(action.target);
       }
     };
+
+    const onSocialFriendPrompt = (event: Event) => {
+      const detail = (event as CustomEvent<SocialFriendPromptDetail>).detail;
+      const draft = buildSocialFriendPromptDraft(detail);
+      if (!draft) return;
+      window.dispatchEvent(new CustomEvent('cowork:newChatWithDraft', { detail: { text: draft } }));
+    };
+
     window.addEventListener(IDBOTS_COMMERCE_INTENT_EVENT, onIntent);
-    return () => window.removeEventListener(IDBOTS_COMMERCE_INTENT_EVENT, onIntent);
+    window.addEventListener(IDBOTS_SOCIAL_FRIEND_PROMPT_EVENT, onSocialFriendPrompt);
+    return () => {
+      window.removeEventListener(IDBOTS_COMMERCE_INTENT_EVENT, onIntent);
+      window.removeEventListener(IDBOTS_SOCIAL_FRIEND_PROMPT_EVENT, onSocialFriendPrompt);
+    };
   }, []);
 
   useEffect(() => {
@@ -90,7 +83,7 @@ const CommerceTradeCoordinator: React.FC = () => {
         target={confirmTarget}
         onClose={() => setConfirmTarget(null)}
         onOrderSubmitted={(order) => {
-          if (order.status === 'settled' || order.status === 'delivered') {
+          if (order.status === 'SETTLED') {
             setPurchaseSettled({
               metabotId: 0,
               orderId: order.orderId,

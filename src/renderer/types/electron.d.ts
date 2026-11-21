@@ -2766,8 +2766,10 @@ interface IElectronAPI {
       metabotId?: number;
       itemPinId: string;
       amountMilli: number;
-      sellerAddress: string;
+      sellerAddress?: string;
       sellerGlobalMetaId?: string;
+      collectionPinId?: string;
+      listingPinId?: string;
       note?: string;
     }) => Promise<{
       success: boolean;
@@ -2775,8 +2777,10 @@ interface IElectronAPI {
         orderId: string;
         itemPinId: string;
         status: string;
+        statusName?: string;
         amountMilli: number;
         sellerAddress: string;
+        sellerBotAddress?: string;
         deliveryTxId?: string;
       };
       error?: string;

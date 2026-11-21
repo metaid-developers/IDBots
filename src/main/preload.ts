@@ -1535,8 +1535,10 @@ contextBridge.exposeInMainWorld('electron', {
       metabotId?: number;
       itemPinId: string;
       amountMilli: number;
-      sellerAddress: string;
+      sellerAddress?: string;
       sellerGlobalMetaId?: string;
+      collectionPinId?: string;
+      listingPinId?: string;
       note?: string;
     }) => ipcRenderer.invoke('goodsTrade:buyWithMe', input),
     onPurchaseSettled: (callback: (payload: Record<string, unknown>) => void) => {

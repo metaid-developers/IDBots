@@ -16,6 +16,8 @@ const {
 } = require('../dist-electron/main/services/goodsTradeWireProtocol.js');
 const {
   findAcceptedGoodsQuoteForItem,
+  findSellerAuthorizedQuoteForOrder,
+  recordSellerAuthorizedQuote,
 } = require('../dist-electron/main/services/mrc721SellIntentService.js');
 
 const SELLER_ADDRESS = '1L8me3xT5G1R3gJ8zQ5cS6oX2Y9wQ7hP8c';
@@ -100,12 +102,16 @@ function makeBaseDeps(overrides: Record<string, unknown> = {}) {
       orderId,
       itemPinId: ITEM_PIN_ID,
       collectionPinId: COLLECTION_PIN_ID,
+      buyerNftAddress: BUYER_ADDRESS,
       buyerAddress: BUYER_ADDRESS,
       buyerMetaId: BUYER_METAID,
+      sellerBotAddress: SELLER_ADDRESS,
       sellerAddress: SELLER_ADDRESS,
       sellerMetaId: SELLER_METAID,
       amountMilli: 5000,
-      status: 'locked',
+      status: 'FROZEN_AWAITING_DELIVERY',
+      statusCode: 1,
+      statusName: 'FROZEN_AWAITING_DELIVERY',
       raw: {},
     }),
     listEscrowOrders: async () => ({ orders: [] }),
@@ -114,10 +120,14 @@ function makeBaseDeps(overrides: Record<string, unknown> = {}) {
       return {
         orderId,
         itemPinId: ITEM_PIN_ID,
+        buyerNftAddress: BUYER_ADDRESS,
         buyerAddress: BUYER_ADDRESS,
+        sellerBotAddress: SELLER_ADDRESS,
         sellerAddress: SELLER_ADDRESS,
         amountMilli: 5000,
-        status: 'settled',
+        status: 'SETTLED',
+        statusCode: 3,
+        statusName: 'SETTLED',
         deliveryTxId: input.deliveryTxId,
         raw: {},
       };
@@ -127,10 +137,14 @@ function makeBaseDeps(overrides: Record<string, unknown> = {}) {
       return {
         orderId,
         itemPinId: ITEM_PIN_ID,
+        buyerNftAddress: BUYER_ADDRESS,
         buyerAddress: BUYER_ADDRESS,
+        sellerBotAddress: SELLER_ADDRESS,
         sellerAddress: SELLER_ADDRESS,
         amountMilli: 5000,
-        status: 'rejected',
+        status: 'CANCELED_REFUNDED',
+        statusCode: 5,
+        statusName: 'CANCELED_REFUNDED',
         rejectReason: input.reason,
         raw: {},
       };
@@ -178,9 +192,9 @@ test('SellerAutoFulfillDaemon fast-path settles valid ME_ESCROW_LOCKED_V1 order 
       orderId: 'ord_happy_1',
       itemPinId: ITEM_PIN_ID,
       amountMilli: 5000,
-      buyerAddress: BUYER_ADDRESS,
-      buyerMetaId: BUYER_METAID,
-      sellerAddress: SELLER_ADDRESS,
+      buyerNftAddress: BUYER_ADDRESS,
+      sellerBotAddress: SELLER_ADDRESS,
+      buyerGlobalMetaId: BUYER_METAID,
     });
 
     const handled = await daemon.handleIncomingTradeMessage({
@@ -197,6 +211,8 @@ test('SellerAutoFulfillDaemon fast-path settles valid ME_ESCROW_LOCKED_V1 order 
     assert.equal(ctx.receipts.length, 1);
     assert.equal(ctx.dms.length, 1);
     assert.match(ctx.dms[0].content, /ME_DELIVERY_DONE_V1/);
+    assert.match(ctx.dms[0].content, /"settledAmountMilli":\s*5000/);
+    assert.match(ctx.dms[0].content, /"buyerNftAddress"/);
     assert.equal(ctx.soldMarks.length, 1);
     assert.equal(ctx.emitted.length, 1);
     assert.equal(ctx.emitted[0].channel, 'goodsTrade:autoSold');
@@ -227,10 +243,14 @@ test('SellerAutoFulfillDaemon crash recovery resumes /deliver without re-transfe
         return {
           orderId,
           itemPinId: ITEM_PIN_ID,
+          buyerNftAddress: BUYER_ADDRESS,
           buyerAddress: BUYER_ADDRESS,
+          sellerBotAddress: SELLER_ADDRESS,
           sellerAddress: SELLER_ADDRESS,
           amountMilli: 5000,
-          status: 'settled',
+          status: 'SETTLED',
+          statusCode: 3,
+          statusName: 'SETTLED',
           deliveryTxId: input.deliveryTxId,
           raw: {},
         };
@@ -303,10 +323,14 @@ test('SellerAutoFulfillDaemon safety checks: rejects missing intent, underpriced
         getEscrowOrder: async (_s: any, orderId: string) => ({
           orderId,
           itemPinId: ITEM_PIN_ID,
+          buyerNftAddress: BUYER_ADDRESS,
           buyerAddress: BUYER_ADDRESS,
+          sellerBotAddress: SELLER_ADDRESS,
           sellerAddress: SELLER_ADDRESS,
           amountMilli: 2000,
-          status: 'locked',
+          status: 'FROZEN_AWAITING_DELIVERY',
+          statusCode: 1,
+          statusName: 'FROZEN_AWAITING_DELIVERY',
           raw: {},
         }),
       });
@@ -333,16 +357,20 @@ test('SellerAutoFulfillDaemon safety checks: rejects missing intent, underpriced
       assert.equal(ctx.transfers.length, 0);
     }
 
-    // 5. Self-trade (buyerAddress === sellerAddress) -> reject
+    // 5. Self-trade (buyerNftAddress === sellerBotAddress) -> reject
     {
       const ctx = makeBaseDeps({
         getEscrowOrder: async (_s: any, orderId: string) => ({
           orderId,
           itemPinId: ITEM_PIN_ID,
+          buyerNftAddress: SELLER_ADDRESS,
           buyerAddress: SELLER_ADDRESS,
+          sellerBotAddress: SELLER_ADDRESS,
           sellerAddress: SELLER_ADDRESS,
           amountMilli: 5000,
-          status: 'locked',
+          status: 'FROZEN_AWAITING_DELIVERY',
+          statusCode: 1,
+          statusName: 'FROZEN_AWAITING_DELIVERY',
           raw: {},
         }),
       });
@@ -355,29 +383,38 @@ test('SellerAutoFulfillDaemon safety checks: rejects missing intent, underpriced
   });
 });
 
-test('SellerAutoFulfillDaemon pollOnce and GOODS_QUOTE_V1 persistence', async () => {
+test('SellerAutoFulfillDaemon pollOnce uses FROZEN_AWAITING_DELIVERY and GOODS_QUOTE_ACCEPT_V1 persists', async () => {
   await withDaemonDb(async ({ db, saveDb }) => {
+    const pollQueries: any[] = [];
     const ctx = makeBaseDeps({
-      listEscrowOrders: async () => ({
-        orders: [{
-          orderId: 'ord_polled_1',
-          itemPinId: ITEM_PIN_ID,
-          buyerAddress: BUYER_ADDRESS,
-          sellerAddress: SELLER_ADDRESS,
-          amountMilli: 5000,
-          status: 'locked',
-          raw: {},
-        }],
-      }),
+      listEscrowOrders: async (_signer: any, query: any) => {
+        pollQueries.push(query);
+        return {
+          orders: [{
+            orderId: 'ord_polled_1',
+            itemPinId: ITEM_PIN_ID,
+            buyerNftAddress: BUYER_ADDRESS,
+            buyerAddress: BUYER_ADDRESS,
+            sellerBotAddress: SELLER_ADDRESS,
+            sellerAddress: SELLER_ADDRESS,
+            amountMilli: 5000,
+            status: 'FROZEN_AWAITING_DELIVERY',
+            statusCode: 1,
+            statusName: 'FROZEN_AWAITING_DELIVERY',
+            raw: {},
+          }],
+        };
+      },
     });
     const daemon = new SellerAutoFulfillDaemon(db, saveDb, ctx.deps);
 
     const quoteWire = formatGoodsTradeWireMessage({
-      type: 'GOODS_QUOTE_V1',
+      type: 'GOODS_QUOTE_ACCEPT_V1',
       inquiryId: 'inq_quote_1',
       itemPinId: ITEM_PIN_ID,
-      acceptedAmountMilli: 3500,
-      sellerAddress: SELLER_ADDRESS,
+      agreedCurrency: 'me',
+      agreedAmountMilli: 3500,
+      sellerBotAddress: SELLER_ADDRESS,
       validUntil: Math.floor(Date.now() / 1000) + 1800,
     });
     const quoteRes = await daemon.handleIncomingTradeMessage({
@@ -391,8 +428,59 @@ test('SellerAutoFulfillDaemon pollOnce and GOODS_QUOTE_V1 persistence', async ()
     assert.equal(savedQuote.agreedAmountMilli, 3500);
 
     await daemon.pollOnce();
+    assert.equal(pollQueries.length, 1);
+    assert.equal(pollQueries[0].status, 'FROZEN_AWAITING_DELIVERY');
     assert.equal(ctx.transfers.length, 1);
     assert.equal(ctx.delivers.length, 1);
     assert.equal(daemon.getFulfillment('ord_polled_1')?.status, 'settled');
+  });
+});
+
+test('SellerAutoFulfillDaemon fulfills quote-authorized negotiated and unlisted orders and marks quote used', async () => {
+  await withDaemonDb(async ({ db, saveDb }) => {
+    // 1. Unlisted item (no sell-intent) with valid seller-authorized quote bound to BUYER_ADDRESS
+    const ctx = makeBaseDeps({
+      findLocalActiveSellIntent: () => null,
+      getEscrowOrder: async (_s: any, orderId: string) => ({
+        orderId,
+        itemPinId: ITEM_PIN_ID,
+        collectionPinId: COLLECTION_PIN_ID,
+        buyerNftAddress: BUYER_ADDRESS,
+        buyerAddress: BUYER_ADDRESS,
+        buyerMetaId: BUYER_METAID,
+        sellerBotAddress: SELLER_ADDRESS,
+        sellerAddress: SELLER_ADDRESS,
+        amountMilli: 3500,
+        status: 'FROZEN_AWAITING_DELIVERY',
+        statusCode: 1,
+        statusName: 'FROZEN_AWAITING_DELIVERY',
+        raw: {},
+      }),
+    });
+    recordSellerAuthorizedQuote(ctx.kv, 1, {
+      inquiryId: 'inq_unlisted_1',
+      itemPinId: ITEM_PIN_ID,
+      agreedCurrency: 'me',
+      agreedAmountMilli: 3500,
+      sellerBotAddress: SELLER_ADDRESS,
+      buyerNftAddress: BUYER_ADDRESS,
+      buyerGlobalMetaId: BUYER_METAID,
+      validUntil: Math.floor(Date.now() / 1000) + 1800,
+    });
+
+    const daemon = new SellerAutoFulfillDaemon(db, saveDb, ctx.deps);
+    const res = await daemon.processEscrowOrder(1, 'ord_quote_unlisted_1');
+    assert.equal(res.outcome, 'settled');
+    assert.equal(ctx.transfers.length, 1);
+    assert.equal(ctx.delivers.length, 1);
+
+    // Quote must be marked used after settlement so it cannot be replayed
+    const remainingQuote = findSellerAuthorizedQuoteForOrder(ctx.kv, 1, ITEM_PIN_ID, BUYER_ADDRESS);
+    assert.equal(remainingQuote, null);
+
+    // Second order for the same unlisted item without a fresh quote is rejected
+    const replay = await daemon.processEscrowOrder(1, 'ord_quote_unlisted_replay');
+    assert.equal(replay.outcome, 'rejected');
+    assert.equal(ctx.rejects[0].reason, 'no_active_sell_intent_for_item');
   });
 });

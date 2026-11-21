@@ -15,9 +15,10 @@ export interface GoodsPurchaseConfirmTarget {
   itemPinId: string;
   itemName?: string;
   series?: string;
+  collectionPinId?: string;
   priceMeMilli: number;
   priceCnyCents?: number;
-  sellerAddress: string;
+  sellerAddress?: string;
   sellerGlobalMetaId?: string;
   sellerName?: string;
   shopMetaAppPinId?: string;
@@ -32,7 +33,7 @@ export interface GoodsPurchaseConfirmModalProps {
     itemPinId: string;
     status: string;
     amountMilli: number;
-    sellerAddress: string;
+    sellerAddress?: string;
     deliveryTxId?: string;
   }) => void;
   // Optional overrides for deterministic testing
@@ -93,7 +94,7 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
           const b = fallback.balance;
           const persistent = Math.max(
             0,
-            (b.persistent?.earnedMilli ?? 0) + (b.persistent?.topupMilli ?? 0) + (b.persistent?.bonusMilli ?? 0) - (b.frozenMilli ?? 0),
+            (b.persistent?.earnedMilli ?? 0) + (b.persistent?.topupMilli ?? 0) - (b.frozenMilli ?? 0),
           );
           setTradeSpendableMilli(b.tradeSpendableMilli ?? persistent);
           setWeeklyRemainingMilli(b.weeklyGrant?.remainingMilli ?? 0);
@@ -217,8 +218,9 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
           metabotId: buyerMetabotId,
           itemPinId: target.itemPinId,
           amountMilli: target.priceMeMilli,
-          sellerAddress: target.sellerAddress,
+          ...(target.sellerAddress ? { sellerAddress: target.sellerAddress } : {}),
           sellerGlobalMetaId: target.sellerGlobalMetaId,
+          ...(target.collectionPinId ? { collectionPinId: target.collectionPinId } : {}),
         });
         if (!res.success || !res.order) {
           setSubmitError(res.error || ct('Purchase failed', '下单失败'));
@@ -228,9 +230,10 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
         onClose();
       } else {
         // Fallback: draft into cowork chat
+        const sellerRef = target.sellerAddress || target.sellerGlobalMetaId || '';
         const draft = ct(
-          `Buy item ${target.itemPinId} using goods_buy_with_me for ${formatMeDisplay(target.priceMeMilli)} from seller ${target.sellerAddress}.`,
-          `请调用 goods_buy_with_me 购买商品 ${target.itemPinId}，金额 ${formatMeDisplay(target.priceMeMilli)}，卖家地址 ${target.sellerAddress}。`,
+          `Buy item ${target.itemPinId} using goods_buy_with_me for ${formatMeDisplay(target.priceMeMilli)}${sellerRef ? ` from seller ${sellerRef}` : ''}.`,
+          `请调用 goods_buy_with_me 购买商品 ${target.itemPinId}，金额 ${formatMeDisplay(target.priceMeMilli)}${sellerRef ? `，卖家 ${sellerRef}` : ''}。`,
         );
         window.dispatchEvent(new CustomEvent('cowork:newChatWithDraft', { detail: { text: draft } }));
         onClose();
@@ -306,7 +309,9 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
               <span>{ct('Seller', '卖方')}</span>
               <span className="truncate font-mono">
                 {target.sellerName ? `${target.sellerName} · ` : ''}
-                {target.sellerAddress.slice(0, 8)}…{target.sellerAddress.slice(-6)}
+                {target.sellerAddress
+                  ? `${target.sellerAddress.slice(0, 8)}…${target.sellerAddress.slice(-6)}`
+                  : (target.sellerGlobalMetaId || ct('Verified on-chain owner', '链上实时持有人'))}
               </span>
             </div>
           </div>

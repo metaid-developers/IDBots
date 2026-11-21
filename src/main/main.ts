@@ -243,6 +243,7 @@ import {
   createMrc721Mint,
   fetchMrc721CollectionInfo,
   fetchMrc721ItemInfo,
+  isMrc721PinId,
   listMrc721MySellOrders,
   mrc721SellOrdersFromSqlite,
   sellMrc721Item,
@@ -259,11 +260,13 @@ import {
   listMrc721MySellIntents,
   markAcceptedGoodsQuoteUsed,
   mrc721SellIntentsFromSqlite,
+  recordSellerAuthorizedQuote,
 } from './services/mrc721SellIntentService';
 import {
   createNftEscrowOrder,
   getBotTradeSpendableBalance,
   getNftEscrowOrder,
+  ME_NFT_ESCROW_MIN_AMOUNT_MILLI,
 } from './services/meNftEscrowService';
 import { formatGoodsTradeWireMessage } from './services/goodsTradeWireProtocol';
 import { SellerAutoFulfillDaemon } from './services/sellerAutoFulfillDaemon';
@@ -9156,6 +9159,8 @@ const getCoworkRunner = () => {
           findAcceptedGoodsQuoteForItem(mrc721SellIntentsFromSqlite(getStore()), metabotId, itemPinId),
         markAcceptedQuoteUsed: (metabotId, itemPinId, orderId) =>
           markAcceptedGoodsQuoteUsed(mrc721SellIntentsFromSqlite(getStore()), metabotId, itemPinId, orderId),
+        recordSellerAuthorizedQuote: (metabotId, quote) =>
+          recordSellerAuthorizedQuote(mrc721SellIntentsFromSqlite(getStore()), metabotId, quote),
         onPurchaseSettled: (event) => {
           broadcastToRenderers('goodsTrade:purchaseSettled', event);
         },
@@ -21288,20 +21293,48 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       const bot = getMetabotStore().getMetabotById(botId);
       if (!bot?.mvc_address) throw new Error('Buyer MetaBot has no MVC address');
       const itemPinId = String(input.itemPinId ?? '').trim().toLowerCase();
+      if (!isMrc721PinId(itemPinId)) {
+        throw new Error('Invalid itemPinId');
+      }
       const amountMilli = Math.round(Number(input.amountMilli ?? 0));
-      const sellerAddress = String(input.sellerAddress ?? '').trim();
-      const sellerMetaId = typeof input.sellerGlobalMetaId === 'string' ? input.sellerGlobalMetaId.trim() : undefined;
-      const note = typeof input.note === 'string' ? input.note.trim() : undefined;
+      if (!Number.isInteger(amountMilli) || amountMilli < ME_NFT_ESCROW_MIN_AMOUNT_MILLI) {
+        throw new Error(`amountMilli must be an integer >= ${ME_NFT_ESCROW_MIN_AMOUNT_MILLI} (1 ME)`);
+      }
+
+      // Live item pre-check before locking ME escrow
+      const item = await fetchMrc721ItemInfo({ pinId: itemPinId });
+      if (!item) throw new Error(`Item ${itemPinId} was not found in the indexer`);
+      if (item.burned) throw new Error(`Item ${itemPinId} is burned and cannot be purchased`);
+      if (!item.ownerAddress) throw new Error(`Could not verify live owner of item ${itemPinId}`);
+      if (item.ownerAddress.toLowerCase() === bot.mvc_address.toLowerCase()) {
+        throw new Error('Buyer MetaBot already owns this item');
+      }
+      const requestedSeller = typeof input.sellerAddress === 'string' ? input.sellerAddress.trim() : '';
+      if (requestedSeller && requestedSeller.toLowerCase() !== item.ownerAddress.toLowerCase()) {
+        throw new Error(`Seller address mismatch: expected live owner ${item.ownerAddress}, got ${requestedSeller}`);
+      }
+
+      const sellerBotAddress = item.ownerAddress;
+      const collectionPinId = item.collectionPinId
+        || (typeof input.collectionPinId === 'string' && input.collectionPinId.trim() ? input.collectionPinId.trim().toLowerCase() : undefined);
+      const listingPinId = item.activeListing?.intentPinId
+        || (typeof input.listingPinId === 'string' && input.listingPinId.trim() ? input.listingPinId.trim().toLowerCase() : undefined);
+      const sellerMetaId = (typeof input.sellerGlobalMetaId === 'string' && input.sellerGlobalMetaId.trim())
+        || item.ownerMetaId
+        || item.ownerProfile?.globalMetaId
+        || undefined;
       const orderId = `goods_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
       const order = await createNftEscrowOrder(meChargeSigner(botId), {
         orderId,
         itemPinId,
-        sellerAddress,
+        collectionPinId,
+        buyerNftAddress: bot.mvc_address,
+        sellerBotAddress,
         amountMilli,
-        buyerMetaId: bot.globalmetaid || undefined,
-        sellerMetaId,
-        note,
+        listingPinId,
+        deliveryTimeoutSec: 900,
+        idempotencyKey: orderId,
       });
 
       if (sellerMetaId) {
@@ -21314,9 +21347,10 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
               orderId: order.orderId,
               itemPinId,
               amountMilli,
-              buyerAddress: bot.mvc_address,
-              buyerMetaId: bot.globalmetaid || undefined,
-              sellerAddress,
+              buyerNftAddress: bot.mvc_address,
+              sellerBotAddress,
+              buyerGlobalMetaId: bot.globalmetaid || undefined,
+              listingPinId,
             });
             await withChainWriteBudget('goods_trade_dm', () => sendEncryptedSimplemsg({
               metabotId: botId,
@@ -21333,7 +21367,41 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         }
       }
 
-      return { success: true, order };
+      // Short-poll ABS escrow order status after DM so fast-path auto-fulfill surfaces immediately
+      let latestOrder = order;
+      const isTerminal = (status: string) =>
+        status === 'SETTLED'
+        || status === 'CANCELED_REFUNDED'
+        || status === 'EXPIRED_REFUNDED'
+        || status === 'DISPUTED_HOLD';
+      for (const waitMs of [1500, 2000, 2500]) {
+        if (isTerminal(latestOrder.status)) break;
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        try {
+          latestOrder = await getNftEscrowOrder(meChargeSigner(botId), order.orderId);
+        } catch {
+          // Keep last known order state
+        }
+      }
+
+      if (latestOrder.status === 'SETTLED') {
+        broadcastToRenderers('goodsTrade:purchaseSettled', {
+          metabotId: botId,
+          orderId: latestOrder.orderId,
+          itemPinId,
+          deliveryTxId: latestOrder.deliveryTxId,
+          amountMilli,
+          sellerAddress: sellerBotAddress,
+          sellerGlobalMetaId: sellerMetaId,
+          buyerAddress: bot.mvc_address,
+          itemName: item.name || item.activeListing?.itemName,
+          collectionName: item.collectionName || item.activeListing?.collectionName,
+          shopMetaAppPinId: item.activeListing?.shopMetaAppPinId,
+          source: 'ipc_buy_with_me',
+        });
+      }
+
+      return { success: true, order: latestOrder };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }

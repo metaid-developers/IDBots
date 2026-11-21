@@ -431,7 +431,7 @@ const POST_FREEZE_INVOKE: Record<string, AllowlistEntry> = {
   'cowork:session:listPeerAvatars': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop peer-avatar deduplication channel, 2026-11-14); mobile gateway receives peerAvatar inline via cowork:session:list.' },
   'cowork:session:getSummary': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop single-session summary delta channel, 2026-11-14); mobile gateway uses cowork:session:list.' },
   'goodsTrade:getBuyerBalance': { tier: 'P1', note: 'WS-D digital goods ME trade balance read.' },
-  'goodsTrade:buyWithMe': { tier: 'P1', note: 'WS-D digital goods ME escrow order submission from confirmation modal.' },
+  'goodsTrade:buyWithMe': { tier: 'N', note: 'Desktop-only local MetaBot ME escrow purchase confirmation modal; denied on mobile gateway.' },
 };
 
 export const INVOKE_ALLOWLIST: Record<string, AllowlistEntry> = {

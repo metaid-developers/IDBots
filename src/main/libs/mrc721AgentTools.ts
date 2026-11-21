@@ -1726,7 +1726,7 @@ export function buildMrc721AgentTools(deps: {
       shop_metaapp_pin_id: z.string().optional().describe('Optional seller MetaApp shop pinId to display on cards and link buyers to.'),
       price_hint_sats: z.number().int().positive().optional().describe('Reference price in native SPACE sats, display only. Omit for "make an offer".'),
       accepted_currencies: z.array(z.string().min(1)).optional().describe('Accepted settlement currencies, e.g. ["me","space","fiat:CNY"]. Auto-merges with priced currencies.'),
-      settlement: z.array(z.enum(['atomic-swap', 'escrow', 'me-escrow'])).optional().describe('Settlement rails the seller accepts. Auto-includes me-escrow when price_me is set.'),
+      settlement: z.array(z.enum(['atomic-swap', 'escrow', 'me-escrow', 'fiat-escrow'])).optional().describe('Settlement rails the seller accepts. Auto-includes me-escrow when price_me is set and fiat-escrow when price_cny_yuan is set.'),
       note: z.string().optional().describe('Free-text note for potential buyers.'),
       expires_in_hours: z.number().int().positive().optional().describe('Display-only expiry window in hours (e.g. 168 for a week). Omit = no stated expiry.'),
       network: z.enum(['mvc', 'btc']).optional().describe('Write network; default mvc (BTC writes are not yet supported in this version).'),

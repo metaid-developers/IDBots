@@ -109,6 +109,10 @@ function acceptedQuotesKey(metabotId: number): string {
   return `goods_accepted_quotes:${metabotId}`;
 }
 
+function sellerAuthorizedQuotesKey(metabotId: number): string {
+  return `goods_seller_authorized_quotes:${metabotId}`;
+}
+
 export interface GoodsAcceptedQuoteRecord {
   inquiryId: string;
   itemPinId: string;
@@ -116,6 +120,7 @@ export interface GoodsAcceptedQuoteRecord {
   agreedAmountMilli: number;
   sellerBotAddress: string;
   sellerPayeeAddress?: string;
+  buyerNftAddress?: string;
   buyerGlobalMetaId?: string;
   validUntil: number;
   status: 'active' | 'used' | 'expired';
@@ -627,6 +632,87 @@ export function markAcceptedGoodsQuoteUsed(
     }
   }
   if (changed) writeAcceptedQuotes(kv, metabotId, records);
+  return changed;
+}
+
+function readSellerAuthorizedQuotes(kv: SellIntentKv, metabotId: number): GoodsAcceptedQuoteRecord[] {
+  const stored = kv.get<GoodsAcceptedQuoteRecord[]>(sellerAuthorizedQuotesKey(metabotId));
+  return Array.isArray(stored) ? stored : [];
+}
+
+function writeSellerAuthorizedQuotes(kv: SellIntentKv, metabotId: number, records: GoodsAcceptedQuoteRecord[]): void {
+  kv.set(sellerAuthorizedQuotesKey(metabotId), records);
+}
+
+export function recordSellerAuthorizedQuote(
+  kv: SellIntentKv,
+  metabotId: number,
+  quote: Omit<GoodsAcceptedQuoteRecord, 'status' | 'createdAt' | 'updatedAt'>,
+): GoodsAcceptedQuoteRecord {
+  const nowMs = Date.now();
+  const normalizedPinId = quote.itemPinId.trim().toLowerCase();
+  const entry: GoodsAcceptedQuoteRecord = {
+    ...quote,
+    itemPinId: normalizedPinId,
+    status: 'active',
+    createdAt: Math.floor(nowMs / 1000),
+    updatedAt: nowMs,
+  };
+  const records = readSellerAuthorizedQuotes(kv, metabotId);
+  const idx = records.findIndex((r) => r.inquiryId === entry.inquiryId);
+  if (idx >= 0) records[idx] = entry;
+  else records.push(entry);
+  writeSellerAuthorizedQuotes(kv, metabotId, records);
+  return entry;
+}
+
+export function findSellerAuthorizedQuoteForOrder(
+  kv: SellIntentKv,
+  metabotId: number,
+  itemPinId: string,
+  buyerNftAddress?: string,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+): GoodsAcceptedQuoteRecord | null {
+  const normalizedPinId = String(itemPinId ?? '').trim().toLowerCase();
+  const normalizedBuyer = String(buyerNftAddress ?? '').trim().toLowerCase();
+  const records = readSellerAuthorizedQuotes(kv, metabotId);
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const r = records[i];
+    if (r.itemPinId.toLowerCase() !== normalizedPinId) continue;
+    if (r.status !== 'active') continue;
+    if (r.validUntil && r.validUntil <= nowSeconds) continue;
+    if (r.buyerNftAddress && (!normalizedBuyer || r.buyerNftAddress.toLowerCase() !== normalizedBuyer)) {
+      continue;
+    }
+    return r;
+  }
+  return null;
+}
+
+export function markSellerAuthorizedQuoteUsed(
+  kv: SellIntentKv,
+  metabotId: number,
+  itemPinId: string,
+  meta?: { inquiryId?: string; orderId?: string },
+): boolean {
+  const normalizedPinId = String(itemPinId ?? '').trim().toLowerCase();
+  const records = readSellerAuthorizedQuotes(kv, metabotId);
+  let changed = false;
+  const nowMs = Date.now();
+  for (let i = 0; i < records.length; i += 1) {
+    const r = records[i];
+    if (r.status !== 'active') continue;
+    if (r.itemPinId.toLowerCase() !== normalizedPinId) continue;
+    if (meta?.inquiryId && r.inquiryId !== meta.inquiryId) continue;
+    records[i] = {
+      ...r,
+      status: 'used',
+      ...(meta?.orderId ? { orderId: meta.orderId } : {}),
+      updatedAt: nowMs,
+    };
+    changed = true;
+  }
+  if (changed) writeSellerAuthorizedQuotes(kv, metabotId, records);
   return changed;
 }
 

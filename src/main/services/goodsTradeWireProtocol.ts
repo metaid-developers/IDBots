@@ -3,7 +3,7 @@
  *
  * Uses `/protocols/simplemsg` private messages carrying a fenced JSON block:
  *   ```idbots-trade-v1
- *   { "type": "ME_ESCROW_LOCKED_V1" | "ME_DELIVERY_DONE_V1" | "ME_ESCROW_REJECTED_V1" | "GOODS_INQUIRY_V1" | "GOODS_QUOTE_V1", ... }
+ *   { "type": "ME_ESCROW_LOCKED_V1" | "ME_DELIVERY_DONE_V1" | "ME_ESCROW_REJECTED_V1" | "GOODS_INQUIRY_V1" | "GOODS_QUOTE_ACCEPT_V1", ... }
  *   ```
  */
 
@@ -14,10 +14,10 @@ export interface MeEscrowLockedMessageV1 {
   orderId: string;
   itemPinId: string;
   amountMilli: number;
-  buyerAddress: string;
-  buyerMetaId?: string;
-  sellerAddress: string;
-  sellPinId?: string;
+  buyerNftAddress: string;
+  sellerBotAddress: string;
+  buyerGlobalMetaId?: string;
+  listingPinId?: string;
 }
 
 export interface MeDeliveryDoneMessageV1 {
@@ -25,9 +25,9 @@ export interface MeDeliveryDoneMessageV1 {
   orderId: string;
   itemPinId: string;
   deliveryTxId: string;
-  amountMilli?: number;
+  settledAmountMilli?: number;
   sellerMetaId?: string;
-  buyerAddress?: string;
+  buyerNftAddress?: string;
 }
 
 export interface MeEscrowRejectedMessageV1 {
@@ -41,20 +41,23 @@ export interface GoodsInquiryMessageV1 {
   type: 'GOODS_INQUIRY_V1';
   inquiryId: string;
   itemPinId: string;
-  offerAmountMilli?: number;
   offerCurrency?: string;
-  buyerAddress?: string;
-  buyerMetaId?: string;
+  offerAmountMilli?: number;
+  buyerNftAddress?: string;
+  buyerGlobalMetaId?: string;
+  expiresAt?: number;
   note?: string;
 }
 
-export interface GoodsQuoteMessageV1 {
-  type: 'GOODS_QUOTE_V1';
+export interface GoodsQuoteAcceptMessageV1 {
+  type: 'GOODS_QUOTE_ACCEPT_V1';
   inquiryId: string;
   itemPinId: string;
-  acceptedAmountMilli: number;
+  agreedCurrency: 'me';
+  agreedAmountMilli: number;
+  sellerBotAddress: string;
+  sellerPayeeAddress?: string;
   validUntil?: number;
-  sellerAddress: string;
   sellerMetaId?: string;
   note?: string;
 }
@@ -64,7 +67,7 @@ export type GoodsTradeWireMessageV1 =
   | MeDeliveryDoneMessageV1
   | MeEscrowRejectedMessageV1
   | GoodsInquiryMessageV1
-  | GoodsQuoteMessageV1;
+  | GoodsQuoteAcceptMessageV1;
 
 export function formatGoodsTradeWireMessage(payload: GoodsTradeWireMessageV1): string {
   return `\`\`\`${GOODS_TRADE_WIRE_FENCE_TAG}\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
@@ -113,22 +116,30 @@ export function parseGoodsTradeWireMessage(
     if (type === 'ME_ESCROW_LOCKED_V1') {
       const orderId = pickNonEmptyString(obj.orderId ?? obj.order_id);
       const amountMilli = pickFiniteNumber(obj.amountMilli ?? obj.amount_milli);
-      const buyerAddress = pickNonEmptyString(obj.buyerAddress ?? obj.buyer_address);
-      const sellerAddress = pickNonEmptyString(obj.sellerAddress ?? obj.seller_address);
-      if (!orderId || amountMilli == null || amountMilli <= 0 || !buyerAddress || !sellerAddress) {
+      const buyerNftAddress = pickNonEmptyString(
+        obj.buyerNftAddress ?? obj.buyer_nft_address ?? obj.buyerAddress ?? obj.buyer_address,
+      );
+      const sellerBotAddress = pickNonEmptyString(
+        obj.sellerBotAddress ?? obj.seller_bot_address ?? obj.sellerAddress ?? obj.seller_address,
+      );
+      if (!orderId || amountMilli == null || amountMilli <= 0 || !buyerNftAddress || !sellerBotAddress) {
         continue;
       }
-      const buyerMetaId = pickNonEmptyString(obj.buyerMetaId ?? obj.buyer_metaid) || undefined;
-      const sellPinId = pickNonEmptyString(obj.sellPinId ?? obj.sell_pin_id) || undefined;
+      const buyerGlobalMetaId = pickNonEmptyString(
+        obj.buyerGlobalMetaId ?? obj.buyer_global_metaid ?? obj.buyerMetaId ?? obj.buyer_metaid,
+      ) || undefined;
+      const listingPinId = pickNonEmptyString(
+        obj.listingPinId ?? obj.listing_pin_id ?? obj.sellPinId ?? obj.sell_pin_id,
+      ) || undefined;
       return {
         type: 'ME_ESCROW_LOCKED_V1',
         orderId,
         itemPinId,
         amountMilli,
-        buyerAddress,
-        ...(buyerMetaId ? { buyerMetaId } : {}),
-        sellerAddress,
-        ...(sellPinId ? { sellPinId } : {}),
+        buyerNftAddress,
+        sellerBotAddress,
+        ...(buyerGlobalMetaId ? { buyerGlobalMetaId } : {}),
+        ...(listingPinId ? { listingPinId } : {}),
       };
     }
 
@@ -136,17 +147,23 @@ export function parseGoodsTradeWireMessage(
       const orderId = pickNonEmptyString(obj.orderId ?? obj.order_id);
       const deliveryTxId = pickNonEmptyString(obj.deliveryTxId ?? obj.delivery_tx_id);
       if (!orderId || !deliveryTxId) continue;
-      const amountMilli = pickFiniteNumber(obj.amountMilli ?? obj.amount_milli);
-      const sellerMetaId = pickNonEmptyString(obj.sellerMetaId ?? obj.seller_metaid) || undefined;
-      const buyerAddress = pickNonEmptyString(obj.buyerAddress ?? obj.buyer_address) || undefined;
+      const settledAmountMilli = pickFiniteNumber(
+        obj.settledAmountMilli ?? obj.settled_amount_milli ?? obj.amountMilli ?? obj.amount_milli,
+      );
+      const sellerMetaId = pickNonEmptyString(
+        obj.sellerMetaId ?? obj.seller_metaid ?? obj.sellerGlobalMetaId ?? obj.seller_global_metaid,
+      ) || undefined;
+      const buyerNftAddress = pickNonEmptyString(
+        obj.buyerNftAddress ?? obj.buyer_nft_address ?? obj.buyerAddress ?? obj.buyer_address,
+      ) || undefined;
       return {
         type: 'ME_DELIVERY_DONE_V1',
         orderId,
         itemPinId,
         deliveryTxId,
-        ...(amountMilli != null ? { amountMilli } : {}),
+        ...(settledAmountMilli != null ? { settledAmountMilli } : {}),
         ...(sellerMetaId ? { sellerMetaId } : {}),
-        ...(buyerAddress ? { buyerAddress } : {}),
+        ...(buyerNftAddress ? { buyerNftAddress } : {}),
       };
     }
 
@@ -167,38 +184,57 @@ export function parseGoodsTradeWireMessage(
       if (!inquiryId) continue;
       const offerAmountMilli = pickFiniteNumber(obj.offerAmountMilli ?? obj.offer_amount_milli);
       const offerCurrency = pickNonEmptyString(obj.offerCurrency ?? obj.offer_currency) || undefined;
-      const buyerAddress = pickNonEmptyString(obj.buyerAddress ?? obj.buyer_address) || undefined;
-      const buyerMetaId = pickNonEmptyString(obj.buyerMetaId ?? obj.buyer_metaid) || undefined;
+      const buyerNftAddress = pickNonEmptyString(
+        obj.buyerNftAddress ?? obj.buyer_nft_address ?? obj.buyerAddress ?? obj.buyer_address,
+      ) || undefined;
+      const buyerGlobalMetaId = pickNonEmptyString(
+        obj.buyerGlobalMetaId ?? obj.buyer_global_metaid ?? obj.buyerMetaId ?? obj.buyer_metaid,
+      ) || undefined;
+      const expiresAt = pickFiniteNumber(obj.expiresAt ?? obj.expires_at);
       const note = pickNonEmptyString(obj.note) || undefined;
       return {
         type: 'GOODS_INQUIRY_V1',
         inquiryId,
         itemPinId,
-        ...(offerAmountMilli != null ? { offerAmountMilli } : {}),
         ...(offerCurrency ? { offerCurrency } : {}),
-        ...(buyerAddress ? { buyerAddress } : {}),
-        ...(buyerMetaId ? { buyerMetaId } : {}),
+        ...(offerAmountMilli != null ? { offerAmountMilli } : {}),
+        ...(buyerNftAddress ? { buyerNftAddress } : {}),
+        ...(buyerGlobalMetaId ? { buyerGlobalMetaId } : {}),
+        ...(expiresAt != null ? { expiresAt } : {}),
         ...(note ? { note } : {}),
       };
     }
 
-    if (type === 'GOODS_QUOTE_V1') {
+    if (type === 'GOODS_QUOTE_ACCEPT_V1' || type === 'GOODS_QUOTE_V1') {
       const inquiryId = pickNonEmptyString(obj.inquiryId ?? obj.inquiry_id);
-      const acceptedAmountMilli = pickFiniteNumber(obj.acceptedAmountMilli ?? obj.accepted_amount_milli);
-      const sellerAddress = pickNonEmptyString(obj.sellerAddress ?? obj.seller_address);
-      if (!inquiryId || acceptedAmountMilli == null || acceptedAmountMilli <= 0 || !sellerAddress) {
+      const agreedAmountMilli = pickFiniteNumber(
+        obj.agreedAmountMilli ?? obj.agreed_amount_milli ?? obj.acceptedAmountMilli ?? obj.accepted_amount_milli,
+      );
+      const sellerBotAddress = pickNonEmptyString(
+        obj.sellerBotAddress ?? obj.seller_bot_address ?? obj.sellerAddress ?? obj.seller_address,
+      );
+      if (!inquiryId || agreedAmountMilli == null || agreedAmountMilli <= 0 || !sellerBotAddress) {
         continue;
       }
+      const agreedCurrencyRaw = pickNonEmptyString(obj.agreedCurrency ?? obj.agreed_currency).toLowerCase();
+      const agreedCurrency: 'me' = agreedCurrencyRaw && agreedCurrencyRaw !== 'me' ? 'me' : 'me';
+      const sellerPayeeAddress = pickNonEmptyString(
+        obj.sellerPayeeAddress ?? obj.seller_payee_address,
+      ) || undefined;
       const validUntil = pickFiniteNumber(obj.validUntil ?? obj.valid_until);
-      const sellerMetaId = pickNonEmptyString(obj.sellerMetaId ?? obj.seller_metaid) || undefined;
+      const sellerMetaId = pickNonEmptyString(
+        obj.sellerMetaId ?? obj.seller_metaid ?? obj.sellerGlobalMetaId ?? obj.seller_global_metaid,
+      ) || undefined;
       const note = pickNonEmptyString(obj.note) || undefined;
       return {
-        type: 'GOODS_QUOTE_V1',
+        type: 'GOODS_QUOTE_ACCEPT_V1',
         inquiryId,
         itemPinId,
-        acceptedAmountMilli,
+        agreedCurrency,
+        agreedAmountMilli,
+        sellerBotAddress,
+        ...(sellerPayeeAddress ? { sellerPayeeAddress } : {}),
         ...(validUntil != null ? { validUntil } : {}),
-        sellerAddress,
         ...(sellerMetaId ? { sellerMetaId } : {}),
         ...(note ? { note } : {}),
       };

@@ -4,7 +4,7 @@
  * 24/7 automatic seller-side fulfillment for ABS ME Points NFT Escrow orders:
  *   - Fast path: triggered immediately when `privateChatDaemon` receives an
  *     `idbots-trade-v1` `ME_ESCROW_LOCKED_V1` wire message.
- *   - Fallback path: polls `GET /v1/me/nft-escrow/orders?role=seller&status=locked`
+ *   - Fallback path: polls `GET /v1/me/nft-escrow/orders?role=seller&status=FROZEN_AWAITING_DELIVERY`
  *     every 60 seconds across all enabled local MetaBots.
  *
  * Enforces 6 strict safety checks + SQLite crash-recovery idempotency
@@ -18,8 +18,11 @@ import { fetchMrc721ItemInfo, type Mrc721ItemSummary } from './mrc721Service';
 import {
   broadcastMrc721TradeReceipt,
   findLocalActiveSellIntentForItem,
+  findSellerAuthorizedQuoteForOrder,
   markMrc721SellIntentSold,
+  markSellerAuthorizedQuoteUsed,
   recordAcceptedGoodsQuote,
+  type GoodsAcceptedQuoteRecord,
   type Mrc721SellIntentRecord,
   type SellIntentKv,
 } from './mrc721SellIntentService';
@@ -122,6 +125,16 @@ export interface SellerAutoFulfillDeps {
     metabotId: number,
     itemPinId: string,
     meta?: { orderId?: string; txId?: string },
+  ) => boolean;
+  findSellerAuthorizedQuote?: (
+    metabotId: number,
+    itemPinId: string,
+    buyerNftAddress?: string,
+  ) => GoodsAcceptedQuoteRecord | null;
+  markSellerAuthorizedQuoteUsed?: (
+    metabotId: number,
+    itemPinId: string,
+    meta?: { inquiryId?: string; orderId?: string },
   ) => boolean;
   emitLog?: (msg: string) => void;
   now?: () => number;
@@ -308,7 +321,7 @@ export class SellerAutoFulfillDaemon {
     if (msg.type === 'ME_ESCROW_LOCKED_V1') {
       await this.processEscrowOrder(params.metabotId, msg.orderId, {
         source: 'a2a_message',
-        buyerMetaIdHint: params.fromGlobalMetaId || msg.buyerMetaId,
+        buyerMetaIdHint: params.fromGlobalMetaId || msg.buyerGlobalMetaId,
       });
       return { handled: true, type: msg.type, orderId: msg.orderId };
     }
@@ -319,9 +332,9 @@ export class SellerAutoFulfillDaemon {
         orderId: msg.orderId,
         itemPinId: msg.itemPinId,
         deliveryTxId: msg.deliveryTxId,
-        amountMilli: msg.amountMilli,
+        amountMilli: msg.settledAmountMilli,
         sellerGlobalMetaId: msg.sellerMetaId || params.fromGlobalMetaId,
-        buyerAddress: msg.buyerAddress,
+        buyerAddress: msg.buyerNftAddress,
         source: 'a2a_message',
       });
       return { handled: true, type: msg.type, orderId: msg.orderId };
@@ -338,19 +351,20 @@ export class SellerAutoFulfillDaemon {
       return { handled: true, type: msg.type, orderId: msg.orderId };
     }
 
-    if (msg.type === 'GOODS_QUOTE_V1') {
+    if (msg.type === 'GOODS_QUOTE_ACCEPT_V1') {
       try {
         recordAcceptedGoodsQuote(this.deps.getSellIntentKv(), params.metabotId, {
           inquiryId: msg.inquiryId,
           itemPinId: msg.itemPinId,
-          agreedCurrency: 'me',
-          agreedAmountMilli: msg.acceptedAmountMilli,
+          agreedCurrency: msg.agreedCurrency ?? 'me',
+          agreedAmountMilli: msg.agreedAmountMilli,
           validUntil: msg.validUntil ?? Math.floor(this.nowMs() / 1000) + 3_600,
-          sellerBotAddress: msg.sellerAddress,
+          sellerBotAddress: msg.sellerBotAddress,
+          ...(msg.sellerPayeeAddress ? { sellerPayeeAddress: msg.sellerPayeeAddress } : {}),
           buyerGlobalMetaId: params.fromGlobalMetaId,
         });
       } catch (error) {
-        this.log(`[SellerAutoFulfill] Failed to record GOODS_QUOTE_V1: ${error instanceof Error ? error.message : String(error)}`);
+        this.log(`[SellerAutoFulfill] Failed to record GOODS_QUOTE_ACCEPT_V1: ${error instanceof Error ? error.message : String(error)}`);
       }
       // Keep conversational delivery so buyer bot/owner sees the quote
       return { handled: false, type: msg.type, orderId: msg.inquiryId };
@@ -404,41 +418,61 @@ export class SellerAutoFulfillDaemon {
         });
       }
 
-      // Check 1: Authoritative ABS order must be 'locked' and addressed to this seller bot
-      if (order.status !== 'locked') {
-        if (order.status === 'settled' || order.status === 'delivered') {
+      const rawBuyerAddress = order.buyerNftAddress || order.buyerAddress;
+
+      // Check 1: Authoritative ABS order must be 'FROZEN_AWAITING_DELIVERY' (status=1) and addressed to this seller bot
+      const isAwaitingDelivery = order.status === 'FROZEN_AWAITING_DELIVERY' || order.statusCode === 1;
+      if (!isAwaitingDelivery) {
+        if (
+          order.status === 'SETTLED'
+          || order.status === 'DELIVERY_SUBMITTED'
+          || order.statusCode === 3
+          || order.statusCode === 2
+        ) {
           this.upsertFulfillment({
             orderId: normalizedOrderId,
             sellerMetabotId,
             itemPinId: order.itemPinId,
-            buyerAddress: order.buyerAddress,
+            buyerAddress: rawBuyerAddress,
             amountMilli: order.amountMilli,
             status: 'settled',
             deliveryTxId: order.deliveryTxId ?? existing?.deliveryTxId ?? null,
           });
-        } else if (order.status === 'rejected') {
+        } else if (
+          order.status === 'CANCELED_REFUNDED'
+          || order.status === 'EXPIRED_REFUNDED'
+          || order.statusCode === 5
+          || order.statusCode === 4
+        ) {
           this.upsertFulfillment({
             orderId: normalizedOrderId,
             sellerMetabotId,
             itemPinId: order.itemPinId,
-            buyerAddress: order.buyerAddress,
+            buyerAddress: rawBuyerAddress,
             amountMilli: order.amountMilli,
             status: 'rejected',
-            errorMessage: order.rejectReason ?? 'rejected_on_server',
+            errorMessage: order.rejectReason ?? order.status ?? 'rejected_on_server',
           });
         }
         return { outcome: 'skipped', reason: `order_status_${order.status}` };
       }
 
-      if (order.sellerAddress.toLowerCase() !== identity.mvcAddress.toLowerCase()) {
+      const orderSellerAddress = order.sellerBotAddress || order.sellerAddress;
+      if (orderSellerAddress.toLowerCase() !== identity.mvcAddress.toLowerCase()) {
         return { outcome: 'skipped', reason: 'seller_address_mismatch' };
       }
 
-      // Check 2: Local active sell-intent exists, is active/unexpired, and autoFulfillMe !== false
+      // Check 2: Local active sell-intent OR unexpired seller-authorized quote exists
       const findIntent = this.deps.findLocalActiveSellIntent
         ?? ((botId: number, pinId: string) => findLocalActiveSellIntentForItem(this.deps.getSellIntentKv(), botId, pinId));
       const sellIntent = findIntent(sellerMetabotId, order.itemPinId);
-      if (!sellIntent) {
+      const nowSec = Math.floor(this.nowMs() / 1000);
+      const findAuthorizedQuote = this.deps.findSellerAuthorizedQuote
+        ?? ((botId: number, pinId: string, buyerAddr?: string) =>
+          findSellerAuthorizedQuoteForOrder(this.deps.getSellIntentKv(), botId, pinId, buyerAddr, nowSec));
+      const authorizedQuote = findAuthorizedQuote(sellerMetabotId, order.itemPinId, rawBuyerAddress);
+
+      if (!sellIntent && !authorizedQuote) {
         return await this.rejectLockedOrder(
           sellerMetabotId,
           identity,
@@ -447,21 +481,33 @@ export class SellerAutoFulfillDaemon {
           opts?.buyerMetaIdHint,
         );
       }
-      if (sellIntent.autoFulfillMe === false || sellIntent.intent.autoFulfillMe === false) {
+      if (!authorizedQuote && sellIntent && (sellIntent.autoFulfillMe === false || sellIntent.intent.autoFulfillMe === false)) {
         // Explicit manual-fulfill preference: do not auto-transfer and do not auto-reject.
         return { outcome: 'skipped', reason: 'auto_fulfill_disabled_by_seller' };
       }
 
-      // Check 3: Price verification (order.amountMilli >= declared ME price)
-      const declaredMeMilli = sellIntent.intent.prices?.me?.amountMilli;
-      if (declaredMeMilli == null || declaredMeMilli <= 0 || order.amountMilli < declaredMeMilli) {
-        return await this.rejectLockedOrder(
-          sellerMetabotId,
-          identity,
-          order,
-          `price_below_listing (got ${order.amountMilli}, required ${declaredMeMilli ?? 'none'})`,
-          opts?.buyerMetaIdHint,
-        );
+      // Check 3: Price verification (quote-authorized price overrides listing price; otherwise >= declared ME price)
+      if (authorizedQuote) {
+        if (order.amountMilli < authorizedQuote.agreedAmountMilli) {
+          return await this.rejectLockedOrder(
+            sellerMetabotId,
+            identity,
+            order,
+            `price_below_agreed_quote (got ${order.amountMilli}, required ${authorizedQuote.agreedAmountMilli})`,
+            opts?.buyerMetaIdHint,
+          );
+        }
+      } else if (sellIntent) {
+        const declaredMeMilli = sellIntent.intent.prices?.me?.amountMilli;
+        if (declaredMeMilli == null || declaredMeMilli <= 0 || order.amountMilli < declaredMeMilli) {
+          return await this.rejectLockedOrder(
+            sellerMetabotId,
+            identity,
+            order,
+            `price_below_listing (got ${order.amountMilli}, required ${declaredMeMilli ?? 'none'})`,
+            opts?.buyerMetaIdHint,
+          );
+        }
       }
 
       // Check 4: Live on-chain holder verification (not burned, still owned by seller bot)
@@ -480,7 +526,7 @@ export class SellerAutoFulfillDaemon {
       // Check 5: Buyer address validity & self-trade prevention
       let validBuyerAddress: string;
       try {
-        validBuyerAddress = assertEscrowMvcAddress(order.buyerAddress, 'buyerAddress');
+        validBuyerAddress = assertEscrowMvcAddress(rawBuyerAddress, 'buyerNftAddress');
       } catch {
         return await this.rejectLockedOrder(
           sellerMetabotId,
@@ -531,8 +577,9 @@ export class SellerAutoFulfillDaemon {
         identity,
         order,
         deliveryTxId: transferResult.txId,
-        collectionPinId: sellIntent.intent.collectionPinId ?? liveItem.collectionPinId,
+        collectionPinId: sellIntent?.intent.collectionPinId ?? liveItem.collectionPinId,
         buyerMetaIdHint: opts?.buyerMetaIdHint,
+        authorizedQuoteInquiryId: authorizedQuote?.inquiryId,
       });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -601,8 +648,10 @@ export class SellerAutoFulfillDaemon {
     deliveryTxId: string;
     collectionPinId?: string;
     buyerMetaIdHint?: string;
+    authorizedQuoteInquiryId?: string;
   }): Promise<{ outcome: 'settled'; deliveryTxId: string }> {
     const { sellerMetabotId, identity, order, deliveryTxId } = input;
+    const rawBuyerAddress = order.buyerNftAddress || order.buyerAddress;
     const doDeliver = this.deps.deliverEscrowOrder ?? deliverNftEscrowOrder;
     await doDeliver(identity.signer, order.orderId, { deliveryTxId });
 
@@ -614,6 +663,19 @@ export class SellerAutoFulfillDaemon {
       markSold(sellerMetabotId, order.itemPinId, { orderId: order.orderId, txId: deliveryTxId });
     } catch (err) {
       this.log(`[SellerAutoFulfill] Failed to mark local sell intent sold: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // Mark any seller-authorized quote as used
+    const markQuoteUsed = this.deps.markSellerAuthorizedQuoteUsed
+      ?? ((botId: number, pinId: string, meta?: { inquiryId?: string; orderId?: string }) =>
+        markSellerAuthorizedQuoteUsed(this.deps.getSellIntentKv(), botId, pinId, meta));
+    try {
+      markQuoteUsed(sellerMetabotId, order.itemPinId, {
+        inquiryId: input.authorizedQuoteInquiryId,
+        orderId: order.orderId,
+      });
+    } catch (err) {
+      this.log(`[SellerAutoFulfill] Failed to mark seller authorized quote used: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // Best-effort /protocols/mrc721trade receipt pin
@@ -629,7 +691,7 @@ export class SellerAutoFulfillDaemon {
           collectionPinId: input.collectionPinId || order.collectionPinId,
           sellerAddress: identity.mvcAddress,
           sellerMetaId: identity.globalMetaId,
-          buyerAddress: order.buyerAddress,
+          buyerAddress: rawBuyerAddress,
           buyerMetaId,
           amountMilli: order.amountMilli,
         });
@@ -643,7 +705,7 @@ export class SellerAutoFulfillDaemon {
       orderId: order.orderId,
       sellerMetabotId,
       itemPinId: order.itemPinId,
-      buyerAddress: order.buyerAddress,
+      buyerAddress: rawBuyerAddress,
       amountMilli: order.amountMilli,
       status: 'settled',
       deliveryTxId,
@@ -658,9 +720,9 @@ export class SellerAutoFulfillDaemon {
           orderId: order.orderId,
           itemPinId: order.itemPinId,
           deliveryTxId,
-          amountMilli: order.amountMilli,
+          settledAmountMilli: order.amountMilli,
           sellerMetaId: identity.globalMetaId,
-          buyerAddress: order.buyerAddress,
+          buyerNftAddress: rawBuyerAddress,
         });
         await this.deps.sendTradeMessage({
           metabotId: sellerMetabotId,
@@ -676,7 +738,7 @@ export class SellerAutoFulfillDaemon {
       orderId: order.orderId,
       sellerMetabotId,
       itemPinId: order.itemPinId,
-      buyerAddress: order.buyerAddress,
+      buyerAddress: rawBuyerAddress,
       amountMilli: order.amountMilli,
       deliveryTxId,
       ...(tradePinId ? { tradePinId } : {}),
@@ -703,7 +765,7 @@ export class SellerAutoFulfillDaemon {
         try {
           const { orders } = await listOrders(identity.signer, {
             role: 'seller',
-            status: 'locked',
+            status: 'FROZEN_AWAITING_DELIVERY',
             limit: 50,
           });
           for (const order of orders) {

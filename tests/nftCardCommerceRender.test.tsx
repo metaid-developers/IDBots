@@ -10,6 +10,10 @@ import NftCard from '../src/renderer/components/chat/NftCard';
 import SwapCompleteShopPromptCard from '../src/renderer/components/commerce/SwapCompleteShopPromptCard';
 import PurchaseSuccessActionCard from '../src/renderer/components/commerce/PurchaseSuccessActionCard';
 import GoodsPurchaseConfirmModal from '../src/renderer/components/commerce/GoodsPurchaseConfirmModal';
+import {
+  buildSocialFriendPromptDraft,
+  resolveCommerceIntentAction,
+} from '../src/renderer/components/commerce/commerceTradeEvents';
 
 const ITEM_PIN_ID = `${'aa'.repeat(32)}i0`;
 const SHOP_PIN_ID = `${'ff'.repeat(32)}i0`;
@@ -170,4 +174,86 @@ test('WS-D Commerce UI components SSR cleanly with expected conversion actions',
     }),
   );
   assert.match(lowBalModalHtml, /Top Up ME|充值 ME|Insufficient|余额不足/);
+
+  // WS-E askTwinToBuy may omit sellerAddress when priceMeMilli > 0
+  const omittedSellerModalHtml = renderToStaticMarkup(
+    React.createElement(GoodsPurchaseConfirmModal, {
+      open: true,
+      target: {
+        itemPinId: ITEM_PIN_ID,
+        itemName: 'Shop Item #7',
+        priceMeMilli: 3000,
+        sellerGlobalMetaId: SELLER_METAID,
+        sellerName: 'ShopBot',
+      },
+      initialTradeSpendableMilli: 5000,
+      onClose: () => {},
+    }),
+  );
+  assert.match(omittedSellerModalHtml, /Shop Item #7/);
+  assert.match(omittedSellerModalHtml, /ShopBot/);
+});
+
+test('WS-E commerce-intent (askTwinToBuy) and social-friend-prompt resolve correctly', () => {
+  // 1. WS-E buy_me with priceMeMilli > 0 and omitted sellerAddress -> open_confirm_modal
+  const buyAction = resolveCommerceIntentAction({
+    intent: 'askTwinToBuy',
+    mode: 'buy_me',
+    itemPinId: ITEM_PIN_ID,
+    itemName: 'Avatar #42',
+    priceMeMilli: 4000,
+    sellerGlobalMetaId: SELLER_METAID,
+  });
+  assert.equal(buyAction?.kind, 'open_confirm_modal');
+  if (buyAction?.kind === 'open_confirm_modal') {
+    assert.equal(buyAction.target.itemPinId, ITEM_PIN_ID);
+    assert.equal(buyAction.target.priceMeMilli, 4000);
+    assert.equal(buyAction.target.sellerAddress, undefined);
+  }
+
+  // 2. WS-E buy_me without ME price -> draft_chat guiding goods_send_inquiry
+  const noPriceAction = resolveCommerceIntentAction({
+    intent: 'askTwinToBuy',
+    mode: 'buy_me',
+    itemPinId: ITEM_PIN_ID,
+    sellerGlobalMetaId: SELLER_METAID,
+  });
+  assert.equal(noPriceAction?.kind, 'draft_chat');
+  if (noPriceAction?.kind === 'draft_chat') {
+    assert.match(noPriceAction.text, /goods_send_inquiry/);
+    assert.match(noPriceAction.text, new RegExp(ITEM_PIN_ID));
+  }
+
+  // 3. WS-E negotiate and inquire_unlisted -> draft_chat guiding goods_send_inquiry
+  const negotiateAction = resolveCommerceIntentAction({
+    intent: 'askTwinToBuy',
+    mode: 'negotiate',
+    itemPinId: ITEM_PIN_ID,
+    priceMeMilli: 4000,
+    sellerGlobalMetaId: SELLER_METAID,
+  });
+  assert.equal(negotiateAction?.kind, 'draft_chat');
+  if (negotiateAction?.kind === 'draft_chat') {
+    assert.match(negotiateAction.text, /goods_send_inquiry/);
+  }
+
+  const unlistedAction = resolveCommerceIntentAction({
+    intent: 'askTwinToBuy',
+    mode: 'inquire_unlisted',
+    itemPinId: ITEM_PIN_ID,
+    sellerGlobalMetaId: SELLER_METAID,
+  });
+  assert.equal(unlistedAction?.kind, 'draft_chat');
+  if (unlistedAction?.kind === 'draft_chat') {
+    assert.match(unlistedAction.text, /goods_send_inquiry/);
+  }
+
+  // 4. social-friend-prompt addFriendPrompt -> draft referencing targetGlobalMetaId
+  const friendDraft = buildSocialFriendPromptDraft({
+    intent: 'addFriendPrompt',
+    targetGlobalMetaId: SELLER_METAID,
+    targetName: 'SellerBot',
+  });
+  assert.ok(friendDraft);
+  assert.match(friendDraft, new RegExp(SELLER_METAID));
 });

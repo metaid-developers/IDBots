@@ -19,10 +19,14 @@ const {
 const BOT_MNEMONIC = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const BOT_ADDRESS = '1L8me3xT5G1R3gJ8zQ5cS6oX2Y9wQ7hP8c';
 const SELLER_ADDRESS = '1Lbcfr7sAHTD9CgdQo3HTMTkV8LK4ZnX71';
+const BUYER_IDENTITY_ADDR = '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa';
+const SELLER_IDENTITY_ADDR = '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2';
 const DELIVERY_TXID = '9a'.repeat(32);
 const BUYER_METAID = 'idq1buyer000000000000000000000000000000000';
 const SELLER_METAID = 'idq1seller00000000000000000000000000000000';
 const ITEM_PIN_ID = `${'aa'.repeat(32)}i0`;
+const COLLECTION_PIN_ID = `${'bb'.repeat(32)}i0`;
+const LISTING_PIN_ID = `${'cc'.repeat(32)}i0`;
 
 const mockSignAction = async (action: string, identity: { mvcAddress: string }) => ({
   address: identity.mvcAddress,
@@ -30,7 +34,7 @@ const mockSignAction = async (action: string, identity: { mvcAddress: string }) 
   signature: `sig_${action}_${identity.mvcAddress}`,
 });
 
-test('meNftEscrowService sends X-Bot-Address auth headers and strictly omits X-Identity-Address', async () => {
+test('meNftEscrowService aligns with ABS b83c76f headers, request body, NftEscrowOrderView, and bonusMilli exclusion', async () => {
   const seenRequests: Array<{ url: string; method: string; headers: Record<string, string>; body?: string }> = [];
   const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
     const headers: Record<string, string> = {};
@@ -45,16 +49,16 @@ test('meNftEscrowService sends X-Bot-Address auth headers and strictly omits X-I
     });
 
     if (String(input).includes('/v1/me/balance')) {
+      // Simulate server omitting tradeSpendableMilli to verify client fallback EXCLUDES bonusMilli
       return new Response(JSON.stringify({
         code: 0,
         data: {
           identityAddress: BOT_ADDRESS,
-          tradeSpendableMilli: 12000,
-          spendableMilli: 50000,
+          spendableMilli: 90000,
           frozenMilli: 1000,
-          totalAvailable: 51000,
+          totalAvailable: 91000,
           weeklyGrant: { remainingMilli: 38000 },
-          persistent: { earnedMilli: 7000, topupMilli: 5000, bonusMilli: 0 },
+          persistent: { earnedMilli: 7000, topupMilli: 6000, bonusMilli: 50000 },
         },
       }), { status: 200 });
     }
@@ -63,10 +67,20 @@ test('meNftEscrowService sends X-Bot-Address auth headers and strictly omits X-I
       data: {
         orderId: 'ord_1',
         itemPinId: ITEM_PIN_ID,
-        buyerAddress: BOT_ADDRESS,
-        sellerAddress: SELLER_ADDRESS,
+        collectionPinId: COLLECTION_PIN_ID,
+        listingPinId: LISTING_PIN_ID,
+        buyerNftAddress: BOT_ADDRESS,
+        buyerBotAddress: BOT_ADDRESS,
+        buyerIdentityAddress: BUYER_IDENTITY_ADDR,
+        sellerBotAddress: SELLER_ADDRESS,
+        sellerPayeeAddress: SELLER_ADDRESS,
+        sellerIdentityAddress: SELLER_IDENTITY_ADDR,
         amountMilli: 5000,
-        status: 'locked',
+        status: 1,
+        statusName: 'FROZEN_AWAITING_DELIVERY',
+        deliveryDeadline: 1795200900,
+        createdAt: 1795200000,
+        applied: true,
       },
     }), { status: 200 });
   }) as typeof fetch;
@@ -77,6 +91,7 @@ test('meNftEscrowService sends X-Bot-Address auth headers and strictly omits X-I
     fetchImpl,
     signAction: mockSignAction,
   });
+  // earned(7000) + topup(6000) - frozen(1000) = 12000; bonusMilli(50000) MUST NOT be included
   assert.equal(bal.tradeSpendableMilli, 12000);
   assert.equal(bal.weeklyRemainingMilli, 38000);
 
@@ -85,13 +100,25 @@ test('meNftEscrowService sends X-Bot-Address auth headers and strictly omits X-I
     {
       orderId: 'ord_1',
       itemPinId: ITEM_PIN_ID,
-      sellerAddress: SELLER_ADDRESS,
+      collectionPinId: COLLECTION_PIN_ID,
+      buyerNftAddress: BOT_ADDRESS,
+      sellerBotAddress: SELLER_ADDRESS,
+      sellerPayeeAddress: SELLER_ADDRESS,
       amountMilli: 5000,
-      note: 'test order',
+      listingPinId: LISTING_PIN_ID,
+      deliveryTimeoutSec: 900,
+      idempotencyKey: 'idem_1',
     },
     { baseUrl: 'https://abs.example.test', fetchImpl, signAction: mockSignAction },
   );
-  assert.equal(created.status, 'locked');
+  assert.equal(created.status, 'FROZEN_AWAITING_DELIVERY');
+  assert.equal(created.statusCode, 1);
+  assert.equal(created.statusName, 'FROZEN_AWAITING_DELIVERY');
+  assert.equal(created.buyerNftAddress, BOT_ADDRESS);
+  assert.equal(created.sellerBotAddress, SELLER_ADDRESS);
+  assert.equal(created.buyerIdentityAddress, BUYER_IDENTITY_ADDR);
+  assert.equal(created.sellerIdentityAddress, SELLER_IDENTITY_ADDR);
+  assert.equal(created.deliveryDeadline, 1795200900);
 
   assert.equal(seenRequests.length, 2);
   for (const req of seenRequests) {
@@ -104,10 +131,22 @@ test('meNftEscrowService sends X-Bot-Address auth headers and strictly omits X-I
   assert.ok(seenRequests[1].url.endsWith('/v1/me/nft-escrow/orders'));
   const body = JSON.parse(seenRequests[1].body!);
   assert.equal(body.orderId, 'ord_1');
+  assert.equal(body.itemPinId, ITEM_PIN_ID);
+  assert.equal(body.collectionPinId, COLLECTION_PIN_ID);
+  assert.equal(body.buyerNftAddress, BOT_ADDRESS);
+  assert.equal(body.sellerBotAddress, SELLER_ADDRESS);
+  assert.equal(body.sellerPayeeAddress, SELLER_ADDRESS);
+  assert.equal(body.listingPinId, LISTING_PIN_ID);
+  assert.equal(body.deliveryTimeoutSec, 900);
+  assert.equal(body.idempotencyKey, 'idem_1');
   assert.equal(body.amountMilli, 5000);
+  // Must NOT send deprecated Go-incompatible body fields
+  assert.equal(body.sellerAddress, undefined);
+  assert.equal(body.sellPinId, undefined);
+  assert.equal(body.ttlSeconds, undefined);
 });
 
-test('meNftEscrowService supports get, list, deliver, reject and surfaces MeNftEscrowApiError', async () => {
+test('meNftEscrowService supports ABS status codes 1..6, beforeId pagination, deliver, reject, and MeNftEscrowApiError', async () => {
   const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
@@ -119,17 +158,19 @@ test('meNftEscrowService supports get, list, deliver, reject and surfaces MeNftE
         haveMilli: 2000,
       }), { status: 400 });
     }
-    if (url.includes('/v1/me/nft-escrow/orders?role=seller&status=locked')) {
+    if (url.includes('/v1/me/nft-escrow/orders?role=seller&status=FROZEN_AWAITING_DELIVERY&beforeId=ord_0')) {
       return new Response(JSON.stringify({
         code: 0,
         data: {
           orders: [{
             orderId: 'ord_locked_1',
             itemPinId: ITEM_PIN_ID,
-            buyerAddress: BOT_ADDRESS,
-            sellerAddress: SELLER_ADDRESS,
+            collectionPinId: COLLECTION_PIN_ID,
+            buyerNftAddress: BOT_ADDRESS,
+            sellerBotAddress: SELLER_ADDRESS,
             amountMilli: 3000,
-            status: 'locked',
+            status: 1,
+            statusName: 'FROZEN_AWAITING_DELIVERY',
           }],
         },
       }), { status: 200 });
@@ -141,11 +182,14 @@ test('meNftEscrowService supports get, list, deliver, reject and surfaces MeNftE
           order: {
             orderId: 'ord_locked_1',
             itemPinId: ITEM_PIN_ID,
-            buyerAddress: BOT_ADDRESS,
-            sellerAddress: SELLER_ADDRESS,
+            buyerNftAddress: BOT_ADDRESS,
+            sellerBotAddress: SELLER_ADDRESS,
             amountMilli: 3000,
-            status: 'settled',
+            status: 3,
+            statusName: 'SETTLED',
             deliveryTxId: DELIVERY_TXID,
+            settlementEntryId: 'entry_9001',
+            settledAt: 1795200500,
           },
         },
       }), { status: 200 });
@@ -157,11 +201,12 @@ test('meNftEscrowService supports get, list, deliver, reject and surfaces MeNftE
           order: {
             orderId: 'ord_locked_1',
             itemPinId: ITEM_PIN_ID,
-            buyerAddress: BOT_ADDRESS,
-            sellerAddress: SELLER_ADDRESS,
+            buyerNftAddress: BOT_ADDRESS,
+            sellerBotAddress: SELLER_ADDRESS,
             amountMilli: 3000,
-            status: 'rejected',
-            rejectReason: 'seller_no_longer_holds',
+            status: 5,
+            statusName: 'CANCELED_REFUNDED',
+            verifyDetail: 'seller_no_longer_holds',
           },
         },
       }), { status: 200 });
@@ -177,19 +222,29 @@ test('meNftEscrowService supports get, list, deliver, reject and surfaces MeNftE
     (err: any) => err instanceof MeNftEscrowApiError && err.errorCode === 'INSUFFICIENT_ME' && err.neededMilli === 5000,
   );
 
-  const list = await listNftEscrowOrders(signer, { role: 'seller', status: 'locked' }, opts);
+  const list = await listNftEscrowOrders(
+    signer,
+    { role: 'seller', status: 'FROZEN_AWAITING_DELIVERY', beforeId: 'ord_0' },
+    opts,
+  );
   assert.equal(list.orders.length, 1);
   assert.equal(list.orders[0].orderId, 'ord_locked_1');
+  assert.equal(list.orders[0].status, 'FROZEN_AWAITING_DELIVERY');
+  assert.equal(list.orders[0].statusCode, 1);
 
   const delivered = await deliverNftEscrowOrder(signer, 'ord_locked_1', { deliveryTxId: DELIVERY_TXID }, opts);
-  assert.equal(delivered.status, 'settled');
+  assert.equal(delivered.status, 'SETTLED');
+  assert.equal(delivered.statusCode, 3);
+  assert.equal(delivered.settlementEntryId, 'entry_9001');
   assert.equal(delivered.deliveryTxId, DELIVERY_TXID);
 
   const rejected = await rejectNftEscrowOrder(signer, 'ord_locked_1', { reason: 'seller_no_longer_holds' }, opts);
-  assert.equal(rejected.status, 'rejected');
+  assert.equal(rejected.status, 'CANCELED_REFUNDED');
+  assert.equal(rejected.statusCode, 5);
+  assert.equal(rejected.verifyDetail, 'seller_no_longer_holds');
 });
 
-test('goods_buy_with_me enforces tradeSpendableMilli, owner confirmation gate, escrow lock, DM dispatch, and settlement callback', async () => {
+test('goods_buy_with_me, goods_send_inquiry, and goods_accept_inquiry align with C5.2 wire protocol and confirmation gates', async () => {
   const makeSdkTool = (name: string, description: string, schema: unknown, handler: (args: any) => Promise<any>) => ({
     name,
     description,
@@ -200,8 +255,10 @@ test('goods_buy_with_me enforces tradeSpendableMilli, owner confirmation gate, e
   const sentMessages: Array<{ toGlobalMetaId: string; content: string }> = [];
   const settledEvents: any[] = [];
   const markedQuotes: any[] = [];
+  const sellerAuthorizedQuotes: any[] = [];
   let tradeSpendableMilli = 1000;
   let confirmResponse = true;
+  let confirmQuoteResponse = true;
   let pollCount = 0;
 
   const tools = buildGoodsTradeAgentTools({
@@ -209,6 +266,7 @@ test('goods_buy_with_me enforces tradeSpendableMilli, owner confirmation gate, e
     sessionId: 'sess-buyer-1',
     resolveMetabotId: () => 2,
     confirmGoodsPurchase: async () => confirmResponse,
+    confirmGoodsQuoteAcceptance: async () => confirmQuoteResponse,
     control: {
       getMetabotIdentity: () => ({ name: 'BuyerBot', mvcAddress: BOT_ADDRESS, globalMetaId: BUYER_METAID }),
       getTradeBalance: async () => ({
@@ -225,10 +283,16 @@ test('goods_buy_with_me enforces tradeSpendableMilli, owner confirmation gate, e
       createEscrowOrder: async (input: any) => ({
         orderId: input.orderId,
         itemPinId: input.itemPinId,
-        buyerAddress: BOT_ADDRESS,
-        sellerAddress: input.sellerAddress,
+        collectionPinId: input.collectionPinId,
+        listingPinId: input.listingPinId,
+        buyerNftAddress: input.buyerNftAddress,
+        buyerAddress: input.buyerNftAddress,
+        sellerBotAddress: input.sellerBotAddress,
+        sellerAddress: input.sellerBotAddress,
         amountMilli: input.amountMilli,
-        status: 'locked',
+        status: 'FROZEN_AWAITING_DELIVERY',
+        statusCode: 1,
+        statusName: 'FROZEN_AWAITING_DELIVERY',
         raw: {},
       }),
       getEscrowOrder: async (input: any) => {
@@ -236,10 +300,14 @@ test('goods_buy_with_me enforces tradeSpendableMilli, owner confirmation gate, e
         return {
           orderId: input.orderId,
           itemPinId: ITEM_PIN_ID,
+          buyerNftAddress: BOT_ADDRESS,
           buyerAddress: BOT_ADDRESS,
+          sellerBotAddress: SELLER_ADDRESS,
           sellerAddress: SELLER_ADDRESS,
           amountMilli: 5000,
-          status: pollCount >= 1 ? 'settled' : 'locked',
+          status: pollCount >= 1 ? 'SETTLED' : 'FROZEN_AWAITING_DELIVERY',
+          statusCode: pollCount >= 1 ? 3 : 1,
+          statusName: pollCount >= 1 ? 'SETTLED' : 'FROZEN_AWAITING_DELIVERY',
           deliveryTxId: 'tx_settled_123',
           raw: {},
         };
@@ -263,9 +331,15 @@ test('goods_buy_with_me enforces tradeSpendableMilli, owner confirmation gate, e
         markedQuotes.push({ itemPinId, orderId });
         return true;
       },
+      recordSellerAuthorizedQuote: (metabotId: number, quote: any) => {
+        const saved = { ...quote, metabotId, status: 'active' as const, createdAt: 1, updatedAt: 1 };
+        sellerAuthorizedQuotes.push(saved);
+        return saved;
+      },
       onPurchaseSettled: (ev: any) => settledEvents.push(ev),
       fetchItemInfo: async () => ({
         itemPinId: ITEM_PIN_ID,
+        collectionPinId: COLLECTION_PIN_ID,
         name: 'VIP Pass',
         collectionName: 'passes',
         ownerAddress: SELLER_ADDRESS,
@@ -274,8 +348,9 @@ test('goods_buy_with_me enforces tradeSpendableMilli, owner confirmation gate, e
       }),
       fetchMarketListings: async () => ({
         items: [{
-          intentPinId: `${'cc'.repeat(32)}i0`,
+          intentPinId: LISTING_PIN_ID,
           itemPinId: ITEM_PIN_ID,
+          collectionPinId: COLLECTION_PIN_ID,
           itemName: 'VIP Pass',
           collectionName: 'passes',
           prices: { me: { amountMilli: 8000 } },
@@ -288,6 +363,8 @@ test('goods_buy_with_me enforces tradeSpendableMilli, owner confirmation gate, e
 
   const buyTool = tools.find((t) => t.name === 'goods_buy_with_me')!;
   const inquiryTool = tools.find((t) => t.name === 'goods_send_inquiry')!;
+  const acceptTool = tools.find((t) => t.name === 'goods_accept_inquiry')!;
+  assert.ok(acceptTool, 'goods_accept_inquiry tool must be registered');
 
   // 1. Weekly grant is 50 ME, but tradeSpendableMilli is 1 ME (< 5 ME quote) -> rejected before confirm
   const lowBal = await buyTool.handler({ item_pin_id: ITEM_PIN_ID });
@@ -310,13 +387,75 @@ test('goods_buy_with_me enforces tradeSpendableMilli, owner confirmation gate, e
   assert.equal(sentMessages.length, 1);
   assert.equal(sentMessages[0].toGlobalMetaId, SELLER_METAID);
   assert.match(sentMessages[0].content, /ME_ESCROW_LOCKED_V1/);
+  assert.match(sentMessages[0].content, /"buyerNftAddress"/);
+  assert.match(sentMessages[0].content, /"sellerBotAddress"/);
   assert.equal(markedQuotes.length, 1);
   assert.equal(settledEvents.length, 1);
   assert.equal(settledEvents[0].deliveryTxId, 'tx_settled_123');
 
-  // 4. Inquiry tool sends GOODS_INQUIRY_V1
+  // 4. Inquiry tool sends GOODS_INQUIRY_V1 with C5.2 fields
   const inq = await inquiryTool.handler({ item_pin_id: ITEM_PIN_ID, offer_me: 4.5, note: 'Can you do 4.5 ME?' });
   assert.equal(inq.isError, undefined);
   assert.match(sentMessages[1].content, /GOODS_INQUIRY_V1/);
   assert.match(sentMessages[1].content, /"offerAmountMilli":\s*4500/);
+  assert.match(sentMessages[1].content, /"buyerNftAddress"/);
+  assert.match(sentMessages[1].content, /"buyerGlobalMetaId"/);
+
+  // 5. Seller accept-inquiry tool checks live ownership (rejects if bot does not hold item)
+  const notOwnerRes = await acceptTool.handler({
+    inquiry_id: 'inq_9',
+    item_pin_id: ITEM_PIN_ID,
+    buyer_global_metaid: BUYER_METAID,
+    agreed_me: 4.5,
+  });
+  assert.equal(notOwnerRes.isError, true);
+  assert.match(notOwnerRes.content[0].text, /does not currently hold/);
+
+  // 6. Seller accept-inquiry succeeds when session bot IS the holder
+  const sellerTools = buildGoodsTradeAgentTools({
+    tool: makeSdkTool as any,
+    sessionId: 'sess-seller-1',
+    resolveMetabotId: () => 1,
+    confirmGoodsPurchase: async () => true,
+    confirmGoodsQuoteAcceptance: async () => confirmQuoteResponse,
+    control: {
+      getMetabotIdentity: () => ({ name: 'SellerBot', mvcAddress: SELLER_ADDRESS, globalMetaId: SELLER_METAID }),
+      getTradeBalance: async () => { throw new Error('unused'); },
+      createEscrowOrder: async () => { throw new Error('unused'); },
+      getEscrowOrder: async () => { throw new Error('unused'); },
+      sendTradeMessage: async (input: any) => {
+        sentMessages.push({ toGlobalMetaId: input.toGlobalMetaId, content: input.content });
+        return { txids: ['tx_dm_quote'], pinId: `${'dd'.repeat(32)}i0` };
+      },
+      recordSellerAuthorizedQuote: (metabotId: number, quote: any) => {
+        const saved = { ...quote, metabotId, status: 'active' as const, createdAt: 1, updatedAt: 1 };
+        sellerAuthorizedQuotes.push(saved);
+        return saved;
+      },
+      fetchItemInfo: async () => ({
+        itemPinId: ITEM_PIN_ID,
+        collectionPinId: COLLECTION_PIN_ID,
+        name: 'VIP Pass',
+        ownerAddress: SELLER_ADDRESS,
+        ownerMetaId: SELLER_METAID,
+        burned: false,
+      }),
+    },
+  }) as Array<{ name: string; handler: (args: any) => Promise<any> }>;
+  const sellerAcceptTool = sellerTools.find((t) => t.name === 'goods_accept_inquiry')!;
+  const acceptedRes = await sellerAcceptTool.handler({
+    inquiry_id: 'inq_9',
+    item_pin_id: ITEM_PIN_ID,
+    buyer_global_metaid: BUYER_METAID,
+    buyer_nft_address: BOT_ADDRESS,
+    agreed_me: 4.5,
+  });
+  assert.equal(acceptedRes.isError, undefined);
+  assert.equal(sellerAuthorizedQuotes.length, 1);
+  assert.equal(sellerAuthorizedQuotes[0].agreedAmountMilli, 4500);
+  assert.equal(sellerAuthorizedQuotes[0].buyerNftAddress, BOT_ADDRESS);
+  assert.match(sentMessages[2].content, /GOODS_QUOTE_ACCEPT_V1/);
+  assert.match(sentMessages[2].content, /"agreedCurrency":\s*"me"/);
+  assert.match(sentMessages[2].content, /"agreedAmountMilli":\s*4500/);
+  assert.match(sentMessages[2].content, /"sellerBotAddress"/);
 });

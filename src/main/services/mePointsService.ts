@@ -169,7 +169,7 @@ export interface MeBalance {
   spendableMilli?: number;
   /**
    * Persistent spendable balance eligible for digital goods / NFT escrow
-   * trades (topup + earned + bonus - frozen, excluding weeklyGrant / feeSubsidy).
+   * trades (topup + earned - frozen, excluding weeklyGrant / feeSubsidy / bonus).
    */
   tradeSpendableMilli?: number;
 }

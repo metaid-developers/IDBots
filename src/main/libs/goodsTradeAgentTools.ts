@@ -20,6 +20,7 @@ import {
   type GoodsAcceptedQuoteRecord,
 } from '../services/mrc721SellIntentService';
 import {
+  assertEscrowMvcAddress,
   describeMeNftEscrowError,
   ME_NFT_ESCROW_MIN_AMOUNT_MILLI,
   type MeBotTradeBalance,
@@ -49,6 +50,18 @@ export interface GoodsPurchaseConfirmationInfo {
   sellerGlobalMetaId?: string;
 }
 
+export interface GoodsQuoteAcceptConfirmationInfo {
+  metabotId: number;
+  metabotName?: string;
+  inquiryId: string;
+  itemPinId: string;
+  itemName?: string;
+  agreedAmountMilli: number;
+  buyerGlobalMetaId: string;
+  buyerNftAddress?: string;
+  validUntil: number;
+}
+
 export interface GoodsPurchaseSettledEvent {
   metabotId: number;
   sessionId?: string;
@@ -74,14 +87,20 @@ export interface GoodsTradeToolsControl {
     metabotId: number;
     orderId: string;
     itemPinId: string;
-    sellerAddress: string;
-    amountMilli: number;
     collectionPinId?: string;
+    buyerNftAddress?: string;
+    sellerBotAddress?: string;
+    sellerAddress?: string;
+    sellerPayeeAddress?: string;
+    amountMilli: number;
+    listingPinId?: string;
     sellPinId?: string;
+    deliveryTimeoutSec?: number;
+    ttlSeconds?: number;
+    idempotencyKey?: string;
     buyerMetaId?: string;
     sellerMetaId?: string;
     note?: string;
-    ttlSeconds?: number;
   }): Promise<MeNftEscrowOrder>;
   getEscrowOrder(input: { metabotId: number; orderId: string }): Promise<MeNftEscrowOrder>;
   sendTradeMessage(input: {
@@ -91,6 +110,10 @@ export interface GoodsTradeToolsControl {
   }): Promise<{ txids: string[]; pinId: string }>;
   findAcceptedQuote?(metabotId: number, itemPinId: string): GoodsAcceptedQuoteRecord | null;
   markAcceptedQuoteUsed?(metabotId: number, itemPinId: string, orderId?: string): boolean;
+  recordSellerAuthorizedQuote?(
+    metabotId: number,
+    quote: Omit<GoodsAcceptedQuoteRecord, 'status' | 'createdAt' | 'updatedAt'>,
+  ): GoodsAcceptedQuoteRecord;
   onPurchaseSettled?(event: GoodsPurchaseSettledEvent): void;
   // Optional overrides for deterministic unit testing
   fetchMarketCollections?: typeof fetchMrc721MarketCollections;
@@ -153,8 +176,16 @@ export function buildGoodsTradeAgentTools(deps: {
   sessionId: string;
   resolveMetabotId: (sessionId: string) => number | undefined;
   confirmGoodsPurchase: (info: GoodsPurchaseConfirmationInfo) => Promise<boolean>;
+  confirmGoodsQuoteAcceptance?: (info: GoodsQuoteAcceptConfirmationInfo) => Promise<boolean>;
 }): unknown[] {
-  const { tool, control, sessionId, resolveMetabotId, confirmGoodsPurchase } = deps;
+  const {
+    tool,
+    control,
+    sessionId,
+    resolveMetabotId,
+    confirmGoodsPurchase,
+    confirmGoodsQuoteAcceptance,
+  } = deps;
   const getMarketCollections = control.fetchMarketCollections ?? fetchMrc721MarketCollections;
   const getMarketCollectionSummary = control.fetchMarketCollectionSummary ?? fetchMrc721MarketCollectionSummary;
   const getMarketListings = control.fetchMarketListings ?? fetchMrc721MarketListings;
@@ -668,19 +699,22 @@ export function buildGoodsTradeAgentTools(deps: {
         return textResult('goods_buy_with_me cancelled: owner did not confirm the ME escrow purchase.', true);
       }
 
+      const collectionPinId = item.collectionPinId || activeListing?.collectionPinId || undefined;
+      const listingPinId = activeListing?.intentPinId || fallbackIntentMeta.sellPinId || undefined;
+
       let order: MeNftEscrowOrder;
       try {
         order = await control.createEscrowOrder({
           metabotId,
           orderId,
           itemPinId,
-          sellerAddress,
+          collectionPinId,
+          buyerNftAddress: buyerIdentity.mvcAddress,
+          sellerBotAddress: sellerAddress,
           amountMilli,
-          collectionPinId: item.collectionPinId || activeListing?.collectionPinId,
-          sellPinId: activeListing?.intentPinId || fallbackIntentMeta.sellPinId,
-          buyerMetaId: buyerIdentity.globalMetaId || undefined,
-          sellerMetaId: sellerMetaId || undefined,
-          note: asString(args.note) || undefined,
+          listingPinId,
+          deliveryTimeoutSec: 900,
+          idempotencyKey: orderId,
         });
       } catch (error) {
         return textResult(`goods_buy_with_me: escrow creation failed: ${describeMeNftEscrowError(error)}`, true);
@@ -695,10 +729,10 @@ export function buildGoodsTradeAgentTools(deps: {
             orderId: order.orderId || orderId,
             itemPinId,
             amountMilli,
-            buyerAddress: buyerIdentity.mvcAddress,
-            buyerMetaId: buyerIdentity.globalMetaId || undefined,
-            sellerAddress,
-            sellPinId: activeListing?.intentPinId || fallbackIntentMeta.sellPinId,
+            buyerNftAddress: buyerIdentity.mvcAddress,
+            sellerBotAddress: sellerAddress,
+            buyerGlobalMetaId: buyerIdentity.globalMetaId || undefined,
+            listingPinId,
           });
           await control.sendTradeMessage({
             metabotId,
@@ -711,10 +745,18 @@ export function buildGoodsTradeAgentTools(deps: {
         }
       }
 
+      const isTerminalStatus = (status: string) =>
+        status === 'SETTLED'
+        || status === 'CANCELED_REFUNDED'
+        || status === 'EXPIRED_REFUNDED'
+        || status === 'DISPUTED_HOLD'
+        || status === 'settled'
+        || status === 'rejected';
+
       // Short-poll ABS order status to catch instant auto-fulfillment
       let latestOrder = order;
       for (const waitMs of pollDelaysMs) {
-        if (latestOrder.status === 'settled' || latestOrder.status === 'delivered' || latestOrder.status === 'rejected') {
+        if (isTerminalStatus(latestOrder.status)) {
           break;
         }
         if (waitMs > 0) await delayMs(waitMs);
@@ -725,7 +767,7 @@ export function buildGoodsTradeAgentTools(deps: {
         }
       }
 
-      if (latestOrder.status === 'settled' || latestOrder.status === 'delivered') {
+      if (latestOrder.status === 'SETTLED' || latestOrder.status === 'settled') {
         control.markAcceptedQuoteUsed?.(metabotId, itemPinId, latestOrder.orderId);
         control.onPurchaseSettled?.({
           metabotId,
@@ -743,7 +785,7 @@ export function buildGoodsTradeAgentTools(deps: {
       }
 
       const lines = [
-        `ME Escrow Order ${latestOrder.status.toUpperCase()}: ${latestOrder.orderId}`,
+        `ME Escrow Order ${String(latestOrder.status).toUpperCase()}: ${latestOrder.orderId}`,
         `- item: ${item.name || itemPinId} (${itemPinId})`,
         `- amount: ${formatMe(latestOrder.amountMilli || amountMilli)}`,
         `- seller: ${sellerAddress}${sellerName ? ` (${sellerName})` : ''}`,
@@ -752,10 +794,18 @@ export function buildGoodsTradeAgentTools(deps: {
       if (latestOrder.deliveryTxId) {
         lines.push(`- delivery txId: ${latestOrder.deliveryTxId}`);
       }
-      if (latestOrder.status === 'locked') {
+      if (latestOrder.status === 'FROZEN_AWAITING_DELIVERY' || latestOrder.status === 'locked') {
         lines.push('- status note: ME points are locked in escrow; waiting for seller delivery (auto-refund on expiry if undelivered).');
-      } else if (latestOrder.status === 'rejected') {
-        lines.push(`- rejection reason: ${latestOrder.rejectReason || 'rejected by seller'} (ME refunded).`);
+      } else if (latestOrder.status === 'DELIVERY_SUBMITTED' || latestOrder.status === 'delivered') {
+        lines.push('- status note: Seller submitted delivery txId; ABS is verifying on-chain transfer before releasing ME.');
+      } else if (
+        latestOrder.status === 'CANCELED_REFUNDED'
+        || latestOrder.status === 'EXPIRED_REFUNDED'
+        || latestOrder.status === 'rejected'
+      ) {
+        lines.push(`- rejection reason: ${latestOrder.rejectReason || latestOrder.verifyDetail || 'order refunded'} (ME refunded).`);
+      } else if (latestOrder.status === 'DISPUTED_HOLD') {
+        lines.push(`- hold reason: ${latestOrder.verifyDetail || 'delivery verification hold'}.`);
       }
       return textResult(lines.join('\n'));
     },
@@ -819,13 +869,15 @@ export function buildGoodsTradeAgentTools(deps: {
 
       const inquiryId = `inq_${randomBytes(6).toString('hex')}`;
       const offerAmountMilli = args.offer_me != null ? Math.round(args.offer_me * 1000) : undefined;
+      const expiresAt = Math.floor(Date.now() / 1000) + 1800;
       const wire = formatGoodsTradeWireMessage({
         type: 'GOODS_INQUIRY_V1',
         inquiryId,
         itemPinId,
-        ...(offerAmountMilli != null ? { offerAmountMilli, offerCurrency: 'me' } : {}),
-        buyerAddress: buyerIdentity.mvcAddress || undefined,
-        buyerMetaId: buyerIdentity.globalMetaId || undefined,
+        ...(offerAmountMilli != null ? { offerCurrency: 'me', offerAmountMilli } : {}),
+        buyerNftAddress: buyerIdentity.mvcAddress || undefined,
+        buyerGlobalMetaId: buyerIdentity.globalMetaId || undefined,
+        expiresAt,
         note: args.note.trim(),
       });
 
@@ -853,11 +905,171 @@ export function buildGoodsTradeAgentTools(deps: {
     },
   );
 
+  // -------------------------------------------------------------------------
+  // 6. goods_accept_inquiry (REQ-D-03 / Contract C5.2)
+  // -------------------------------------------------------------------------
+  const goodsAcceptInquiry = tool(
+    'goods_accept_inquiry',
+    [
+      'Accept a buyer inquiry/negotiation offer for an MRC-721 item held by this MetaBot.',
+      'Verifies live item ownership, requires explicit owner confirmation, records a seller-side quote authorization so SellerAutoFulfillDaemon fulfills the agreed ME price (even below listing price or for unlisted items), and sends GOODS_QUOTE_ACCEPT_V1 over /protocols/simplemsg.',
+    ].join(' '),
+    {
+      inquiry_id: z.string().min(1).describe('Inquiry ID from the buyer GOODS_INQUIRY_V1 message.'),
+      item_pin_id: z.string().min(1).describe('Item pinId being quoted (64-hex txid + "i" + index).'),
+      buyer_global_metaid: z.string().min(1).describe('Buyer GlobalMetaID to send GOODS_QUOTE_ACCEPT_V1 to.'),
+      agreed_me: z.number().positive().min(1).describe('Agreed ME price in ME points (minimum 1 ME).'),
+      buyer_nft_address: z.string().optional().describe('Optional buyer MVC address to bind this quote authorization to.'),
+      seller_payee_address: z.string().optional().describe('Optional payee MVC address (defaults to seller bot MVC address).'),
+      valid_minutes: z.number().int().min(5).max(1440).optional().describe('Quote validity in minutes (default 30, range 5-1440).'),
+      note: z.string().optional().describe('Optional note for the buyer.'),
+    },
+    async (args: {
+      inquiry_id: string;
+      item_pin_id: string;
+      buyer_global_metaid: string;
+      agreed_me: number;
+      buyer_nft_address?: string;
+      seller_payee_address?: string;
+      valid_minutes?: number;
+      note?: string;
+    }) => {
+      const metabotId = requireSessionMetabot('goods_accept_inquiry');
+      if (typeof metabotId === 'string') return textResult(metabotId, true);
+
+      const inquiryId = asString(args.inquiry_id);
+      const itemPinId = asString(args.item_pin_id).toLowerCase();
+      const buyerGlobalMetaId = asString(args.buyer_global_metaid);
+      if (!inquiryId) return textResult('goods_accept_inquiry: inquiry_id is required.', true);
+      if (!isMrc721PinId(itemPinId)) {
+        return textResult('goods_accept_inquiry: invalid item_pin_id (expected <64hex>i<index>).', true);
+      }
+      if (!buyerGlobalMetaId) {
+        return textResult('goods_accept_inquiry: buyer_global_metaid is required.', true);
+      }
+
+      const agreedAmountMilli = Math.round(Number(args.agreed_me) * 1000);
+      if (!Number.isInteger(agreedAmountMilli) || agreedAmountMilli < ME_NFT_ESCROW_MIN_AMOUNT_MILLI) {
+        return textResult(`goods_accept_inquiry: agreed_me must be at least 1 ME (${ME_NFT_ESCROW_MIN_AMOUNT_MILLI} milli-ME).`, true);
+      }
+
+      const sellerIdentity = control.getMetabotIdentity(metabotId);
+      if (!sellerIdentity?.mvcAddress) {
+        return textResult('goods_accept_inquiry: session MetaBot has no MVC address.', true);
+      }
+
+      let buyerNftAddress: string | undefined;
+      if (asString(args.buyer_nft_address)) {
+        try {
+          buyerNftAddress = assertEscrowMvcAddress(args.buyer_nft_address, 'buyer_nft_address');
+        } catch (err) {
+          return textResult(`goods_accept_inquiry: ${err instanceof Error ? err.message : String(err)}`, true);
+        }
+      }
+
+      let sellerPayeeAddress: string | undefined;
+      if (asString(args.seller_payee_address)) {
+        try {
+          sellerPayeeAddress = assertEscrowMvcAddress(args.seller_payee_address, 'seller_payee_address');
+        } catch (err) {
+          return textResult(`goods_accept_inquiry: ${err instanceof Error ? err.message : String(err)}`, true);
+        }
+      }
+
+      let item: Mrc721ItemSummary | null;
+      try {
+        item = await getItemInfo({ pinId: itemPinId });
+      } catch (error) {
+        return textResult(`goods_accept_inquiry: failed to verify item on-chain: ${error instanceof Error ? error.message : String(error)}`, true);
+      }
+      if (!item || item.burned) {
+        return textResult(`goods_accept_inquiry: item ${itemPinId} is missing or burned.`, true);
+      }
+      if ((item.ownerAddress ?? '').toLowerCase() !== sellerIdentity.mvcAddress.toLowerCase()) {
+        return textResult(
+          `goods_accept_inquiry: seller MetaBot (${sellerIdentity.mvcAddress}) does not currently hold item ${itemPinId} (owner is ${item.ownerAddress || 'unknown'}).`,
+          true,
+        );
+      }
+
+      const validMinutes = args.valid_minutes ?? 30;
+      const validUntil = Math.floor(Date.now() / 1000) + validMinutes * 60;
+
+      if (!confirmGoodsQuoteAcceptance) {
+        return textResult('goods_accept_inquiry: owner confirmation handler unavailable.', true);
+      }
+      const approved = await confirmGoodsQuoteAcceptance({
+        metabotId,
+        metabotName: sellerIdentity.name,
+        inquiryId,
+        itemPinId,
+        itemName: item.name,
+        agreedAmountMilli,
+        buyerGlobalMetaId,
+        buyerNftAddress,
+        validUntil,
+      });
+      if (!approved) {
+        return textResult('goods_accept_inquiry cancelled: owner did not confirm accepting this quote.', true);
+      }
+
+      if (!control.recordSellerAuthorizedQuote) {
+        return textResult('goods_accept_inquiry: seller quote authorization storage unavailable.', true);
+      }
+      control.recordSellerAuthorizedQuote(metabotId, {
+        inquiryId,
+        itemPinId,
+        agreedCurrency: 'me',
+        agreedAmountMilli,
+        sellerBotAddress: sellerIdentity.mvcAddress,
+        ...(sellerPayeeAddress ? { sellerPayeeAddress } : {}),
+        ...(buyerNftAddress ? { buyerNftAddress } : {}),
+        buyerGlobalMetaId,
+        validUntil,
+      });
+
+      const wire = formatGoodsTradeWireMessage({
+        type: 'GOODS_QUOTE_ACCEPT_V1',
+        inquiryId,
+        itemPinId,
+        agreedCurrency: 'me',
+        agreedAmountMilli,
+        sellerBotAddress: sellerIdentity.mvcAddress,
+        sellerPayeeAddress: sellerPayeeAddress || sellerIdentity.mvcAddress,
+        validUntil,
+        sellerMetaId: sellerIdentity.globalMetaId || undefined,
+        note: asString(args.note) || undefined,
+      });
+
+      const humanSummary = `Accepted inquiry ${inquiryId} for ${item.name || itemPinId} at ${formatMe(agreedAmountMilli)} (valid for ${validMinutes} min).`;
+      try {
+        const sent = await control.sendTradeMessage({
+          metabotId,
+          toGlobalMetaId: buyerGlobalMetaId,
+          content: `${wire}\n\n${humanSummary}`,
+        });
+        return textResult([
+          'Digital goods quote accepted and sent to buyer.',
+          `- inquiryId: ${inquiryId}`,
+          `- itemPinId: ${itemPinId}`,
+          `- agreedAmount: ${formatMe(agreedAmountMilli)}`,
+          `- buyerGlobalMetaId: ${buyerGlobalMetaId}`,
+          ...(buyerNftAddress ? [`- bound buyerNftAddress: ${buyerNftAddress}`] : []),
+          `- validUntil: ${validUntil}`,
+          `- message pin: pin://${sent.pinId}`,
+        ].join('\n'));
+      } catch (error) {
+        return textResult(`goods_accept_inquiry DM failed (local quote authorized): ${error instanceof Error ? error.message : String(error)}`, true);
+      }
+    },
+  );
+
   return [
     goodsMarketSummary,
     goodsMarketSearch,
     goodsHolderLookup,
     goodsBuyWithMe,
     goodsSendInquiry,
+    goodsAcceptInquiry,
   ];
 }
