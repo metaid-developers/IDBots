@@ -236,3 +236,21 @@ test('composeHomepageForSave builds protocol JSON and rejects invalid pins', () 
   assert.throws(() => composeHomepageForSave(homepageValues({ homepage_source: 'metafile' })));
   assert.throws(() => composeHomepageForSave(homepageValues({ homepage_source: 'metaapp', homepage_metaapp_pin: 'a b' })));
 });
+
+test('Basic panel shows follow-global reset when primary llm_id is set and enables fallback setup when cleared', () => {
+  const withPrimary = panelMarkup(renderTabsMarkup({ llm_id: 'codex-mini', llm_provider: 'codex' }), 'basic');
+  assert.match(withPrimary, /data-slot="metabot-clear-primary-llm"/);
+
+  const followingGlobal = panelMarkup(renderTabsMarkup({ llm_id: '', llm_provider: '' }), 'basic');
+  assert.doesNotMatch(followingGlobal, /data-slot="metabot-clear-primary-llm"/);
+  assert.ok(
+    followingGlobal.includes(i18nService.t('metabotPrimaryLlmFollowGlobalEmpty')),
+    'primary picker should show follow-global placeholder when llm_id is empty',
+  );
+  // Fallback setup button remains enabled when primary follows global default.
+  const fallbackMatch = /<button[^>]*id="metabot-fallback-llm"[^>]*>/.exec(followingGlobal);
+  assert.ok(fallbackMatch, 'fallback setup button renders');
+  const attrOnly = fallbackMatch[0].replace(/\sclass="[^"]*"/, '');
+  assert.doesNotMatch(attrOnly, /\bdisabled\b/);
+});
+

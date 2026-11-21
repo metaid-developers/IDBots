@@ -25,7 +25,12 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { PhotoIcon, PlusIcon, QuestionMarkCircleIcon, WrenchScrewdriverIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { configService } from '../../services/config';
-import { isLlmEffortLevel, type LlmEffortLevel } from '../../services/modelCatalog';
+import {
+  buildModelGroupsFromConfig,
+  isLlmEffortLevel,
+  resolveBrainModelInGroups,
+  type LlmEffortLevel,
+} from '../../services/modelCatalog';
 import ModelEffortPicker from '../ModelEffortPicker';
 import type { Metabot } from '../../types/metabot';
 import type { Skill } from '../../types/skill';
@@ -568,7 +573,28 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
   };
 
   const hasNoAvailableLlm = llmOptions.length === 0;
-  const globalDefaultModel = configService.getConfig().model?.defaultModel ?? null;
+  const appConfig = configService.getConfig();
+  const globalDefaultModel = appConfig.model?.defaultModel ?? null;
+  const globalDefaultProvider = appConfig.model?.defaultProvider ?? null;
+  const catalogGroups = buildModelGroupsFromConfig(appConfig);
+  const resolvedGlobalDefault = resolveBrainModelInGroups(
+    catalogGroups,
+    globalDefaultModel,
+    globalDefaultProvider,
+    globalDefaultModel,
+  );
+  const globalDefaultDisplayName = resolvedGlobalDefault?.model.name ?? globalDefaultModel;
+  const primaryFollowGlobalPlaceholder = globalDefaultDisplayName
+    ? i18nService.t('metabotPrimaryLlmFollowGlobal').replace('{model}', globalDefaultDisplayName)
+    : i18nService.t('metabotPrimaryLlmFollowGlobalEmpty');
+  const fallbackSeedModelId = values.llm_id.trim()
+    || resolvedGlobalDefault?.model.id
+    || catalogGroups[0]?.models[0]?.id
+    || '';
+  const fallbackSeedProvider = values.llm_id.trim()
+    ? values.llm_provider
+    : (resolvedGlobalDefault?.providerKey ?? catalogGroups[0]?.id ?? '');
+  const fallbackSeedEffort = values.llm_id.trim() ? values.llm_effort : '';
   const brainEffortOf = (value: string): LlmEffortLevel | null =>
     isLlmEffortLevel(value) ? value : null;
   // Twin switch: the current Twin can turn itself off; Workers see it only
@@ -879,10 +905,25 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                       handleChange('llm_provider', selection.providerKey ?? '');
                       handleChange('llm_effort', selection.effort ?? '');
                     }}
+                    placeholder={primaryFollowGlobalPlaceholder}
                     globalDefaultModel={globalDefaultModel}
                     onManageModels={onRequestModelSettings}
                   />
                 </div>
+                {values.llm_id.trim() && (
+                  <button
+                    type="button"
+                    data-slot="metabot-clear-primary-llm"
+                    onClick={() => {
+                      handleChange('llm_id', '');
+                      handleChange('llm_provider', '');
+                      handleChange('llm_effort', '');
+                    }}
+                    className={clearActionClass}
+                  >
+                    {i18nService.t('metabotPrimaryLlmFollowGlobalAction')}
+                  </button>
+                )}
                 <span className="relative inline-flex shrink-0 group">
                   <button
                     type="button"
@@ -946,13 +987,13 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                   type="button"
                   id="metabot-fallback-llm"
                   onClick={() => {
-                    // Seed the fallback with the primary brain so the picker has
-                    // a concrete starting selection; the user adjusts from there.
-                    handleChange('fallback_llm_id', values.llm_id);
-                    handleChange('fallback_llm_provider', values.llm_provider);
-                    handleChange('fallback_llm_effort', values.llm_effort);
+                    // Seed the fallback with the primary brain (or global default)
+                    // so the picker has a concrete starting selection.
+                    handleChange('fallback_llm_id', fallbackSeedModelId);
+                    handleChange('fallback_llm_provider', fallbackSeedProvider);
+                    handleChange('fallback_llm_effort', fallbackSeedEffort);
                   }}
-                  disabled={!values.llm_id.trim()}
+                  disabled={!fallbackSeedModelId}
                   className="px-3 py-1.5 rounded-xl border dark:border-claude-darkBorder border-claude-border text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {i18nService.t('metabotFallbackLlmSetup')}
