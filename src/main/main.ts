@@ -239,8 +239,16 @@ import { openMetabotBtcWallet, signBtcPsbtPartial } from './services/btcPartialS
 import { broadcastBtcTx, fetchBtcUtxos } from './libs/btcApi';
 import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
 import { executeMvcTokenSellTrade, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
-import { listMvcFtAssets, mvcFtTokenBalanceFromAssets } from './services/mvcFtService';
-import { listMrc20Assets } from './services/mrc20Service';
+import { broadcastMvcFtTransferBundle, listMvcFtAssets, mvcFtTokenBalanceFromAssets } from './services/mvcFtService';
+import { executeMrc20Transfer, listMrc20Assets } from './services/mrc20Service';
+import { TokenOrderWatcher } from './services/tokenOrderWatcher';
+import { defaultFtMandateGate } from './services/ftMandateGateService';
+import {
+  getFtBatchOrderProgress,
+  listFtActiveOrders,
+  markFtOrdersCanceledByOutpoint,
+  updateFtOrderStatus,
+} from './services/ftOrderStore';
 import {
   broadcastMvcTx,
   buyMrc721Listing,
@@ -284,7 +292,7 @@ import {
   publishMrc721OpenOffer,
   takeMrc721OpenOffer,
 } from './services/mrc721OpenOfferService';
-import { buildMvc721OpenOfferTx, buildMvc721SellPartialTx, buildMvcTransferRawTx, completeMvc721BuyTx, completeMvc721OpenOfferTx } from './services/walletRawTxService';
+import { buildMvc721OpenOfferTx, buildMvc721SellPartialTx, buildMvcFtTransferRawTx, buildMvcTransferRawTx, completeMvc721BuyTx, completeMvc721OpenOfferTx, type MvcTokenSellListingRef } from './services/walletRawTxService';
 import { BotWalletTransferStore } from './services/botWalletTransferStore';
 import { EscrowOrderStore } from './services/escrowOrderStore';
 import {
@@ -4475,11 +4483,86 @@ function getSellerAutoFulfillDaemon(): SellerAutoFulfillDaemon {
             createPin: (id, payload) => createPin(mStore, id, payload, { feeRate: getGlobalFeeRate('mvc') }),
           }));
         },
+        transferMvcFt: ({ metabotId, codehash, genesis, toAddress, amountBase }) =>
+          withChainWriteBudget('seller_auto_fulfill_mvc_ft', async () => {
+            const feeRate = getGlobalFeeRate('mvc');
+            const built = await buildMvcFtTransferRawTx(getMetabotStore(), {
+              metabotId,
+              token: {
+                codeHash: codehash,
+                genesisHash: genesis,
+              },
+              toAddress,
+              amount: amountBase,
+              feeRate,
+            });
+            const broadcasted = await broadcastMvcFtTransferBundle(
+              {
+                amountCheckRawTx: built.amount_check_raw_tx,
+                rawTx: built.raw_tx,
+              },
+              (rawTx) => broadcastMvcTx(rawTx),
+            );
+            return { txId: broadcasted.txId };
+          }),
+        transferBtcMrc20: ({ metabotId, mrc20Id, decimal, symbol, fromAddress, toAddress, amountBase }) =>
+          withChainWriteBudget('seller_auto_fulfill_btc_mrc20', async () => {
+            const raw = BigInt(amountBase);
+            const dec = Number.isInteger(decimal) && decimal > 0 ? decimal : 0;
+            let exactDisplay = raw.toString();
+            if (dec > 0) {
+              const scale = 10n ** BigInt(dec);
+              const whole = raw / scale;
+              const frac = (raw % scale).toString().padStart(dec, '0').replace(/0+$/, '');
+              exactDisplay = frac ? `${whole.toString()}.${frac}` : whole.toString();
+            }
+            const res = await executeMrc20Transfer(getMetabotStore(), {
+              metabotId,
+              asset: {
+                mrc20Id,
+                symbol,
+                address: fromAddress,
+                decimal: dec,
+              },
+              toAddress,
+              amount: exactDisplay,
+              feeRate: getGlobalFeeRate('btc'),
+            });
+            return { revealTxId: res.revealTxId, commitTxId: res.commitTxId };
+          }),
+        recordNotification: (notif) => {
+          try {
+            getNotificationService().record(notif);
+          } catch (err) {
+            console.warn('[SellerAutoFulfill/FT] recordNotification failed:', err);
+          }
+        },
         emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
       },
     );
   }
   return sellerAutoFulfillDaemon;
+}
+
+let tokenOrderWatcher: TokenOrderWatcher | null = null;
+function getTokenOrderWatcher(): TokenOrderWatcher {
+  if (!tokenOrderWatcher) {
+    tokenOrderWatcher = new TokenOrderWatcher(
+      getStore().getDatabase(),
+      getStore().getSaveFunction(),
+      {
+        emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+        recordNotification: (notif) => {
+          try {
+            getNotificationService().record(notif);
+          } catch (err) {
+            console.warn('[TokenOrderWatcher] recordNotification failed:', err);
+          }
+        },
+      },
+    );
+  }
+  return tokenOrderWatcher;
 }
 
 interface SqliteBackedRestartState {
@@ -4519,6 +4602,10 @@ const resetSqliteBackedSingletons = async (): Promise<void> => {
   if (sellerAutoFulfillDaemon) {
     sellerAutoFulfillDaemon.stopPolling();
     sellerAutoFulfillDaemon = null;
+  }
+  if (tokenOrderWatcher) {
+    tokenOrderWatcher.stopPolling();
+    tokenOrderWatcher = null;
   }
   if (providerDiscoveryService) {
     providerDiscoveryService.dispose();
@@ -5230,6 +5317,7 @@ const startStartupMessageTier = (): void => {
   );
   getSwapOrderTrackerService().startPolling();
   getSellerAutoFulfillDaemon().startPolling();
+  getTokenOrderWatcher().startPolling();
 
   // Periodically reconcile private chat history with the MetaSO API so
   // messages missed by the socket push are recovered and processed.
@@ -21760,6 +21848,128 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       }
 
       return { success: true, order: latestOrder };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // WS-1 FT Commerce single-tap Mandate Gate & batch order progress/cancel IPC
+  defaultFtMandateGate.setPromptEmitter((event) => {
+    const hasDesktopWindow = BrowserWindow.getAllWindows().some((w) => !w.isDestroyed());
+    broadcastToRenderers('ftTrade:mandatePrompt', event);
+    return hasDesktopWindow || Boolean(process.env.IDBOTS_SERVER_MODE);
+  });
+
+  registerIpcHandler('ftTrade:mandateRespond', async (_event, rawInput: unknown) => {
+    try {
+      const input = (rawInput && typeof rawInput === 'object' ? rawInput : {}) as Record<string, unknown>;
+      const requestId = String(input.requestId ?? '').trim();
+      const approved = input.approved === true;
+      if (!requestId) {
+        return { success: false, error: 'requestId is required' };
+      }
+      const matched = defaultFtMandateGate.resolvePrompt(requestId, approved);
+      return { success: true, matched };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerIpcHandler('ftTrade:getBatchProgress', async (_event, rawInput: unknown) => {
+    try {
+      const input = (rawInput && typeof rawInput === 'object' ? rawInput : {}) as Record<string, unknown>;
+      const batchGroupId = String(input.batchGroupId ?? '').trim();
+      if (!batchGroupId) {
+        return { success: false, error: 'batchGroupId is required' };
+      }
+      const db = getStore().getDatabase();
+      const progress = getFtBatchOrderProgress(db, batchGroupId);
+      const orders = listFtActiveOrders(db, { batchGroupId });
+      return { success: true, progress, orders };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerIpcHandler('ftTrade:cancelBatchOrders', async (_event, rawInput: unknown) => {
+    try {
+      const input = (rawInput && typeof rawInput === 'object' ? rawInput : {}) as Record<string, unknown>;
+      const batchGroupId = String(input.batchGroupId ?? '').trim();
+      if (!batchGroupId) {
+        return { success: false, error: 'batchGroupId is required' };
+      }
+      const db = getStore().getDatabase();
+      const saveFn = getStore().getSaveFunction();
+      const activeOrders = listFtActiveOrders(db, { batchGroupId, status: 'active' });
+      const canceledKeys: string[] = [];
+      const txids: string[] = [];
+      const errors: string[] = [];
+
+      for (const order of activeOrders) {
+        try {
+          if (order.rail === 'me-escrow') {
+            updateFtOrderStatus(db, order.listingKey, 'canceled', {}, saveFn);
+            canceledKeys.push(order.listingKey);
+            continue;
+          }
+          if (order.rail === 'mvc-tokensell') {
+            const parts = order.utxoOutpoint.split(':');
+            const sellTxid = parts[0] || '';
+            const tokenVout = Number(parts[1] ?? 0);
+            let listingRef: MvcTokenSellListingRef = {
+              sell_txid: sellTxid,
+              sell_output_index: tokenVout,
+              sell_price_sats: Number(order.priceSats ?? 0),
+              seller_address: order.sellerAddress ?? '',
+            };
+            if (order.tokenSellJson) {
+              try {
+                const parsedListing = JSON.parse(order.tokenSellJson) as Record<string, unknown>;
+                listingRef = {
+                  sell_txid: String(parsedListing.sell_txid ?? sellTxid),
+                  sell_output_index: Number(parsedListing.sell_output_index ?? tokenVout),
+                  sell_price_sats: Number(parsedListing.sell_price_sats ?? order.priceSats ?? 0),
+                  seller_address: String(parsedListing.seller_address ?? order.sellerAddress ?? ''),
+                  ...(typeof parsedListing.seed_txid === 'string' ? { seed_txid: parsedListing.seed_txid } : {}),
+                  ...(parsedListing.seed_vout != null ? { seed_vout: Number(parsedListing.seed_vout) } : {}),
+                  ...(typeof parsedListing.token_txid === 'string' ? { token_txid: parsedListing.token_txid } : {}),
+                  ...(parsedListing.token_vout != null ? { token_vout: Number(parsedListing.token_vout) } : {}),
+                  ...(typeof parsedListing.prev_token_txid === 'string' ? { prev_token_txid: parsedListing.prev_token_txid } : {}),
+                  ...(typeof parsedListing.token_genesis === 'string' ? { token_genesis: parsedListing.token_genesis } : {}),
+                };
+              } catch {
+                // Keep synthesized tuple fallback
+              }
+            }
+            const res = await executeMvcTokenSellTrade(getMetabotStore(), {
+              metabotId: order.metabotId,
+              action: 'cancel',
+              listing: listingRef,
+              feeRate: getGlobalFeeRate('mvc'),
+            });
+            updateFtOrderStatus(db, order.listingKey, 'canceled', { filledTxId: res.txId }, saveFn);
+            markFtOrdersCanceledByOutpoint(db, order.metabotId, order.utxoOutpoint, Date.now(), saveFn);
+            canceledKeys.push(order.listingKey);
+            txids.push(res.txId);
+            continue;
+          }
+          errors.push(`BTC PSBT order ${order.listingKey} requires skill-assisted PSBT cancel`);
+        } catch (err) {
+          errors.push(
+            `${order.listingKey}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      const progress = getFtBatchOrderProgress(db, batchGroupId);
+      return {
+        success: errors.length === 0 || canceledKeys.length > 0,
+        canceledCount: canceledKeys.length,
+        canceledKeys,
+        txids,
+        errors,
+        progress,
+      };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }

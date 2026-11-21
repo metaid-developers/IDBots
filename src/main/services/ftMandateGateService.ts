@@ -230,7 +230,7 @@ export class FtMandateGate {
   }
 
   /**
-   * Resolve a pending UI prompt from `ipcMain.handle('ftTrade:mandateRespond')`.
+   * Resolve a pending UI prompt from `registerIpcHandler('ftTrade:mandateRespond')`.
    */
   resolvePrompt(requestId: string, approved: boolean, reason?: string): boolean {
     const key = String(requestId || '').trim();
