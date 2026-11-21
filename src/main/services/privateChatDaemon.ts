@@ -3753,7 +3753,16 @@ export interface PrivateChatOwnerNotification {
   body: string;
 }
 
+import type { WorldPerceptionA2ATurnEvent } from './proactiveWorldPerceptionService';
+
 let privateChatOwnerNotifier: ((notification: PrivateChatOwnerNotification) => void) | null = null;
+let privateChatWorldPerceptionObserver: ((event: WorldPerceptionA2ATurnEvent) => void | Promise<void>) | null = null;
+
+export function setPrivateChatWorldPerceptionObserver(
+  observer: ((event: WorldPerceptionA2ATurnEvent) => void | Promise<void>) | null,
+): void {
+  privateChatWorldPerceptionObserver = observer;
+}
 
 function notifyPrivateChatOwner(notification: PrivateChatOwnerNotification): void {
   try {
@@ -3761,6 +3770,20 @@ function notifyPrivateChatOwner(notification: PrivateChatOwnerNotification): voi
   } catch (error) {
     console.warn('[PrivateChat] Owner notification failed:', error instanceof Error ? error.message : String(error));
   }
+}
+
+function notifyPrivateChatWorldPerception(event: WorldPerceptionA2ATurnEvent): void {
+  const observer = privateChatWorldPerceptionObserver;
+  if (!observer) return;
+  const work = Promise.resolve()
+    .then(() => observer(event))
+    .catch((error) => {
+      console.warn(
+        '[PrivateChat] World perception observer failed:',
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+  trackPrivateChatDetachedWork(work);
 }
 
 /**
@@ -6490,6 +6513,19 @@ async function processOne(
             }),
             emitToRenderer,
           });
+          notifyPrivateChatWorldPerception({
+            sessionId,
+            localMetabotId: metabot.id,
+            localMetabotName: metabot.name,
+            localMetabotType: metabot.metabot_type ?? 'worker',
+            peerGlobalMetaId: fromGlobalMetaId,
+            peerName: (row.from_name as string | null) ?? null,
+            peerMessageText: plaintext,
+            localReplyText: null,
+            sourcePinId: row.pin_id,
+            replyPinId: null,
+            autoReplySuppressedReason: 'max_turns_reached',
+          });
         }
         emitLog(`[PrivateChat] byeSent flag set for ${externalConversationId.slice(0, 30)}…, stored inbound message without auto-reply.`);
         markProcessed(db, row.id, saveDb);
@@ -6678,6 +6714,21 @@ async function processOne(
           externalConversationId,
           content: buildAutoReplySuppressedNotice(autoReplyPolicy.reason),
           emitToRenderer,
+        });
+      }
+      if (autoReplyPolicy.reason !== 'disabled_metabot') {
+        notifyPrivateChatWorldPerception({
+          sessionId,
+          localMetabotId: metabot.id,
+          localMetabotName: metabot.name,
+          localMetabotType: metabot.metabot_type ?? 'worker',
+          peerGlobalMetaId: fromGlobalMetaId,
+          peerName: (row.from_name as string | null) ?? null,
+          peerMessageText: plaintext,
+          localReplyText: null,
+          sourcePinId: row.pin_id,
+          replyPinId: null,
+          autoReplySuppressedReason: 'auto_reply_disabled',
         });
       }
       markProcessed(db, row.id, saveDb);
@@ -7636,6 +7687,19 @@ async function processOne(
         });
       }
       emitLog(`[PrivateChat] Replied to ${fromGlobalMetaId.slice(0, 12)}…`);
+      notifyPrivateChatWorldPerception({
+        sessionId,
+        localMetabotId: metabot.id,
+        localMetabotName: metabot.name,
+        localMetabotType: metabot.metabot_type ?? 'worker',
+        peerGlobalMetaId: fromGlobalMetaId,
+        peerName: (row.from_name as string | null) ?? null,
+        peerMessageText: plaintext,
+        localReplyText: trimmed,
+        sourcePinId: row.pin_id,
+        replyPinId: sentResult.pinId ?? null,
+        autoReplySuppressedReason: null,
+      });
       // The promised follow-up just landed: settle the owed-reply ledger so
       // boot-time restore no longer sees this pin as outstanding.
       clearPrivateChatOwedReply(coworkStore, getPrivateChatSkillWaitNoticeKey(row), emitLog, 'reply delivered');
@@ -7870,10 +7934,12 @@ export function startPrivateChatDaemon(
    */
   notifyOwner?: (notification: PrivateChatOwnerNotification) => void,
   sellerAutoFulfillDaemon?: SellerAutoFulfillDaemon,
+  onA2ATurnSettled?: (event: WorldPerceptionA2ATurnEvent) => void | Promise<void>,
 ): void {
   void stopPrivateChatDaemon();
   const daemonGeneration = ++privateChatDaemonGeneration;
   privateChatOwnerNotifier = notifyOwner ?? null;
+  privateChatWorldPerceptionObserver = onA2ATurnSettled ?? null;
   orderCowork = new PrivateChatOrderCowork({
     coworkRunner,
     coworkStore,
@@ -8024,6 +8090,7 @@ export function startPrivateChatDaemon(
 export async function stopPrivateChatDaemon(options?: { waitForTick?: boolean }): Promise<void> {
   privateChatDaemonGeneration += 1;
   privateChatOwnerNotifier = null;
+  privateChatWorldPerceptionObserver = null;
   const scheduler = activeRowScheduler;
   activeRowScheduler = null;
   const detachedWork = [...privateChatDetachedWork];

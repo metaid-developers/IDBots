@@ -167,6 +167,10 @@ import {
   type StudioChiefOfStaffToolsControl,
 } from './studioChiefOfStaffAgentTools';
 import {
+  buildProactiveFollowUpAgentTools,
+  type ProactiveFollowUpToolsControl,
+} from './proactiveFollowUpAgentTools';
+import {
   buildTwinTodoAgentTools,
   type TwinTodoToolsControl,
 } from './twinTodoAgentTools';
@@ -2603,6 +2607,15 @@ export interface CoworkRunnerOptions {
   longTermTaskTools?: LongTermTaskAgentControl;
   /** Studio Chief-of-Staff tools (decision queue, presence lock, Twin stamp publish). */
   studioChiefOfStaffTools?: StudioChiefOfStaffToolsControl;
+  /** Proactive Follow-Up resolution tools (followup_*, A2A reply steering, task promotion). */
+  proactiveFollowUpTools?: ProactiveFollowUpToolsControl;
+  /** Intercepts direct Worker cross-session reports aimed at an A2A session (WRITE_NOT_ALLOWED_FOR_A2A). */
+  onWorkerCrossSessionToA2AEscalation?: (input: {
+    sourceSessionId: string;
+    targetA2ASessionId: string;
+    message: string;
+    deliveryId?: string | null;
+  }) => boolean;
   /** Twin persistent memory-tier todo checklist tools (`twin_todo`). */
   twinTodoTools?: TwinTodoToolsControl;
   /** Live Studio decision-queue & active-briefing volatile context block. */
@@ -3059,6 +3072,13 @@ export class CoworkRunner extends EventEmitter {
   private scheduledTaskTools?: ScheduledTaskAgentControl;
   private longTermTaskTools?: LongTermTaskAgentControl;
   private studioChiefOfStaffTools?: StudioChiefOfStaffToolsControl;
+  private proactiveFollowUpTools?: ProactiveFollowUpToolsControl;
+  private onWorkerCrossSessionToA2AEscalation?: (input: {
+    sourceSessionId: string;
+    targetA2ASessionId: string;
+    message: string;
+    deliveryId?: string | null;
+  }) => boolean;
   private twinTodoTools?: TwinTodoToolsControl;
   private getStudioVolatileContextPrompt?: (sessionId: string) => string;
   private getActiveTasksRadarPrompt?: (sessionId: string) => string;
@@ -3293,6 +3313,8 @@ export class CoworkRunner extends EventEmitter {
     this.scheduledTaskTools = options?.scheduledTaskTools;
     this.longTermTaskTools = options?.longTermTaskTools;
     this.studioChiefOfStaffTools = options?.studioChiefOfStaffTools;
+    this.proactiveFollowUpTools = options?.proactiveFollowUpTools;
+    this.onWorkerCrossSessionToA2AEscalation = options?.onWorkerCrossSessionToA2AEscalation;
     this.twinTodoTools = options?.twinTodoTools;
     this.getStudioVolatileContextPrompt = options?.getStudioVolatileContextPrompt;
     this.getActiveTasksRadarPrompt = options?.getActiveTasksRadarPrompt;
@@ -9726,6 +9748,18 @@ export class CoworkRunner extends EventEmitter {
       deliveryId: delivery.id,
     });
     if (!result.ok) {
+      if ('code' in result && result.code === 'WRITE_NOT_ALLOWED_FOR_A2A') {
+        try {
+          this.onWorkerCrossSessionToA2AEscalation?.({
+            sourceSessionId: input.sourceSessionId,
+            targetA2ASessionId: input.targetSessionId,
+            message: input.message,
+            deliveryId: delivery.id,
+          });
+        } catch {
+          // Escalation capture is best-effort.
+        }
+      }
       if (delivery.state === 'pending') store.markCancelled(delivery.id, String(result.message));
       return { insert: result, runQueued: false };
     }
@@ -9780,6 +9814,18 @@ export class CoworkRunner extends EventEmitter {
     }
     const result = this.getCrossSessionService().insertUserMessage(input);
     if (!result.ok) {
+      if ('code' in result && result.code === 'WRITE_NOT_ALLOWED_FOR_A2A') {
+        try {
+          this.onWorkerCrossSessionToA2AEscalation?.({
+            sourceSessionId: input.sourceSessionId,
+            targetA2ASessionId: input.targetSessionId,
+            message: input.message,
+            deliveryId: input.deliveryId ?? null,
+          });
+        } catch {
+          // Escalation capture is best-effort.
+        }
+      }
       return { insert: result, runQueued: false };
     }
 
@@ -14747,36 +14793,53 @@ export class CoworkRunner extends EventEmitter {
         }
       }
       const sessionMetaForStudio = this.store.getSessionWithoutMessages?.(sessionId) ?? this.store.getSession(sessionId);
-      const isStudioTwinFrontOffice = Boolean(
+      const isTwinFrontOfficeSession = Boolean(
         sessionMetaForStudio
         && !sessionMetaForStudio.autoOrigin
-        && sessionMetaForStudio.sessionType === 'browser'
-        && sessionMetaForStudio.assistantMode === true
         && this.isTwinSession(sessionId),
       );
-      if (isStudioTwinFrontOffice) {
+      const isStudioTwinFrontOffice = Boolean(
+        isTwinFrontOfficeSession
+        && sessionMetaForStudio?.sessionType === 'browser'
+        && sessionMetaForStudio?.assistantMode === true,
+      );
+      if (isTwinFrontOfficeSession) {
         const latestPage = this.store.getSessionMessagesPage?.(sessionId, { limit: 4 });
+        const latestUserMsg = [...(latestPage?.messages ?? [])].reverse().find((m) => m.type === 'user');
+        const latestUserOrigin = (latestUserMsg?.metadata as Record<string, unknown> | undefined)?.origin;
         const inProactiveBriefing = Boolean(
-          latestPage?.messages?.some(
-            (m) =>
-              m.type === 'user'
-              && (String(m.content ?? '').includes('<studio_proactive_briefing>')
-                || (m.metadata as Record<string, unknown> | undefined)?.origin === 'studio_briefing'),
-          ),
+          latestUserMsg
+          && (String(latestUserMsg.content ?? '').includes('<studio_proactive_briefing>')
+            || latestUserOrigin === 'studio_briefing'
+            || latestUserOrigin === 'proactive_followup_briefing'),
         );
-        const studioVerdict = evaluateStudioTwinToolGuard({
-          isStudioTwinFrontOffice: true,
-          isProactiveBriefingTurn: inProactiveBriefing,
-          toolName,
-          toolInput,
-          workspaceRoot: activeSession?.workspaceRoot ?? sessionMetaForStudio?.cwd ?? process.cwd(),
-        });
-        if ('reason' in studioVerdict) {
-          coworkLog('INFO', 'evaluateDshToolPolicy', 'Studio Chief-of-Staff tool guardrail denied direct file mutation', {
-            sessionId,
+        if (
+          inProactiveBriefing
+          && (toolName.trim().toLowerCase() === 'ask_user_question'
+            || toolName.trim().toLowerCase() === 'askuserquestion')
+        ) {
+          return {
+            decision: 'deny',
+            reason:
+              'Proactive briefing rule: NEVER call ask_user_question during a proactive briefing or follow-up report. ' +
+              'Speak naturally in the chat stream and let the owner reply directly in the conversation.',
+          };
+        }
+        if (isStudioTwinFrontOffice) {
+          const studioVerdict = evaluateStudioTwinToolGuard({
+            isStudioTwinFrontOffice: true,
+            isProactiveBriefingTurn: inProactiveBriefing,
             toolName,
+            toolInput,
+            workspaceRoot: activeSession?.workspaceRoot ?? sessionMetaForStudio?.cwd ?? process.cwd(),
           });
-          return { decision: 'deny', reason: studioVerdict.reason };
+          if ('reason' in studioVerdict) {
+            coworkLog('INFO', 'evaluateDshToolPolicy', 'Studio Chief-of-Staff tool guardrail denied direct file mutation', {
+              sessionId,
+              toolName,
+            });
+            return { decision: 'deny', reason: studioVerdict.reason };
+          }
         }
       }
       // Dream-RSI practice sessions (design §3.5): every tool call passes the
@@ -16159,6 +16222,15 @@ export class CoworkRunner extends EventEmitter {
         ...buildStudioChiefOfStaffAgentTools({
           tool,
           control: this.studioChiefOfStaffTools,
+          sessionId,
+        })
+      );
+    }
+    if (this.proactiveFollowUpTools) {
+      memoryTools.push(
+        ...buildProactiveFollowUpAgentTools({
+          tool,
+          control: this.proactiveFollowUpTools,
           sessionId,
         })
       );

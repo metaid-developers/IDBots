@@ -1,4 +1,5 @@
 import type { StudioDecisionQueueItem } from '../studioDecisionQueueStore';
+import type { ProactiveFollowUpItem } from '../proactiveFollowUpStore';
 
 /**
  * Twin Bot front-office presence state in Studio mode:
@@ -17,8 +18,11 @@ export interface StudioTwinPresenceSnapshot {
   mode: StudioTwinPresenceMode;
   reason: string;
   activeStudioSessionId: string | null;
+  primaryTwinSessionId?: string | null;
   presentingItem: StudioDecisionQueueItem | null;
+  presentingFollowUpItem?: ProactiveFollowUpItem | null;
   queuedCount: number;
+  followUpQueuedCount?: number;
 }
 
 export const DEFAULT_STUDIO_IDLE_DEBOUNCE_MS = 8_000;
@@ -26,13 +30,16 @@ export const DEFAULT_SHAPING_HOLD_TTL_MS = 20 * 60_000;
 
 export interface DeriveStudioPresenceInput {
   activeStudioSessionId: string | null;
+  primaryTwinSessionId?: string | null;
   studioTurnRunning: boolean;
   briefingTurnRunning: boolean;
   hasDefiningDraftInStudio: boolean;
   explicitShapingHoldReason: string | null;
   lastNonBriefingTurnEndedAtMs: number | null;
   presentingItem: StudioDecisionQueueItem | null;
+  presentingFollowUpItem?: ProactiveFollowUpItem | null;
   queuedCount: number;
+  followUpQueuedCount?: number;
   nowMs?: number;
   idleDebounceMs?: number;
 }
@@ -42,14 +49,20 @@ export function deriveStudioPresenceState(
 ): StudioTwinPresenceSnapshot {
   const nowMs = input.nowMs ?? Date.now();
   const debounceMs = Math.max(0, input.idleDebounceMs ?? DEFAULT_STUDIO_IDLE_DEBOUNCE_MS);
+  const presentingFollowUpItem = input.presentingFollowUpItem ?? null;
+  const followUpQueuedCount = input.followUpQueuedCount ?? 0;
+  const primaryTwinSessionId = input.primaryTwinSessionId ?? input.activeStudioSessionId;
 
   if (input.briefingTurnRunning) {
     return {
       mode: 'briefing',
       reason: 'proactive briefing turn is streaming',
       activeStudioSessionId: input.activeStudioSessionId,
+      primaryTwinSessionId,
       presentingItem: input.presentingItem,
+      presentingFollowUpItem,
       queuedCount: input.queuedCount,
+      followUpQueuedCount,
     };
   }
 
@@ -58,8 +71,11 @@ export function deriveStudioPresenceState(
       mode: 'shaping',
       reason: 'owner turn is currently running in Studio',
       activeStudioSessionId: input.activeStudioSessionId,
+      primaryTwinSessionId,
       presentingItem: input.presentingItem,
+      presentingFollowUpItem,
       queuedCount: input.queuedCount,
+      followUpQueuedCount,
     };
   }
 
@@ -68,8 +84,11 @@ export function deriveStudioPresenceState(
       mode: 'shaping',
       reason: `awaiting owner clarification to form task (${input.explicitShapingHoldReason})`,
       activeStudioSessionId: input.activeStudioSessionId,
+      primaryTwinSessionId,
       presentingItem: input.presentingItem,
+      presentingFollowUpItem,
       queuedCount: input.queuedCount,
+      followUpQueuedCount,
     };
   }
 
@@ -78,8 +97,11 @@ export function deriveStudioPresenceState(
       mode: 'shaping',
       reason: 'an unactivated task draft is currently being defined in Studio',
       activeStudioSessionId: input.activeStudioSessionId,
+      primaryTwinSessionId,
       presentingItem: input.presentingItem,
+      presentingFollowUpItem,
       queuedCount: input.queuedCount,
+      followUpQueuedCount,
     };
   }
 
@@ -88,8 +110,24 @@ export function deriveStudioPresenceState(
       mode: 'briefing',
       reason: `awaiting owner ruling on "${input.presentingItem.title}"`,
       activeStudioSessionId: input.activeStudioSessionId,
+      primaryTwinSessionId,
       presentingItem: input.presentingItem,
+      presentingFollowUpItem,
       queuedCount: input.queuedCount,
+      followUpQueuedCount,
+    };
+  }
+
+  if (presentingFollowUpItem) {
+    return {
+      mode: 'briefing',
+      reason: `awaiting owner ruling on follow-up "${presentingFollowUpItem.title}"`,
+      activeStudioSessionId: input.activeStudioSessionId,
+      primaryTwinSessionId,
+      presentingItem: null,
+      presentingFollowUpItem,
+      queuedCount: input.queuedCount,
+      followUpQueuedCount,
     };
   }
 
@@ -101,8 +139,11 @@ export function deriveStudioPresenceState(
       mode: 'shaping',
       reason: 'post-turn quiet debounce window active',
       activeStudioSessionId: input.activeStudioSessionId,
+      primaryTwinSessionId,
       presentingItem: null,
+      presentingFollowUpItem: null,
       queuedCount: input.queuedCount,
+      followUpQueuedCount,
     };
   }
 
@@ -110,8 +151,11 @@ export function deriveStudioPresenceState(
     mode: 'idle',
     reason: 'standing by for owner conversation or next queued briefing',
     activeStudioSessionId: input.activeStudioSessionId,
+    primaryTwinSessionId,
     presentingItem: null,
+    presentingFollowUpItem: null,
     queuedCount: input.queuedCount,
+    followUpQueuedCount,
   };
 }
 
