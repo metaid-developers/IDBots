@@ -214,6 +214,7 @@ const TOOLS_BY_DOMAIN: Record<Exclude<ToolDomain, 'browser_automation'>, readonl
   financial: [
     'goods_accept_inquiry',
     'goods_buy_with_me',
+    'goods_buy_with_token',
     'goods_holder_lookup',
     'goods_market_search',
     'goods_market_summary',

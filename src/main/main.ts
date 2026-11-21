@@ -287,6 +287,11 @@ import {
 import { formatGoodsTradeWireMessage } from './services/goodsTradeWireProtocol';
 import { SellerAutoFulfillDaemon } from './services/sellerAutoFulfillDaemon';
 import {
+  buildMvcFtGoodsAtomicProposal,
+  decimalDisplayToBaseUnits,
+  parseCanonicalFtAssetKey,
+} from './services/tokenForGoodsService';
+import {
   cancelMrc721OpenOffer,
   listMrc721MyOpenOffers,
   mrc721OpenOffersFromSqlite,
@@ -4464,13 +4469,15 @@ function getSellerAutoFulfillDaemon(): SellerAutoFulfillDaemon {
             { createPin: mrc721CreatePinBackend },
             {
               ...input,
-              currency: 'me',
-              verifiedSource: 'abs_escrow',
+              currency: input.currency ?? 'me',
+              verifiedSource: input.verifiedSource ?? 'abs_escrow',
               network: 'mvc',
             },
           );
           return res;
         },
+        broadcastMvcRawTx: (rawTx: string) =>
+          withChainWriteBudget('seller_auto_fulfill_atomic_ft_goods', () => broadcastMvcTx(rawTx)),
         sendTradeMessage: async ({ metabotId, toGlobalMetaId, content }) => {
           const mStore = getMetabotStore();
           const wallet = mStore.getMetabotWalletByMetabotId(metabotId);
@@ -9467,12 +9474,79 @@ const getCoworkRunner = () => {
           return {
             name: String(bot.name || '').trim() || `MetaBot #${metabotId}`,
             mvcAddress: String(bot.mvc_address || '').trim(),
+            btcAddress: String(bot.btc_address || '').trim() || undefined,
             globalMetaId: String(bot.globalmetaid || '').trim(),
           };
         },
         getTradeBalance: (metabotId) => getBotTradeSpendableBalance(meChargeSigner(metabotId)),
         createEscrowOrder: ({ metabotId, ...rest }) => createNftEscrowOrder(meChargeSigner(metabotId), rest),
         getEscrowOrder: ({ metabotId, orderId }) => getNftEscrowOrder(meChargeSigner(metabotId), orderId),
+        checkSellerOnline: async (sellerGlobalMetaId) => {
+          const status = await getIdchatPresenceService().fetchOnlineStatus([sellerGlobalMetaId]);
+          return status.list.some(
+            (entry) => entry.globalMetaId.toLowerCase() === sellerGlobalMetaId.toLowerCase() && entry.isOnline,
+          );
+        },
+        getTokenBalanceBase: async (metabotId, assetKey) => {
+          const bot = getMetabotStore().getMetabotById(metabotId);
+          if (!bot) return { balanceBase: '0' };
+          const parsed = parseCanonicalFtAssetKey(assetKey);
+          if (parsed.chain === 'btc' && parsed.mrc20Id) {
+            if (!bot.btc_address) return { balanceBase: '0' };
+            const assets = await listMrc20Assets(bot.btc_address);
+            const hit = assets.find((a) => a.mrc20Id.toLowerCase() === parsed.mrc20Id);
+            if (!hit) return { balanceBase: '0' };
+            try {
+              return {
+                balanceBase: decimalDisplayToBaseUnits(String(hit.balance.display || '0'), hit.decimal),
+                symbol: hit.symbol,
+                decimals: hit.decimal,
+              };
+            } catch {
+              return { balanceBase: '0', symbol: hit.symbol, decimals: hit.decimal };
+            }
+          }
+          if (parsed.chain === 'mvc' && parsed.codehash && parsed.genesis) {
+            if (!bot.mvc_address) return { balanceBase: '0' };
+            const assets = await listMvcFtAssets(bot.mvc_address);
+            const hit = assets.find(
+              (a) => a.codeHash.toLowerCase() === parsed.codehash && a.genesis.toLowerCase() === parsed.genesis,
+            );
+            if (!hit) return { balanceBase: '0' };
+            try {
+              return {
+                balanceBase: decimalDisplayToBaseUnits(String(hit.balance.display || '0'), hit.decimal),
+                symbol: hit.symbol,
+                decimals: hit.decimal,
+              };
+            } catch {
+              return { balanceBase: '0', symbol: hit.symbol, decimals: hit.decimal };
+            }
+          }
+          return { balanceBase: '0' };
+        },
+        buildMvcFtGoodsAtomicProposal: (input) =>
+          buildMvcFtGoodsAtomicProposal(getMetabotStore(), {
+            ...input,
+            feeRate: getGlobalFeeRate('mvc'),
+          }),
+        transferBtcMrc20: ({ metabotId, mrc20Id, decimal, symbol, toAddress, amountDisplay }) =>
+          withChainWriteBudget('goods_buy_with_token_mrc20', async () => {
+            const bot = getMetabotStore().getMetabotById(metabotId);
+            if (!bot?.btc_address) throw new Error('Buyer MetaBot has no BTC address');
+            return await executeMrc20Transfer(getMetabotStore(), {
+              metabotId,
+              asset: {
+                mrc20Id,
+                decimal,
+                address: bot.btc_address,
+                symbol,
+              },
+              toAddress,
+              amount: amountDisplay,
+              feeRate: getGlobalFeeRate('btc'),
+            });
+          }),
         sendTradeMessage: async ({ metabotId, toGlobalMetaId, content }) => {
           const mStore = getMetabotStore();
           const wallet = mStore.getMetabotWalletByMetabotId(metabotId);

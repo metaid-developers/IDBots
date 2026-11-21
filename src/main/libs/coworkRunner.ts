@@ -387,6 +387,7 @@ import {
   buildGoodsTradeAgentTools,
   type GoodsPurchaseConfirmationInfo,
   type GoodsQuoteAcceptConfirmationInfo,
+  type GoodsTokenPurchaseConfirmationInfo,
   type GoodsTradeToolsControl,
 } from './goodsTradeAgentTools';
 import {
@@ -9441,6 +9442,54 @@ export class CoworkRunner extends EventEmitter {
     return outcome === 'approved';
   }
 
+  private async confirmGoodsTokenPurchase(
+    sessionId: string,
+    info: GoodsTokenPurchaseConfirmationInfo,
+  ): Promise<boolean> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (!activeSession) {
+      return false;
+    }
+    const modeZh = info.settlementMode === 'atomic_swap'
+      ? 'MVC 同链原子互换（单笔交易一手交币一手交货）'
+      : '5 分钟排他锁 + MRC-20 链上直付自动发货';
+    const modeEn = info.settlementMode === 'atomic_swap'
+      ? 'MVC Same-Chain Atomic Swap (single-tx payment + NFT delivery)'
+      : '5-Min Exclusive Lock + Direct MRC-20 Transfer & Auto-Delivery';
+    const question = tApp(
+      `Agent 准备使用代币购买数字商品：\n` +
+      `- 商品: ${info.itemName || info.itemPinId} (${info.itemPinId})\n` +
+      `- 支付代币: ${info.amountDisplay} $${info.symbol} (${info.assetKey})\n` +
+      `- 交割方式: ${modeZh}\n` +
+      `- 卖方收款地址: ${info.sellerReceiveAddress}${info.sellerName ? ` (${info.sellerName})` : ''}\n` +
+      `确认执行该笔代币支付购买吗？（需要你本人确认；60 秒内未回答视为拒绝）`,
+      `The agent is about to buy a digital item with tokens:\n` +
+      `- Item: ${info.itemName || info.itemPinId} (${info.itemPinId})\n` +
+      `- Payment: ${info.amountDisplay} $${info.symbol} (${info.assetKey})\n` +
+      `- Settlement: ${modeEn}\n` +
+      `- Seller Receive Address: ${info.sellerReceiveAddress}${info.sellerName ? ` (${info.sellerName})` : ''}\n` +
+      `Confirm executing this token purchase? (owner confirmation required; unanswered after 60s = denied)`,
+    );
+    const outcome = await this.requestSafetyApproval(
+      sessionId,
+      activeSession.abortController.signal,
+      activeSession,
+      question,
+      'goods_buy_with_token',
+      {
+        item_pin_id: info.itemPinId,
+        asset_key: info.assetKey,
+        amount_display: info.amountDisplay,
+        amount_base: info.amountBase,
+        seller_receive_address: info.sellerReceiveAddress,
+        settlement_mode: info.settlementMode,
+      } as Record<string, unknown>,
+      'deny',
+      { ownerOnly: true },
+    );
+    return outcome === 'approved';
+  }
+
   private async confirmGoodsQuoteAcceptance(
     sessionId: string,
     info: GoodsQuoteAcceptConfirmationInfo,
@@ -16565,6 +16614,7 @@ export class CoworkRunner extends EventEmitter {
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
           confirmGoodsPurchase: (info) => this.confirmGoodsPurchase(sessionId, info),
+          confirmGoodsTokenPurchase: (info) => this.confirmGoodsTokenPurchase(sessionId, info),
           confirmGoodsQuoteAcceptance: (info) => this.confirmGoodsQuoteAcceptance(sessionId, info),
         })
       );
