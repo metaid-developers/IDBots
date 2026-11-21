@@ -167,6 +167,11 @@ export interface MeBalance {
    * Absent on servers that predate it.
    */
   spendableMilli?: number;
+  /**
+   * Persistent spendable balance eligible for digital goods / NFT escrow
+   * trades (topup + earned - frozen, excluding weeklyGrant / feeSubsidy / bonus).
+   */
+  tradeSpendableMilli?: number;
 }
 
 /** GET /v1/me/subscription response (tolerant: guide pins statusText only). */
@@ -655,6 +660,13 @@ function normalizeMeBalance(data: Record<string, unknown>): MeBalance {
   // Unparseable values stay absent: reading them as 0 would claim "no ME left".
   if (Number.isFinite(spendable) && spendable >= 0 && String(spendableRaw).trim() !== '') {
     balance.spendableMilli = spendable;
+  }
+  const tradeSpendableRaw = data.tradeSpendableMilli ?? data.trade_spendable_milli;
+  const tradeSpendable = typeof tradeSpendableRaw === 'number' || typeof tradeSpendableRaw === 'string'
+    ? Number(tradeSpendableRaw)
+    : Number.NaN;
+  if (Number.isFinite(tradeSpendable) && tradeSpendable >= 0 && String(tradeSpendableRaw).trim() !== '') {
+    balance.tradeSpendableMilli = tradeSpendable;
   }
   return balance;
 }

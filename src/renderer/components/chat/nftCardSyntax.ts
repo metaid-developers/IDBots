@@ -91,6 +91,20 @@ export interface NftCardData {
   issuerLabel?: string;
   /** Ask/deal price in sats at broadcast time. */
   priceSats?: number;
+  /** v2.1 digital goods commerce price in ME milli-units (1 ME = 1000). */
+  priceMeMilli?: number;
+  /** v2.1 digital goods commerce reference price in CNY cents. */
+  priceCnyCents?: number;
+  /** Seller's GlobalMetaID for A2A negotiation & escrow notifications. */
+  sellerGlobalMetaId?: string;
+  /** Display name for the seller bot. */
+  sellerName?: string;
+  /** Whether the seller bot is currently online. */
+  sellerOnline?: boolean;
+  /** Seller's MetaApp Shop pinId (metaapp://<pinId>). */
+  shopMetaAppPinId?: string;
+  /** Whether the collection is CA-certified official. */
+  caVerified?: boolean;
   /** listed | transferred | sold | bought | escrow | delisted | minted | info … */
   action?: string;
   /**
@@ -159,6 +173,19 @@ const cleanPriceSats = (value: unknown): number | undefined => {
   const num = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : NaN;
   if (!Number.isInteger(num) || num < 0 || num > 2_100_000_000_000_000) return undefined;
   return num;
+};
+
+const cleanNonNegInt = (value: unknown, max = 1_000_000_000_000): number | undefined => {
+  const num = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value.trim()) : NaN;
+  if (!Number.isInteger(num) || num < 0 || num > max) return undefined;
+  return num;
+};
+
+const cleanGlobalMetaId = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || /\s/.test(trimmed)) return undefined;
+  return trimmed.slice(0, 128);
 };
 
 /** MRC-721 mint serial: non-negative integer (number or numeric string). */
@@ -249,6 +276,18 @@ export const parseNftCardFence = (codeText: string): NftCardData | null => {
   if (issuerLabel) data.issuerLabel = issuerLabel;
   const priceSats = cleanPriceSats(row.priceSats);
   if (priceSats !== undefined) data.priceSats = priceSats;
+  const priceMeMilli = cleanNonNegInt(row.priceMeMilli);
+  if (priceMeMilli !== undefined) data.priceMeMilli = priceMeMilli;
+  const priceCnyCents = cleanNonNegInt(row.priceCnyCents);
+  if (priceCnyCents !== undefined) data.priceCnyCents = priceCnyCents;
+  const sellerGlobalMetaId = cleanGlobalMetaId(row.sellerGlobalMetaId);
+  if (sellerGlobalMetaId) data.sellerGlobalMetaId = sellerGlobalMetaId;
+  const sellerName = cleanTextField(row.sellerName);
+  if (sellerName) data.sellerName = sellerName;
+  if (typeof row.sellerOnline === 'boolean') data.sellerOnline = row.sellerOnline;
+  const shopMetaAppPinId = cleanPinId(row.shopMetaAppPinId);
+  if (shopMetaAppPinId) data.shopMetaAppPinId = shopMetaAppPinId;
+  if (typeof row.caVerified === 'boolean') data.caVerified = row.caVerified;
   const action = cleanTextField(row.action, MAX_ACTION_FIELD);
   if (action) data.action = action.toLowerCase();
   // hostStamp is copy-through only: an admissible stamp keeps its exact
@@ -368,7 +407,8 @@ export const groupAdjacentNftCardFences = (content: string): string => {
 const NFT_CARD_KEY_ORDER: Array<keyof NftCardData> = [
   'format', 'pinId', 'genesis', 'codehash', 'tokenIndex', 'number', 'name',
   'series', 'imgUrl', 'icon', 'owner', 'ownerLabel', 'issuer', 'issuerLabel',
-  'priceSats', 'action', 'hostStamp',
+  'priceSats', 'priceMeMilli', 'priceCnyCents', 'sellerGlobalMetaId',
+  'sellerName', 'sellerOnline', 'shopMetaAppPinId', 'caVerified', 'action', 'hostStamp',
 ];
 
 /**

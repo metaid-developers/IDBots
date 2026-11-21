@@ -263,6 +263,61 @@ export interface Mrc721CollectionSummary {
   totalnum?: number;
 }
 
+export interface Mrc721OwnerProfile {
+  globalMetaId?: string;
+  name?: string;
+  avatar?: string;
+  isOnline?: boolean;
+  hasChatPubkey?: boolean;
+}
+
+export interface Mrc721MarketPriceMe {
+  amountMilli: number;
+}
+
+export interface Mrc721MarketPriceFiat {
+  currency: 'CNY' | string;
+  amountCents: number;
+}
+
+export interface Mrc721MarketPrices {
+  me?: Mrc721MarketPriceMe;
+  fiat?: Mrc721MarketPriceFiat;
+}
+
+export interface Mrc721SellerProfile {
+  address: string;
+  globalMetaId?: string;
+  name?: string;
+  avatar?: string;
+  hasChatPubkey?: boolean;
+  isOnline?: boolean;
+  lastSeenAgoSeconds?: number;
+}
+
+export interface Mrc721MarketListing {
+  intentPinId: string;
+  itemPinId: string;
+  collectionPinId?: string;
+  collectionName?: string;
+  caVerified?: boolean;
+  itemName?: string;
+  cover?: string;
+  metadata?: string;
+  prices?: Mrc721MarketPrices;
+  priceHintSats?: number;
+  autoFulfillMe?: boolean;
+  negotiable?: boolean;
+  acceptedCurrencies: string[];
+  settlement: string[];
+  note?: string;
+  shopMetaAppPinId?: string;
+  seller: Mrc721SellerProfile;
+  listedAt?: number;
+  expiresAt?: number;
+  confirmed?: boolean;
+}
+
 export interface Mrc721ItemSummary {
   itemPinId: string;
   collectionName?: string;
@@ -287,6 +342,10 @@ export interface Mrc721ItemSummary {
   outputValue?: number;
   createTime?: number;
   transferCount?: number;
+  /** C3 item/info enrichments (present on upgraded MetaSo-P2P indexers). */
+  caVerified?: boolean;
+  ownerProfile?: Mrc721OwnerProfile | null;
+  activeListing?: Mrc721MarketListing | null;
 }
 
 export interface Mrc721ItemTransferRecord {
@@ -425,21 +484,25 @@ export async function fetchMrc721CollectionItems(params: {
 
 /** 地址持有的专辑 ("我发行的/我持有的专辑" 持有人视图). */
 export async function fetchMrc721AddressCollections(params: {
-  address: string;
+  address?: string;
+  globalMetaId?: string;
 }): Promise<Mrc721CollectionSummary[]> {
   const page = await fetchMrc721List<Mrc721CollectionSummary>('/api/mrc721/address/collection', {
     address: params.address,
+    globalMetaId: params.globalMetaId,
   });
   return page.items;
 }
 
 /** 地址持有的 NFT (转移/交易前的持仓源; 可按专辑过滤). */
 export async function fetchMrc721AddressItems(params: {
-  address: string;
+  address?: string;
+  globalMetaId?: string;
   pinId?: string;
 }): Promise<Mrc721ItemSummary[]> {
   const page = await fetchMrc721List<Mrc721ItemSummary>('/api/mrc721/address/item', {
     address: params.address,
+    globalMetaId: params.globalMetaId,
     pinId: params.pinId,
   });
   return page.items;
@@ -1788,3 +1851,242 @@ export {
   MRC721_MIN_SELL_PRICE_SATS,
 } from './mrc721AtomicSwapService';
 export type { Mrc721AtomicSwapListing, Mrc721SellOrderView } from './mrc721AtomicSwapService';
+
+// ---------------------------------------------------------------------------
+// C3: MetaSo-P2P Market, Holders, Trades & CA Registry endpoints
+// Accepts both code === 0 (C3 standard envelope) and code === 1 (legacy).
+// ---------------------------------------------------------------------------
+
+export interface Mrc721MarketFloorSeller {
+  globalMetaId?: string;
+  address?: string;
+  name?: string;
+  avatar?: string;
+  isOnline?: boolean;
+  shopMetaAppPinId?: string;
+  itemPinId?: string;
+  itemName?: string;
+}
+
+export interface Mrc721MarketTradeStats {
+  totalTrades?: number;
+  trades24h?: number;
+  volumeMeMilli24h?: number;
+  lastSalePriceMeMilli?: number;
+  lastSaleAt?: number;
+}
+
+export interface Mrc721MarketCollectionSummary {
+  collectionPinId: string;
+  collectionName: string;
+  displayTitle?: string;
+  cover?: string;
+  caVerified?: boolean;
+  totalSupply?: number;
+  mintedCount?: number;
+  burnedCount?: number;
+  holderCount?: number;
+  listedCount?: number;
+  listedMeCount?: number;
+  listedCnyCount?: number;
+  floorPriceMeMilli?: number | null;
+  medianPriceMeMilli?: number | null;
+  floorPriceCnyCents?: number | null;
+  medianPriceCnyCents?: number | null;
+  floorSeller?: Mrc721MarketFloorSeller | null;
+  tradeStats?: Mrc721MarketTradeStats | null;
+}
+
+export interface Mrc721CollectionHolder {
+  address: string;
+  globalMetaId?: string;
+  name?: string;
+  avatar?: string;
+  isOnline?: boolean;
+  hasChatPubkey?: boolean;
+  itemCount: number;
+  listedItemCount?: number;
+}
+
+export interface Mrc721CollectionHoldersPage {
+  holderCount: number;
+  list: Mrc721CollectionHolder[];
+  cursor?: string;
+}
+
+export interface Mrc721MarketTradeRecord {
+  txId: string;
+  itemPinId: string;
+  itemName?: string;
+  cover?: string;
+  collectionPinId?: string;
+  sellerAddress?: string;
+  sellerMetaId?: string;
+  buyerAddress?: string;
+  buyerMetaId?: string;
+  currency?: string;
+  amountMilli?: number;
+  amountCents?: number;
+  priceSats?: number;
+  settledAt?: number;
+  verifiedSource?: string;
+}
+
+async function fetchMetasoMarketJson(
+  localPath: string,
+  query: Record<string, string | number | boolean | undefined> = {},
+): Promise<unknown> {
+  const base = getMetasoApiBase();
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value == null || value === '') continue;
+    params.set(key, String(value));
+  }
+  const qs = params.toString();
+  const response = await fetch(`${base}${localPath}${qs ? `?${qs}` : ''}`, {
+    signal: AbortSignal.timeout(10_000),
+  });
+  let json: ManapiEnvelope<unknown> | null = null;
+  try {
+    json = (await response.json()) as ManapiEnvelope<unknown>;
+  } catch {
+    json = null;
+  }
+  if (!response.ok) {
+    throw Object.assign(new Error(`metaso market read failed (HTTP ${response.status}): ${localPath}`), {
+      mrc721Status: response.status,
+    });
+  }
+  if (json?.code !== 0 && json?.code !== 1) {
+    throw Object.assign(new Error(`metaso market read failed: ${json?.message || `code ${json?.code}`}`), {
+      mrc721Code: json?.code,
+    });
+  }
+  return json.data;
+}
+
+export async function fetchMrc721CaRegistry(): Promise<{
+  verified: boolean;
+  pinId?: string;
+  officialMetaId?: string;
+  updatedAt?: number;
+  collections: Array<Record<string, unknown>>;
+  officialBots: Array<Record<string, unknown>>;
+} | null> {
+  try {
+    const data = await fetchMetasoMarketJson('/api/mrc721/ca/registry');
+    if (!data || typeof data !== 'object') return null;
+    const record = data as Record<string, unknown>;
+    return {
+      verified: record.verified === true,
+      pinId: typeof record.pinId === 'string' ? record.pinId : undefined,
+      officialMetaId: typeof record.officialMetaId === 'string' ? record.officialMetaId : undefined,
+      updatedAt: Number.isFinite(Number(record.updatedAt)) ? Number(record.updatedAt) : undefined,
+      collections: Array.isArray(record.collections) ? (record.collections as Array<Record<string, unknown>>) : [],
+      officialBots: Array.isArray(record.officialBots) ? (record.officialBots as Array<Record<string, unknown>>) : [],
+    };
+  } catch (error) {
+    const status = (error as { mrc721Status?: number }).mrc721Status;
+    if (status === 404) return null;
+    throw error;
+  }
+}
+
+export async function fetchMrc721MarketCollections(params?: {
+  caOnly?: boolean;
+  keyword?: string;
+  sort?: 'listed_desc' | 'volume_desc' | 'floor_me_asc' | 'newest';
+  cursor?: string | number;
+  size?: number;
+}): Promise<Mrc721Page<Mrc721MarketCollectionSummary>> {
+  const data = await fetchMetasoMarketJson('/api/mrc721/market/collections', {
+    caOnly: params?.caOnly,
+    keyword: params?.keyword,
+    sort: params?.sort,
+    cursor: params?.cursor,
+    size: params?.size,
+  });
+  return normalizeMrc721List<Mrc721MarketCollectionSummary>(data);
+}
+
+export async function fetchMrc721MarketCollectionSummary(
+  collectionPinId: string,
+): Promise<Mrc721MarketCollectionSummary | null> {
+  const id = String(collectionPinId ?? '').trim().toLowerCase();
+  if (!isMrc721PinId(id)) {
+    throw new Error('collectionPinId must be a valid pinId (<64hex>i<index>)');
+  }
+  try {
+    const data = await fetchMetasoMarketJson(`/api/mrc721/market/collection/${encodeURIComponent(id)}/summary`);
+    return (data && typeof data === 'object' ? data : null) as Mrc721MarketCollectionSummary | null;
+  } catch (error) {
+    const status = (error as { mrc721Status?: number }).mrc721Status;
+    const code = (error as { mrc721Code?: unknown }).mrc721Code;
+    if (status === 404 || code !== undefined) return null;
+    throw error;
+  }
+}
+
+export async function fetchMrc721MarketListings(params?: {
+  collectionPinId?: string;
+  seller?: string;
+  itemPinId?: string;
+  currency?: 'me' | 'fiat:CNY' | 'any';
+  minPrice?: number;
+  maxPrice?: number;
+  onlineOnly?: boolean;
+  caOnly?: boolean;
+  keyword?: string;
+  sort?: 'price_me_asc' | 'price_me_desc' | 'price_cny_asc' | 'price_cny_desc' | 'newest';
+  cursor?: string | number;
+  size?: number;
+}): Promise<Mrc721Page<Mrc721MarketListing>> {
+  const data = await fetchMetasoMarketJson('/api/mrc721/market/listings', {
+    collectionPinId: params?.collectionPinId,
+    seller: params?.seller,
+    itemPinId: params?.itemPinId,
+    currency: params?.currency,
+    minPrice: params?.minPrice,
+    maxPrice: params?.maxPrice,
+    onlineOnly: params?.onlineOnly,
+    caOnly: params?.caOnly,
+    keyword: params?.keyword,
+    sort: params?.sort,
+    cursor: params?.cursor,
+    size: params?.size,
+  });
+  return normalizeMrc721List<Mrc721MarketListing>(data);
+}
+
+export async function fetchMrc721CollectionHolders(params: {
+  pinId: string;
+  cursor?: string | number;
+  size?: number;
+}): Promise<Mrc721CollectionHoldersPage> {
+  const data = await fetchMetasoMarketJson('/api/mrc721/collection/holders', {
+    pinId: params.pinId,
+    cursor: params.cursor,
+    size: params.size,
+  }) as Record<string, unknown> | null;
+  const list = Array.isArray(data?.list) ? (data.list as Mrc721CollectionHolder[]) : [];
+  const holderCount = Number.isFinite(Number(data?.holderCount)) ? Number(data?.holderCount) : list.length;
+  const cursor = typeof data?.cursor === 'string' && data.cursor ? data.cursor : undefined;
+  return { holderCount, list, cursor };
+}
+
+export async function fetchMrc721MarketTrades(params?: {
+  collectionPinId?: string;
+  itemPinId?: string;
+  party?: string;
+  cursor?: string | number;
+  size?: number;
+}): Promise<Mrc721Page<Mrc721MarketTradeRecord>> {
+  const data = await fetchMetasoMarketJson('/api/mrc721/market/trades', {
+    collectionPinId: params?.collectionPinId,
+    itemPinId: params?.itemPinId,
+    party: params?.party,
+    cursor: params?.cursor,
+    size: params?.size,
+  });
+  return normalizeMrc721List<Mrc721MarketTradeRecord>(data);
+}

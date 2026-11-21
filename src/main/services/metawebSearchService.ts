@@ -23,7 +23,11 @@ export type MetawebSearchProtocol =
   | 'metaapp'
   | 'metabot-skill'
   | 'skill-service'
-  | 'metaprotocol';
+  | 'metaprotocol'
+  | 'mrc721-collection'
+  | 'mrc721-listing'
+  | 'simplequestion'
+  | 'simpleanswer';
 
 export type MetawebSearchPublisher = {
   globalMetaId: string;

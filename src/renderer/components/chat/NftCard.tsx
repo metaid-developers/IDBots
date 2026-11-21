@@ -43,11 +43,13 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { DocumentDuplicateIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { CheckBadgeIcon, DocumentDuplicateIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { parseMetafileUri } from '../cowork/A2AMessageItem';
 import { useNftCardIdentity, shortAddress } from './nftCardIdentity';
 import { useNftCardHeal } from './nftCardHeal';
 import type { NftCardData } from './nftCardSyntax';
+import { ct, formatCnyDisplay, formatMeDisplay } from '../commerce/commerceTradeI18n';
+import { dispatchCommerceIntent } from '../commerce/commerceTradeEvents';
 
 const ACTION_LABELS: Record<string, string> = {
   listed: 'LISTED',
@@ -58,7 +60,7 @@ const ACTION_LABELS: Record<string, string> = {
   delisted: 'DELISTED',
   minted: 'MINTED',
   selling: 'SELLING',
-  info: 'NFT',
+  info: 'ITEM',
 };
 
 const ACTION_BADGE_CLASS: Record<string, string> = {
@@ -172,8 +174,19 @@ export const resolveNftCardArtwork = (data: NftCardData, opts?: { large?: boolea
 };
 
 const initialsOf = (data: NftCardData): string => {
-  const base = data.name?.trim() || data.series?.trim() || 'NFT';
+  const base = data.name?.trim() || data.series?.trim() || 'DI';
   return base.slice(0, 2).toUpperCase();
+};
+
+const formatCardRowPrice = (data: NftCardData): string | null => {
+  if (data.priceMeMilli != null && data.priceMeMilli > 0) {
+    return formatMeDisplay(data.priceMeMilli);
+  }
+  if (data.priceCnyCents != null && data.priceCnyCents > 0) {
+    return formatCnyDisplay(data.priceCnyCents);
+  }
+  const satsPrice = formatNftPrice(data.priceSats);
+  return satsPrice ? satsPrice.split(' · ')[0] : null;
 };
 
 const copyTextToClipboard = (value: string): void => {
@@ -231,10 +244,11 @@ const NftCardImage: React.FC<{ data: NftCardData; large?: boolean }> = ({ data, 
     return <NftCardPlaceholder data={data} large={large} />;
   }
   const serial = nftCardSerial(data);
+  const itemDefaultLabel = ct('Digital Item', '数字商品');
   return (
     <img
       src={artwork.sources[failedCount]}
-      alt={data.name ? `${data.name}${serial ? ` #${serial}` : ''}` : `NFT${serial ? ` #${serial}` : ''}`}
+      alt={data.name ? `${data.name}${serial ? ` #${serial}` : ''}` : `${itemDefaultLabel}${serial ? ` #${serial}` : ''}`}
       loading="lazy"
       className={`block w-full bg-black/5 object-cover dark:bg-white/5 ${large ? 'max-h-[60vh]' : 'aspect-square'}`}
       onError={() => setFailedCount((n) => n + 1)}
@@ -333,6 +347,12 @@ const buildDetailFields = (data: NftCardData): DetailField[] => {
     if (data.genesis) fields.push({ label: 'Genesis', value: data.genesis, mono: true, copy: true });
     if (data.codehash) fields.push({ label: 'Codehash', value: data.codehash, mono: true, copy: true });
   }
+  if (data.priceMeMilli != null && data.priceMeMilli > 0) {
+    fields.push({ label: ct('ME Price', 'ME 价格'), value: formatMeDisplay(data.priceMeMilli) });
+  }
+  if (data.priceCnyCents != null && data.priceCnyCents > 0) {
+    fields.push({ label: ct('CNY Reference', '人民币参考价'), value: formatCnyDisplay(data.priceCnyCents) });
+  }
   const price = formatNftPrice(data.priceSats);
   if (price) fields.push({ label: 'Price', value: price });
   return fields;
@@ -378,7 +398,8 @@ export const NftCardDetailModal: React.FC<{ data: NftCardData; onClose: () => vo
   }, [onClose]);
 
   const serial = nftCardSerial(data);
-  const title = data.name ? `${data.name}${serial ? ` #${serial}` : ''}` : `NFT${serial ? ` #${serial}` : ''}`;
+  const itemDefaultLabel = ct('Digital Item', '数字商品');
+  const title = data.name ? `${data.name}${serial ? ` #${serial}` : ''}` : `${itemDefaultLabel}${serial ? ` #${serial}` : ''}`;
 
   const content = (
     <div
@@ -396,6 +417,15 @@ export const NftCardDetailModal: React.FC<{ data: NftCardData; onClose: () => vo
         <div className="flex items-center justify-between gap-2 border-b border-claude-border px-4 py-2 dark:border-claude-darkBorder">
           <div className="flex min-w-0 items-center gap-2">
             <ActionBadge action={data.action ?? 'info'} />
+            {data.caVerified === true && (
+              <span
+                data-nft-verified="true"
+                className="inline-flex shrink-0 items-center gap-0.5 rounded bg-emerald-500/15 px-1.5 py-px text-[10px] font-semibold text-emerald-600 dark:text-emerald-400"
+              >
+                <CheckBadgeIcon className="h-3 w-3" />
+                {ct('Verified', '官方认证')}
+              </span>
+            )}
             <span className="truncate text-sm font-semibold dark:text-claude-darkText text-claude-text">
               {title}
             </span>
@@ -461,92 +491,202 @@ const NftCard: React.FC<{ data: NftCardData; className?: string }> = ({ data, cl
   const healed = useNftCardHeal(data);
 
   const serial = nftCardSerial(healed);
-  const title = healed.name || `NFT${serial ? ` #${serial}` : ''}`;
-  const price = formatNftPrice(healed.priceSats);
+  const itemDefaultLabel = ct('Digital Item', '数字商品');
+  const title = healed.name || `${itemDefaultLabel}${serial ? ` #${serial}` : ''}`;
+  const rowPrice = formatCardRowPrice(healed);
+  const secondaryCny = healed.priceMeMilli != null && healed.priceMeMilli > 0 && healed.priceCnyCents != null && healed.priceCnyCents > 0
+    ? formatCnyDisplay(healed.priceCnyCents)
+    : null;
   const identityLine = healed.format === 'mrc721' ? healed.pinId : healed.genesis;
+  const ownerDisplayLabel = healed.ownerLabel || healed.sellerName;
+  const showBuyCapsule = Boolean(healed.pinId && (healed.priceMeMilli != null || healed.action === 'selling'));
+  const showNegotiateCapsule = Boolean(healed.pinId && (healed.sellerGlobalMetaId || healed.action === 'selling'));
+  const showShopCapsule = Boolean(healed.shopMetaAppPinId);
+  const hasCommerceActions = showBuyCapsule || showNegotiateCapsule || showShopCapsule;
 
   return (
     <>
       <div className={`my-2 w-[280px] max-w-full ${className}`}>
-        <button
-          type="button"
-          data-nft-card="true"
-          data-nft-format={healed.format}
-          data-nft-token-index={healed.tokenIndex}
-          data-nft-pin-id={healed.pinId}
-          onClick={openDetail}
-          title="View NFT details"
-          aria-label={`View NFT details: ${title}`}
-          className="flex h-full w-full flex-col overflow-hidden rounded-[8px] border border-claude-border bg-claude-surface text-left shadow-subtle transition-shadow hover:shadow-md dark:border-claude-darkBorder dark:bg-claude-darkSurface"
-        >
-          <div className="relative">
-            <NftCardImage data={healed} />
-            <NftCardFormatTag format={healed.format} />
-          </div>
-          {/* Fixed four-row text block: identical slot count on every card
-              (Row1 badge/series + price right-aligned — the standalone price
-              row of the first pass is gone; Row2 name + #serial; Row3 Owner;
-              Row4 Issuer with an em-dash placeholder while the heal is still
-              pending), tightened spacing, so grouped cards align at the
-              bottom and never differ in height. */}
-          <div className="flex flex-col gap-[3px] px-2.5 pt-1.5 pb-2">
-            <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-tight" data-nft-row="series">
-              <ActionBadge action={healed.action} />
-              {healed.series ? (
-                <span className="truncate font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                  {healed.series}
-                </span>
-              ) : (
-                <span className="truncate font-mono text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                  {identityLine ? shortId(identityLine, 8, 6) : 'NFT'}
-                </span>
-              )}
-              {price && (
-                <span className="ml-auto shrink-0 font-semibold text-claude-accent">{price.split(' · ')[0]}</span>
-              )}
+        <div className="flex h-full w-full flex-col overflow-hidden rounded-[8px] border border-claude-border bg-claude-surface shadow-subtle transition-shadow hover:shadow-md dark:border-claude-darkBorder dark:bg-claude-darkSurface">
+          <button
+            type="button"
+            data-nft-card="true"
+            data-nft-format={healed.format}
+            data-nft-token-index={healed.tokenIndex}
+            data-nft-pin-id={healed.pinId}
+            onClick={openDetail}
+            title="View NFT details"
+            aria-label={`View NFT details: ${title}`}
+            className="flex flex-1 flex-col text-left"
+          >
+            <div className="relative">
+              <NftCardImage data={healed} />
+              <NftCardFormatTag format={healed.format} />
             </div>
-            <div className="flex min-w-0 items-baseline gap-1 leading-tight">
-              <span className="truncate text-sm font-semibold dark:text-claude-darkText text-claude-text">{title}</span>
-              {serial && (
-                <span className="shrink-0 font-mono text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                  #{serial}
-                </span>
-              )}
+            {/* Fixed four-row text block: identical slot count on every card
+                (Row1 badge/series + price right-aligned; Row2 name + #serial;
+                Row3 Owner; Row4 Issuer with an em-dash placeholder while the
+                heal is still pending), tightened spacing, so grouped cards
+                align at the bottom and never differ in height. */}
+            <div className="flex flex-col gap-[3px] px-2.5 pt-1.5 pb-2">
+              <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-tight" data-nft-row="series">
+                <ActionBadge action={healed.action} />
+                {healed.caVerified === true && (
+                  <span
+                    data-nft-verified="true"
+                    className="inline-flex shrink-0 items-center gap-0.5 rounded bg-emerald-500/15 px-1 py-px text-[10px] font-semibold leading-tight text-emerald-600 dark:text-emerald-400"
+                    title={ct('CA-Verified Official Collection', 'CA 官方认证系列')}
+                  >
+                    <CheckBadgeIcon className="h-2.5 w-2.5" />
+                    {ct('Verified', '官方认证')}
+                  </span>
+                )}
+                {healed.series ? (
+                  <span className="truncate font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                    {healed.series}
+                  </span>
+                ) : (
+                  <span className="truncate font-mono text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                    {identityLine ? shortId(identityLine, 8, 6) : itemDefaultLabel}
+                  </span>
+                )}
+                {rowPrice && (
+                  <span className="ml-auto flex shrink-0 items-baseline gap-1 font-semibold text-claude-accent">
+                    <span>{rowPrice}</span>
+                    {secondaryCny && (
+                      <span className="text-[10px] font-normal text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                        {secondaryCny}
+                      </span>
+                    )}
+                  </span>
+                )}
+              </div>
+              <div className="flex min-w-0 items-baseline gap-1 leading-tight">
+                <span className="truncate text-sm font-semibold dark:text-claude-darkText text-claude-text">{title}</span>
+                {serial && (
+                  <span className="shrink-0 font-mono text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                    #{serial}
+                  </span>
+                )}
+              </div>
+              <div
+                data-nft-row="owner"
+                className="flex h-4 min-w-0 items-center gap-1.5 text-[11px] leading-tight text-claude-textSecondary dark:text-claude-darkTextSecondary"
+              >
+                <span className="shrink-0 opacity-70">Owner</span>
+                {healed.owner || ownerDisplayLabel ? (
+                  <div className="flex min-w-0 flex-1 items-center gap-1">
+                    {healed.sellerOnline === true && (
+                      <span
+                        data-seller-online="true"
+                        title={ct('Seller Online', '卖家在线')}
+                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
+                      />
+                    )}
+                    <NftCardIdentityChip
+                      address={healed.owner}
+                      label={ownerDisplayLabel}
+                      className="min-w-0 flex-1"
+                      avatarClassName="h-3.5 w-3.5 text-[8px]"
+                    />
+                  </div>
+                ) : (
+                  <span className="opacity-70">—</span>
+                )}
+              </div>
+              <div
+                data-nft-row="issuer"
+                className="flex h-4 min-w-0 items-center gap-1.5 text-[11px] leading-tight text-claude-textSecondary dark:text-claude-darkTextSecondary"
+              >
+                <span className="shrink-0 opacity-70">Issuer</span>
+                {healed.issuer || healed.issuerLabel ? (
+                  <NftCardIdentityChip
+                    address={healed.issuer}
+                    label={healed.issuerLabel}
+                    className="min-w-0 flex-1"
+                    avatarClassName="h-3.5 w-3.5 text-[8px]"
+                  />
+                ) : (
+                  <span className="opacity-70">—</span>
+                )}
+              </div>
             </div>
+          </button>
+          {hasCommerceActions && (
             <div
-              data-nft-row="owner"
-              className="flex h-4 min-w-0 items-center gap-1.5 text-[11px] leading-tight text-claude-textSecondary dark:text-claude-darkTextSecondary"
+              data-nft-commerce-actions="true"
+              className="flex flex-wrap items-center gap-1 border-t border-claude-border/70 px-2.5 py-1.5 dark:border-claude-darkBorder/70"
             >
-              <span className="shrink-0 opacity-70">Owner</span>
-              {healed.owner || healed.ownerLabel ? (
-                <NftCardIdentityChip
-                  address={healed.owner}
-                  label={healed.ownerLabel}
-                  className="min-w-0 flex-1"
-                  avatarClassName="h-3.5 w-3.5 text-[8px]"
-                />
-              ) : (
-                <span className="opacity-70">—</span>
+              {showBuyCapsule && healed.pinId && (
+                <button
+                  type="button"
+                  data-nft-action="buy-me"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    dispatchCommerceIntent({
+                      type: 'buy_with_me',
+                      itemPinId: healed.pinId!,
+                      itemName: healed.name,
+                      series: healed.series,
+                      priceMeMilli: healed.priceMeMilli,
+                      priceCnyCents: healed.priceCnyCents,
+                      priceSats: healed.priceSats,
+                      sellerAddress: healed.owner,
+                      sellerGlobalMetaId: healed.sellerGlobalMetaId,
+                      sellerName: ownerDisplayLabel,
+                      shopMetaAppPinId: healed.shopMetaAppPinId,
+                      icon: healed.icon,
+                      imgUrl: healed.imgUrl,
+                    });
+                  }}
+                  className="rounded-full bg-claude-accent/15 px-2 py-0.5 text-[10px] font-semibold text-claude-accent transition-colors hover:bg-claude-accent/25"
+                >
+                  {ct('Buy with ME', 'ME 购买')}
+                </button>
+              )}
+              {showNegotiateCapsule && healed.pinId && (
+                <button
+                  type="button"
+                  data-nft-action="negotiate"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    dispatchCommerceIntent({
+                      type: 'negotiate',
+                      itemPinId: healed.pinId!,
+                      itemName: healed.name,
+                      series: healed.series,
+                      sellerAddress: healed.owner,
+                      sellerGlobalMetaId: healed.sellerGlobalMetaId,
+                      sellerName: ownerDisplayLabel,
+                      priceMeMilli: healed.priceMeMilli,
+                    });
+                  }}
+                  className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] font-medium text-claude-textSecondary transition-colors hover:bg-black/10 dark:bg-white/10 dark:text-claude-darkTextSecondary dark:hover:bg-white/20"
+                >
+                  {ct('Negotiate', '议价')}
+                </button>
+              )}
+              {showShopCapsule && healed.shopMetaAppPinId && (
+                <button
+                  type="button"
+                  data-nft-action="visit-shop"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    dispatchCommerceIntent({
+                      type: 'visit_shop',
+                      shopMetaAppPinId: healed.shopMetaAppPinId!,
+                      sellerGlobalMetaId: healed.sellerGlobalMetaId,
+                      sellerName: ownerDisplayLabel,
+                    });
+                  }}
+                  className="ml-auto rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-600 transition-colors hover:bg-violet-500/20 dark:text-violet-400"
+                >
+                  {ct('Visit Shop', '进店')}
+                </button>
               )}
             </div>
-            <div
-              data-nft-row="issuer"
-              className="flex h-4 min-w-0 items-center gap-1.5 text-[11px] leading-tight text-claude-textSecondary dark:text-claude-darkTextSecondary"
-            >
-              <span className="shrink-0 opacity-70">Issuer</span>
-              {healed.issuer || healed.issuerLabel ? (
-                <NftCardIdentityChip
-                  address={healed.issuer}
-                  label={healed.issuerLabel}
-                  className="min-w-0 flex-1"
-                  avatarClassName="h-3.5 w-3.5 text-[8px]"
-                />
-              ) : (
-                <span className="opacity-70">—</span>
-              )}
-            </div>
-          </div>
-        </button>
+          )}
+        </div>
       </div>
       {detailOpen && <NftCardDetailModal data={healed} onClose={closeDetail} />}
     </>

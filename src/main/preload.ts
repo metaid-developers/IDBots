@@ -1535,6 +1535,35 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('nftSwap:orderCompleted', handler);
     },
   },
+  goodsTrade: {
+    getBuyerBalance: (input?: { metabotId?: number }) =>
+      ipcRenderer.invoke('goodsTrade:getBuyerBalance', input ?? {}),
+    buyWithMe: (input: {
+      metabotId?: number;
+      itemPinId: string;
+      amountMilli: number;
+      sellerAddress?: string;
+      sellerGlobalMetaId?: string;
+      collectionPinId?: string;
+      listingPinId?: string;
+      note?: string;
+    }) => ipcRenderer.invoke('goodsTrade:buyWithMe', input),
+    onPurchaseSettled: (callback: (payload: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: Record<string, unknown>) => callback(payload);
+      ipcRenderer.on('goodsTrade:purchaseSettled', handler);
+      return () => ipcRenderer.removeListener('goodsTrade:purchaseSettled', handler);
+    },
+    onAutoSold: (callback: (payload: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: Record<string, unknown>) => callback(payload);
+      ipcRenderer.on('goodsTrade:autoSold', handler);
+      return () => ipcRenderer.removeListener('goodsTrade:autoSold', handler);
+    },
+    onOrderRejected: (callback: (payload: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: Record<string, unknown>) => callback(payload);
+      ipcRenderer.on('goodsTrade:orderRejected', handler);
+      return () => ipcRenderer.removeListener('goodsTrade:orderRejected', handler);
+    },
+  },
   networkStatus: {
     send: (status: 'online' | 'offline') => ipcRenderer.send('network:status-change', status),
   },

@@ -47,6 +47,13 @@ export interface NftCardEmitFields {
   issuer?: string;
   issuerLabel?: string;
   priceSats?: number;
+  priceMeMilli?: number;
+  priceCnyCents?: number;
+  sellerGlobalMetaId?: string;
+  sellerName?: string;
+  sellerOnline?: boolean;
+  shopMetaAppPinId?: string;
+  caVerified?: boolean;
   action?: string;
   /**
    * Host source signature (S4 Correction slice, owner decision A): stamped by
@@ -59,7 +66,8 @@ export interface NftCardEmitFields {
 const NFT_CARD_KEY_ORDER: Array<keyof NftCardEmitFields> = [
   'format', 'pinId', 'genesis', 'codehash', 'tokenIndex', 'number', 'name',
   'series', 'imgUrl', 'icon', 'owner', 'ownerLabel', 'issuer', 'issuerLabel',
-  'priceSats', 'action', 'hostStamp',
+  'priceSats', 'priceMeMilli', 'priceCnyCents', 'sellerGlobalMetaId',
+  'sellerName', 'sellerOnline', 'shopMetaAppPinId', 'caVerified', 'action', 'hostStamp',
 ];
 
 const cleanOptional = (value: string | undefined, max: number): string | undefined => {
@@ -162,6 +170,13 @@ export const buildMrc721CardFields = (input: {
   owner?: string;
   ownerLabel?: string;
   priceSats?: number;
+  priceMeMilli?: number;
+  priceCnyCents?: number;
+  sellerGlobalMetaId?: string;
+  sellerName?: string;
+  sellerOnline?: boolean;
+  shopMetaAppPinId?: string;
+  caVerified?: boolean;
   action?: string;
 }): NftCardEmitFields => {
   const item = input.facts?.item ?? null;
@@ -187,6 +202,24 @@ export const buildMrc721CardFields = (input: {
   if (issuer) fields.issuer = issuer;
   if (input.priceSats != null && Number.isInteger(input.priceSats) && input.priceSats >= 0) {
     fields.priceSats = input.priceSats;
+  }
+  if (input.priceMeMilli != null && Number.isInteger(input.priceMeMilli) && input.priceMeMilli >= 0) {
+    fields.priceMeMilli = input.priceMeMilli;
+  }
+  if (input.priceCnyCents != null && Number.isInteger(input.priceCnyCents) && input.priceCnyCents >= 0) {
+    fields.priceCnyCents = input.priceCnyCents;
+  }
+  const sellerGlobalMetaId = cleanOptional(input.sellerGlobalMetaId, 128);
+  if (sellerGlobalMetaId) fields.sellerGlobalMetaId = sellerGlobalMetaId;
+  const sellerName = cleanOptional(input.sellerName, 64);
+  if (sellerName) fields.sellerName = sellerName;
+  if (typeof input.sellerOnline === 'boolean') {
+    fields.sellerOnline = input.sellerOnline;
+  }
+  const shopMetaAppPinId = cleanOptional(input.shopMetaAppPinId, 80);
+  if (shopMetaAppPinId) fields.shopMetaAppPinId = shopMetaAppPinId;
+  if (typeof input.caVerified === 'boolean') {
+    fields.caVerified = input.caVerified;
   }
   const action = cleanOptional(input.action, 16);
   if (action) fields.action = action.toLowerCase();
