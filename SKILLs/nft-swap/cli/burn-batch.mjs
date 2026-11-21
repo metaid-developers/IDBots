@@ -44,6 +44,7 @@ const HELP = `burn-batch — 逐枚单发销毁旧 token（PRD §5.8）
   node cli/burn-batch.mjs [--batch-id <id>] [选项]
 
 选项:
+  --collection <slug>   目标系列 slug（可选，默认 metabot-avatar）
   --batch-id <id>       批次审计键（广播时必填；dry-run 省略时自动生成一个建议值）
   --limit <n>           本批最多处理枚数（默认 20）
   --broadcast           真实广播（默认 dry-run）
@@ -70,12 +71,12 @@ function suggestedBatchId(now = new Date()) {
 
 async function main(argv) {
   const args = parseCliArgs(argv, {
-    values: ['batch-id', 'limit', 'settle-ms', 'metabot-id', 'ledger', 'user-data'],
+    values: ['collection', 'batch-id', 'limit', 'settle-ms', 'metabot-id', 'ledger', 'user-data'],
     booleans: ['broadcast', 'confirm-owner'],
   });
   const userDataPath = resolveUserData(args);
-  const config = resolvedPilotConfig(userDataPath);
-  const album = albumFromConfig(config);
+  const config = resolvedPilotConfig(userDataPath, args.collection || null);
+  const album = albumFromConfig(config, { collectionSlug: args.collection || null });
   const broadcast = Boolean(args.broadcast);
   const batchId = args['batch-id'] || (broadcast ? null : suggestedBatchId());
   if (!batchId) {

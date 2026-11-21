@@ -30,7 +30,7 @@ function loadTestUtils() {
   }
 }
 
-const { resolveThinkingForModel, extractAnthropicThinkingText, resolveDeepSeekResponsesReasoning, resolveDefaultMaxOutputTokens, buildDeepSeekResponsesTools, allowThinkingFallbackPromotion } = loadTestUtils();
+const { resolveThinkingForModel, extractAnthropicThinkingText, resolveDeepSeekResponsesReasoning, resolveDefaultMaxOutputTokens, buildDeepSeekResponsesTools, allowThinkingFallbackPromotion, readAnthropicSseCompletion, assembleAnthropicResult, resolveOneShotStreamDeadline, buildOneShotAttemptDeadline } = loadTestUtils();
 
 test('one-shot completion reads the Anthropic thinking field emitted by the proxy', () => {
   assert.equal(
@@ -215,4 +215,174 @@ test('one-shot attempts pin their upstream under a throwaway key and clear it af
   assert.ok(resolvedKeys.every((key) => typeof key === 'string' && key.startsWith('oneshot-')));
   assert.notEqual(resolvedKeys[0], resolvedKeys[1], 'each attempt pins a distinct upstream entry');
   assert.deepEqual([...clearedKeys].sort(), [...resolvedKeys].sort(), 'every pin is cleared after the attempt');
+});
+
+
+// ── Streaming transport (2026-11-20 ABS relay handoff) ─────────────────────
+
+function makeSseResponse(frames, { contentType = 'text/event-stream' } = {}) {
+  return new Response(frames.join('\n\n') + '\n\n', { headers: { 'content-type': contentType } });
+}
+
+/** A stream that emits `frames` then stalls forever unless `abortSignal`
+ *  fires — mimics the fetch transport contract where an aborted request
+ *  signal errors the body stream with the abort reason. */
+function makeStallingSseStream(frames, abortSignal) {
+  return new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+      for (const frame of frames) controller.enqueue(encoder.encode(frame + '\n\n'));
+      if (abortSignal) {
+        abortSignal.addEventListener('abort', () => controller.error(abortSignal.reason), { once: true });
+      }
+      // Otherwise: never enqueue again, never close — the stalled upstream.
+    },
+  });
+}
+
+test('anthropic SSE stream folds text, tool calls, usage and stop reason into the JSON shape', async () => {
+  const frames = [
+    'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":42}}}',
+    ': ping',
+    'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"He"}}',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"llo"}}',
+    'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}',
+    'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tc_1","name":"lookup"}}',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"q\\":"}}',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"x\\"}"}}',
+    'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}',
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":17}}',
+    'event: message_stop\ndata: {"type":"message_stop"}',
+  ];
+  const deadline = buildOneShotAttemptDeadline({ idleMs: 5000, totalMs: 60000 }, undefined);
+  try {
+    const shaped = await readAnthropicSseCompletion(makeSseResponse(frames), { deadline });
+    assert.equal(shaped.stop_reason, 'tool_use');
+    assert.equal(shaped.usage.input_tokens, 42);
+    assert.equal(shaped.usage.output_tokens, 17);
+    const result = assembleAnthropicResult(shaped, 'glm-5.3-flash');
+    assert.equal(result.content, 'Hello');
+    assert.equal(result.tool_calls?.length, 1);
+    assert.equal(result.tool_calls[0].id, 'tc_1');
+    assert.equal(result.tool_calls[0].name, 'lookup');
+    assert.equal(result.tool_calls[0].arguments, '{"q":"x"}');
+    assert.deepEqual(result.responseMetadata.contentBlockTypes, ['text', 'tool_use']);
+  } finally {
+    deadline.cleanup();
+  }
+});
+
+test('SSE thinking-only stream promotes reasoning on DeepSeek but never on GLM', async () => {
+  const frames = [
+    'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hidden chain"}}',
+    'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}',
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"stop"}}',
+    'event: message_stop\ndata: {"type":"message_stop"}',
+  ];
+  const deadline = buildOneShotAttemptDeadline({ idleMs: 5000, totalMs: 60000 }, undefined);
+  try {
+    const shaped = await readAnthropicSseCompletion(makeSseResponse(frames), { deadline });
+    const deepseek = assembleAnthropicResult(shaped, 'deepseek-v4-flash');
+    assert.equal(deepseek.content, 'hidden chain');
+    assert.ok(deepseek.responseMetadata.contentBlockTypes?.includes('reasoning-fallback'));
+    // GLM reasoning is always hidden thinking — promoting it would leak a
+    // mid-thought fragment as the answer (2026-10-23 ack-bubble leak class).
+    const glm = assembleAnthropicResult(shaped, 'glm-5.3-flash');
+    assert.equal(glm.content, undefined);
+    assert.ok(!glm.responseMetadata.contentBlockTypes?.includes('reasoning-fallback'));
+    assert.ok(glm.responseMetadata.contentBlockTypes?.includes('thinking'));
+  } finally {
+    deadline.cleanup();
+  }
+});
+
+test('SSE error event rejects the attempt', async () => {
+  const frames = [
+    'event: message_start\ndata: {"type":"message_start","message":{}}',
+    'event: error\ndata: {"type":"error","error":{"type":"upstream_error","message":"boom"}}',
+  ];
+  const deadline = buildOneShotAttemptDeadline({ idleMs: 5000, totalMs: 60000 }, undefined);
+  try {
+    await assert.rejects(
+      readAnthropicSseCompletion(makeSseResponse(frames), { deadline }),
+      /LLM stream error: boom/,
+    );
+  } finally {
+    deadline.cleanup();
+  }
+});
+
+test('SSE stream without message_stop rejects (truncated upstream)', async () => {
+  const frames = [
+    'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}',
+  ];
+  const deadline = buildOneShotAttemptDeadline({ idleMs: 5000, totalMs: 60000 }, undefined);
+  try {
+    await assert.rejects(
+      readAnthropicSseCompletion(makeSseResponse(frames), { deadline }),
+      /message_stop/,
+    );
+  } finally {
+    deadline.cleanup();
+  }
+});
+
+test('idle watchdog aborts a stalled SSE stream with a TimeoutError', async () => {
+  const deadline = buildOneShotAttemptDeadline({ idleMs: 60, totalMs: null }, undefined);
+  const response = new Response(
+    makeStallingSseStream([': ping\n\n'], deadline.signal),
+    { headers: { 'content-type': 'text/event-stream' } },
+  );
+  try {
+    await assert.rejects(
+      readAnthropicSseCompletion(response, { deadline }),
+      (err) => err instanceof Error && err.name === 'TimeoutError' && /idle timeout/.test(err.message),
+    );
+  } finally {
+    deadline.cleanup();
+  }
+});
+
+test('total deadline still bounds the attempt wall clock', async () => {
+  const deadline = buildOneShotAttemptDeadline({ idleMs: 60000, totalMs: 60 }, undefined);
+  const response = new Response(
+    makeStallingSseStream([': ping\n\n'], deadline.signal),
+    { headers: { 'content-type': 'text/event-stream' } },
+  );
+  try {
+    await assert.rejects(
+      readAnthropicSseCompletion(response, { deadline }),
+      (err) => err instanceof Error && err.name === 'TimeoutError' && /deadline exceeded/.test(err.message),
+    );
+  } finally {
+    deadline.cleanup();
+  }
+});
+
+test('stream deadline: total kind keeps the wall clamp, idle kind grows the total', () => {
+  // 'total' (default) — attemptTimeoutMs stays the whole-attempt wall budget
+  // (dream's run-budget clamp contract).
+  assert.deepEqual(
+    resolveOneShotStreamDeadline({ attemptTimeoutMs: 60_000 }),
+    { idleMs: 60_000, totalMs: 60_000 },
+  );
+  // unset attemptTimeoutMs keeps the historical unbounded wait (caller signal governs)
+  assert.deepEqual(resolveOneShotStreamDeadline({}), { idleMs: 120_000, totalMs: null });
+  // 'idle' — no-progress budget with a grown total (min(idle×8, 600s))
+  assert.deepEqual(
+    resolveOneShotStreamDeadline({ attemptTimeoutMs: 60_000, attemptTimeoutKind: 'idle' }),
+    { idleMs: 60_000, totalMs: 480_000 },
+  );
+  assert.deepEqual(
+    resolveOneShotStreamDeadline({ attemptTimeoutKind: 'idle' }),
+    { idleMs: 120_000, totalMs: 600_000 },
+  );
+  // a caller window at or above the ceiling never shrinks (dream ladder tail)
+  assert.deepEqual(
+    resolveOneShotStreamDeadline({ attemptTimeoutMs: 2_280_000, attemptTimeoutKind: 'idle' }),
+    { idleMs: 2_280_000, totalMs: 2_280_000 },
+  );
 });

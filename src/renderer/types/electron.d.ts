@@ -1763,6 +1763,8 @@ interface IElectronAPI {
     }>;
     onDelegationStateChange: (callback: (data: { sessionId: string; blocking: boolean; orderId?: string; message?: string }) => void) => () => void;
     onSessionProfileRefreshed: (callback: (data: { sessionId: string }) => void) => () => void;
+    /** §9 visibility: a turn switched onto / settled off a fallback brain route. */
+    onSessionFallbackBrain: (callback: (data: { sessionId: string }) => void) => () => void;
   };
   dialog: {
     selectDirectory: () => Promise<{ success: boolean; path: string | null }>;
@@ -2742,6 +2744,9 @@ interface IElectronAPI {
     runNow: (metabotId: number) => Promise<{ success: boolean; runId?: string; error?: string }>;
     onStatusChanged: (callback: (payload: { metabotId: number; runId: string; trigger: string; status: string; error?: string | null }) => void) => () => void;
   };
+  nftSwap: {
+    onOrderCompleted: (callback: (payload: ElectronNftSwapOrderCompletedEvent) => void) => () => void;
+  };
   permissions: {
     checkCalendar: () => Promise<{ success: boolean; status?: string; error?: string; autoRequested?: boolean }>;
     requestCalendar: () => Promise<{ success: boolean; granted?: boolean; status?: string; error?: string }>;
@@ -3042,11 +3047,65 @@ interface ElectronMetabotNftListItem {
   raw: ElectronMetabotMrc721Raw | ElectronMetabotMetaContractNftRaw;
 }
 
+interface ElectronNftSwapOrderCompletedEvent {
+  requestId: string;
+  metabotId: number;
+  stationGlobalMetaId: string;
+  collectionSlug: string;
+  targetCollectionPinId: string | null;
+  sessionId: string | null;
+  status: 'submitted' | 'partially_completed' | 'completed' | 'failed';
+  source: 'a2a_message' | 'metaso_poll';
+  results: Array<{
+    tokenIndex: string;
+    status: 'completed' | 'failed';
+    itemPinId?: string;
+    deliveryTxId?: string;
+    itemName?: string;
+    cover?: string;
+    error?: string;
+  }>;
+  completedAt: number;
+}
+
 /** One certified collection in the IDBots NFT CA registry pin content. */
 interface ElectronNftCaCollectionEntry {
   collectionPinId: string;
   collectionName?: string;
+  displayTitle?: string;
+  legacySeries?: {
+    codehash: string;
+    genesis: string;
+    swapStationGlobalMetaId?: string;
+  };
   note?: string;
+  certifiedAt?: number;
+}
+
+interface ElectronNftCaOfficialBotEntry {
+  globalMetaId: string;
+  metaId?: string;
+  mvcAddress: string;
+  role: 'swap_station' | 'escrow_guarantor' | 'official_announcer';
+  badgeType: string;
+  badgeLabel: string;
+  swapConfig?: {
+    vaultAddress: string;
+    supportedSeries: Array<{
+      collectionSlug: string;
+      targetCollectionPinId: string;
+      codehash: string;
+      genesis: string;
+      maxTokenIndex?: number;
+      minConfirmations?: number;
+    }>;
+  };
+  escrowConfig?: {
+    custodyAddress: string;
+    supportedCurrencies?: string[];
+    maxOrderCnyCents?: number;
+  };
+  active: boolean;
   certifiedAt?: number;
 }
 
@@ -3065,6 +3124,7 @@ interface ElectronNftCaRegistry {
   creatorMetaId: string | null;
   officialMetaId: string;
   collections: ElectronNftCaCollectionEntry[];
+  officialBots?: ElectronNftCaOfficialBotEntry[];
   fetchedAt: number;
 }
 

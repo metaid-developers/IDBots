@@ -90,6 +90,10 @@ import {
   resolveFollowUpAction,
 } from '../cerebellum/sessionFollowUpGate';
 import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isModelSwitchCompactionFailedDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isRuntimeBootDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, shouldAutoReviewDshToolCall, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, extractOfficialRelayMeErrorCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice, meBalanceSpendableMilli } from './coworkAssistantReply';
+// §9 session-level visibility for a fallback-brain turn (see the module doc):
+// the runner records WHICH rung is serving the turn and clears it at settle;
+// route selection itself is untouched.
+import { FallbackBrainRegistry, type FallbackBrainActivation, type FallbackBrainRung } from './fallbackBrainStatus';
 import {
   filterSdkInternalDiagnostics,
   isSdkInternalDiagnostic,
@@ -264,6 +268,10 @@ import {
   type ProjectsControl,
 } from './projectsAgentTools';
 import {
+  buildMobilePageAgentTools,
+  type MobilePageAgentToolsControl,
+} from './mobilePageAgentTools';
+import {
   buildSocialRecallAgentTools,
   type SocialRecallControl,
 } from './socialRecallAgentTools';
@@ -361,6 +369,11 @@ import {
   buildMrc721AgentTools,
   type Mrc721ToolsControl,
 } from './mrc721AgentTools';
+import {
+  buildNftSwapAgentTools,
+  type NftSwapBatchConfirmationInfo,
+  type NftSwapToolsControl,
+} from './nftSwapAgentTools';
 import {
   buildEscrowAgentTools,
   type EscrowAgentToolsControl,
@@ -2506,6 +2519,15 @@ export interface CoworkRunnerOptions {
    */
   projects?: ProjectsControl;
   /**
+   * Server mode only (REQ-A-5 posture): when set, the session gets the
+   * `mobile_open_page` tool — the bot hosts one local HTML page through the
+   * running gateway with an HMAC-signed, expiring page token and returns a
+   * tappable card the owner opens on their phone. Desktop never wires this
+   * control, and the mount seam also checks isServerMode(), so the desktop
+   * tool surface does not change.
+   */
+  mobilePage?: MobilePageAgentToolsControl;
+  /**
    * When set, every cowork session gets on-chain social post search tools
    * (search_social_posts + social_post_detail + social_post_comments) backed
    * by the metaso-p2p Social Recall API (so.metaid.io/api/social/*). Browser
@@ -2620,6 +2642,11 @@ export interface CoworkRunnerOptions {
    * Separate lineage from the MetaContract wallet_nft_* tools.
    */
   mrc721Tools?: Mrc721ToolsControl;
+  /**
+   * WS-A: CA-verified legacy MetaContract -> MRC-721 batch swap tools
+   * (nft_swap_verify_official_station, nft_swap_submit_batch, nft_swap_order_status).
+   */
+  nftSwapTools?: NftSwapToolsControl;
   /**
    * When set, every cowork session gets the escrow_* tools (S3 generalized
    * escrow, first-round slice): escrow_order_create / act / list / info /
@@ -3008,6 +3035,8 @@ export class CoworkRunner extends EventEmitter {
   private networkServices?: NetworkServicesControl;
   private onlineBots?: OnlineBotsControl;
   private projects?: ProjectsControl;
+  /** Server-mode-only mobile page hosting surface (see CoworkRunnerOptions). */
+  private mobilePage?: MobilePageAgentToolsControl;
   private socialRecall?: SocialRecallControl;
   private metawebLearning?: MetawebLearningControl;
   private metaProtocolRegistry?: MetaProtocolRegistryControl;
@@ -3028,6 +3057,7 @@ export class CoworkRunner extends EventEmitter {
   private walletTools?: WalletToolsControl;
   private btcMultisigTools?: BtcMultisigToolsControl;
   private mrc721Tools?: Mrc721ToolsControl;
+  private nftSwapTools?: NftSwapToolsControl;
   private escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
   private meChargeTools?: MeChargeToolsControl;
   private paymentCards?: PaymentCardAgentToolsControl;
@@ -3235,6 +3265,7 @@ export class CoworkRunner extends EventEmitter {
     this.networkServices = options?.networkServices;
     this.onlineBots = options?.onlineBots;
     this.projects = options?.projects;
+    this.mobilePage = options?.mobilePage;
     this.socialRecall = options?.socialRecall;
     this.metawebLearning = options?.metawebLearning;
     this.metaProtocolRegistry = options?.metaProtocolRegistry;
@@ -3259,6 +3290,7 @@ export class CoworkRunner extends EventEmitter {
     this.walletTools = options?.walletTools;
     this.btcMultisigTools = options?.btcMultisigTools;
     this.mrc721Tools = options?.mrc721Tools;
+    this.nftSwapTools = options?.nftSwapTools;
     this.escrowTools = options?.escrowTools;
     this.meChargeTools = options?.meChargeTools;
     this.paymentCards = options?.paymentCards;
@@ -9123,6 +9155,51 @@ export class CoworkRunner extends EventEmitter {
     return outcome === 'approved';
   }
 
+  private async confirmBatchSwap(
+    sessionId: string,
+    info: NftSwapBatchConfirmationInfo,
+  ): Promise<boolean> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (!activeSession) {
+      return false;
+    }
+    const previewTokens = info.tokenIndexes.slice(0, 10).map((t) => `#${t}`).join(', ');
+    const moreCount = info.tokenIndexes.length > 10 ? ` (+${info.tokenIndexes.length - 10})` : '';
+    const question = tApp(
+      `Agent 准备向官方 CA 认证置换站提交一笔旧版藏品（MetaContract）批量置换（不可撤销）：\n` +
+      `- 系列: ${info.collectionName || info.collectionSlug}\n` +
+      `- 认证站点: ${info.badgeLabel} (${info.stationGlobalMetaId})\n` +
+      `- 托管金库地址: ${info.vaultAddress}\n` +
+      `- 置换数量: ${info.tokenIndexes.length} 枚 (${previewTokens}${moreCount})\n` +
+      `是否允许一键转出旧藏品并向置换站发起自动置换？（需要你本人确认；60 秒内未回答视为拒绝）`,
+      `The agent is about to submit a batch legacy collectible (MetaContract) swap to a CA-certified official station (irreversible):\n` +
+      `- Series: ${info.collectionName || info.collectionSlug}\n` +
+      `- Verified Station: ${info.badgeLabel} (${info.stationGlobalMetaId})\n` +
+      `- Vault Address: ${info.vaultAddress}\n` +
+      `- Quantity: ${info.tokenIndexes.length} item(s) (${previewTokens}${moreCount})\n` +
+      `Allow transferring these legacy items and submitting the swap claim? (owner confirmation required; unanswered after 60s = denied)`,
+    );
+    const outcome = await this.requestSafetyApproval(
+      sessionId,
+      activeSession.abortController.signal,
+      activeSession,
+      question,
+      'nft_swap_batch',
+      {
+        collection_slug: info.collectionSlug,
+        station_global_metaid: info.stationGlobalMetaId,
+        vault_address: info.vaultAddress,
+        codehash: info.codehash,
+        genesis: info.genesis,
+        token_indexes: info.tokenIndexes,
+        count: info.tokenIndexes.length,
+      } as Record<string, unknown>,
+      'deny',
+      { ownerOnly: true },
+    );
+    return outcome === 'approved';
+  }
+
   /**
    * Owner gate for multisig signing and broadcast. Timeout is deny: an
    * unanswered prompt must not attach a signature or publish a transaction.
@@ -10375,6 +10452,7 @@ export class CoworkRunner extends EventEmitter {
             effort: 'low',
             webSearch: false,
             attemptTimeoutMs: STUDIO_CHAPTER_CARD_TIMEOUT_MS,
+            attemptTimeoutKind: 'idle',
           },
         );
         const parsed = parseStudioChapterCardResponse(raw);
@@ -11315,6 +11393,54 @@ export class CoworkRunner extends EventEmitter {
   /** Sessions already notified about a given exhaustion period — one bypass notice per period per session. */
   private readonly quotaBypassNoticeBySession = new Map<string, { provider: string; sinceMs: number }>();
 
+  /**
+   * Live per-session "this turn is NOT on the primary brain" markers (§9
+   * visibility, 2026-11-20). Written only when a switch has ALREADY been
+   * committed, cleared in the turn's single settle point (finish()); the session
+   * summary IPC merges it so a sidebar row can say 备用脑运行中 instead of a bare
+   * 运行中. Purely an annotation layer — it never feeds route selection.
+   */
+  private readonly fallbackBrainRegistry = new FallbackBrainRegistry();
+
+  /** Live fallback-brain marker for a session (null when the turn runs on its own route). */
+  getActiveFallbackBrain(sessionId: string): FallbackBrainActivation | null {
+    return this.fallbackBrainRegistry.get(sessionId);
+  }
+
+  /**
+   * Record + announce a committed brain switch (annotation only: the caller has
+   * already resolved and entered the new route). Emits `fallbackBrain` so the
+   * main process can ping renderers without waiting for the turn to settle.
+   */
+  private markFallbackBrainActive(
+    sessionId: string,
+    input: {
+      provider: string;
+      model: string;
+      fromProvider: string | null;
+      fromModel: string | null;
+      rung: FallbackBrainRung;
+    },
+  ): void {
+    const activation = this.fallbackBrainRegistry.mark(sessionId, { ...input, at: Date.now() });
+    if (!activation) return;
+    this.emit('fallbackBrain', sessionId, activation);
+    coworkLog('INFO', 'markFallbackBrainActive', 'Session turn is running on a fallback brain route', {
+      sessionId,
+      rung: activation.rung,
+      fromProvider: activation.fromProvider,
+      fromModel: activation.fromModel,
+      toProvider: activation.provider,
+      toModel: activation.model,
+    });
+  }
+
+  /** Clear + announce the marker (called from the turn's settle point). */
+  private clearFallbackBrainActive(sessionId: string): void {
+    if (!this.fallbackBrainRegistry.clear(sessionId)) return;
+    this.emit('fallbackBrain', sessionId, null);
+  }
+
   /** The exhaustion entry when the provider should still be bypassed, else null (absent, or the re-probe window is due). */
   private quotaExhaustedBypassEntry(provider: string): { sinceMs: number; lastProbeAt: number } | null {
     const entry = this.providerQuotaExhausted.get(provider);
@@ -11362,16 +11488,16 @@ export class CoworkRunner extends EventEmitter {
   private resolveQuotaBypassDshRoute(
     sessionId: string,
     deadRoute: DshProviderRouteInfo,
-  ): { route: DshProviderRouteInfo; targetZh: string; targetEn: string } | null {
+  ): { route: DshProviderRouteInfo; targetZh: string; targetEn: string; rung: FallbackBrainRung } | null {
     const brainFallback = this.resolveSessionFallbackDshRoute(sessionId, deadRoute);
     if (brainFallback && !this.isQuotaDeadAlternative(brainFallback)) {
-      return { route: brainFallback, targetZh: '该 Bot 的备用模型', targetEn: "the bot's fallback model" };
+      return { route: brainFallback, targetZh: '该 Bot 的备用模型', targetEn: "the bot's fallback model", rung: 'bot-fallback' };
     }
     const rescue = this.resolveCurrentDefaultDshRoute(sessionId, deadRoute);
     if (rescue.route && !this.isQuotaDeadAlternative(rescue.route)) {
       return rescue.source === 'system-rescue'
-        ? { route: rescue.route, targetZh: '系统兜底模型', targetEn: 'the system rescue model' }
-        : { route: rescue.route, targetZh: '当前默认模型', targetEn: 'the current default model' };
+        ? { route: rescue.route, targetZh: '系统兜底模型', targetEn: 'the system rescue model', rung: 'system-rescue' }
+        : { route: rescue.route, targetZh: '当前默认模型', targetEn: 'the current default model', rung: 'current-default' };
     }
     return null;
   }
@@ -12419,6 +12545,10 @@ export class CoworkRunner extends EventEmitter {
     // activeSessions, and turn N+1 arrives after turn N's teardown removed it.
     this.activeSessions.set(sessionId, activeSession);
     this.dshActiveTurns.add(sessionId);
+    // §9 visibility: a new turn starts on the session's own route, so any mark
+    // left by a torn-down predecessor (crash / restart path that skipped
+    // finish()) must not decorate it. Absent mark → no-op, no emit.
+    this.clearFallbackBrainActive(sessionId);
     // Stop/abort maps to the runtime's native turn cancel; the turn promise
     // then settles with an aborted reason. The cancel tag rides the abort
     // signal's reason: stopSession passes its caller-supplied reason through
@@ -12437,6 +12567,10 @@ export class CoworkRunner extends EventEmitter {
         claudeSessionId: activeSession.claudeSessionId,
         status,
       });
+      // §9 visibility: the turn is over, so "running on the fallback brain" is
+      // no longer true. Cleared AFTER the status write so a renderer refresh
+      // triggered by the announcement can never observe running + stale mark.
+      this.clearFallbackBrainActive(sessionId);
     };
 
     try {
@@ -13584,6 +13718,17 @@ export class CoworkRunner extends EventEmitter {
         const bypass = this.resolveQuotaBypassDshRoute(sessionId, route);
         if (bypass) {
           quotaBypassRoute = bypass.route;
+          // §9 visibility: this turn is about to run on a non-primary route.
+          // The notice below is rate-limited to once per exhaustion period per
+          // session, so it cannot double as the per-turn status marker — this
+          // one is written for every bypassed turn and cleared at settle.
+          this.markFallbackBrainActive(sessionId, {
+            provider: bypass.route.provider,
+            model: bypass.route.model,
+            fromProvider: route.provider,
+            fromModel: route.model,
+            rung: bypass.rung,
+          });
           const deadProviderLabel = isFreeQuotaProvider(route.provider) ? FREE_PROVIDER_DISPLAY_NAME : route.provider;
           const altProviderLabel = isFreeQuotaProvider(bypass.route.provider) ? FREE_PROVIDER_DISPLAY_NAME : bypass.route.provider;
           const noticed = this.quotaBypassNoticeBySession.get(sessionId);
@@ -13891,6 +14036,18 @@ export class CoworkRunner extends EventEmitter {
               ...(fallbackIsSystemRescue ? { systemRescue: true } : {}),
             }
           );
+          // §9 session-level visibility: the transcript notice above is only
+          // visible to a reader of THIS session's messages — a post-mortem that
+          // inspects the sidebar row needs the status itself to say "on the
+          // fallback brain". Annotation only: the route was already resolved and
+          // is entered by the attempts below, unchanged.
+          this.markFallbackBrainActive(sessionId, {
+            provider: fallbackRoute.provider,
+            model: fallbackRoute.model,
+            fromProvider: route.provider,
+            fromModel: route.model,
+            rung: fallbackIsSystemRescue ? 'system-rescue' : fallbackIsCurrentDefault ? 'current-default' : 'bot-fallback',
+          });
           // Direct-entry failures get one fallback attempt. Only the transient
           // entry uses the loop below, preserving its established resume cap.
           if (gateQuota || gateOverflow || gateConfigHard || gateRuntimeBoot) {
@@ -15238,7 +15395,7 @@ export class CoworkRunner extends EventEmitter {
       memoryTools.push(
         tool(
           'twin_task_accept',
-          'Record YOUR acceptance of a delegated step as an APPEND-ONLY event: who accepted, when, the evidence list, and an optional note. Twin Bot only. Use after you have actually verified a Worker step against its acceptance criteria, so the record stops claiming "awaiting verification". This does NOT rewrite history: the step row keeps the Worker claim (status / acceptedResult), a second accept is a separate later event, and nothing is ever overwritten. When this acceptance completes the LAST open step of a card you delegated (twin_delegate), the card auto-completes with a self-closure — the result carries taskAutoCompleted: true, and no further close action is needed. Evidence is mandatory — at least one { kind: "dir"|"metaapp"|"pin"|"url"|"other", uri } entry, mirroring long-term-task acceptance evidence. When NOT to use: do not accept work you have not verified, and do not use this to change a step status (there is no such action here). Refused with a readable code for an unknown step, a task mismatch, or empty/invalid evidence.',
+          'Record YOUR acceptance of a delegated step as an APPEND-ONLY event: who accepted, when, the evidence list, and an optional note. Twin Bot only. Use after you have actually verified a Worker step against its acceptance criteria, so the record stops claiming "awaiting verification". This does NOT rewrite history: the step row keeps the Worker claim (status / acceptedResult), a second accept is a separate later event, and nothing is ever overwritten. When this acceptance completes the LAST open step of a card you delegated (twin_delegate), the card auto-completes with a self-closure — the result carries taskAutoCompleted: true, and no further close action is needed. Evidence is mandatory — at least one { kind: "dir"|"file"|"metaapp"|"pin"|"url"|"other", uri } entry (dir/file carry a local absolute path), mirroring long-term-task acceptance evidence. When NOT to use: do not accept work you have not verified, and do not use this to change a step status (there is no such action here). Refused with a readable code for an unknown step, a task mismatch, or empty/invalid evidence.',
           {
             stepId: z.string().min(1),
             taskId: z.string().optional(),
@@ -15997,6 +16154,17 @@ export class CoworkRunner extends EventEmitter {
         })
       );
     }
+    if (this.nftSwapTools && mountFinancialTools) {
+      memoryTools.push(
+        ...buildNftSwapAgentTools({
+          tool,
+          control: this.nftSwapTools,
+          sessionId,
+          resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+          confirmBatchSwap: (info) => this.confirmBatchSwap(sessionId, info),
+        })
+      );
+    }
     // Desktop-initiated IM outbound (im_send_message): the ONLY supported way
     // to "send a WeChat message" from a desktop session. Deliberately
     // cowork_ui-only — an IM session answers through its own reply closure,
@@ -16273,6 +16441,16 @@ export class CoworkRunner extends EventEmitter {
     if (this.projects) {
       memoryTools.push(
         ...buildProjectsAgentTools({ tool, control: this.projects })
+      );
+    }
+    // Mobile page hosting (`mobile_open_page`) is SERVER MODE ONLY: it mints
+    // a gateway page token, which only a running mobile gateway can serve.
+    // Desktop tool surfaces therefore stay exactly as before (this branch is
+    // never entered: desktop never wires the control, and the mode switch is
+    // re-checked here as the second gate).
+    if (this.mobilePage && isServerMode()) {
+      memoryTools.push(
+        ...buildMobilePageAgentTools({ tool, control: this.mobilePage })
       );
     }
     // On-chain social post search (MetaSo social recall) is registered for

@@ -11,7 +11,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { openDb } from './db/index.js';
-import { ConfigError } from './config.js';
+import { ConfigError, parsePushConfig } from './config.js';
 import type { ControlPlaneConfig } from './config.js';
 import { DockerClient } from './docker/client.js';
 import { FakeSmsProvider } from './sms.js';
@@ -83,6 +83,9 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
     alertWebhook: env.CP_ALERT_WEBHOOK ?? null,
     // The CLI never serves HTTP; this is an inert default.
     loginBundleDir: '',
+    // Push provider comes from the environment so `push.send-test` can use
+    // the real FCM credentials when the operator sources deploy.env.
+    push: parsePushConfig(env),
     // The CLI never serves the voice gateway either; inert stub defaults.
     asr: {
       upstream: 'stub',
@@ -95,7 +98,6 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
     // The CLI grants credits through services/creditService directly (actor
     // admin:<name>); the HTTP token is irrelevant here — inert default.
     adminApiToken: null,
-    push: { provider: 'disabled', fcm: null },
   } as ControlPlaneConfig;
   const docker = new DockerClient(config.dockerUrl);
   const db = openDb(dbPath);
@@ -590,6 +592,66 @@ async function cmdTenantExport(ctx: AppContext, flags: Map<string, string | bool
   console.log(`tenant ${id}: exported ${archive.length} bytes to ${to}`);
 }
 
+/**
+ * push.send-test — deliver one real test notification to every enabled device
+ * of a user through the configured provider (FCM in acceptance). Read-only
+ * audit-wise (no config mutation), but it sends a real provider message, so
+ * it requires --as like other operational commands.
+ */
+async function cmdPushSendTest(
+  ctx: AppContext,
+  flags: Map<string, string | boolean>,
+  as: string,
+): Promise<void> {
+  if (ctx.config.push.provider === 'disabled') {
+    throw new CliError(
+      'push provider is disabled on this CLI context; set CP_PUSH_PROVIDER=fcm and CP_FCM_SERVICE_ACCOUNT_JSON in the environment first',
+    );
+  }
+  const phone = flags.get('phone');
+  const userId = flags.get('user');
+  if (typeof phone !== 'string' && typeof userId !== 'string') {
+    throw new CliError('usage: push.send-test --phone +8613800138000 | --user <id> [--title T] [--body B] [--as NAME]');
+  }
+  const user = typeof phone === 'string'
+    ? ctx.db.prepare('SELECT id, phone_e164 FROM users WHERE phone_e164 = ?').get(phone) as { id: string; phone_e164: string } | undefined
+    : ctx.db.prepare('SELECT id, phone_e164 FROM users WHERE id = ?').get(userId as string) as { id: string; phone_e164: string } | undefined;
+  if (!user) throw new CliError('user not found');
+  const tenant = ctx.db
+    .prepare("SELECT id FROM tenants WHERE user_id = ? AND status IN ('ready', 'degraded') ORDER BY rowid DESC LIMIT 1")
+    .get(user.id) as { id: string } | undefined;
+  if (!tenant) throw new CliError('user has no ready tenant; notification routing keys off the tenant');
+  const devices = ctx.db
+    .prepare('SELECT device_id, platform, enabled FROM user_devices WHERE user_id = ?')
+    .all(user.id) as Array<{ device_id: string; platform: string; enabled: number }>;
+  const enabledDevices = devices.filter((d) => d.enabled === 1);
+  console.log(`user=${user.id} phone=${maskPhone(user.phone_e164)} tenant=${tenant.id}`);
+  console.log(`devices: ${devices.length} registered, ${enabledDevices.length} enabled (${enabledDevices.map((d) => d.platform).join(', ') || 'none'})`);
+  if (enabledDevices.length === 0) {
+    throw new CliError('no enabled device registered; sign in on the device and let the shell register for push first');
+  }
+  const eventId = `push-test-${Date.now()}`;
+  const result = await ctx.push.ingest(tenant.id, {
+    eventId,
+    type: 'system.test',
+    category: 'system',
+    title: typeof flags.get('title') === 'string' ? flags.get('title') as string : 'IDBots 推送验收测试',
+    body: typeof flags.get('body') === 'string' ? flags.get('body') as string : `这是一条真实推送验收消息（${eventId}）。收到即表示 FCM 链路畅通。`,
+    priority: 'high',
+  });
+  const deliveries = ctx.db
+    .prepare('SELECT device_id, state, provider_message_id, last_error FROM push_deliveries WHERE event_id = ?')
+    .all(eventId) as Array<{ device_id: string; state: string; provider_message_id: string | null; last_error: string | null }>;
+  for (const row of deliveries) {
+    console.log(`  device=${row.device_id} state=${row.state} msg=${row.provider_message_id ?? '-'} err=${row.last_error ?? '-'}`);
+  }
+  console.log(`accepted event=${result.eventId} devices=${result.devices} duplicate=${result.duplicate}`);
+  if (result.devices === 0) {
+    throw new CliError('ingest matched 0 devices (check notification preferences: category "system" must be enabled)');
+  }
+  audit(ctx, as, 'push.send-test', user.id, { eventId, devices: result.devices });
+}
+
 function cmdDeletionList(ctx: AppContext): void {
   const rows = ctx.db
     .prepare('SELECT id, user_id, reason, status, created_at, closed_at FROM deletion_requests ORDER BY created_at')
@@ -678,7 +740,7 @@ async function run(argv: string[]): Promise<void> {
     requireOperator(as);
   }
   if (!domain) {
-    throw new CliError('usage: cli.js <invite|redeem|credit|user|tenant|deletion> <command> [flags] [--as NAME]');
+    throw new CliError('usage: cli.js <invite|redeem|credit|user|tenant|deletion|push> <command> [flags] [--as NAME]');
   }
 
   const ctx = loadCliContext(process.env);
@@ -746,6 +808,9 @@ async function run(argv: string[]): Promise<void> {
         break;
       case 'deletion.list':
         cmdDeletionList(ctx);
+        break;
+      case 'push.send-test':
+        await cmdPushSendTest(ctx, flags, as!);
         break;
       case 'deletion.complete':
         await cmdDeletionComplete(ctx, rest[0], flags, as!);

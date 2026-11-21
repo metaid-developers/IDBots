@@ -18,6 +18,7 @@ import MetaBotWalletAssetsModal, {
   type WalletDisplayAsset,
 } from './MetaBotWalletAssetsModal';
 import MetaBotTokenTransferModal, { type TokenTransferAsset } from './MetaBotTokenTransferModal';
+import LegacyNftDepositGuideModal from './LegacyNftDepositGuideModal';
 
 interface MetaBotWalletBalanceModalProps {
   isOpen: boolean;
@@ -56,6 +57,7 @@ const MetaBotWalletBalanceModal: React.FC<MetaBotWalletBalanceModalProps> = ({
   const [walletAssetsLoading, setWalletAssetsLoading] = useState(false);
   const [walletAssetsError, setWalletAssetsError] = useState('');
   const [tokenTransferAsset, setTokenTransferAsset] = useState<TokenTransferAsset | null>(null);
+  const [showLegacyDepositGuide, setShowLegacyDepositGuide] = useState(false);
 
   const refreshAllBalances = useCallback(() => {
     setBalance((prev) => ({ ...prev, loading: true }));
@@ -229,13 +231,21 @@ const MetaBotWalletBalanceModal: React.FC<MetaBotWalletBalanceModalProps> = ({
               </p>
             )}
 
-            <div className="pt-2">
+            <div className="flex flex-wrap items-center gap-4 pt-2">
               <button
                 type="button"
                 onClick={() => setShowWalletAssetsModal(true)}
                 className="text-xs text-claude-accent hover:underline"
               >
                 {i18nService.t('metabotViewMoreTokenBalances')}
+              </button>
+              <button
+                type="button"
+                data-slot="metabot-wallet-legacy-deposit-guide"
+                onClick={() => setShowLegacyDepositGuide(true)}
+                className="text-xs font-medium text-sky-600 dark:text-sky-400 hover:underline"
+              >
+                {i18nService.t('legacyDepositGuideEntry')}
               </button>
             </div>
           </div>
@@ -279,6 +289,12 @@ const MetaBotWalletBalanceModal: React.FC<MetaBotWalletBalanceModalProps> = ({
           }}
         />
       )}
+      <LegacyNftDepositGuideModal
+        isOpen={showLegacyDepositGuide}
+        metabot={metabot}
+        onClose={() => setShowLegacyDepositGuide(false)}
+        onStartUpgradeChat={onClose}
+      />
     </>
   );
 };

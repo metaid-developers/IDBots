@@ -71,6 +71,8 @@ import PaymentCard from './chat/PaymentCard';
 import { isPayCardFenceLanguage, parsePayCardFence } from './chat/paymentCardSyntax';
 import EscrowCard from './chat/EscrowCard';
 import { isEscrowCardFenceLanguage, parseEscrowCardFence } from './chat/escrowCardSyntax';
+import MobilePageCard from './chat/MobilePageCard';
+import { isMobilePageCardFenceLanguage, parseMobilePageCardFence } from './chat/mobilePageCardSyntax';
 import { splitStreamingMarkdownBlocks } from './streamingMarkdownSplit';
 
 /**
@@ -545,6 +547,22 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
       const escrowData = parseEscrowCardFence(trimmedCodeText);
       if (escrowData) {
         return <EscrowCard data={escrowData} />;
+      }
+    }
+
+    // Mobile page hosting card (server mode `mobile_open_page`): a bot hosted
+    // one local page on the tenant gateway and sent this card; tapping it
+    // opens `/pages/<token>/`. Own fence tag, disjoint from every other card;
+    // an unparsable or non-same-origin payload keeps the code-block fallback
+    // so an arbitrary URL can never be smuggled in through this branch.
+    // MOBILE RUNTIME ONLY: the desktop surface keeps its existing rendering of
+    // this fence (a plain code block), so desktop behavior stays byte-identical
+    // for every input — the desktop never produces the fence anyway (the tool
+    // is server-mode only), this guard just makes that a fact of the renderer.
+    if (isMobileBridgeRuntime() && isMobilePageCardFenceLanguage(fenceLanguage)) {
+      const pageData = parseMobilePageCardFence(trimmedCodeText);
+      if (pageData) {
+        return <MobilePageCard data={pageData} />;
       }
     }
 

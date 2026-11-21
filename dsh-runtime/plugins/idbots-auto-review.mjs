@@ -25,9 +25,16 @@
 
 import { BlockAssembler } from '@deepseek-ai/dsh-llm'
 
-/** Bounded wait for the reviewer model call; a hung review must not wedge the
- * tool call until the turn-level stall watchdog. */
-const REVIEW_TIMEOUT_MS = 60_000;
+/** Idle budget for the reviewer stream, re-armed on every arriving chunk: the
+ * deadline bounds stream SILENCE rather than the whole generation, so a
+ * slow-but-flowing review is no longer cut at a fixed wall mark (the
+ * 2026-11-20 ABS relay handoff — total-duration client timeouts surfaced
+ * there as client_gone on long generations). Covers time-to-first-byte too. */
+const REVIEW_IDLE_TIMEOUT_MS = 60_000;
+
+/** Hard wall cap so a pathological "always something, never the verdict"
+ * stream still fails closed in bounded time. */
+const REVIEW_TOTAL_TIMEOUT_MS = 300_000;
 
 /** Fixed reviewer system prompt. Risk tiers and the strict JSON protocol are
  * ported from @deepseek-ai/dsh-experimental-auto-review's REVIEW_POLICY
@@ -114,11 +121,13 @@ function parseDecision(text) {
 }
 
 /** Consume zero or more reasoning blocks, one JSON text block, and one
- * terminal stop from the review stream. Mirrors upstream readDecision. */
-async function readDecision(stream, { BlockAssembler }) {
+ * terminal stop from the review stream. Mirrors upstream readDecision.
+ * `onActivity` re-arms the idle watchdog on every arriving chunk. */
+async function readDecision(stream, { BlockAssembler, onActivity }) {
 	const assembler = new BlockAssembler();
 	let finished = false;
 	for await (const chunk of stream) {
+		onActivity?.();
 		if (finished) throw new Error("auto-review: reviewer emitted data after its terminal finish");
 		assembler.push(chunk);
 		if (chunk.type === "finish") {
@@ -233,11 +242,25 @@ export async function reviewPendingAction(ctx, exec) {
 			{ role: 'user', content: [{ type: 'text', text: `PENDING_ACTION\n${JSON.stringify(action)}` }] },
 		];
 		// Abort with the turn, but never hang past the review deadline: a wedged
-		// reviewer must fail closed (deny), not pin the tool call open.
+		// reviewer must fail closed (deny), not pin the tool call open. The
+		// idle watchdog re-arms on every chunk (stream-silence semantics); the
+		// total timer is the bounded-time backstop.
 		const controller = new AbortController();
 		const onAbort = () => controller.abort(exec.signal?.reason);
 		exec.signal?.addEventListener('abort', onAbort, { once: true });
-		const timer = setTimeout(() => controller.abort(new Error(`auto-review: reviewer exceeded the ${Math.round(REVIEW_TIMEOUT_MS / 1000)}s deadline`)), REVIEW_TIMEOUT_MS);
+		let idleTimer = null;
+		const armIdle = () => {
+			if (idleTimer) clearTimeout(idleTimer);
+			idleTimer = setTimeout(
+				() => controller.abort(new Error(`auto-review: reviewer stream idle past ${Math.round(REVIEW_IDLE_TIMEOUT_MS / 1000)}s`)),
+				REVIEW_IDLE_TIMEOUT_MS
+			);
+		};
+		armIdle();
+		const totalTimer = setTimeout(
+			() => controller.abort(new Error(`auto-review: reviewer exceeded the ${Math.round(REVIEW_TOTAL_TIMEOUT_MS / 1000)}s deadline`)),
+			REVIEW_TOTAL_TIMEOUT_MS
+		);
 		let decision;
 		try {
 			const stream = ctx.llm.stream({
@@ -250,9 +273,10 @@ export async function reviewPendingAction(ctx, exec) {
 				purpose: 'idbots-auto-review',
 				signal: controller.signal,
 			});
-			decision = await readDecision(stream, { BlockAssembler });
+			decision = await readDecision(stream, { BlockAssembler, onActivity: armIdle });
 		} finally {
-			clearTimeout(timer);
+			if (idleTimer) clearTimeout(idleTimer);
+			clearTimeout(totalTimer);
 			exec.signal?.removeEventListener('abort', onAbort);
 		}
 		if (controller.signal.aborted && !exec.signal?.aborted) {

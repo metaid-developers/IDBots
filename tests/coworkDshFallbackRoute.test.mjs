@@ -140,7 +140,10 @@ const NO_RESCUE_PROVIDERS = {
 // Drive one runDshSessionLocal turn with a scripted fake hub. `script(input,
 // callNo)` returns the DshTurnOutcome for each hub.runTurn call (callNo is
 // 1-based). Returns the recorded calls plus the post-turn session row.
-async function driveTurn({ sessionId, metabot, script, sessionRow = {}, configOverrides = {} }) {
+// `onRunner(runner)` runs before the turn starts, so a test can subscribe to
+// runner events (e.g. the §9 fallbackBrain announcement) or read the live
+// marker from inside `script`.
+async function driveTurn({ sessionId, metabot, script, sessionRow = {}, configOverrides = {}, onRunner = null }) {
   const { runner: runnerModule, claudeSettings, assistantReply } = loadModules()
   const { CoworkRunner } = runnerModule
   installApiConfig(claudeSettings, configOverrides)
@@ -149,6 +152,7 @@ async function driveTurn({ sessionId, metabot, script, sessionRow = {}, configOv
   const runner = new CoworkRunner(store, {
     getMetabotById: (id) => (metabot && id === metabot.id ? metabot : null),
   })
+  if (typeof onRunner === 'function') onRunner(runner)
 
   const runTurnCalls = []
   runner.dshTurnHub = {
@@ -952,4 +956,92 @@ test('route circuit breaker: changing the model binding resets the verdict', asy
   assert.equal(probe.provider.key, 'gw-c')
   assert.equal(ctx2.runner.dshRouteCircuits.get('gt02-circuit-switch'), undefined, 'the live outcome clears the circuit')
   assert.equal(ctx2.store.sessions.get('gt02-circuit-switch')?.status, 'completed')
+})
+
+// ---------------------------------------------------------------------------
+// §9 session-level visibility (2026-11-20): the switch must be readable from
+// the SESSION status surface, not only from the transcript. The runner writes
+// a per-session marker when a switch commits and clears it at settle; the
+// session-summary IPC merges it into `activeFallbackBrain`.
+// ---------------------------------------------------------------------------
+
+test('a fallback-brain switch marks the session while the turn runs and clears it at settle', async () => {
+  const events = []
+  let markDuringFallbackCall = null
+  let runnerRef = null
+  const result = await driveTurn({
+    sessionId: 'gt02-fallback-marker',
+    metabot: BOT_WITH_FALLBACK,
+    onRunner: (runner) => {
+      runnerRef = runner
+      runner.on('fallbackBrain', (sessionId, activation) => events.push({ sessionId, activation }))
+    },
+    script: (_input, callNo) => {
+      if (callNo === 5) {
+        // Read the marker from INSIDE the fallback attempt: it must already be
+        // live before the first model call on the new route.
+        markDuringFallbackCall = runnerRef.getActiveFallbackBrain('gt02-fallback-marker')
+      }
+      return callNo <= 4 ? transientError() : { kind: 'completed' }
+    },
+  })
+
+  assert.equal(result.runTurnCalls.length, 5, 'the turn still switches exactly as before')
+  assert.equal(result.runTurnCalls[4].provider.key, 'gw-b', 'the fallback route serves the turn')
+  assert.ok(markDuringFallbackCall, 'the marker is live before the fallback route runs')
+  assert.equal(markDuringFallbackCall.rung, 'bot-fallback', "the bot's own fallback brain is the rung")
+  assert.equal(markDuringFallbackCall.model, 'mock-b1')
+  assert.equal(markDuringFallbackCall.fromModel, 'mock-a1', 'the failed primary route is remembered')
+  assert.equal(markDuringFallbackCall.provider, 'gw-b')
+
+  const announcements = events.filter((event) => event.sessionId === 'gt02-fallback-marker')
+  assert.equal(announcements.length, 2, 'one mark + one clear announcement per fallback turn')
+  assert.equal(announcements[0].activation?.model, 'mock-b1', 'the mark announcement carries the serving route')
+  assert.equal(announcements[1].activation, null, 'settle announces the clear')
+  assert.equal(
+    result.runner.getActiveFallbackBrain('gt02-fallback-marker'),
+    null,
+    'no marker survives the settled turn',
+  )
+  assert.equal(result.sessionRow?.status, 'completed')
+})
+
+test('a turn served by its own route never writes the fallback marker', async () => {
+  const events = []
+  let markDuringCall = null
+  let runnerRef = null
+  const result = await driveTurn({
+    sessionId: 'gt02-primary-clean',
+    metabot: BOT_WITH_FALLBACK,
+    onRunner: (runner) => {
+      runnerRef = runner
+      runner.on('fallbackBrain', (sessionId, activation) => events.push({ sessionId, activation }))
+    },
+    script: () => {
+      markDuringCall = runnerRef.getActiveFallbackBrain('gt02-primary-clean')
+      return { kind: 'completed' }
+    },
+  })
+
+  assert.equal(result.runTurnCalls.length, 1, 'a healthy primary route runs exactly one attempt')
+  assert.equal(markDuringCall, null, 'the primary route carries no degradation marker')
+  assert.equal(events.length, 0, 'no fallback announcement on a clean turn')
+  assert.equal(result.runner.getActiveFallbackBrain('gt02-primary-clean'), null)
+  assert.equal(result.sessionRow?.status, 'completed')
+})
+
+test('a failed turn that never reached an alternative leaves no stale marker', async () => {
+  const result = await driveTurn({
+    sessionId: 'gt02-no-alternative',
+    metabot: { id: 2, name: 'NoFallback Bot', llm_id: 'mock-a1', llm_provider: 'gw-a' },
+    configOverrides: { providers: NO_RESCUE_PROVIDERS },
+    script: () => transientError(),
+  })
+
+  assert.equal(result.sessionRow?.status, 'error', 'the turn still dies as before')
+  assert.equal(
+    result.runner.getActiveFallbackBrain('gt02-no-alternative'),
+    null,
+    'a route with no alternative never claims a fallback brain',
+  )
 })

@@ -10,8 +10,8 @@ function bootstrap(origin, platform = 'android', remoteOrigin = 'https://staging
   const script = template
     .replace('__IDBOTS_REMOTE_ORIGIN_JSON__', JSON.stringify(remoteOrigin))
     .replace('__IDBOTS_PLATFORM_JSON__', JSON.stringify(platform))
-    .replace('__IDBOTS_APP_VERSION_JSON__', JSON.stringify('0.1.6'))
-    .replace('__IDBOTS_APP_VERSION_CODE_JSON__', '8');
+    .replace('__IDBOTS_APP_VERSION_JSON__', JSON.stringify('0.1.7'))
+    .replace('__IDBOTS_APP_VERSION_CODE_JSON__', '9');
   const listeners = new Map();
   const window = {
     location: {
@@ -51,8 +51,8 @@ function bootstrap(origin, platform = 'android', remoteOrigin = 'https://staging
 test('Android installs the versioned bridge at document start on the exact origin', () => {
   const window = bootstrap('https://staging.idbots.world');
   assert.equal(window.idbotsNative.nativeBridgeVersion, 1);
-  assert.equal(window.idbotsNative.appVersion, '0.1.6');
-  assert.equal(window.idbotsNative.appVersionCode, 8);
+  assert.equal(window.idbotsNative.appVersion, '0.1.7');
+  assert.equal(window.idbotsNative.appVersionCode, 9);
   assert.deepEqual({ ...window.idbotsMobile }, { isMobile: true, os: 'android', shell: 'capacitor' });
   assert.deepEqual({ ...window.idbotsNative.bootstrap }, {
     phase: 'document-start',

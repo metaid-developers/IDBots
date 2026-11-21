@@ -169,8 +169,12 @@ export interface OrchestrationClosureMark {
  * `updateStepStatus`: nothing here rewrites the step, flips
  * `acceptedResult.verified`, or edits an earlier acceptance. Every accept is a
  * new row, so reading a step shows claim and acceptance(s) in order.
+ *
+ * Evidence kinds: `dir` names a local directory and `file` one local file
+ * (both absolute paths); `file` exists so a produced report/log/artifact is
+ * recorded truthfully instead of being mislabelled `other`.
  */
-export type OrchestrationAcceptanceEvidenceKind = 'dir' | 'metaapp' | 'pin' | 'url' | 'other';
+export type OrchestrationAcceptanceEvidenceKind = 'dir' | 'file' | 'metaapp' | 'pin' | 'url' | 'other';
 
 export interface OrchestrationAcceptanceEvidence {
   kind: OrchestrationAcceptanceEvidenceKind;
@@ -254,7 +258,7 @@ function parseJson(value: unknown, fallback: unknown): unknown {
   try { return JSON.parse(value); } catch { return fallback; }
 }
 
-const ACCEPTANCE_EVIDENCE_KINDS: readonly OrchestrationAcceptanceEvidenceKind[] = ['dir', 'metaapp', 'pin', 'url', 'other'];
+const ACCEPTANCE_EVIDENCE_KINDS: readonly OrchestrationAcceptanceEvidenceKind[] = ['dir', 'file', 'metaapp', 'pin', 'url', 'other'];
 const ACCEPTANCE_EVIDENCE_URI_MAX = 2048;
 const ACCEPTANCE_EVIDENCE_NOTE_MAX = 500;
 const ACCEPTANCE_NOTE_MAX = 2000;

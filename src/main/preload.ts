@@ -8,6 +8,7 @@ import type {
 } from '../renderer/types/cowork';
 import type { KnowledgeBaseLearnStatusEvent } from '../renderer/types/knowledgeBase';
 import type { DailyReportRunNowResult } from './services/dailyReportService';
+import type { NftSwapOrderCompletedEvent } from './services/swapOrderTrackerService';
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
@@ -799,6 +800,13 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('cowork:session:profileRefreshed', handler);
       return () => ipcRenderer.removeListener('cowork:session:profileRefreshed', handler);
     },
+    // §9 session-level visibility: a turn started/stopped running on a
+    // fallback brain; the listener re-reads that session's summary.
+    onSessionFallbackBrain: (callback: (data: { sessionId: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string }) => callback(data);
+      ipcRenderer.on('cowork:session:fallbackBrain', handler);
+      return () => ipcRenderer.removeListener('cowork:session:fallbackBrain', handler);
+    },
   },
   dialog: {
     selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),
@@ -1518,6 +1526,13 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_event: Electron.IpcRendererEvent, payload: { metabotId: number; runId: string; trigger: string; status: string; error?: string | null }) => callback(payload);
       ipcRenderer.on('metabot:surfStatusChanged', handler);
       return () => ipcRenderer.removeListener('metabot:surfStatusChanged', handler);
+    },
+  },
+  nftSwap: {
+    onOrderCompleted: (callback: (payload: NftSwapOrderCompletedEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: NftSwapOrderCompletedEvent) => callback(payload);
+      ipcRenderer.on('nftSwap:orderCompleted', handler);
+      return () => ipcRenderer.removeListener('nftSwap:orderCompleted', handler);
     },
   },
   networkStatus: {

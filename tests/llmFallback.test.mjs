@@ -129,3 +129,32 @@ test('a failed fallback attempt throws a combined error naming both brains', asy
     },
   );
 });
+
+
+test('streamingTransport skips the per-attempt AbortSignal.timeout (the transport owns the deadline)', async () => {
+  // The streaming transport builds its own deadline (total cap + idle
+  // watchdog, semantics chosen by attemptTimeoutKind); wrapping the caller
+  // signal in AbortSignal.timeout here would re-impose the old total-only
+  // semantics and cut steadily-flowing long generations.
+  const result = await runWithLlmFallback(
+    { llmId: 'primary-model', attemptTimeoutMs: 50, streamingTransport: true },
+    async (options) => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return { signalAborted: options.signal?.aborted ?? false };
+    },
+    () => {},
+  );
+  assert.equal(result.signalAborted, false);
+});
+
+test('without streamingTransport the per-attempt timeout still fires', async () => {
+  const result = await runWithLlmFallback(
+    { llmId: 'primary-model', attemptTimeoutMs: 50 },
+    async (options) => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return { signalAborted: options.signal?.aborted ?? false };
+    },
+    () => {},
+  );
+  assert.equal(result.signalAborted, true);
+});

@@ -3,6 +3,10 @@ import type { CoworkSessionSummary, CoworkSessionStatus } from '../../types/cowo
 import { ArchiveBoxIcon, ArrowRightOnRectangleIcon, CheckIcon, ChevronRightIcon, ClipboardDocumentIcon, EllipsisHorizontalIcon, PencilSquareIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { getCoworkSessionTitleClassName, getAssistantSessionDisplayTitle, shouldShowCoworkA2ADot, getImSessionChannelInfo, isLegacyImSessionTitle } from './coworkSessionPresentation.js';
+// §9 visibility: a running turn served by a non-primary brain labels its
+// status 「备用脑运行中」 instead of a bare 运行中 (pure module — see
+// src/main/libs/fallbackBrainStatus.ts for the write/clear side).
+import { resolveFallbackBrainStatusLabelKey, buildFallbackBrainStatusDetail } from './fallbackBrainPresentation.js';
 import { copyCoworkSessionLinkToClipboard } from './coworkSessionLink.js';
 import TradeActivityBadge from '../chat/TradeActivityBadge';
 import { toRenderableAvatarSource } from '../../utils/avatarSource';
@@ -601,6 +605,15 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
   };
   const relativeTime = formatRelativeTime(session.updatedAt, nowMs);
   const showRunningIndicator = !approvalPending && session.status === 'running';
+  // §9 visibility: while the primary route is dead and a fallback brain serves
+  // the turn, the status word must say so — the transcript notice alone is
+  // invisible to whoever inspects the row (orchestrator bridge, post-mortem).
+  // Pure helper: returns null unless the session is RUNNING with a live mark.
+  const fallbackBrainLabelKey = resolveFallbackBrainStatusLabelKey(session);
+  const fallbackBrainDetail = fallbackBrainLabelKey
+    ? buildFallbackBrainStatusDetail(session, (key) => i18nService.t(key))
+    : '';
+  const statusLabel = i18nService.t(fallbackBrainLabelKey ?? statusLabels[session.status]);
   const showUnreadIndicator = !approvalPending && !showRunningIndicator && hasUnread;
   const showStatusIndicator = approvalPending || showRunningIndicator || showUnreadIndicator;
   // A legacy IM direct row may still carry session_type 'a2a'; it must not get
@@ -713,14 +726,20 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
                 className={`block w-2 h-2 rounded-full flex-shrink-0 ${
                   approvalPending
                     ? 'bg-red-500 shadow-[0_0_0_3px_rgba(239,68,68,0.14)] animate-pulse'
-                    : `bg-claude-accent ${showRunningIndicator ? 'shadow-[0_0_6px_rgba(59,130,246,0.5)] animate-pulse' : ''}`
+                    : fallbackBrainLabelKey
+                      // Amber, not the normal accent: "alive but degraded".
+                      ? 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.5)] animate-pulse'
+                      : `bg-claude-accent ${showRunningIndicator ? 'shadow-[0_0_6px_rgba(59,130,246,0.5)] animate-pulse' : ''}`
                 }`}
                 title={approvalPending
                   ? i18nService.t('a2aApprovalPending')
-                  : showRunningIndicator
-                    ? i18nService.t(statusLabels[session.status])
-                    : undefined}
+                  : fallbackBrainDetail
+                    ? fallbackBrainDetail
+                    : showRunningIndicator
+                      ? i18nService.t(statusLabels[session.status])
+                      : undefined}
                 data-a2a-approval-pending={approvalPending || undefined}
+                data-fallback-brain={fallbackBrainLabelKey ? session.activeFallbackBrain?.rung ?? true : undefined}
               />
             )}
             {/* A2A blue dot (only when not already showing status indicator) */}
@@ -778,13 +797,18 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
             <span className="whitespace-nowrap" title={relativeTime.full}>
               {relativeTime.compact}
             </span>
-            {(!showBrowserContext || DEATH_STATUS_LABEL_STATES.has(session.status)) && (
+            {(!showBrowserContext || DEATH_STATUS_LABEL_STATES.has(session.status) || fallbackBrainLabelKey) && (
               <span
                 className={`text-[10px] whitespace-nowrap ${
-                  session.status === 'error' || session.status === 'error_retried' ? 'text-red-500' : ''
+                  session.status === 'error' || session.status === 'error_retried'
+                    ? 'text-red-500'
+                    : fallbackBrainLabelKey
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : ''
                 }`}
+                title={fallbackBrainDetail || undefined}
               >
-                {i18nService.t(statusLabels[session.status])}
+                {statusLabel}
               </span>
             )}
             {showBrowserBadge && session.sessionType === 'browser' ? (

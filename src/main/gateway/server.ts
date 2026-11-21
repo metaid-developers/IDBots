@@ -52,6 +52,7 @@ import {
 } from './upload';
 import { buildReadinessResponse, type ReadinessState } from './readiness';
 import { NonceStore, verifyFileToken, verifyReverifyToken } from './tokens';
+import { MOBILE_PAGE_ROUTE_PATH_PREFIX, resolveMobilePageAsset } from './mobilePages';
 import { sanitizeIpcPayload } from '../ipc/sanitize';
 
 // ---------------------------------------------------------------------------
@@ -182,6 +183,24 @@ function sendEmpty(res: http.ServerResponse, status: number, headers?: Record<st
   res.end();
 }
 
+/**
+ * Decode one percent-encoded URL path segment, or return null when the
+ * encoding is malformed ('%zz', a lone '%', an overlong sequence, …).
+ *
+ * decodeURIComponent throws URIError synchronously on malformed input, and
+ * handleRequest has no outer try/catch: an escaping throw reaches the http
+ * server's 'request' emit as an uncaughtException, which takes the whole main
+ * process down from a single unauthenticated-URL-shaped request. Malformed
+ * encoding is a client mistake, so every caller answers 400 instead.
+ */
+function decodePathSegment(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Per-socket state
 // ---------------------------------------------------------------------------
@@ -244,7 +263,13 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   // -- HTTP routes -----------------------------------------------------------
 
   const handleFileRoute = (req: http.IncomingMessage, res: http.ServerResponse, url: URL): void => {
-    const rawToken = decodeURIComponent(url.pathname.slice(GATEWAY_FILES_PATH_PREFIX.length + 1));
+    // The token is percent-encoded in the path; a malformed sequence ('%zz')
+    // is a client error (400), never an escaping URIError that crashes main.
+    const rawToken = decodePathSegment(url.pathname.slice(GATEWAY_FILES_PATH_PREFIX.length + 1));
+    if (rawToken === null) {
+      sendEmpty(res, 400);
+      return;
+    }
     const payload = verifyFileToken(options.secret, options.tenantId, rawToken);
     if (!payload) {
       sendEmpty(res, 404);
@@ -295,6 +320,76 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     stream.on('error', () => {
       res.destroy();
     });
+  };
+
+  /**
+   * Server-mode mobile page hosting (`mobile_open_page`): serves one page
+   * root by its wrapped page token. The token is the only address into the
+   * root; resolveMobilePageAsset rejects traversal, symlink escapes,
+   * non-servable extensions and expired/wrong-tenant tokens alike, and every
+   * refusal answers a uniform 404 so this route is never an existence
+   * oracle. Registered in every mode (the token can only be minted where
+   * mobile_open_page is offered — server mode), so desktop behavior is
+   * unchanged: without a token nothing here ever answers.
+   */
+  const handleMobilePageRoute = (req: http.IncomingMessage, res: http.ServerResponse, url: URL): void => {
+    const rawRest = url.pathname.slice(MOBILE_PAGE_ROUTE_PATH_PREFIX.length + 1);
+    const slash = rawRest.indexOf('/');
+    const rawToken = slash === -1 ? rawRest : rawRest.slice(0, slash);
+    const rawAsset = slash === -1 ? '' : rawRest.slice(slash + 1);
+    // BOTH segments go through decodeURIComponent, and BOTH must be inside the
+    // guard: a malformed percent sequence ('%zz') throws URIError
+    // synchronously, and this handler has no outer try/catch — an escaping
+    // throw reaches the http server's request emit as an uncaughtException
+    // (main-process crash). A malformed encoding is just another 404.
+    let token = '';
+    let asset = '';
+    try {
+      token = decodeURIComponent(rawToken);
+      asset = decodeURIComponent(rawAsset);
+    } catch {
+      sendEmpty(res, 404);
+      return;
+    }
+    const resolved = resolveMobilePageAsset(
+      { secret: options.secret, tenantId: options.tenantId, realpathSync: fs.realpathSync },
+      token,
+      asset,
+    );
+    if (!resolved) {
+      sendEmpty(res, 404);
+      return;
+    }
+    const headers: Record<string, string> = {
+      // The page is browser-executable content: honor the resolved MIME and
+      // never let a nested page frame the shell it is rendered in.
+      'Content-Type': resolved.mime,
+      'Content-Length': String(resolved.size),
+      'Cache-Control': 'no-cache',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "frame-ancestors 'self'",
+    };
+    const rangeHeader = req.headers.range;
+    if (rangeHeader) {
+      const range = parseRangeHeader(rangeHeader, resolved.size);
+      if (!range) {
+        sendEmpty(res, 416, { 'Content-Range': `bytes */${resolved.size}` });
+        return;
+      }
+      const stream = fs.createReadStream(resolved.filePath, { start: range.start, end: range.end });
+      res.writeHead(206, {
+        ...headers,
+        'Content-Range': `bytes ${range.start}-${range.end}/${resolved.size}`,
+        'Content-Length': range.end - range.start + 1,
+      });
+      stream.pipe(res);
+      stream.on('error', () => res.destroy());
+      return;
+    }
+    res.writeHead(200, headers);
+    const stream = fs.createReadStream(resolved.filePath);
+    stream.pipe(res);
+    stream.on('error', () => res.destroy());
   };
 
   const handleUploadRoute = (req: http.IncomingMessage, res: http.ServerResponse, url: URL): void => {
@@ -446,7 +541,13 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     }
     const routePath = url.pathname.slice(APP_BUNDLE_PATH_PREFIX.length);
     const bundleRoot = fs.realpathSync(options.staticBundleDir);
-    const decoded = decodeURIComponent(routePath);
+    // Same guard as the file route: a malformed percent sequence is a 400, not
+    // a URIError that escapes handleRequest and crashes the main process.
+    const decoded = decodePathSegment(routePath);
+    if (decoded === null) {
+      sendEmpty(res, 400);
+      return;
+    }
     const relative = decoded === '' || decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
     const resolved = path.normalize(path.join(bundleRoot, relative));
     if (!isInsideRoot(resolved, bundleRoot)) {
@@ -523,6 +624,10 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     }
     if (method === 'GET' && url.pathname.startsWith(`${GATEWAY_FILES_PATH_PREFIX}/`)) {
       handleFileRoute(req, res, url);
+      return;
+    }
+    if (method === 'GET' && url.pathname.startsWith(`${MOBILE_PAGE_ROUTE_PATH_PREFIX}/`)) {
+      handleMobilePageRoute(req, res, url);
       return;
     }
     if (method === 'POST' && url.pathname === GATEWAY_UPLOAD_PATH) {

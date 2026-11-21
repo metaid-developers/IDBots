@@ -2438,6 +2438,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
             creatorMetaId: 'idbots-official',
             officialMetaId: 'idbots-official',
             collections: [{ collectionPinId: `${'c'.repeat(64)}i0`, collectionName: 'IDBots Founders' }],
+            officialBots: [],
             fetchedAt: now(),
           },
         })),
@@ -2641,7 +2642,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     'deepseek', 'appEvents', 'fs', 'autoLaunch', 'experimentalAutomation', 'feeRates',
     'appUpdate', 'im', 'longtermTask', 'metatask', 'preference', 'groupTask', 'openTeamCollab',
     'idbots', 'chainBackup', 'metaWebListener', 'dream', 'knowledgeBase', 'metawebStudy',
-    'surf', 'permissions', 'networkStatus', 'mcp', 'projects', 'p2p', 'providerDiscovery',
+    'surf', 'nftSwap', 'permissions', 'networkStatus', 'mcp', 'projects', 'p2p', 'providerDiscovery',
     'jevRelay',
   ] as const;
   for (const name of namespaceNames) {

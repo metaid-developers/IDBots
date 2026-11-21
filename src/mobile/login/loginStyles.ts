@@ -75,13 +75,14 @@ export function buildStyles(
       fontFamily: 'system-ui, -apple-system, sans-serif',
     },
     loginCard: {
+      boxSizing: 'border-box',
       width: '100%',
-      maxWidth: 400,
+      maxWidth: 380,
       display: 'flex',
       flexDirection: 'column',
       gap: 16,
-      padding: 14,
-      borderRadius: 28,
+      padding: '26px 22px',
+      borderRadius: 24,
       border: `1px solid ${p.border}`,
       backgroundColor: p.surface,
       boxShadow: isDark ? '0 16px 50px rgba(0, 0, 0, 0.36)' : '0 16px 50px rgba(36, 36, 37, 0.08)',
@@ -97,6 +98,7 @@ export function buildStyles(
       fontFamily: 'system-ui, -apple-system, sans-serif',
     },
     guideSheet: {
+      boxSizing: 'border-box',
       width: '100%',
       maxWidth: 480,
       backgroundColor: p.surface,
@@ -117,11 +119,44 @@ export function buildStyles(
       boxShadow: '0 8px 22px rgba(100, 80, 10, 0.12)',
     },
     title: { fontSize: 24, fontWeight: 650, letterSpacing: '-0.03em', margin: 0 },
-    subtitle: { fontSize: 14, color: p.textSecondary, textAlign: 'center', margin: 0, lineHeight: 1.5 },
+    subtitle: { fontSize: 14, color: p.textSecondary, margin: 0, lineHeight: 1.5 },
     subtitleLeft: { fontSize: 14, color: p.textSecondary, textAlign: 'left', margin: 0, lineHeight: 1.6 },
-    input: {
+    // Composite phone field: fixed +86 prefix plus a borderless input. The
+    // field spans the card content width; the prefix removes the need for a
+    // long "include country code" placeholder.
+    phoneField: {
+      boxSizing: 'border-box',
+      display: 'flex',
+      alignItems: 'stretch',
       width: '100%',
-      maxWidth: 340,
+      minHeight: 46,
+      borderRadius: 14,
+      border: `1px solid ${p.border}`,
+      backgroundColor: p.surface,
+      overflow: 'hidden',
+    },
+    phonePrefix: {
+      display: 'flex',
+      alignItems: 'center',
+      padding: '0 12px',
+      fontSize: 16,
+      fontWeight: 600,
+      color: p.text,
+      borderRight: `1px solid ${p.border}`,
+      backgroundColor: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(36, 36, 37, 0.03)',
+    },
+    phoneInput: {
+      flex: 1,
+      minWidth: 0,
+      border: 'none',
+      backgroundColor: 'transparent',
+      padding: '11px 14px',
+      fontSize: 16,
+      color: p.text,
+    },
+    input: {
+      boxSizing: 'border-box',
+      width: '100%',
       minHeight: 46,
       borderRadius: 14,
       border: `1px solid ${p.border}`,
@@ -130,9 +165,22 @@ export function buildStyles(
       fontSize: 16,
       color: p.text,
     },
-    button: {
+    codeInput: {
+      boxSizing: 'border-box',
       width: '100%',
-      maxWidth: 340,
+      minHeight: 46,
+      borderRadius: 14,
+      border: `1px solid ${p.border}`,
+      backgroundColor: p.surface,
+      padding: '11px 14px',
+      fontSize: 18,
+      fontWeight: 600,
+      letterSpacing: 6,
+      color: p.text,
+    },
+    button: {
+      boxSizing: 'border-box',
+      width: '100%',
       minHeight: 46,
       borderRadius: 14,
       border: 'none',
@@ -147,7 +195,6 @@ export function buildStyles(
     },
     field: {
       width: '100%',
-      maxWidth: 340,
       display: 'flex',
       flexDirection: 'column',
       gap: 6,
@@ -176,10 +223,17 @@ export function buildStyles(
       alignItems: 'flex-start',
       gap: 10,
       width: '100%',
-      maxWidth: 320,
       fontSize: 13,
       lineHeight: 1.5,
       color: p.checkboxRow,
+    },
+    checkbox: {
+      accentColor: '#ffdc51',
+      width: 18,
+      height: 18,
+      margin: 0,
+      marginTop: 1,
+      flexShrink: 0,
     },
     link: { color: p.link, textDecoration: 'none' },
     note: { fontSize: 13, color: p.textSecondary, textAlign: 'center', margin: 0 },
@@ -188,6 +242,7 @@ export function buildStyles(
     errorLeft: { fontSize: 13, color: p.error, textAlign: 'left', margin: 0, lineHeight: 1.45 },
     statusWord: { fontSize: 16, fontWeight: 600, margin: 0 },
     a2hsCard: {
+      boxSizing: 'border-box',
       position: 'fixed',
       left: 12,
       right: 12,
@@ -219,10 +274,16 @@ export function buildStyles(
 
 /**
  * Placeholder color cannot be expressed as a React inline style (::placeholder
- * is a pseudo-element), so the login entry injects this one themed rule at
- * mount. Everything else on the page stays inline-styled.
+ * is a pseudo-element), and the same is true for :focus/:focus-within, so the
+ * login entry injects these themed rules at mount (inline styles would win a
+ * specificity fight, hence !important). Everything else stays inline-styled.
  */
 export function loginPlaceholderStyleTag(isDark: boolean): string {
   const p = loginPalette(isDark);
-  return `input::placeholder { color: ${p.placeholder}; opacity: 1; }`;
+  return [
+    `input::placeholder { color: ${p.placeholder}; opacity: 1; }`,
+    `.login-ui-input:focus { outline: none; border-color: #ffdc51 !important; }`,
+    `.login-ui-field:focus-within { border-color: #ffdc51 !important; }`,
+    `.login-ui-input:focus::placeholder { color: transparent; }`,
+  ].join('\n');
 }

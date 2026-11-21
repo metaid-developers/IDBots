@@ -145,6 +145,7 @@ export type CultureDistillationPerformChat = (
     fallbackLlmProvider?: string | null;
     /** Per-attempt timeout: primary and fallback each get a fresh window. */
     attemptTimeoutMs?: number;
+    attemptTimeoutKind?: 'total' | 'idle';
   },
 ) => Promise<string>;
 
@@ -196,6 +197,7 @@ export async function runCultureDistillation(input: {
         // Per-attempt window: the fallback brain gets its own fresh timeout
         // instead of inheriting the primary's spent signal.
         attemptTimeoutMs: DISTILLATION_LLM_TIMEOUT_MS,
+        attemptTimeoutKind: 'idle',
         // Same JSON contract as deep-consolidation: a stray built-in web
         // search derails the output into prose the parser must drop.
         webSearch: false,

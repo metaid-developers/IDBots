@@ -156,6 +156,21 @@ export interface RunOrchestratorSkillTurnParams {
   practiceSession?: PracticeSessionState;
 }
 
+/**
+ * Handoff for the private-chat skill wait notice: the bridge knows when the
+ * turn has settled, the notice pipeline (LLM ack generation + chain
+ * broadcast) runs concurrently and can easily outlive a fast skill turn. A
+ * notice still un-broadcast at settle time is dropped by its owner via this
+ * flag — its purpose (covering a still-running skill) is already moot, and
+ * broadcasting it would trail the turn's real reply with a "wait for my
+ * answer" promise nothing will fulfill (the 2026-11-20 23:53 /
+ * 2026-11-21 02:10 incidents). A notice already past its broadcast cannot be
+ * recalled; the flag is simply ignored there.
+ */
+export interface SkillExecutionStartControls {
+  cancelRequested: boolean;
+}
+
 export interface RunExistingSessionSkillTurnParams {
   sessionId: string;
   systemPrompt: string;
@@ -172,7 +187,7 @@ export interface RunExistingSessionSkillTurnParams {
    * keep the blackout default.
    */
   memoryReadOnly?: boolean;
-  onSkillExecutionStart?: () => Promise<void> | void;
+  onSkillExecutionStart?: (controls: SkillExecutionStartControls) => Promise<void> | void;
   /**
    * Overrides the skill-turn watchdog timeout (ms). Defaults to 300s.
    * Group-task turns run real pipelines (video/audio generation, batch file
@@ -231,6 +246,10 @@ export function extractFinalAssistantReply(
     }
     if (message.type !== 'assistant') continue;
     if (message.metadata?.privateChatSkillWaitNotice === true) continue;
+    // Same protocol-row rule for the silent-turn retraction that closes a
+    // wait-notice promise: a later turn (e.g. a wake re-drive ending in
+    // another silence) must never deliver it as its own reply.
+    if (message.metadata?.privateChatWaitNoticeRetraction === true) continue;
     if (message.metadata?.isThinking === true) continue;
     // Assistant-mode narration bubbles are interim commentary, not the
     // final answer; consumers here (A2A replies, orchestrator workers,
@@ -823,10 +842,18 @@ export async function runSkillTurnInExistingSession(
       reject(typeof err === 'string' ? new Error(err) : err);
     };
 
+    // Wait-notice cancellation (see SkillExecutionStartControls): flipped the
+    // moment the turn settles or terminates so a not-yet-broadcast notice is
+    // dropped instead of trailing the turn's outcome.
+    const skillExecutionStartControls: SkillExecutionStartControls = { cancelRequested: false };
+    const cancelSkillExecutionStartNotice = (): void => {
+      skillExecutionStartControls.cancelRequested = true;
+    };
+
     const triggerSkillExecutionStart = () => {
       if (skillExecutionStartPromise || !params.onSkillExecutionStart) return;
       try {
-        skillExecutionStartPromise = Promise.resolve(params.onSkillExecutionStart()).catch((error) => {
+        skillExecutionStartPromise = Promise.resolve(params.onSkillExecutionStart(skillExecutionStartControls)).catch((error) => {
           console.warn(
             '[Orchestrator] Private chat skill wait notice callback failed:',
             error instanceof Error ? error.message : String(error)
@@ -842,6 +869,12 @@ export async function runSkillTurnInExistingSession(
     };
 
     const finishAfterSkillStartNotice = (result: RunExistingSessionSkillTurnResult) => {
+      // The turn settled before the wait notice went out: cancel whatever has
+      // not been broadcast yet, then still join on the notice promise so a
+      // broadcast already in flight keeps its notice-before-reply chain
+      // order. A cancelled notice resolves right after its generation tail,
+      // which is also the only wait the reply pays for.
+      cancelSkillExecutionStartNotice();
       const waitForNotice = skillExecutionStartPromise;
       if (!waitForNotice) {
         finish(result);
@@ -868,6 +901,10 @@ export async function runSkillTurnInExistingSession(
 
     const onError = (sid: string, errorMessage: string) => {
       if (sid !== sessionId) return;
+      // The turn errored (the daemon may retry it later with a fresh notice):
+      // drop the stale not-yet-broadcast notice instead of promising a reply
+      // this attempt will never deliver.
+      cancelSkillExecutionStartNotice();
       if (isDshShutdownError(errorMessage)) {
         cancelWithoutSessionError(errorMessage);
         return;
@@ -877,6 +914,9 @@ export async function runSkillTurnInExistingSession(
 
     const onStopped = (sid: string, reason?: string) => {
       if (sid !== sessionId) return;
+      // Same stale-notice rule as onError: a stopped turn must not leave a
+      // "wait for my answer" promise in flight on chain.
+      cancelSkillExecutionStartNotice();
       const detail = (reason ?? '').trim();
       cancelWithoutSessionError(
         'Private chat skill turn stopped before assistant output so queued A2A guidance can be applied'

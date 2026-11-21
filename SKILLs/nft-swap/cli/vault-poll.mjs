@@ -16,6 +16,7 @@
  */
 
 import { ISSUER_CONFIG } from './lib/issuer-config.mjs';
+import { albumFromSeries, resolveSeries } from './lib/series-registry.mjs';
 import {
   CliError,
   emitError,
@@ -35,27 +36,39 @@ const HELP = `vault-poll — 金库巡检 / 入账识别（PRD §5.4）
   node cli/vault-poll.mjs [选项]
 
 选项:
+  --collection <slug>       目标系列 slug（默认 metabot-avatar）
   --dry-run                 只拉取+过滤+报告，不写台账（台账文件也不会被创建）
   --address <mvc地址>       金库地址（默认取 pilot 配置，回退 issuer-config 常量）
   --ledger <路径>           台账 sqlite 路径（默认 <user-data>/nft-swap-ledger.sqlite）
   --user-data <目录>        IDBots userData 目录（默认 macOS 标准路径）
-  --min-confirmations <n>   入账确认门槛（默认 6，PRD §5.4c）
+  --min-confirmations <n>   入账确认门槛（默认 1）
   --chain-tip <高度>        链尖高度（不带时以 manapi tx/status 的逐笔确认数为准）
   --help                    显示本帮助
 
 退出码: 0 完成 | 1 拒绝/失败 | 2 需人工 | 3 待重试
 `;
 
-const albumOf = (config) => ({
-  genesis: config.genesis ?? ISSUER_CONFIG.genesis,
-  codeHash: config.codeHash ?? ISSUER_CONFIG.codeHash,
-  sensibleId: config.sensibleId ?? ISSUER_CONFIG.sensibleId,
-  tokenSupply: config.tokenSupply ?? ISSUER_CONFIG.tokenSupply,
-});
+const albumOf = (config, collectionSlug) => {
+  if (collectionSlug) {
+    const s = resolveSeries({ collectionSlug });
+    if (!s) throw new CliError('UNKNOWN_COLLECTION_SLUG', `unknown collection slug: ${collectionSlug}`);
+    return albumFromSeries(s, {
+      ...(config?.vaultAddress ? { vaultAddress: config.vaultAddress } : {}),
+      ...(config?.issuerAddress ? { issuerAddress: config.issuerAddress } : {}),
+    });
+  }
+  return {
+    collectionSlug: config.collectionSlug ?? 'metabot-avatar',
+    genesis: config.genesis ?? ISSUER_CONFIG.genesis,
+    codeHash: config.codeHash ?? ISSUER_CONFIG.codeHash,
+    sensibleId: config.sensibleId ?? ISSUER_CONFIG.sensibleId,
+    tokenSupply: config.tokenSupply ?? ISSUER_CONFIG.tokenSupply,
+  };
+};
 
 async function main(argv) {
   const args = parseCliArgs(argv, {
-    values: ['address', 'ledger', 'user-data', 'min-confirmations', 'chain-tip'],
+    values: ['collection', 'address', 'ledger', 'user-data', 'min-confirmations', 'chain-tip'],
     booleans: ['dry-run'],
   });
   const userDataPath = resolveUserData(args);
@@ -66,11 +79,11 @@ async function main(argv) {
 
   let config = null;
   try {
-    config = resolvedPilotConfig(userDataPath);
+    config = resolvedPilotConfig(userDataPath, args.collection || null);
   } catch (error) {
     if (!args.address) throw error;
   }
-  const album = albumOf(config ?? {});
+  const album = albumOf(config ?? {}, args.collection || null);
   const vaultAddress = args.address || config?.vaultAddress || ISSUER_CONFIG.vaultAddress;
   if (!vaultAddress) throw new CliError('VAULT_ADDRESS_MISSING', 'no vault address: pass --address or complete M0');
 

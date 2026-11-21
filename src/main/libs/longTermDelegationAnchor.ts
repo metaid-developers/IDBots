@@ -47,7 +47,7 @@ export function buildDelegationAnchorBlock(
         '  1. 动手前先调用 task_get(taskId) 或 longterm_task_get(taskId) 读取全量上下文（目标、全部子任务、前序产物、事件流水）；如需核对人类发起时的精确原话，调用 task_context_read(taskId, subtaskId)——不要只凭自然语言转述行动。',
         '  2. 本委派只是该子项目的一个执行切片：禁止自行发明基建/配置面/通道；任何未经验证的前提先问，不要先建。',
         '  3. 长耗时步骤中途用 task_subtask_progress(subtaskId, note) 登记阶段进展；重大发现或偏差用 longterm_event_note(taskId, subtaskId) 记回任务事件流。',
-        '  4. 完工或遇阻时，先调用 task_subtask_submit(subtaskId, ...) 将完成情况、数字产物路径/URI 与逐条自证证据（本地目录 / metaapp:// / metafile:// / pin:// / URL）直接写入该子任务对象，再返回交接回执。',
+        '  4. 完工或遇阻时，先调用 task_subtask_submit(subtaskId, ...) 将完成情况、数字产物路径/URI 与逐条自证证据（本地目录或文件 / metaapp:// / metafile:// / pin:// / URL）直接写入该子任务对象，再返回交接回执。',
         '</longterm_anchor>',
       ]
     : [
@@ -70,7 +70,7 @@ export function buildDelegationAnchorBlock(
         '  1. Before acting, call task_get(taskId) or longterm_task_get(taskId) for the full context (goal, all sub-projects, prior artifacts, event journal), and call task_context_read(taskId, subtaskId) whenever you need the owner\'s verbatim origin context — never act on this brief alone.',
         '  2. This delegation is one execution slice of the sub-project: never invent infrastructure/config surfaces/channels; ask about any unverified premise before building.',
         '  3. Record mid-flight milestones via task_subtask_progress(subtaskId, note), and journal major findings or drift with longterm_event_note(taskId, subtaskId).',
-        '  4. When finished or blocked, FIRST register your outcome, digital deliverables, and criterion-by-criterion evidence (local dir / metaapp:// / metafile:// / pin:// / URL) directly onto the subtask via task_subtask_submit(subtaskId, ...), then return your handoff.',
+        '  4. When finished or blocked, FIRST register your outcome, digital deliverables, and criterion-by-criterion evidence (local dir or file / metaapp:// / metafile:// / pin:// / URL) directly onto the subtask via task_subtask_submit(subtaskId, ...), then return your handoff.',
         '</longterm_anchor>',
       ];
   return lines.filter((line) => line !== '').join('\n');

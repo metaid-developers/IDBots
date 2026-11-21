@@ -28,6 +28,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
+import { DEFAULT_COLLECTION_SLUG, resolveSeries } from './series-registry.mjs';
 
 export const LEDGER_STATES = Object.freeze([
   'detected',
@@ -61,6 +62,7 @@ const LEGAL_TRANSITIONS = Object.freeze({
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS swap_ledger (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  collection_slug TEXT NOT NULL DEFAULT 'metabot-avatar',
   genesis TEXT NOT NULL,
   code_hash TEXT NOT NULL,
   token_index INTEGER NOT NULL,
@@ -109,6 +111,20 @@ CREATE TABLE IF NOT EXISTS swap_events (
 );
 `;
 
+function resolveCollectionSlugKey(collectionOrGenesis) {
+  if (!collectionOrGenesis || typeof collectionOrGenesis !== 'string') {
+    return DEFAULT_COLLECTION_SLUG;
+  }
+  const trimmed = collectionOrGenesis.trim();
+  if (!trimmed) return DEFAULT_COLLECTION_SLUG;
+  // If caller passed a 40/64-hex genesis hash, resolve to registered slug if known.
+  if (/^[0-9a-f]{40,64}$/i.test(trimmed)) {
+    const found = resolveSeries({ genesis: trimmed });
+    return found ? found.collectionSlug : trimmed.toLowerCase();
+  }
+  return trimmed.toLowerCase();
+}
+
 export class SwapLedger {
   /**
    * @param {string} dbPath absolute path to the ledger sqlite file
@@ -122,15 +138,28 @@ export class SwapLedger {
   }
 
   /**
-   * Additive migration for ledgers created by the first M1 cut (before
-   * item_desc_pin_id existed). CREATE TABLE IF NOT EXISTS never alters an
-   * existing table, so the column is added explicitly.
+   * Additive, idempotent migrations for existing ledgers:
+   *  - item_desc_pin_id (0.2.0+)
+   *  - collection_slug (0.5.0+): existing rows default to 'metabot-avatar' and
+   *    the active single-lock key upgrades to (collection_slug, token_index).
    */
   #migrate() {
     const columns = this.db.prepare('PRAGMA table_info(swap_ledger)').all().map((c) => c.name);
     if (!columns.includes('item_desc_pin_id')) {
       this.db.exec('ALTER TABLE swap_ledger ADD COLUMN item_desc_pin_id TEXT');
     }
+    if (!columns.includes('collection_slug')) {
+      this.db.exec(`ALTER TABLE swap_ledger ADD COLUMN collection_slug TEXT NOT NULL DEFAULT '${DEFAULT_COLLECTION_SLUG}'`);
+    }
+    this.db.exec(
+      `UPDATE swap_ledger SET collection_slug = '${DEFAULT_COLLECTION_SLUG}' WHERE collection_slug IS NULL OR TRIM(collection_slug) = ''`,
+    );
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_ledger_collection_token ON swap_ledger (collection_slug, token_index)');
+    this.db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_active_collection_token
+       ON swap_ledger (collection_slug, token_index)
+       WHERE state IN ('detected','claimed','mint_pending','minted','send_pending','sent')`,
+    );
   }
 
   close() {
@@ -151,14 +180,15 @@ export class SwapLedger {
     return this.db.prepare('SELECT * FROM swap_ledger WHERE id = ?').get(id) ?? null;
   }
 
-  /** Active (non-terminal) row for a tokenIndex, if any — the single-lock. */
-  activeRowByToken(genesis, tokenIndex) {
+  /** Active (non-terminal) row for a (collection_slug, tokenIndex) — the single-lock. */
+  activeRowByToken(collectionOrGenesis, tokenIndex) {
+    const slug = resolveCollectionSlugKey(collectionOrGenesis);
     return (
       this.db
         .prepare(
-          `SELECT * FROM swap_ledger WHERE genesis = ? AND token_index = ? AND state IN (${ACTIVE_STATES.map(() => '?').join(',')}) ORDER BY id DESC LIMIT 1`,
+          `SELECT * FROM swap_ledger WHERE collection_slug = ? AND token_index = ? AND state IN (${ACTIVE_STATES.map(() => '?').join(',')}) ORDER BY id DESC LIMIT 1`,
         )
-        .get(genesis, tokenIndex, ...ACTIVE_STATES) ?? null
+        .get(slug, tokenIndex, ...ACTIVE_STATES) ?? null
     );
   }
 
@@ -166,27 +196,47 @@ export class SwapLedger {
     return this.db.prepare('SELECT * FROM swap_ledger WHERE deposit_outpoint = ?').get(outpoint) ?? null;
   }
 
-  /** Newest row for a tokenIndex regardless of state (CLI row resolution). */
-  latestRowByToken(genesis, tokenIndex) {
+  /** Newest row for a (collection_slug, tokenIndex) regardless of state (CLI row resolution). */
+  latestRowByToken(collectionOrGenesis, tokenIndex) {
+    const slug = resolveCollectionSlugKey(collectionOrGenesis);
     return (
       this.db
-        .prepare('SELECT * FROM swap_ledger WHERE genesis = ? AND token_index = ? ORDER BY id DESC LIMIT 1')
-        .get(genesis, tokenIndex) ?? null
+        .prepare('SELECT * FROM swap_ledger WHERE collection_slug = ? AND token_index = ? ORDER BY id DESC LIMIT 1')
+        .get(slug, tokenIndex) ?? null
     );
   }
 
   /**
-   * Rows that already carry a minted pin for this tokenIndex (mint_pending
-   * onward). Used to prove "one tokenIndex is swapped at most once in its
-   * whole lifetime" before a mint/adoption is allowed (PRD §6).
+   * Look up the ledger row matching an exact (collection_slug, tokenIndex,
+   * deposit_txid) tuple so a claim cannot attach to an unrelated deposit for
+   * the same tokenIndex.
    */
-  mintedRowsByToken(genesis, tokenIndex) {
+  rowByDepositTx(collectionOrGenesis, tokenIndex, depositTxid) {
+    const slug = resolveCollectionSlugKey(collectionOrGenesis);
+    const txid = String(depositTxid ?? '').trim().toLowerCase();
+    if (!txid) return null;
+    return (
+      this.db
+        .prepare(
+          'SELECT * FROM swap_ledger WHERE collection_slug = ? AND token_index = ? AND LOWER(deposit_txid) = ? ORDER BY id DESC LIMIT 1',
+        )
+        .get(slug, tokenIndex, txid) ?? null
+    );
+  }
+
+  /**
+   * Rows that already carry a minted pin for this (collection_slug, tokenIndex)
+   * (mint_pending onward). Used to prove "one tokenIndex per collection is
+   * swapped at most once in its whole lifetime" before mint/adoption (PRD §6).
+   */
+  mintedRowsByToken(collectionOrGenesis, tokenIndex) {
+    const slug = resolveCollectionSlugKey(collectionOrGenesis);
     return this.db
       .prepare(
-        `SELECT * FROM swap_ledger WHERE genesis = ? AND token_index = ? AND mint_pin_id IS NOT NULL
+        `SELECT * FROM swap_ledger WHERE collection_slug = ? AND token_index = ? AND mint_pin_id IS NOT NULL
            AND state IN ('mint_pending','minted','send_pending','sent','burn_pending','burned') ORDER BY id`,
       )
-      .all(genesis, tokenIndex);
+      .all(slug, tokenIndex);
   }
 
   /**
@@ -224,6 +274,7 @@ export class SwapLedger {
    * existing row is refreshed (height/confirmations) instead of duplicated.
    */
   recordDetection({
+    collectionSlug,
     genesis,
     codeHash,
     tokenIndex,
@@ -232,6 +283,7 @@ export class SwapLedger {
     depositVout,
     depositHeight,
   }) {
+    const resolvedSlug = resolveCollectionSlugKey(collectionSlug || genesis);
     const outpoint = `${depositTxid}:${depositVout}`;
     const now = Date.now();
     const existing = this.rowByOutpoint(outpoint);
@@ -242,18 +294,19 @@ export class SwapLedger {
       return { row: this.rowById(existing.id), created: false };
     }
 
-    const blocker = this.activeRowByToken(genesis, tokenIndex);
+    const blocker = this.activeRowByToken(resolvedSlug, tokenIndex);
     const state = blocker ? 'rejected' : 'detected';
     const rejectReason = blocker
-      ? `duplicate deposit while tokenIndex ${tokenIndex} is ${blocker.state} (ledger id ${blocker.id})`
+      ? `duplicate deposit while ${resolvedSlug} #${tokenIndex} is ${blocker.state} (ledger id ${blocker.id})`
       : null;
     const info = this.db
       .prepare(
         `INSERT INTO swap_ledger
-          (genesis, code_hash, token_index, state, sensible_id, deposit_txid, deposit_vout, deposit_outpoint, deposit_height, detected_at, reject_reason, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (collection_slug, genesis, code_hash, token_index, state, sensible_id, deposit_txid, deposit_vout, deposit_outpoint, deposit_height, detected_at, reject_reason, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
+        resolvedSlug,
         genesis,
         codeHash,
         tokenIndex,
@@ -268,7 +321,11 @@ export class SwapLedger {
         now,
       );
     const id = Number(info.lastInsertRowid);
-    this.#event(id, blocker ? 'detect_rejected_duplicate' : 'detected', null, state, { outpoint, depositHeight });
+    this.#event(id, blocker ? 'detect_rejected_duplicate' : 'detected', null, state, {
+      collectionSlug: resolvedSlug,
+      outpoint,
+      depositHeight,
+    });
     return { row: this.rowById(id), created: true };
   }
 
@@ -456,7 +513,15 @@ export class SwapLedger {
   }
 
   /** Burn candidates: sent + transferCount stable (prereview #10 口径). */
-  burnCandidates() {
+  burnCandidates(collectionSlug = null) {
+    if (collectionSlug) {
+      const slug = resolveCollectionSlugKey(collectionSlug);
+      return this.db
+        .prepare(
+          `SELECT * FROM swap_ledger WHERE collection_slug = ? AND state = 'sent' AND transfer_txid IS NOT NULL AND transfer_count IS NOT NULL ORDER BY id`,
+        )
+        .all(slug);
+    }
     return this.db
       .prepare(
         `SELECT * FROM swap_ledger WHERE state = 'sent' AND transfer_txid IS NOT NULL AND transfer_count IS NOT NULL ORDER BY id`,

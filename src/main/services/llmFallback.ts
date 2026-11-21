@@ -116,16 +116,28 @@ export interface LlmFallbackCallOptions {
    * actually ran).
    */
   attemptTimeoutMs?: number;
+  /**
+   * Set when the attempt transport builds its own per-attempt deadline
+   * (cognitiveChatCompletion.buildOneShotAttemptDeadline: caller signal +
+   * total cap + streaming idle watchdog, with the total/idle semantics chosen
+   * by attemptTimeoutKind). withPerAttemptSignal must not wrap the caller
+   * signal in AbortSignal.timeout on top — that would re-impose the old
+   * total-only semantics and cut steadily-flowing long generations, exactly
+   * what the streaming transport exists to stop (the 2026-11-20 ABS relay
+   * handoff: glm non-stream avg 45.6s against 45-60s total caps).
+   */
+  streamingTransport?: boolean;
 }
 
 /**
  * Derive the options for one attempt: when attemptTimeoutMs is set, swap the
  * caller's signal for a fresh per-attempt timeout linked to it, so each
  * attempt gets the full window while caller cancellation still propagates.
+ * Skipped when the transport owns the deadline (streamingTransport).
  */
 function withPerAttemptSignal<TOptions extends LlmFallbackCallOptions>(options: TOptions): TOptions {
   const timeoutMs = options.attemptTimeoutMs;
-  if (!timeoutMs || timeoutMs <= 0) return options;
+  if (!timeoutMs || timeoutMs <= 0 || options.streamingTransport) return options;
   const callerSignal = (options as { signal?: AbortSignal }).signal;
   const attemptSignal = callerSignal
     ? AbortSignal.any([callerSignal, AbortSignal.timeout(timeoutMs)])

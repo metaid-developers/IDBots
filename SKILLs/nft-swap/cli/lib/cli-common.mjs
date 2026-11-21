@@ -14,6 +14,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { ISSUER_CONFIG } from './issuer-config.mjs';
+import { albumFromSeries, registerSeries, resolveSeries } from './series-registry.mjs';
 import { SwapLedger } from './swap-ledger.mjs';
 import { SwapEngineError } from './swap-engine.mjs';
 
@@ -77,6 +78,23 @@ export function resolveLedgerPath(userDataPath, args) {
  * WITHOUT touching the app build. Read-only; the row never contains key
  * material (addresses and constants only).
  */
+export function registerConfiguredSeries(config) {
+  const list = Array.isArray(config?.series) ? config.series : [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const collectionSlug = String(item.collectionSlug ?? '').trim().toLowerCase();
+    const legacyGenesis = String(item.legacyGenesis ?? item.genesis ?? '').trim().toLowerCase();
+    const legacyCodeHash = String(item.legacyCodeHash ?? item.codeHash ?? item.codehash ?? '').trim().toLowerCase();
+    if (!collectionSlug || !legacyGenesis || !legacyCodeHash) continue;
+    registerSeries({
+      ...item,
+      collectionSlug,
+      legacyGenesis,
+      legacyCodeHash,
+    });
+  }
+}
+
 export function readPilotConfig(userDataPath) {
   const dbPath = path.join(userDataPath, APP_DB_FILENAME);
   if (!existsSync(dbPath)) {
@@ -94,23 +112,40 @@ export function readPilotConfig(userDataPath) {
         `cowork_config key ${PILOT_CONFIG_KEY} is absent — M0 restore-issuer has not run against this userData`,
       );
     }
-    return JSON.parse(String(row.value));
+    const parsed = JSON.parse(String(row.value));
+    registerConfiguredSeries(parsed);
+    return parsed;
   } finally {
     db.close();
   }
 }
 
-/** Config with issuer-config fallbacks for the constants the engine needs. */
-export function resolvedPilotConfig(userDataPath) {
+/** Config with series-registry + issuer-config fallbacks for the constants the engine needs. */
+export function resolvedPilotConfig(userDataPath, collectionSlug = null) {
   const stored = readPilotConfig(userDataPath);
+  const series = collectionSlug
+    ? resolveSeries({ collectionSlug })
+    : resolveSeries({ genesis: stored.genesis, codeHash: stored.codeHash });
+  if (collectionSlug && !series) {
+    throw new CliError('UNKNOWN_COLLECTION_SLUG', `unknown collection slug in SERIES_REGISTRY: ${collectionSlug}`);
+  }
+  const base = series
+    ? albumFromSeries(series, {
+        issuerAddress: stored.issuerAddress || series.issuerAddress,
+        vaultAddress: stored.vaultAddress || series.vaultAddress,
+        burnAddress: stored.burnAddress || series.burnAddress,
+        perSwapFeeCeilingSats: stored.perSwapFeeCeilingSats ?? series.perSwapFeeCeilingSats,
+      })
+    : {};
   return {
     ...stored,
-    genesis: stored.genesis || ISSUER_CONFIG.genesis,
-    codeHash: stored.codeHash || ISSUER_CONFIG.codeHash,
-    sensibleId: stored.sensibleId ?? ISSUER_CONFIG.sensibleId,
-    tokenSupply: stored.tokenSupply ?? ISSUER_CONFIG.tokenSupply,
+    ...base,
+    genesis: base.genesis || stored.genesis || ISSUER_CONFIG.genesis,
+    codeHash: base.codeHash || stored.codeHash || ISSUER_CONFIG.codeHash,
+    sensibleId: base.sensibleId ?? stored.sensibleId ?? ISSUER_CONFIG.sensibleId,
+    tokenSupply: base.tokenSupply ?? stored.tokenSupply ?? ISSUER_CONFIG.tokenSupply,
     issuerAddress: stored.issuerAddress || ISSUER_CONFIG.issuerAddress,
-    collectionName: stored.collectionName || ISSUER_CONFIG.collectionName,
+    collectionName: base.collectionName || stored.collectionName || ISSUER_CONFIG.collectionName,
     vaultAddress: stored.vaultAddress || ISSUER_CONFIG.vaultAddress,
     burnAddress: stored.burnAddress || ISSUER_CONFIG.burnAddress,
     perSwapFeeCeilingSats: stored.perSwapFeeCeilingSats ?? ISSUER_CONFIG.perSwapFeeCeilingSats,

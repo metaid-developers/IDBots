@@ -1000,6 +1000,7 @@ export type DailyReportPerformChat = (
     thinking?: 'enabled' | 'disabled';
     webSearch?: boolean;
     attemptTimeoutMs?: number;
+    attemptTimeoutKind?: 'total' | 'idle';
   },
 ) => Promise<string>;
 
@@ -1136,6 +1137,7 @@ export const generateDailyReport = async (input: {
           fallbackLlmProvider: input.brain.fallbackLlmProvider ?? null,
           fallbackEffort: input.brain.fallbackEffort ?? null,
           attemptTimeoutMs: input.brainTimeoutMs ?? DAILY_REPORT_BRAIN_TIMEOUT_MS,
+          attemptTimeoutKind: 'idle',
           thinking: 'disabled',
           webSearch: false,
           throwOnEmptyContent: true,
