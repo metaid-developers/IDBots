@@ -72,7 +72,7 @@ export function buildOwnerCapabilityGuidance(capabilities: OwnerPromptCapabiliti
       ? 'Desktop Bot Browser tools are available on this surface when page inspection or preview is needed.'
       : '';
     lines.push(
-      `**Active surface capabilities (desktop Studio).** ${visualNote} ${browserNote}`.trim(),
+      `**Active surface capabilities (desktop Studio).** ${visualNote} ${browserNote} Read-only verification is open (read/grep/glob, read-only \`bash\` inspection/verification, read-only MetaTask/Escrow lookups via \`metatask_list\`/\`metatask_get\`/\`metatask_replay\` and \`escrow_order_list\`/\`escrow_order_info\`, and read-only social/MetaWeb lookup tools); heavy economy/social write tools stay off-surface. Under the Chief-of-Staff boundary, NEVER use \`write\`, \`edit\`, or mutating/build \`bash\` commands to author code or deliverables directly in Studio chat (outside \`reports/*.html\`) — delegate execution to Worker Bots via \`local_worker_delegate\`.`.replace(/\s+/g, ' ').trim(),
     );
   }
   lines.push(

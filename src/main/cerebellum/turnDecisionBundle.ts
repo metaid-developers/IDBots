@@ -92,6 +92,12 @@ import {
   type TaskIntentAssessment,
   type TaskIntentRubricConfig,
 } from './taskIntentRubric';
+import {
+  buildMobileToolIntentQuestions,
+  parseMobileToolIntentAnswers,
+  selectPendingMobileToolExpansions,
+} from './mobileToolIntent';
+import type { MobileToolExpansion } from '../libs/toolCapabilityRegistry';
 
 export const CEREBELLUM_TURN_DECISION_TIMEOUT_MS = 2500;
 export const CEREBELLUM_BUNDLE_MAX_MEMORIES = 15;
@@ -123,6 +129,10 @@ export interface CerebellumTurnDecisionSet {
   includeTaskIntent?: boolean;
   /** Optional parameter overrides for the 5-factor Task vs. Dialogue rubric. */
   taskIntentConfig?: Partial<TaskIntentRubricConfig> | null;
+  /** Whether to classify Mobile tool-domain expansions in this bundle (Mobile owner chats only). */
+  includeMobileToolExpansions?: boolean;
+  /** Already-expanded Mobile tool domains (sticky); omitted from new questions. */
+  currentMobileExpansions?: readonly MobileToolExpansion[];
 }
 
 /**
@@ -140,6 +150,7 @@ export interface CerebellumTurnDecisionSelection {
   includeEffort: boolean;
   includeTaskIntent?: boolean;
   taskIntentConfig?: Partial<TaskIntentRubricConfig> | null;
+  pendingMobileExpansions?: MobileToolExpansion[];
 }
 
 export type CerebellumTurnQuestion =
@@ -170,6 +181,7 @@ export interface CerebellumTurnDecisionResults {
   gateVerdicts: Record<string, boolean> | null;
   effortDistribution?: CerebellumEffortDistribution | null;
   taskIntentAssessment?: TaskIntentAssessment | null;
+  mobileToolExpansions?: MobileToolExpansion[] | null;
 }
 
 /**
@@ -293,6 +305,9 @@ export function selectTurnDecisionCandidates(
   const includeGate = decisions.includeGate;
   const includeEffort = decisions.includeEffort === true;
   const includeTaskIntent = decisions.includeTaskIntent === true;
+  const pendingMobileExpansions = decisions.includeMobileToolExpansions === true
+    ? selectPendingMobileToolExpansions(decisions.currentMobileExpansions)
+    : [];
   if (
     memories.length === 0
     && knowledge.length === 0
@@ -301,6 +316,7 @@ export function selectTurnDecisionCandidates(
     && !includeGate
     && !includeEffort
     && !includeTaskIntent
+    && pendingMobileExpansions.length === 0
   ) {
     return null;
   }
@@ -314,6 +330,7 @@ export function selectTurnDecisionCandidates(
     includeEffort,
     ...(includeTaskIntent ? { includeTaskIntent: true } : {}),
     ...(decisions.taskIntentConfig ? { taskIntentConfig: decisions.taskIntentConfig } : {}),
+    ...(pendingMobileExpansions.length > 0 ? { pendingMobileExpansions } : {}),
   };
 }
 
@@ -375,6 +392,9 @@ export function buildTurnDecisionRequest(input: {
       ...(selection.includeGate ? buildVolatileGateQuestions() : {}),
       ...(selection.includeEffort ? buildBundledEffortQuestion() : {}),
       ...(selection.includeTaskIntent ? buildBundledTaskIntentQuestions() : {}),
+      ...(selection.pendingMobileExpansions?.length
+        ? buildMobileToolIntentQuestions(selection.pendingMobileExpansions)
+        : {}),
       ...knQuestions,
     },
   };
@@ -416,6 +436,12 @@ export function parseTurnDecisionAnswers(
       payload,
       { userText: selection.currentUserText },
       selection.taskIntentConfig,
+    );
+  }
+  if (selection.pendingMobileExpansions && selection.pendingMobileExpansions.length > 0) {
+    baseResults.mobileToolExpansions = parseMobileToolIntentAnswers(
+      payload,
+      selection.pendingMobileExpansions,
     );
   }
   return baseResults;

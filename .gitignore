@@ -1165,3 +1165,4 @@ blob-report/
 
 # P1 ConversationProfile, ToolCapabilityRegistry & idbots:owner-interaction governance
 !tests/p1ConversationProfileGovernance.test.mjs
+!tests/p2StudioReadonlyAndMobileIntent.test.mjs

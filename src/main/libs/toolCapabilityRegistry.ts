@@ -46,8 +46,40 @@ export interface ToolCapabilitySpec {
   readonly desktopOnly?: boolean;
   readonly serverOnly?: boolean;
   readonly imOnly?: boolean;
+  readonly readOnly?: boolean;
   readonly expansion?: MobileToolExpansion;
 }
+
+const READ_ONLY_ECONOMY_TOOLS: ReadonlySet<string> = new Set([
+  'escrow_order_info',
+  'escrow_order_list',
+  'metatask_get',
+  'metatask_list',
+  'metatask_replay',
+]);
+
+const READ_ONLY_SOCIAL_METAWEB_TOOLS: ReadonlySet<string> = new Set([
+  'check_peer_relationship',
+  'get_question_answers',
+  'list_latest_questions',
+  'list_online_bots',
+  'list_online_services',
+  'list_social_connections',
+  'metaid_profile',
+  'metaprotocol_registry',
+  'metaweb_pin_versions',
+  'omni_read',
+  'read_metaweb_pin',
+  'read_metaweb_pins_batch',
+  'search_metaapps',
+  'search_metaids',
+  'search_metaweb',
+  'search_preference_comparisons',
+  'search_qa',
+  'search_social_posts',
+  'social_post_comments',
+  'social_post_detail',
+]);
 
 const DOMAIN_DEFAULT_SPEC: Record<ToolDomain, ToolCapabilitySpec> = {
   core: { domain: 'core' },
@@ -368,12 +400,15 @@ const TOOLS_BY_DOMAIN: Record<Exclude<ToolDomain, 'browser_automation'>, readonl
 
 const registryEntries = new Map<string, ToolCapabilitySpec>();
 for (const [domain, names] of Object.entries(TOOLS_BY_DOMAIN) as Array<[Exclude<ToolDomain, 'browser_automation'>, readonly string[]]>) {
-  const spec = DOMAIN_DEFAULT_SPEC[domain];
+  const baseSpec = DOMAIN_DEFAULT_SPEC[domain];
   for (const name of names) {
     if (registryEntries.has(name)) {
       throw new Error(`Duplicate tool capability registration: "${name}"`);
     }
-    registryEntries.set(name, spec);
+    const isReadOnly =
+      (domain === 'worker_economy' && READ_ONLY_ECONOMY_TOOLS.has(name))
+      || (domain === 'metaweb' && READ_ONLY_SOCIAL_METAWEB_TOOLS.has(name));
+    registryEntries.set(name, isReadOnly ? { ...baseSpec, readOnly: true } : baseSpec);
   }
 }
 
@@ -431,6 +466,50 @@ export function resolveMobileToolExpansions(
     if (MOBILE_TOOL_PATTERNS[expansion].test(prompt)) next.add(expansion);
   }
   return MOBILE_TOOL_EXPANSIONS.filter((expansion) => next.has(expansion));
+}
+
+/**
+ * Apply semantic Cerebellum mobile-intent verdicts when available, preserving
+ * sticky prior expansions, and fall back to regex heuristics (`resolveMobileToolExpansions`)
+ * whenever `cerebellumExpanded` is null or undefined.
+ */
+export function applyMobileToolExpansionVerdict(
+  previous: readonly MobileToolExpansion[] | undefined,
+  prompt: string,
+  cerebellumExpanded: readonly MobileToolExpansion[] | null | undefined,
+): MobileToolExpansion[] {
+  if (cerebellumExpanded !== null && cerebellumExpanded !== undefined) {
+    const next = new Set(previous ?? []);
+    for (const expansion of cerebellumExpanded) {
+      if (MOBILE_TOOL_EXPANSIONS.includes(expansion)) {
+        next.add(expansion);
+      }
+    }
+    return MOBILE_TOOL_EXPANSIONS.filter((expansion) => next.has(expansion));
+  }
+  return resolveMobileToolExpansions(previous, prompt);
+}
+
+export interface ReadOnlyToolMountPolicy {
+  readonly economyRead: boolean;
+  readonly socialRead: boolean;
+}
+
+/**
+ * Read-only verification surface policy (P2-1):
+ * Studio Twin front-office blocks heavy write/production domains (`workerEconomy`,
+ * `social`) while keeping read-only verification tools (`economy_read` for
+ * MetaTask/Escrow status checks and `social_read` for MetaWeb/social lookups)
+ * open for supervisory inspection.
+ */
+export function resolveReadOnlyToolMountPolicy(
+  profile: Pick<ConversationProfile, 'isStudioOwnerChat' | 'isMobileOwnerChat'>,
+  expansions: readonly MobileToolExpansion[],
+): ReadOnlyToolMountPolicy {
+  return {
+    economyRead: !profile.isMobileOwnerChat || expansions.includes('workerEconomy'),
+    socialRead: !profile.isMobileOwnerChat || expansions.includes('metaweb') || expansions.includes('social'),
+  };
 }
 
 export function resolveToolMountPolicy(
