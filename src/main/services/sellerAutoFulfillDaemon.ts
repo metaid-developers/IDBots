@@ -39,6 +39,27 @@ import {
   formatGoodsTradeWireMessage,
   parseGoodsTradeWireMessage,
 } from './goodsTradeWireProtocol';
+import type { AgentNotificationInput } from '../../renderer/types/notification';
+import {
+  deliverFtEscrowOrder,
+  getFtEscrowOrder,
+  listFtEscrowOrders,
+  rejectFtEscrowOrder,
+  validateFtReceiveAddress,
+  type FtEscrowOrderStatus,
+  type MeFtEscrowOrder,
+} from './meFtEscrowService';
+import {
+  ensureFtOrderTables,
+  findActiveMeFtOrderForEscrow,
+  getFtBatchOrderProgress,
+  getMeFtFulfillmentRecord,
+  listFtActiveOrders,
+  updateFtOrderStatus,
+  upsertMeFtFulfillmentRecord,
+  type FtActiveOrderRecord,
+  type MeFtSellerFulfillmentRecord,
+} from './ftOrderStore';
 
 export const SELLER_AUTO_FULFILL_POLL_INTERVAL_MS = 60_000;
 
@@ -136,6 +157,39 @@ export interface SellerAutoFulfillDeps {
     itemPinId: string,
     meta?: { inquiryId?: string; orderId?: string },
   ) => boolean;
+  // WS-1 FT ME Escrow Auto-Fulfill dependencies (optional with defaults)
+  transferMvcFt?: (input: {
+    metabotId: number;
+    codehash: string;
+    genesis: string;
+    toAddress: string;
+    amountBase: string;
+  }) => Promise<{ txId: string }>;
+  transferBtcMrc20?: (input: {
+    metabotId: number;
+    mrc20Id: string;
+    decimal: number;
+    symbol: string;
+    fromAddress: string;
+    toAddress: string;
+    amountBase: string;
+  }) => Promise<{ revealTxId: string; commitTxId?: string }>;
+  getFtEscrowOrder?: (signer: MeNftEscrowSigner, orderId: string) => Promise<MeFtEscrowOrder>;
+  listFtEscrowOrders?: (
+    signer: MeNftEscrowSigner,
+    query: { role: 'buyer' | 'seller'; status?: FtEscrowOrderStatus; limit?: number },
+  ) => Promise<MeFtEscrowOrder[]>;
+  deliverFtEscrowOrder?: (
+    signer: MeNftEscrowSigner,
+    orderId: string,
+    params: { deliveryTxId: string; tradePinId?: string },
+  ) => Promise<MeFtEscrowOrder>;
+  rejectFtEscrowOrder?: (
+    signer: MeNftEscrowSigner,
+    orderId: string,
+    reason: string,
+  ) => Promise<MeFtEscrowOrder>;
+  recordNotification?: (input: AgentNotificationInput) => void;
   emitLog?: (msg: string) => void;
   now?: () => number;
 }
@@ -191,6 +245,7 @@ export class SellerAutoFulfillDaemon {
     this.saveDb = saveDb;
     this.deps = deps;
     ensureMeNftSellerFulfillmentsSchema(db);
+    ensureFtOrderTables(db);
   }
 
   private nowMs(): number {
@@ -291,6 +346,7 @@ export class SellerAutoFulfillDaemon {
   private getSigner(metabotId: number): {
     signer: MeNftEscrowSigner;
     mvcAddress: string;
+    btcAddress?: string;
     globalMetaId?: string;
   } | null {
     const store = this.deps.getMetabotStore();
@@ -302,6 +358,7 @@ export class SellerAutoFulfillDaemon {
     return {
       signer: { mnemonic: wallet.mnemonic, path: wallet.path },
       mvcAddress: bot.mvc_address,
+      btcAddress: bot.btc_address || undefined,
       globalMetaId: bot.globalmetaid || undefined,
     };
   }
@@ -370,8 +427,46 @@ export class SellerAutoFulfillDaemon {
       return { handled: false, type: msg.type, orderId: msg.inquiryId };
     }
 
-    // GOODS_INQUIRY_V1 passes through to conversational handling
-    return { handled: false, type: msg.type, orderId: msg.inquiryId };
+    if (msg.type === 'ME_FT_ESCROW_LOCKED_V1') {
+      await this.processFtEscrowOrder(params.metabotId, msg.orderId, {
+        source: 'a2a_message',
+        buyerMetaIdHint: params.fromGlobalMetaId || msg.buyerGlobalMetaId,
+      });
+      return { handled: true, type: msg.type, orderId: msg.orderId };
+    }
+
+    if (msg.type === 'ME_FT_DELIVERY_DONE_V1') {
+      this.deps.emitToRenderer?.('ftTrade:orderFilled', {
+        role: 'buyer',
+        orderId: msg.orderId,
+        metabotId: params.metabotId,
+        assetKey: msg.assetKey,
+        chain: msg.chain,
+        rail: 'me-escrow',
+        tokenAmountBase: msg.tokenAmountBase,
+        filledTxId: msg.deliveryTxId,
+        priceMeMilli: msg.settledAmountMilli,
+        sellerGlobalMetaId: msg.sellerMetaId || params.fromGlobalMetaId,
+        settledAt: this.nowMs(),
+      });
+      return { handled: true, type: msg.type, orderId: msg.orderId };
+    }
+
+    if (msg.type === 'ME_FT_ESCROW_REJECTED_V1') {
+      this.deps.emitToRenderer?.('goodsTrade:orderRejected', {
+        metabotId: params.metabotId,
+        orderId: msg.orderId,
+        assetKey: msg.assetKey,
+        reason: msg.reason,
+        sellerGlobalMetaId: params.fromGlobalMetaId,
+      });
+      return { handled: true, type: msg.type, orderId: msg.orderId };
+    }
+
+    if (msg.type === 'GOODS_INQUIRY_V1') {
+      return { handled: false, type: msg.type, orderId: msg.inquiryId };
+    }
+    return { handled: false };
   }
 
   /**
@@ -748,6 +843,504 @@ export class SellerAutoFulfillDaemon {
     return { outcome: 'settled', deliveryTxId };
   }
 
+  getFtFulfillment(orderId: string): MeFtSellerFulfillmentRecord | null {
+    return getMeFtFulfillmentRecord(this.db, orderId);
+  }
+
+  private hasPendingOrActiveFtSellerWork(metabotId: number): boolean {
+    if (this.deps.listFtEscrowOrders) return true;
+    const activeMeLots = listFtActiveOrders(this.db, {
+      metabotId,
+      status: 'active',
+      rails: ['me-escrow'],
+    });
+    if (activeMeLots.length > 0) return true;
+    const pendingRes = this.db.exec(
+      `SELECT COUNT(*) FROM me_ft_seller_fulfillments
+       WHERE seller_metabot_id = ? AND status IN ('transferring', 'transferred')`,
+      [metabotId],
+    );
+    return Number(pendingRes[0]?.values?.[0]?.[0] ?? 0) > 0;
+  }
+
+  /**
+   * Process one seller FT ME escrow order (`REQ-1-02`) with 6 strict safety
+   * checks + SQLite crash-recovery idempotency (`me_ft_seller_fulfillments`).
+   */
+  async processFtEscrowOrder(
+    sellerMetabotId: number,
+    orderId: string,
+    opts?: { source?: 'a2a_message' | 'escrow_poll'; buyerMetaIdHint?: string },
+  ): Promise<{
+    outcome: 'settled' | 'rejected' | 'skipped' | 'failed';
+    reason?: string;
+    deliveryTxId?: string;
+  }> {
+    const normalizedOrderId = String(orderId ?? '').trim();
+    if (!normalizedOrderId) return { outcome: 'skipped', reason: 'empty_order_id' };
+
+    const flightKey = `ft:${normalizedOrderId}`;
+    if (this.processingOrders.has(flightKey)) {
+      return { outcome: 'skipped', reason: 'already_in_flight' };
+    }
+
+    const existing = getMeFtFulfillmentRecord(this.db, normalizedOrderId);
+    if (existing?.status === 'delivered' || existing?.status === 'rejected') {
+      return {
+        outcome: 'skipped',
+        reason: `already_${existing.status}`,
+        deliveryTxId: existing.deliveryTxId,
+      };
+    }
+
+    const identity = this.getSigner(sellerMetabotId);
+    if (!identity) {
+      return { outcome: 'skipped', reason: 'seller_bot_unavailable' };
+    }
+
+    this.processingOrders.add(flightKey);
+    try {
+      const fetchOrder = this.deps.getFtEscrowOrder ?? getFtEscrowOrder;
+      const order = await fetchOrder(identity.signer, normalizedOrderId);
+
+      // Crash-recovery fast path: FT/MRC-20 transfer already broadcast in an earlier run;
+      // NEVER re-send tokens! Resume /deliver + local order update + DM + notification.
+      if (existing?.status === 'transferred' && existing.deliveryTxId) {
+        this.log(
+          `[SellerAutoFulfill/FT] Crash-recovery resuming /deliver for order ${normalizedOrderId} (tx=${existing.deliveryTxId})`,
+        );
+        const localForRecovery = existing.listingKey
+          ? listFtActiveOrders(this.db, { metabotId: sellerMetabotId }).find(
+              (r) => r.listingKey === existing.listingKey,
+            ) ?? null
+          : null;
+        return await this.completeFtDeliveryAfterTransfer({
+          sellerMetabotId,
+          identity,
+          order,
+          localOrder: localForRecovery,
+          deliveryTxId: existing.deliveryTxId,
+          createdAt: existing.createdAt,
+          buyerMetaIdHint: opts?.buyerMetaIdHint,
+        });
+      }
+
+      // Check 1: Authoritative ABS order must be FROZEN_AWAITING_DELIVERY and addressed to this seller bot
+      if (order.status !== 'FROZEN_AWAITING_DELIVERY') {
+        if (
+          order.status === 'SETTLED' ||
+          order.status === 'RELEASED_TO_SELLER' ||
+          order.status === 'DELIVERY_SUBMITTED'
+        ) {
+          const now = this.nowMs();
+          upsertMeFtFulfillmentRecord(
+            this.db,
+            {
+              orderId: normalizedOrderId,
+              sellerMetabotId,
+              listingKey: order.listingKey,
+              assetKey: order.assetKey,
+              chain: order.chain,
+              tokenAmountBase: order.tokenAmountBase,
+              buyerReceiveAddress: order.buyerReceiveAddress,
+              amountMilli: order.amountMilli,
+              status: 'delivered',
+              deliveryTxId: order.deliveryTxId ?? existing?.deliveryTxId,
+              createdAt: existing?.createdAt ?? now,
+              updatedAt: now,
+            },
+            this.saveDb,
+          );
+        }
+        return { outcome: 'skipped', reason: `order_status_${order.status}` };
+      }
+
+      if (order.sellerBotAddress.toLowerCase() !== identity.mvcAddress.toLowerCase()) {
+        return { outcome: 'skipped', reason: 'seller_address_mismatch' };
+      }
+
+      // Check 2: Local active FT ME sell listing with autoFulfillMe === true
+      const localOrder = findActiveMeFtOrderForEscrow(this.db, {
+        metabotId: sellerMetabotId,
+        assetKey: order.assetKey,
+        listingKey: order.listingKey,
+        lockedUtxoOutpoint: order.lockedUtxoOutpoint,
+      });
+      if (!localOrder) {
+        return await this.rejectLockedFtOrder(
+          sellerMetabotId,
+          identity,
+          order,
+          'no_active_ft_sell_order',
+          opts?.buyerMetaIdHint,
+        );
+      }
+
+      // Check 3: Exact assetKey, chain, ME price floor, and BigInt quantity ceiling
+      if (order.chain !== localOrder.chain || order.assetKey !== localOrder.assetKey) {
+        return await this.rejectLockedFtOrder(
+          sellerMetabotId,
+          identity,
+          order,
+          'asset_or_chain_mismatch',
+          opts?.buyerMetaIdHint,
+        );
+      }
+      if (
+        localOrder.priceMeMilli == null ||
+        localOrder.priceMeMilli <= 0 ||
+        order.amountMilli < localOrder.priceMeMilli
+      ) {
+        return await this.rejectLockedFtOrder(
+          sellerMetabotId,
+          identity,
+          order,
+          `price_below_listing (got ${order.amountMilli}, required ${localOrder.priceMeMilli ?? 'none'})`,
+          opts?.buyerMetaIdHint,
+        );
+      }
+
+      let requestedBase: bigint;
+      let lotBase: bigint;
+      try {
+        requestedBase = BigInt(order.tokenAmountBase);
+        lotBase = BigInt(localOrder.amountBase);
+      } catch {
+        return await this.rejectLockedFtOrder(
+          sellerMetabotId,
+          identity,
+          order,
+          'invalid_token_amount_base',
+          opts?.buyerMetaIdHint,
+        );
+      }
+      if (requestedBase <= 0n || requestedBase > lotBase) {
+        return await this.rejectLockedFtOrder(
+          sellerMetabotId,
+          identity,
+          order,
+          `token_amount_exceeds_lot (requested ${requestedBase.toString()}, lot ${lotBase.toString()})`,
+          opts?.buyerMetaIdHint,
+        );
+      }
+
+      // Check 4: Buyer receive address validity & self-trade prevention
+      let validReceiveAddress: string;
+      try {
+        validReceiveAddress = validateFtReceiveAddress(order.buyerReceiveAddress, order.chain);
+      } catch {
+        return await this.rejectLockedFtOrder(
+          sellerMetabotId,
+          identity,
+          order,
+          'invalid_buyer_receive_address',
+          opts?.buyerMetaIdHint,
+        );
+      }
+
+      const sellerOwnChainAddr =
+        order.chain === 'btc' ? identity.btcAddress || '' : identity.mvcAddress;
+      if (
+        order.buyerBotAddress.toLowerCase() === identity.mvcAddress.toLowerCase() ||
+        (sellerOwnChainAddr &&
+          validReceiveAddress.toLowerCase() === sellerOwnChainAddr.toLowerCase())
+      ) {
+        return await this.rejectLockedFtOrder(
+          sellerMetabotId,
+          identity,
+          order,
+          'self_trade_prohibited',
+          opts?.buyerMetaIdHint,
+        );
+      }
+
+      // Check 5: Persist 'transferring' lock BEFORE broadcasting on-chain FT/MRC-20 transfer
+      const createdAt = existing?.createdAt ?? this.nowMs();
+      upsertMeFtFulfillmentRecord(
+        this.db,
+        {
+          orderId: normalizedOrderId,
+          sellerMetabotId,
+          listingKey: localOrder.listingKey,
+          assetKey: order.assetKey,
+          chain: order.chain,
+          tokenAmountBase: requestedBase.toString(),
+          buyerReceiveAddress: validReceiveAddress,
+          amountMilli: order.amountMilli,
+          status: 'transferring',
+          createdAt,
+          updatedAt: this.nowMs(),
+        },
+        this.saveDb,
+      );
+
+      // Check 6: Execute on-chain FT or MRC-20 transfer, persist 'transferred' + txId BEFORE /deliver
+      let deliveryTxId: string;
+      if (order.chain === 'mvc') {
+        if (!this.deps.transferMvcFt) {
+          throw new Error('transferMvcFt dependency is not configured');
+        }
+        const parts = localOrder.assetKey.slice('mvc-ft:'.length).split(':');
+        const codehash = localOrder.codehash || parts[0] || '';
+        const genesis = localOrder.genesis || parts[1] || '';
+        if (!codehash || !genesis) {
+          throw new Error(`Missing codehash/genesis for MVC FT order ${localOrder.listingKey}`);
+        }
+        const txRes = await this.deps.transferMvcFt({
+          metabotId: sellerMetabotId,
+          codehash,
+          genesis,
+          toAddress: validReceiveAddress,
+          amountBase: requestedBase.toString(),
+        });
+        deliveryTxId = txRes.txId;
+      } else {
+        if (!this.deps.transferBtcMrc20) {
+          throw new Error('transferBtcMrc20 dependency is not configured');
+        }
+        const mrc20Id = localOrder.mrc20Id || localOrder.assetKey.slice('mrc20:'.length);
+        const fromAddress = identity.btcAddress || localOrder.sellerAddress || '';
+        if (!mrc20Id || !fromAddress) {
+          throw new Error(`Missing mrc20Id or seller BTC address for order ${localOrder.listingKey}`);
+        }
+        const txRes = await this.deps.transferBtcMrc20({
+          metabotId: sellerMetabotId,
+          mrc20Id,
+          decimal: localOrder.decimals,
+          symbol: localOrder.symbol,
+          fromAddress,
+          toAddress: validReceiveAddress,
+          amountBase: requestedBase.toString(),
+        });
+        deliveryTxId = txRes.revealTxId;
+      }
+
+      upsertMeFtFulfillmentRecord(
+        this.db,
+        {
+          orderId: normalizedOrderId,
+          sellerMetabotId,
+          listingKey: localOrder.listingKey,
+          assetKey: order.assetKey,
+          chain: order.chain,
+          tokenAmountBase: requestedBase.toString(),
+          buyerReceiveAddress: validReceiveAddress,
+          amountMilli: order.amountMilli,
+          status: 'transferred',
+          deliveryTxId,
+          createdAt,
+          updatedAt: this.nowMs(),
+        },
+        this.saveDb,
+      );
+
+      return await this.completeFtDeliveryAfterTransfer({
+        sellerMetabotId,
+        identity,
+        order,
+        localOrder,
+        deliveryTxId,
+        createdAt,
+        buyerMetaIdHint: opts?.buyerMetaIdHint,
+      });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.log(`[SellerAutoFulfill/FT] Order ${normalizedOrderId} failed: ${errMsg}`);
+      const current = getMeFtFulfillmentRecord(this.db, normalizedOrderId);
+      if (
+        current &&
+        current.status !== 'transferred' &&
+        current.status !== 'delivered' &&
+        current.status !== 'rejected'
+      ) {
+        upsertMeFtFulfillmentRecord(
+          this.db,
+          {
+            ...current,
+            status: 'failed',
+            errorMessage: errMsg,
+            updatedAt: this.nowMs(),
+          },
+          this.saveDb,
+        );
+      }
+      return { outcome: 'failed', reason: errMsg };
+    } finally {
+      this.processingOrders.delete(flightKey);
+    }
+  }
+
+  private async rejectLockedFtOrder(
+    sellerMetabotId: number,
+    identity: {
+      signer: MeNftEscrowSigner;
+      mvcAddress: string;
+      btcAddress?: string;
+      globalMetaId?: string;
+    },
+    order: MeFtEscrowOrder,
+    reason: string,
+    buyerMetaIdHint?: string,
+  ): Promise<{ outcome: 'rejected'; reason: string }> {
+    const doReject = this.deps.rejectFtEscrowOrder ?? rejectFtEscrowOrder;
+    await doReject(identity.signer, order.orderId, reason);
+    const now = this.nowMs();
+    upsertMeFtFulfillmentRecord(
+      this.db,
+      {
+        orderId: order.orderId,
+        sellerMetabotId,
+        listingKey: order.listingKey,
+        assetKey: order.assetKey,
+        chain: order.chain,
+        tokenAmountBase: order.tokenAmountBase,
+        buyerReceiveAddress: order.buyerReceiveAddress,
+        amountMilli: order.amountMilli,
+        status: 'rejected',
+        errorMessage: reason,
+        createdAt: now,
+        updatedAt: now,
+      },
+      this.saveDb,
+    );
+    if (buyerMetaIdHint && this.deps.sendTradeMessage) {
+      try {
+        const wire = formatGoodsTradeWireMessage({
+          type: 'ME_FT_ESCROW_REJECTED_V1',
+          orderId: order.orderId,
+          assetKey: order.assetKey,
+          reason,
+        });
+        await this.deps.sendTradeMessage({
+          metabotId: sellerMetabotId,
+          toGlobalMetaId: buyerMetaIdHint,
+          content: `${wire}\n\n[ME FT Escrow Rejected] Order ${order.orderId} rejected: ${reason} (ME refunded).`,
+        });
+      } catch (err) {
+        this.log(
+          `[SellerAutoFulfill/FT] Failed to send ME_FT_ESCROW_REJECTED_V1 DM: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return { outcome: 'rejected', reason };
+  }
+
+  private async completeFtDeliveryAfterTransfer(input: {
+    sellerMetabotId: number;
+    identity: {
+      signer: MeNftEscrowSigner;
+      mvcAddress: string;
+      btcAddress?: string;
+      globalMetaId?: string;
+    };
+    order: MeFtEscrowOrder;
+    localOrder: FtActiveOrderRecord | null;
+    deliveryTxId: string;
+    createdAt: number;
+    buyerMetaIdHint?: string;
+  }): Promise<{ outcome: 'settled'; deliveryTxId: string }> {
+    const { sellerMetabotId, identity, order, localOrder, deliveryTxId } = input;
+    const doDeliver = this.deps.deliverFtEscrowOrder ?? deliverFtEscrowOrder;
+    await doDeliver(identity.signer, order.orderId, { deliveryTxId });
+
+    const now = this.nowMs();
+    if (localOrder) {
+      updateFtOrderStatus(
+        this.db,
+        localOrder.listingKey,
+        'filled',
+        { filledTxId: deliveryTxId, nowMs: now },
+        this.saveDb,
+      );
+    }
+
+    upsertMeFtFulfillmentRecord(
+      this.db,
+      {
+        orderId: order.orderId,
+        sellerMetabotId,
+        listingKey: localOrder?.listingKey ?? order.listingKey,
+        assetKey: order.assetKey,
+        chain: order.chain,
+        tokenAmountBase: order.tokenAmountBase,
+        buyerReceiveAddress: order.buyerReceiveAddress,
+        amountMilli: order.amountMilli,
+        status: 'delivered',
+        deliveryTxId,
+        createdAt: input.createdAt,
+        updatedAt: now,
+      },
+      this.saveDb,
+    );
+
+    if (input.buyerMetaIdHint && this.deps.sendTradeMessage) {
+      try {
+        const wire = formatGoodsTradeWireMessage({
+          type: 'ME_FT_DELIVERY_DONE_V1',
+          orderId: order.orderId,
+          assetKey: order.assetKey,
+          chain: order.chain,
+          tokenAmountBase: order.tokenAmountBase,
+          deliveryTxId,
+          settledAmountMilli: order.amountMilli,
+          sellerMetaId: identity.globalMetaId,
+          buyerReceiveAddress: order.buyerReceiveAddress,
+        });
+        await this.deps.sendTradeMessage({
+          metabotId: sellerMetabotId,
+          toGlobalMetaId: input.buyerMetaIdHint,
+          content: `${wire}\n\n[ME FT Escrow Delivered] ${order.tokenSymbol} transferred in tx ${deliveryTxId}.`,
+        });
+      } catch (err) {
+        this.log(
+          `[SellerAutoFulfill/FT] Best-effort ME_FT_DELIVERY_DONE_V1 DM failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    const progress = localOrder
+      ? getFtBatchOrderProgress(this.db, localOrder.batchGroupId)
+      : null;
+    const filledLots = progress?.filledLots ?? 1;
+    const totalLots = progress?.totalLots ?? 1;
+    const meDisplay = (order.amountMilli / 1000).toFixed(order.amountMilli % 1000 === 0 ? 0 : 3);
+
+    this.deps.emitToRenderer?.('ftTrade:orderFilled', {
+      role: 'seller',
+      orderId: order.orderId,
+      listingKey: localOrder?.listingKey ?? order.listingKey ?? order.orderId,
+      batchGroupId: localOrder?.batchGroupId ?? order.listingKey ?? order.orderId,
+      metabotId: sellerMetabotId,
+      assetKey: order.assetKey,
+      symbol: localOrder?.symbol ?? order.tokenSymbol,
+      rail: 'me-escrow',
+      amountDisplay: localOrder?.amountDisplay ?? order.tokenAmountBase,
+      priceMeMilli: order.amountMilli,
+      filledTxId: deliveryTxId,
+      filledLots,
+      totalLots,
+      settledAt: now,
+    });
+
+    this.deps.recordNotification?.({
+      eventId: `ft-me-sold:${order.orderId}`,
+      type: 'ft.escrow.sold',
+      category: 'work',
+      metabotId: sellerMetabotId,
+      sessionId: localOrder?.sessionId ?? null,
+      taskId: null,
+      runId: null,
+      title: `${localOrder?.symbol ?? order.tokenSymbol} auto-fulfilled (+${meDisplay} ME)`,
+      body: `Delivered ${localOrder?.amountDisplay ?? order.tokenAmountBase} ${localOrder?.symbol ?? order.tokenSymbol} and settled ${meDisplay} ME (${filledLots}/${totalLots} lots).`,
+      priority: 'normal',
+      target: localOrder?.sessionId
+        ? { kind: 'session', sessionId: localOrder.sessionId }
+        : { kind: 'bot_automation', metabotId: sellerMetabotId, section: 'surf' },
+    });
+
+    return { outcome: 'settled', deliveryTxId };
+  }
+
   /**
    * Poll locked seller escrow orders across all enabled MetaBots that have
    * at least one active local sell intent or pending 'transferred' recovery row.
@@ -758,6 +1351,7 @@ export class SellerAutoFulfillDaemon {
     try {
       const metabots = this.deps.getMetabotStore().listMetabots?.() ?? [];
       const listOrders = this.deps.listEscrowOrders ?? listNftEscrowOrders;
+      const listFtOrders = this.deps.listFtEscrowOrders ?? listFtEscrowOrders;
       for (const bot of metabots) {
         if (bot.enabled === false || !bot.mvc_address) continue;
         const identity = this.getSigner(bot.id);
@@ -773,6 +1367,23 @@ export class SellerAutoFulfillDaemon {
           }
         } catch (error) {
           this.log(`[SellerAutoFulfill] Poll failed for bot #${bot.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+
+        if (this.hasPendingOrActiveFtSellerWork(bot.id)) {
+          try {
+            const ftOrders = await listFtOrders(identity.signer, {
+              role: 'seller',
+              status: 'FROZEN_AWAITING_DELIVERY',
+              limit: 50,
+            });
+            for (const ftOrder of ftOrders) {
+              await this.processFtEscrowOrder(bot.id, ftOrder.orderId, { source: 'escrow_poll' });
+            }
+          } catch (error) {
+            this.log(
+              `[SellerAutoFulfill/FT] Poll failed for bot #${bot.id}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
         }
       }
     } finally {

@@ -2795,6 +2795,42 @@ interface IElectronAPI {
     onAutoSold: (callback: (payload: GoodsTradeAutoSoldEvent) => void) => () => void;
     onOrderRejected: (callback: (payload: GoodsTradeOrderRejectedEvent) => void) => () => void;
   };
+  ftTrade: {
+    respondMandate: (input: { requestId: string; approved: boolean }) => Promise<{
+      success: boolean;
+      matched?: boolean;
+      error?: string;
+    }>;
+    getBatchProgress: (input: { batchGroupId: string }) => Promise<{
+      success: boolean;
+      progress?: {
+        batchGroupId: string;
+        totalLots: number;
+        activeLots: number;
+        filledLots: number;
+        canceledLots: number;
+      };
+      orders?: Array<Record<string, unknown>>;
+      error?: string;
+    }>;
+    cancelBatchOrders: (input: { batchGroupId: string }) => Promise<{
+      success: boolean;
+      canceledCount?: number;
+      canceledKeys?: string[];
+      txids?: string[];
+      errors?: string[];
+      progress?: {
+        batchGroupId: string;
+        totalLots: number;
+        activeLots: number;
+        filledLots: number;
+        canceledLots: number;
+      };
+      error?: string;
+    }>;
+    onMandatePrompt: (callback: (payload: FtMandatePromptEventPayload) => void) => () => void;
+    onOrderFilled: (callback: (payload: FtOrderFilledEventPayload) => void) => () => void;
+  };
   permissions: {
     checkCalendar: () => Promise<{ success: boolean; status?: string; error?: string; autoRequested?: boolean }>;
     requestCalendar: () => Promise<{ success: boolean; granted?: boolean; status?: string; error?: string }>;
@@ -3310,8 +3346,49 @@ declare global {
   }
 }
 
+interface FtMandatePromptEventPayload {
+  requestId: string;
+  draft: {
+    metabotId: number;
+    action: 'buy-sweep' | 'list-lots' | 'cancel';
+    assetKey: string;
+    symbol: string;
+    decimals?: number;
+    rail: 'btc-psbt' | 'mvc-tokensell' | 'me-escrow';
+    totalTokenDisplay: string;
+    lotCount: number;
+    maxSpendDisplay: string;
+    maxSpendAmount: string;
+    estimatedGasDisplay: string;
+    caVerified?: boolean;
+    sessionId?: string;
+  };
+  expiresAt: number;
+  timeoutMs: number;
+}
+
+interface FtOrderFilledEventPayload {
+  listingKey?: string;
+  batchGroupId?: string;
+  orderId?: string;
+  role?: 'buyer' | 'seller';
+  metabotId: number;
+  assetKey: string;
+  symbol?: string;
+  rail: 'btc-psbt' | 'mvc-tokensell' | 'me-escrow';
+  amountDisplay?: string;
+  priceSats?: number;
+  priceMeMilli?: number;
+  filledTxId: string;
+  filledLots?: number;
+  totalLots?: number;
+  settledAt: number;
+}
+
 export type {
   ElectronNftSwapOrderCompletedEvent,
+  FtMandatePromptEventPayload,
+  FtOrderFilledEventPayload,
   GoodsTradePurchaseSettledEvent,
   GoodsTradeAutoSoldEvent,
   GoodsTradeOrderRejectedEvent,

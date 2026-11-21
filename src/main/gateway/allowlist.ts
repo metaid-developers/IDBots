@@ -432,6 +432,9 @@ const POST_FREEZE_INVOKE: Record<string, AllowlistEntry> = {
   'cowork:session:getSummary': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop single-session summary delta channel, 2026-11-14); mobile gateway uses cowork:session:list.' },
   'goodsTrade:getBuyerBalance': { tier: 'P1', note: 'WS-D digital goods ME trade balance read.' },
   'goodsTrade:buyWithMe': { tier: 'N', note: 'Desktop-only local MetaBot ME escrow purchase confirmation modal; denied on mobile gateway.' },
+  'ftTrade:mandateRespond': { tier: 'P1', note: 'WS-1 FT single-tap mandate confirmation response.' },
+  'ftTrade:getBatchProgress': { tier: 'P1', note: 'WS-1 FT multi-lot batch order progress read.' },
+  'ftTrade:cancelBatchOrders': { tier: 'P1', note: 'WS-1 FT batch remaining active orders cancellation.' },
 };
 
 export const INVOKE_ALLOWLIST: Record<string, AllowlistEntry> = {
@@ -498,6 +501,8 @@ export const EVENT_ALLOWLIST: Record<string, AllowlistEntry> = {
   'goodsTrade:purchaseSettled': { tier: 'P1', note: 'WS-D buyer ME escrow delivery settled notification.' },
   'goodsTrade:autoSold': { tier: 'P1', note: 'WS-D seller auto-fulfill sold notification.' },
   'goodsTrade:orderRejected': { tier: 'P1', note: 'WS-D seller escrow rejection notification.' },
+  'ftTrade:mandatePrompt': { tier: 'P1', note: 'WS-1 FT single-tap mandate confirmation prompt event.' },
+  'ftTrade:orderFilled': { tier: 'P1', note: 'WS-1 FT order fill / ME FT escrow settlement event.' },
   'store:changed': { tier: 'P1', restrictions: ['R-store'], note: '`02`: P1-R — only key `app_config`, redacted like R-store.' },
   'groupTask:statusChanged': { tier: 'P2' },
   'groupTask:checkpointChanged': { tier: 'P2' },

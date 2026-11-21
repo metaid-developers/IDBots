@@ -71,6 +71,17 @@ import PaymentCard from './chat/PaymentCard';
 import { isPayCardFenceLanguage, parsePayCardFence } from './chat/paymentCardSyntax';
 import EscrowCard from './chat/EscrowCard';
 import { isEscrowCardFenceLanguage, parseEscrowCardFence } from './chat/escrowCardSyntax';
+import FtQuoteCard from './chat/FtQuoteCard';
+import FtOrderCard from './chat/FtOrderCard';
+import FtFillCard from './chat/FtFillCard';
+import {
+  isFtFillCardFenceLanguage,
+  isFtOrderCardFenceLanguage,
+  isFtQuoteCardFenceLanguage,
+  parseFtFillCardFence,
+  parseFtOrderCardFence,
+  parseFtQuoteCardFence,
+} from './chat/ftCardSyntax';
 import MobilePageCard from './chat/MobilePageCard';
 import { isMobilePageCardFenceLanguage, parseMobilePageCardFence } from './chat/mobilePageCardSyntax';
 import { splitStreamingMarkdownBlocks } from './streamingMarkdownSplit';
@@ -547,6 +558,27 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
       const escrowData = parseEscrowCardFence(trimmedCodeText);
       if (escrowData) {
         return <EscrowCard data={escrowData} />;
+      }
+    }
+
+    // WS-1 FT Commerce ritual cards (`ft-quote-card`, `ft-order-card`, `ft-fill-card`).
+    // Unparsable payloads degrade gracefully to plain fenced code blocks.
+    if (isFtQuoteCardFenceLanguage(fenceLanguage)) {
+      const quoteData = parseFtQuoteCardFence(trimmedCodeText);
+      if (quoteData) {
+        return <FtQuoteCard data={quoteData} />;
+      }
+    }
+    if (isFtOrderCardFenceLanguage(fenceLanguage)) {
+      const orderData = parseFtOrderCardFence(trimmedCodeText);
+      if (orderData) {
+        return <FtOrderCard data={orderData} />;
+      }
+    }
+    if (isFtFillCardFenceLanguage(fenceLanguage)) {
+      const fillData = parseFtFillCardFence(trimmedCodeText);
+      if (fillData) {
+        return <FtFillCard data={fillData} />;
       }
     }
 

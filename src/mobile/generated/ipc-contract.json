@@ -1409,6 +1409,40 @@
       ]
     },
     {
+      "path": "ftTrade.cancelBatchOrders",
+      "kind": "invoke",
+      "channel": "ftTrade:cancelBatchOrders",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "ftTrade.getBatchProgress",
+      "kind": "invoke",
+      "channel": "ftTrade:getBatchProgress",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "ftTrade.onMandatePrompt",
+      "kind": "on",
+      "channel": "ftTrade:mandatePrompt"
+    },
+    {
+      "path": "ftTrade.onOrderFilled",
+      "kind": "on",
+      "channel": "ftTrade:orderFilled"
+    },
+    {
+      "path": "ftTrade.respondMandate",
+      "kind": "invoke",
+      "channel": "ftTrade:mandateRespond",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "gateway.fileSign",
       "kind": "invoke",
       "channel": "gateway:file:sign",

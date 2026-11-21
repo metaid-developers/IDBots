@@ -686,6 +686,10 @@ man_base_data_pebble/
 !tests/messageFeedback.test.mjs
 !tests/metaAppOwnerIdempotency.test.mjs
 !tests/metaAppGuard.test.mjs
+!tests/ftMandateGate.test.ts
+!tests/ftAutoFulfillDaemon.test.ts
+!tests/tokenOrderWatcher.test.ts
+!tests/ftCardsRender.test.tsx
 
 # dev-only isolated user-data dirs for "npm run electron:dev:fresh" (new-user simulation)
 .dev-userdata-fresh/
