@@ -60,6 +60,7 @@ import { ThinkingBlock, splitThinkTaggedContent } from './ThinkingBlock';
 import { AssistantActivityIndicator } from './AssistantActivityIndicator';
 import { drawTurnAckPhrase, findTailTurnAck } from './turnAckPhrases';
 import { shouldHideA2AInternalMessage, lastA2AErrorDetail } from './a2aInternalMessageFilter';
+import { anchorPrivateChatWaitNoticesBeforeReplies } from '../../utils/privateChatWaitNoticeOrder';
 import {
   getTodoListSummaryText,
   isTaskCreateToolName,
@@ -3115,10 +3116,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     && NON_TEXT_SERVICE_OUTPUT_TYPES.includes(serviceOrderOutputType)
   );
   const visibleA2AMessages = useMemo(() => (
-    currentSession?.messages.filter((message) => (
+    anchorPrivateChatWaitNoticesBeforeReplies<CoworkMessage>(currentSession?.messages.filter((message) => (
       !shouldHideControlMessage(message)
       && !shouldHideA2AInternalMessage(message, { chainBackedConversation: isPrivateA2ASession })
-    )) ?? []
+    )) ?? [])
   ), [currentSession?.messages, isPrivateA2ASession]);
   // Episode metadata of the A2A thread — powers the divider cards shown where
   // the visible history crosses an episode rollover boundary.

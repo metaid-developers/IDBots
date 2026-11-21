@@ -225,7 +225,7 @@ type RunPrivateChatSkillTurnFn = (params: {
   userMessage: string;
   metabotId: number;
   activeSkillIds: string[];
-  onSkillExecutionStart?: () => Promise<void> | void;
+  onSkillExecutionStart?: (controls: { readonly cancelRequested: boolean }) => Promise<void> | void;
 }) => Promise<{ replyText: string; assistantMessageId?: string | null }>;
 type GeneratePrivateChatSkillWaitNoticeFn = (params: {
   metabot: {
@@ -734,15 +734,29 @@ const privateChatA2AWakes = new Map<string, PrivateChatA2AWakeEntry>();
 /** Wake schedule (delay before fire N+1); length bounds the total fires. */
 export const PRIVATE_CHAT_A2A_DEFAULT_WAKE_DELAYS_MS: readonly number[] = [15 * 60_000, 2 * 60 * 60_000, 12 * 60 * 60_000];
 let privateChatA2AWakeDelaysMs: readonly number[] = PRIVATE_CHAT_A2A_DEFAULT_WAKE_DELAYS_MS;
+/**
+ * Denser schedule for rows whose turn already BROADCAST a wait notice ("稍后
+ * 给你确认"): the peer is actively waiting on a promise, so the +2h/+12h
+ * generic steps are far too sparse — every dangling promise ever observed
+ * (2026-11-21 census) died inside the generic +2h gap. The promise ladder
+ * keeps the retry loop inside ~2.7h worst case.
+ */
+export const PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS: readonly number[] = [10 * 60_000, 30 * 60_000, 2 * 60 * 60_000];
+let privateChatA2APromiseWakeDelaysMs: readonly number[] = PRIVATE_CHAT_A2A_PROMISE_WAKE_DELAYS_MS;
 
 /**
  * Next wake fire timestamp after `fires` wakes have already fired, or null
- * when the wake budget is exhausted.
+ * when the wake budget is exhausted. Pass the promise ladder explicitly for
+ * rows carrying an outstanding wait-notice promise.
  */
-export function nextPrivateChatA2AWakeAt(fires: number, now: number = Date.now()): number | null {
+export function nextPrivateChatA2AWakeAt(
+  fires: number,
+  now: number = Date.now(),
+  delays: readonly number[] = privateChatA2AWakeDelaysMs,
+): number | null {
   const safeFires = Number.isFinite(fires) && fires >= 0 ? Math.floor(fires) : 0;
-  if (safeFires >= privateChatA2AWakeDelaysMs.length) return null;
-  return now + Math.max(1, privateChatA2AWakeDelaysMs[safeFires] ?? 1);
+  if (safeFires >= delays.length) return null;
+  return now + Math.max(1, delays[safeFires] ?? 1);
 }
 
 /** Test seam: shrink the wake schedule so daemon-level tests can observe fires. */
@@ -750,17 +764,156 @@ export function setPrivateChatA2AWakeDelaysForTests(delays: readonly number[]): 
   privateChatA2AWakeDelaysMs = delays.filter((delay) => Number.isFinite(delay) && delay > 0);
 }
 
+/** Test seam: shrink the promise wake schedule (owed-reply rows). */
+export function setPrivateChatA2APromiseWakeDelaysForTests(delays: readonly number[]): void {
+  privateChatA2APromiseWakeDelaysMs = delays.filter((delay) => Number.isFinite(delay) && delay > 0);
+}
+
 /** Host notice appended to the system prompt of a wake turn. */
-export function buildPrivateChatA2AWakeNotice(fire: number): string {
+export function buildPrivateChatA2AWakeNotice(
+  fire: number,
+  options?: { owedWaitNoticeText?: string },
+): string {
   const safeFire = Number.isFinite(fire) && fire > 0 ? Math.floor(fire) : 1;
-  return [
+  const lines = [
     `## Host Wake Check ${safeFire} (host timer — no new peer message arrived)`,
     'Your previous turn for the peer\'s latest message ended WITHOUT delivering anything, and the conversation is still open. The host woke you on a timer because it only runs you again when a NEW peer message arrives — if both sides now wait, the conversation deadlocks.',
     'Decide again for the conversation tail:',
     '- If you owe the peer an answer you promised or deferred earlier (for example you said you would verify something and reply later), deliver it now as your final text.',
+  ];
+  const owedText = String(options?.owedWaitNoticeText ?? '').trim();
+  if (owedText) {
+    lines.push(
+      `- An unfulfilled promise is ON RECORD: you already sent the peer this wait notice — "${owedText}" — and nothing has been delivered since. The promise is binding: you must NOT answer \`[NO_REPLY]\` this turn. Deliver the promised answer now as your final text.`,
+    );
+  }
+  lines.push(
     '- If the conversation has nothing left to produce, close it politely by replying exactly "bye".',
     '- Reply `[NO_REPLY]` only if you genuinely owe nothing and the conversation should stay open awaiting the peer.',
-  ].join('\n');
+  );
+  return lines.join('\n');
+}
+
+// ---- Owed-reply promise ledger (durable across restarts) -------------------
+//
+// A broadcast wait notice is a promise to the peer ("稍后给你确认"). The wake
+// that is supposed to fulfill it used to live only in a module-level Map, so
+// any app restart silently erased the retry chain and the promise dangled
+// forever (2026-11-21 02:10 incident: wake 2 scheduled for 04:26, process
+// restarted at 03:10, promise never fulfilled, nobody told). The ledger
+// records every outstanding promise in the kv table; boot time re-arms wakes
+// for unfulfilled records (and seeds itself from the transcript for promises
+// that predate the ledger), and every terminal outcome — reply delivered,
+// retraction sent, wake budget exhausted — clears the record.
+
+const PRIVATE_CHAT_OWNED_REPLY_LEDGER_PREFIX = 'privateChatOwedReply/';
+const PRIVATE_CHAT_OWNED_REPLY_LEDGER_TTL_MS = 24 * 60 * 60_000;
+
+export interface PrivateChatOwedReplyRecord {
+  version: 1;
+  pinId: string;
+  sessionId: string;
+  metabotId: number;
+  externalConversationId: string;
+  rowId: number;
+  fromGlobalMetaId: string | null;
+  fromMetaId: string | null;
+  toGlobalMetaId: string | null;
+  toMetaId: string | null;
+  promisedAt: number;
+  fires: number;
+}
+
+type OwedReplyLedgerStore = Pick<
+  CoworkStore,
+  'getKvString' | 'setKvString' | 'deleteKvKey' | 'listKvKeysWithPrefix'
+>;
+
+function owedReplyLedgerKey(pinId: string): string {
+  return `${PRIVATE_CHAT_OWNED_REPLY_LEDGER_PREFIX}${pinId}`;
+}
+
+function parseOwedReplyRecord(raw: string | null): PrivateChatOwedReplyRecord | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as PrivateChatOwedReplyRecord;
+    if (
+      parsed?.version !== 1
+      || typeof parsed.pinId !== 'string'
+      || typeof parsed.sessionId !== 'string'
+      || typeof parsed.externalConversationId !== 'string'
+      || typeof parsed.rowId !== 'number'
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function recordPrivateChatOwedReply(
+  store: OwedReplyLedgerStore,
+  record: PrivateChatOwedReplyRecord,
+  emitLog: (msg: string) => void,
+): void {
+  try {
+    store.setKvString(owedReplyLedgerKey(record.pinId), JSON.stringify(record));
+    emitLog(`[PrivateChat] Owed-reply promise recorded for pin ${record.pinId.slice(0, 24)}… (session ${record.sessionId.slice(0, 8)}…).`);
+  } catch (error) {
+    emitLog(`[PrivateChat] Failed to record owed-reply promise for pin ${record.pinId.slice(0, 24)}…: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function clearPrivateChatOwedReply(
+  store: OwedReplyLedgerStore,
+  pinId: string,
+  emitLog: (msg: string) => void,
+  reason: string,
+): void {
+  try {
+    store.deleteKvKey(owedReplyLedgerKey(pinId));
+    emitLog(`[PrivateChat] Owed-reply promise cleared for pin ${pinId.slice(0, 24)}… (${reason}).`);
+  } catch (error) {
+    emitLog(`[PrivateChat] Failed to clear owed-reply promise for pin ${pinId.slice(0, 24)}…: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function bumpPrivateChatOwedReplyFires(
+  store: Pick<CoworkStore, 'getKvString' | 'setKvString'>,
+  pinId: string,
+  fires: number,
+  emitLog: (msg: string) => void,
+): void {
+  try {
+    const record = parseOwedReplyRecord(store.getKvString(owedReplyLedgerKey(pinId)));
+    if (!record) return;
+    record.fires = Math.max(0, Math.floor(fires));
+    store.setKvString(owedReplyLedgerKey(record.pinId), JSON.stringify(record));
+  } catch (error) {
+    emitLog(`[PrivateChat] Failed to bump owed-reply wake count for pin ${pinId.slice(0, 24)}…: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function loadPrivateChatOwedReplyRecords(
+  store: OwedReplyLedgerStore,
+  emitLog: (msg: string) => void,
+): PrivateChatOwedReplyRecord[] {
+  const records: PrivateChatOwedReplyRecord[] = [];
+  try {
+    for (const key of store.listKvKeysWithPrefix(PRIVATE_CHAT_OWNED_REPLY_LEDGER_PREFIX)) {
+      const record = parseOwedReplyRecord(store.getKvString(key));
+      if (!record) {
+        store.deleteKvKey(key);
+        emitLog(`[PrivateChat] Dropped corrupt owed-reply ledger record ${key.slice(PRIVATE_CHAT_OWNED_REPLY_LEDGER_PREFIX.length)}.`);
+        continue;
+      }
+      records.push(record);
+    }
+  } catch (error) {
+    emitLog(`[PrivateChat] Failed to load owed-reply ledger: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return records;
 }
 
 function armPrivateChatA2AWake(params: {
@@ -769,9 +922,14 @@ function armPrivateChatA2AWake(params: {
   metabotId: number;
   externalConversationId: string;
   fires: number;
+  /** Row carries an unfulfilled wait-notice promise — use the denser ladder. */
+  promiseOutstanding?: boolean;
   emitLog: (msg: string) => void;
 }): void {
-  const fireAt = nextPrivateChatA2AWakeAt(params.fires);
+  const ladder = params.promiseOutstanding
+    ? privateChatA2APromiseWakeDelaysMs
+    : privateChatA2AWakeDelaysMs;
+  const fireAt = nextPrivateChatA2AWakeAt(params.fires, Date.now(), ladder);
   if (fireAt == null) {
     privateChatA2AWakes.delete(params.row.pin_id);
     params.emitLog(
@@ -796,7 +954,8 @@ function armPrivateChatA2AWake(params: {
   });
   params.emitLog(
     `[PrivateChat] Wake ${params.fires + 1} scheduled in ${Math.round(waitMs / 1000)}s for the silent open ` +
-    `conversation ${params.externalConversationId.slice(0, 30)}… (message ${params.row.id}).`
+    `conversation ${params.externalConversationId.slice(0, 30)}… (message ${params.row.id})` +
+    `${params.promiseOutstanding ? ' [owed-reply promise ladder]' : ''}.`
   );
 }
 
@@ -829,7 +988,7 @@ export interface PrivateChatWakeReDriveDisposition {
 function fireDuePrivateChatA2AWakes(deps: {
   db: Pick<Database, 'exec' | 'run'>;
   saveDb: SaveDbFn;
-  coworkStore: Pick<CoworkStore, 'getConversationMapping' | 'getSessionWithoutMessages' | 'addMessage' | 'updateSession'>;
+  coworkStore: Pick<CoworkStore, 'getConversationMapping' | 'getSessionWithoutMessages' | 'addMessage' | 'updateSession' | 'getKvString' | 'setKvString'>;
   emitLog: (msg: string) => void;
   emitToRenderer?: (channel: string, data: unknown) => void;
 }): Map<number, PrivateChatWakeReDriveDisposition> {
@@ -867,6 +1026,9 @@ function fireDuePrivateChatA2AWakes(deps: {
     wake.running = true;
     wake.fireAt = Number.POSITIVE_INFINITY;
     privateChatA2AWakes.set(taskKey, wake);
+    // A fired wake consumed a ladder step: persist it so a restart resumes
+    // the owed-reply retry chain at the right step instead of replaying.
+    bumpPrivateChatOwedReplyFires(deps.coworkStore, taskKey, wake.fires, deps.emitLog);
     try {
       deps.db.run('UPDATE private_chat_messages SET is_processed = 0 WHERE id = ?', [wake.rowId]);
       deps.saveDb();
@@ -1134,6 +1296,199 @@ function parsePrivateChatRows(db: Database): PrivateChatMessageRow[] {
       return acc;
     }, {} as Record<string, unknown>)
   ) as PrivateChatMessageRow[];
+}
+
+function loadPrivateChatMessageRow(
+  db: Pick<Database, 'exec'>,
+  where: { rowId?: number; pinId?: string },
+): PrivateChatMessageRow | null {
+  const clauses: string[] = [];
+  const params: Array<string | number> = [];
+  if (where.rowId != null) {
+    clauses.push('id = ?');
+    params.push(where.rowId);
+  }
+  if (where.pinId) {
+    clauses.push('pin_id = ?');
+    params.push(where.pinId);
+  }
+  if (clauses.length === 0) return null;
+  const result = db.exec(
+    `SELECT id, pin_id, tx_id, from_metaid, from_global_metaid, from_name, from_avatar, from_chat_pubkey, to_metaid, to_global_metaid, protocol, content, content_type, encryption, reply_pin, raw_data
+     FROM private_chat_messages WHERE ${clauses.join(' AND ')} ORDER BY id ASC LIMIT 1`,
+    params,
+  );
+  if (!result[0]?.values?.length) return null;
+  const cols = result[0].columns as string[];
+  return result[0].values.map((row) =>
+    cols.reduce((acc, c, i) => {
+      acc[c] = row[i];
+      return acc;
+    }, {} as Record<string, unknown>)
+  )[0] as PrivateChatMessageRow;
+}
+
+function hasDeliveredPrivateChatReplyForPin(
+  coworkStore: Pick<CoworkStore, 'getSessionMessagesMatchingMetadataValues'>,
+  sessionId: string,
+  pinId: string,
+): boolean {
+  if (!pinId) return false;
+  return coworkStore.getSessionMessagesMatchingMetadataValues(
+    sessionId,
+    [pinId],
+  ).some((message) => (
+    message.type === 'assistant'
+    && message.metadata?.privateChatReplyForPinId === pinId
+    && message.metadata?.privateChatDeliveryStatus === 'sent'
+  ));
+}
+
+/**
+ * D2 boot restore: re-arm the owed-reply wake chain after a restart. Before
+ * this, the wake lived only in a module-level Map, so any restart between
+ * wake N and wake N+1 silently killed the promise (2026-11-21: wake 2 was
+ * scheduled for 04:26, the process restarted at 03:10, the promised "稍后给
+ * 你确认" never arrived). Sources: kv ledger records (chains alive at
+ * shutdown, resumed at their persisted ladder step) plus a transcript sweep
+ * seeding promises that predate the ledger, both inside the 24h TTL. Stale
+ * records (session gone, conversation bye'd, reply already delivered,
+ * retraction already sent) are cleared. Boot never writes to the peer chain —
+ * the in-process give-up path owns the retraction; expired promises (>24h)
+ * are retired with a log line only.
+ */
+async function restorePrivateChatOwedReplyWakes(deps: {
+  db: Pick<Database, 'exec'>;
+  coworkStore: CoworkStore;
+  emitLog: (msg: string) => void;
+}): Promise<void> {
+  const now = Date.now();
+  const sinceMs = now - PRIVATE_CHAT_OWNED_REPLY_LEDGER_TTL_MS;
+  const candidates = new Map<string, {
+    sessionId: string;
+    metabotId: number | null;
+    externalConversationId: string | null;
+    promisedAt: number;
+    rowId: number | null;
+    fires: number;
+  }>();
+  for (const record of loadPrivateChatOwedReplyRecords(deps.coworkStore, deps.emitLog)) {
+    candidates.set(record.pinId, {
+      sessionId: record.sessionId,
+      metabotId: record.metabotId,
+      externalConversationId: record.externalConversationId,
+      promisedAt: record.promisedAt,
+      rowId: record.rowId,
+      fires: record.fires,
+    });
+  }
+  try {
+    for (const entry of deps.coworkStore.listRecentUnfulfilledPrivateChatWaitNotices(sinceMs)) {
+      if (!candidates.has(entry.pinId)) {
+        candidates.set(entry.pinId, {
+          sessionId: entry.sessionId,
+          metabotId: null,
+          externalConversationId: entry.externalConversationId,
+          promisedAt: entry.promisedAt,
+          rowId: null,
+          fires: 0,
+        });
+      }
+    }
+  } catch (error) {
+    deps.emitLog(`[PrivateChat] Owed-reply transcript sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (candidates.size === 0) {
+    deps.emitLog('[PrivateChat] Owed-reply restore: nothing outstanding.');
+    return;
+  }
+
+  let armed = 0;
+  let expired = 0;
+  let stale = 0;
+  for (const [pinId, candidate] of candidates) {
+    try {
+      if (candidate.promisedAt + PRIVATE_CHAT_OWNED_REPLY_LEDGER_TTL_MS < now) {
+        expired += 1;
+        clearPrivateChatOwedReply(deps.coworkStore, pinId, deps.emitLog, 'promise older than the 24h TTL');
+        continue;
+      }
+      const session = deps.coworkStore.getSessionWithoutMessages(candidate.sessionId);
+      if (!session) {
+        stale += 1;
+        clearPrivateChatOwedReply(deps.coworkStore, pinId, deps.emitLog, 'session no longer exists');
+        continue;
+      }
+      const metabotId = candidate.metabotId
+        ?? (typeof session.metabotId === 'number' ? session.metabotId : null);
+      const externalConversationId = candidate.externalConversationId
+        ?? deps.coworkStore.getConversationSourceContextBySession(candidate.sessionId)?.externalConversationId
+        ?? null;
+      if (metabotId == null || !externalConversationId) {
+        stale += 1;
+        clearPrivateChatOwedReply(deps.coworkStore, pinId, deps.emitLog, 'conversation mapping unavailable');
+        continue;
+      }
+      const mapping = deps.coworkStore.getConversationMapping('metaweb_private', externalConversationId, metabotId);
+      if (parseConversationMappingMetadata(mapping?.metadataJson).byeSent === true) {
+        stale += 1;
+        clearPrivateChatOwedReply(deps.coworkStore, pinId, deps.emitLog, 'conversation closed with bye');
+        continue;
+      }
+      if (hasDeliveredPrivateChatReplyForPin(deps.coworkStore, candidate.sessionId, pinId)) {
+        stale += 1;
+        clearPrivateChatOwedReply(deps.coworkStore, pinId, deps.emitLog, 'reply already delivered');
+        continue;
+      }
+      if (hasSentPrivateChatWaitNoticeRetraction(deps.coworkStore, candidate.sessionId, pinId)) {
+        stale += 1;
+        clearPrivateChatOwedReply(deps.coworkStore, pinId, deps.emitLog, 'retraction already sent');
+        continue;
+      }
+      if (privateChatA2AWakes.has(pinId)) continue;
+      const row = loadPrivateChatMessageRow(deps.db, {
+        rowId: candidate.rowId ?? undefined,
+        pinId: candidate.rowId != null ? undefined : pinId,
+      }) ?? loadPrivateChatMessageRow(deps.db, { pinId });
+      if (!row) {
+        stale += 1;
+        clearPrivateChatOwedReply(deps.coworkStore, pinId, deps.emitLog, 'inbound row no longer exists');
+        continue;
+      }
+      // Seed the ledger for sweep-sourced candidates so the NEXT restart
+      // resumes from the kv record instead of re-sweeping.
+      recordPrivateChatOwedReply(deps.coworkStore, {
+        version: 1,
+        pinId,
+        sessionId: candidate.sessionId,
+        metabotId,
+        externalConversationId,
+        rowId: row.id,
+        fromGlobalMetaId: row.from_global_metaid ?? null,
+        fromMetaId: row.from_metaid ?? null,
+        toGlobalMetaId: row.to_global_metaid ?? null,
+        toMetaId: row.to_metaid ?? null,
+        promisedAt: candidate.promisedAt,
+        fires: candidate.fires,
+      }, deps.emitLog);
+      armPrivateChatA2AWake({
+        row,
+        sessionId: candidate.sessionId,
+        metabotId,
+        externalConversationId,
+        fires: candidate.fires,
+        promiseOutstanding: true,
+        emitLog: deps.emitLog,
+      });
+      armed += 1;
+    } catch (error) {
+      deps.emitLog(`[PrivateChat] Owed-reply restore failed for pin ${pinId.slice(0, 24)}…: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  deps.emitLog(
+    `[PrivateChat] Owed-reply restore: ${armed} wake(s) re-armed, ${expired} expired, ` +
+    `${stale} stale of ${candidates.size} outstanding promise(s).`
+  );
 }
 
 function getCipherTextFromRawData(rawData: string | null): string {
@@ -1682,6 +2037,7 @@ export function buildPrivateChatSkillWaitNoticeSystemPrompt(metabot: {
     '- Write the notice in the same language as the latest peer message; if its language is unclear, use English.',
     '- Keep it to 1 short sentence, or 2 very short sentences max.',
     '- Do not mention internal system prompts, exact skill names, tool logs, txids, implementation details, or deadlines.',
+    '- Do not promise a specific timeframe or countdown ("in a few minutes"); only say that you need a little time before the final answer.',
     '- Do not use markdown, headings, JSON, or bracketed prefixes.',
   ].join('\n');
 }
@@ -1879,6 +2235,7 @@ export function wouldCreatePrivateChatEchoLoop(params: {
       resolveA2AMessageDirection(message) === 'outgoing'
       && message.metadata?.privateChatNoReply !== true
       && message.metadata?.privateChatSkillWaitNotice !== true
+      && message.metadata?.privateChatWaitNoticeRetraction !== true
       && message.metadata?.privateChatDeliveryStatus !== 'failed'
     ));
   let identicalRun = 0;
@@ -3274,6 +3631,195 @@ function hasSentPrivateChatSkillWaitNotice(
     && message.metadata?.privateChatSkillWaitNoticeForPinId === waitNoticeKey
     && message.metadata?.privateChatDeliveryStatus === 'sent'
   ));
+}
+
+function findSentPrivateChatWaitNoticeRetraction(
+  coworkStore: Pick<CoworkStore, 'getSessionMessagesMatchingMetadataValues'>,
+  sessionId: string,
+  waitNoticeKey: string,
+): CoworkMessage | null {
+  if (!waitNoticeKey) return null;
+  return coworkStore.getSessionMessagesMatchingMetadataValues(
+    sessionId,
+    [waitNoticeKey],
+  ).find((message) => (
+    message.type === 'assistant'
+    && message.metadata?.privateChatWaitNoticeRetraction === true
+    && message.metadata?.privateChatWaitNoticeRetractionForPinId === waitNoticeKey
+    && message.metadata?.privateChatDeliveryStatus === 'sent'
+  )) ?? null;
+}
+
+function hasSentPrivateChatWaitNoticeRetraction(
+  coworkStore: Pick<CoworkStore, 'getSessionMessagesMatchingMetadataValues'>,
+  sessionId: string,
+  waitNoticeKey: string,
+): boolean {
+  return findSentPrivateChatWaitNoticeRetraction(coworkStore, sessionId, waitNoticeKey) != null;
+}
+
+function findSentPrivateChatSkillWaitNoticeText(
+  coworkStore: Pick<CoworkStore, 'getSessionMessagesMatchingMetadataValues'>,
+  sessionId: string,
+  waitNoticeKey: string,
+): string {
+  if (!waitNoticeKey) return '';
+  const notice = coworkStore.getSessionMessagesMatchingMetadataValues(
+    sessionId,
+    [waitNoticeKey],
+  ).find((message) => (
+    message.type === 'assistant'
+    && message.metadata?.privateChatSkillWaitNotice === true
+    && message.metadata?.privateChatSkillWaitNoticeForPinId === waitNoticeKey
+    && message.metadata?.privateChatDeliveryStatus === 'sent'
+  ));
+  return String(notice?.content ?? '');
+}
+
+const PRIVATE_CHAT_WAIT_NOTICE_RETRACTION_TEXT_ZH = '补充说明：刚才那条「稍后回复」不用专门等了——这一轮先到这里，后面有结论我会直接发你。';
+const PRIVATE_CHAT_WAIT_NOTICE_RETRACTION_TEXT_EN = 'One update so you are not left waiting: no need to hold for a reply on this one — I will message you directly when there is something to share.';
+
+/**
+ * A broadcast wait notice promises a follow-up ("几分钟后给你完整回复"). When
+ * the turn then settles silent ([NO_REPLY] sentinel / echo-loop guard),
+ * nothing will ever fulfill that promise — the notice becomes the bot's last
+ * word and the peer waits forever (the 2026-11-21 02:10 incident). The
+ * retraction closes it in the notice's own language (detected from the
+ * notice text) and is deliberately wake-compatible: the scheduled wake
+ * re-drive may still deliver a real reply afterwards, so the line retracts
+ * the WAIT, not the conversation.
+ */
+export function buildPrivateChatWaitNoticeRetractionText(noticeText: string): string {
+  return /[\u3400-\u9fff\uf900-\ufaff]/.test(String(noticeText ?? ''))
+    ? PRIVATE_CHAT_WAIT_NOTICE_RETRACTION_TEXT_ZH
+    : PRIVATE_CHAT_WAIT_NOTICE_RETRACTION_TEXT_EN;
+}
+
+async function sendPrivateChatWaitNoticeRetraction(params: {
+  coworkStore: CoworkStore;
+  sessionId: string;
+  externalConversationId: string;
+  row: PrivateChatMessageRow;
+  fromGlobalMetaId: string;
+  sharedSecretForReply: string;
+  noticeText: string;
+  waitNoticeKey: string;
+  createSimpleMsgPin: (payload: string) => Promise<{ txids?: unknown; pinId?: unknown }>;
+  emitLog: (msg: string) => void;
+  emitToRenderer?: RendererEmitter;
+}): Promise<boolean> {
+  const retractionText = buildPrivateChatWaitNoticeRetractionText(params.noticeText);
+  try {
+    const encryptedRetraction = ecdhEncrypt(retractionText, params.sharedSecretForReply);
+    const payloadStr = buildPrivateMsgPayload(params.fromGlobalMetaId, encryptedRetraction, params.row.reply_pin ?? '');
+    const sentResult = await params.createSimpleMsgPin(payloadStr);
+    const chainMetadata = buildPrivateChatA2AChainMetadata({
+      txids: sentResult.txids,
+      pinId: sentResult.pinId,
+    });
+    appendPrivateChatA2AMessage({
+      coworkStore: params.coworkStore,
+      sessionId: params.sessionId,
+      externalConversationId: params.externalConversationId,
+      type: 'assistant',
+      content: retractionText,
+      extraMetadata: {
+        ...chainMetadata,
+        privateChatWaitNoticeRetraction: true,
+        privateChatWaitNoticeRetractionForPinId: params.waitNoticeKey,
+        privateChatDeliveryStatus: 'sent',
+        suppressRunningStatus: true,
+      },
+      emitToRenderer: params.emitToRenderer,
+    });
+    params.emitLog(`[PrivateChat] Sent wait-notice retraction to ${params.fromGlobalMetaId.slice(0, 12)}…`);
+    // The retraction closes the promise: settle the ledger.
+    clearPrivateChatOwedReply(params.coworkStore, params.waitNoticeKey, params.emitLog, 'retraction sent');
+    return true;
+  } catch (e) {
+    rethrowSqliteWasmBoundsError(e);
+    params.emitLog(`[PrivateChat] Failed to send wait-notice retraction: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
+}
+
+/** Desktop-notification seam for the D4 give-up notice (wired in main.ts to
+ * the same ingredients as the owner-ask notifier). */
+export interface PrivateChatOwnerNotification {
+  sessionId: string;
+  pinId: string;
+  title: string;
+  body: string;
+}
+
+let privateChatOwnerNotifier: ((notification: PrivateChatOwnerNotification) => void) | null = null;
+
+function notifyPrivateChatOwner(notification: PrivateChatOwnerNotification): void {
+  try {
+    privateChatOwnerNotifier?.(notification);
+  } catch (error) {
+    console.warn('[PrivateChat] Owner notification failed:', error instanceof Error ? error.message : String(error));
+  }
+}
+
+/**
+ * D4 give-up: the promise is dead — the whole wake ladder ran out with
+ * nothing delivered. The peer already got (or will get, best-effort) the
+ * retraction; the human owner learns what was promised, to whom, and that
+ * the machine gave up, via a session system row plus a desktop notification.
+ * Silent give-ups are what made this class of failure look like the bot
+ * "went missing" (2026-11-21 02:10 incident).
+ */
+function notifyPrivateChatOwedReplyGaveUp(params: {
+  coworkStore: Pick<CoworkStore, 'addMessage'>;
+  sessionId: string;
+  externalConversationId: string;
+  peerName: string | null;
+  waitNoticeKey: string;
+  noticeText: string;
+  emitLog: (msg: string) => void;
+  emitToRenderer?: RendererEmitter;
+}): void {
+  const peerLabel = (params.peerName ?? '').trim() || 'the peer';
+  const noticePreview = params.noticeText.trim().slice(0, 120) || '(unavailable)';
+  const content = [
+    '[Host] A promised private-chat follow-up was never delivered.',
+    `The bot told ${peerLabel}: "${noticePreview}"`,
+    'Every scheduled wake retry ended without a deliverable reply, so the promise was retracted on-chain. If the promised work still matters, follow up with the peer manually.',
+  ].join(' ');
+  let systemMessage: CoworkMessage | null = null;
+  try {
+    systemMessage = params.coworkStore.addMessage(params.sessionId, {
+      type: 'system',
+      content,
+      metadata: {
+        sourceChannel: 'metaweb_private',
+        externalConversationId: params.externalConversationId,
+        privateChatOwedReplyGaveUp: true,
+        privateChatOwedReplyForPinId: params.waitNoticeKey,
+        suppressRunningStatus: true,
+      },
+    });
+  } catch (error) {
+    params.emitLog(`[PrivateChat] Failed to record the owed-reply give-up notice: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (systemMessage && params.emitToRenderer) {
+    try {
+      params.emitToRenderer('cowork:stream:message', {
+        sessionId: params.sessionId,
+        message: systemMessage,
+      });
+    } catch (error) {
+      params.emitLog(`[PrivateChat] Failed to surface the owed-reply give-up notice: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  notifyPrivateChatOwner({
+    sessionId: params.sessionId,
+    pinId: params.waitNoticeKey,
+    title: 'Private chat: promised reply not delivered',
+    body: `The bot promised "${noticePreview}" but every retry stayed silent. The promise was retracted on-chain.`,
+  });
+  params.emitLog(`[PrivateChat] Owed-reply promise for ${params.waitNoticeKey.slice(0, 24)}… gave up; owner notified.`);
 }
 
 async function sendPrivateChatSkillWaitNotice(params: {
@@ -6254,7 +6800,7 @@ async function processOne(
     let skillWaitNoticeAlreadySent = canRunChatSkills
       ? hasSentPrivateChatSkillWaitNotice(coworkStore, sessionId, waitNoticeKey)
       : false;
-    const sendSkillWaitNoticeBeforeExecution = async (): Promise<void> => {
+    const sendSkillWaitNoticeBeforeExecution = async (controls?: { readonly cancelRequested: boolean }): Promise<void> => {
       if (!canRunChatSkills || skillWaitNoticeAlreadySent) return;
       skillWaitNoticeAlreadySent = hasSentPrivateChatSkillWaitNotice(coworkStore, sessionId, waitNoticeKey);
       if (skillWaitNoticeAlreadySent) return;
@@ -6302,6 +6848,16 @@ async function processOne(
         emitLog(`[PrivateChat] Skill wait notice generation failed for message ${row.id}: ${error instanceof Error ? error.message : String(error)}`);
       }
 
+      // The bridge flips cancelRequested the moment the turn settles (or
+      // errors/stops). A notice still un-broadcast then is pure noise: the
+      // turn's outcome (reply or silence) follows immediately, so a "wait for
+      // my answer" promise would trail or dangle. The broadcast is the point
+      // of no return — this is the last check before it.
+      if (controls?.cancelRequested) {
+        emitLog(`[PrivateChat] Skill wait notice cancelled before broadcast for message ${row.id}: the turn already settled.`);
+        return;
+      }
+
       const waitNoticeSent = await sendPrivateChatSkillWaitNotice({
         coworkStore,
         sessionId,
@@ -6319,6 +6875,23 @@ async function processOne(
         return;
       }
       skillWaitNoticeAlreadySent = true;
+      // Durable promise: the broadcast wait notice owes the peer a follow-up.
+      // The ledger survives restarts so the wake chain can be re-armed on
+      // boot instead of dying with the process.
+      recordPrivateChatOwedReply(coworkStore, {
+        version: 1,
+        pinId: waitNoticeKey,
+        sessionId,
+        metabotId: metabot.id,
+        externalConversationId,
+        rowId: row.id,
+        fromGlobalMetaId,
+        fromMetaId: row.from_metaid ?? null,
+        toGlobalMetaId: row.to_global_metaid ?? null,
+        toMetaId: row.to_metaid ?? null,
+        promisedAt: Date.now(),
+        fires: 0,
+      }, emitLog);
     };
     const operatorGuidance = conversationAnalysis.shouldForceBye || completedTurnReply
       ? null
@@ -6503,10 +7076,21 @@ async function processOne(
     // carries the wake notice: re-decide the silent tail (owed answer / bye /
     // sentinel), because no new peer message drove this run.
     const emptyReplyRetryAttempt = privateChatSkillTurnRetries.get(taskKey)?.attempts ?? 0;
+    // D1: the wake turn must SEE the promise it is being asked to fulfill.
+    // The transcript filter hides wait-notice rows from every turn (they are
+    // protocol noise), which is exactly why the 02:10 wake re-decided
+    // silence — the prompt asked "if you owe an answer, deliver it" while the
+    // evidence of the promise was filtered out. Inject the owed notice text
+    // here so the promise is binding and visible.
+    const owedWaitNoticeText = isWakeTurn
+      && hasSentPrivateChatSkillWaitNotice(coworkStore, sessionId, waitNoticeKey)
+      && !hasSentPrivateChatWaitNoticeRetraction(coworkStore, sessionId, waitNoticeKey)
+      ? findSentPrivateChatSkillWaitNoticeText(coworkStore, sessionId, waitNoticeKey)
+      : '';
     const systemPromptForTurn = [
       systemPromptWithExperience,
       emptyReplyRetryAttempt > 0 ? `\n\n${buildPrivateChatEmptyReplyRetryNotice(emptyReplyRetryAttempt)}` : '',
-      isWakeTurn ? `\n\n${buildPrivateChatA2AWakeNotice(wakeEntry?.fires ?? 1)}` : '',
+      isWakeTurn ? `\n\n${buildPrivateChatA2AWakeNotice(wakeEntry?.fires ?? 1, { owedWaitNoticeText })}` : '',
       // Last position = strongest recency slot: memory/experience blocks above
       // are frequently Chinese and otherwise pull the turn into Chinese.
       `\n\n${buildPrivateChatLanguageContract()}`,
@@ -6734,14 +7318,19 @@ async function processOne(
         // The conversation tail is now silent without a bye — arm a wake so
         // the host revisits it on a timer (only for established, open
         // conversations; a wake turn that exhausted its reply retries does
-        // not re-arm).
+        // not re-arm). A broadcast wait notice makes this an owed reply:
+        // denser ladder, and the ordinary silent-settlement give-up path in
+        // deliverNothingForSilentTurn still owns the final retraction.
         if (!isWakeTurn && hasPriorLocalOutbound && !conversationClosedByBye) {
+          const promiseOutstanding = hasSentPrivateChatSkillWaitNotice(coworkStore, sessionId, waitNoticeKey)
+            && !hasSentPrivateChatWaitNoticeRetraction(coworkStore, sessionId, waitNoticeKey);
           armPrivateChatA2AWake({
             row,
             sessionId,
             metabotId: metabot.id,
             externalConversationId,
             fires: 0,
+            promiseOutstanding,
             emitLog,
           });
         }
@@ -6749,7 +7338,7 @@ async function processOne(
         return;
       }
       privateChatSkillTurnRetries.delete(taskKey);
-      const deliverNothingForSilentTurn = (logMessage: string): void => {
+      const deliverNothingForSilentTurn = async (logMessage: string): Promise<void> => {
         emitLog(`[PrivateChat] ${logMessage}; delivering nothing to ${fromGlobalMetaId.slice(0, 12)}…`);
         // The skill-turn path may already have persisted the would-be reply as
         // an assistant bubble. Keep it for local context, but tag it so the
@@ -6772,11 +7361,67 @@ async function processOne(
             }
           }
         }
+        // Promise state (transcript is the source of truth — it works even
+        // when the kv ledger row is missing, e.g. promises recorded before
+        // the ledger existed). A broadcast wait notice means the peer is
+        // waiting: ordinary silent settlements keep the promise alive for the
+        // promise-aware wakes (owed-reply prompt + dense ladder) to fulfill;
+        // the retraction only fires at final death below. Retracting at the
+        // first silence instead would break the "fulfill the promise if at
+        // all possible" contract (2026-11-21 02:10 incident).
+        const promiseOutstanding = hasSentPrivateChatSkillWaitNotice(coworkStore, sessionId, waitNoticeKey)
+          && !hasSentPrivateChatWaitNoticeRetraction(coworkStore, sessionId, waitNoticeKey);
+        const wakeFires = isWakeTurn ? (wakeEntry?.fires ?? 1) : 0;
+        const canArmWake = isWakeTurn || (hasPriorLocalOutbound && !conversationClosedByBye);
+        const nextWakeAt = promiseOutstanding
+          ? nextPrivateChatA2AWakeAt(wakeFires, Date.now(), privateChatA2APromiseWakeDelaysMs)
+          : null;
+        if (promiseOutstanding && (nextWakeAt == null || !canArmWake)) {
+          if (conversationClosedByBye) {
+            // The conversation ended by human intent; a retraction pin after
+            // a bye would be protocol noise. Retire the promise quietly.
+            clearPrivateChatOwedReply(coworkStore, waitNoticeKey, emitLog, 'conversation closed by bye');
+            markProcessed(db, row.id, saveDb);
+            return;
+          }
+          // FINAL DEATH of the promise: the whole wake ladder ran out (or no
+          // wake can ever fire) with nothing delivered. Close the promise
+          // honestly with the peer, then tell the human what died and why.
+          const noticeText = findSentPrivateChatSkillWaitNoticeText(coworkStore, sessionId, waitNoticeKey);
+          emitLog(`[PrivateChat] Owed-reply promise for message ${row.id} reached final death (no wake left); retracting and notifying the owner.`);
+          await sendPrivateChatWaitNoticeRetraction({
+            coworkStore,
+            sessionId,
+            externalConversationId,
+            row,
+            fromGlobalMetaId,
+            sharedSecretForReply,
+            noticeText,
+            waitNoticeKey,
+            createSimpleMsgPin,
+            emitLog,
+            emitToRenderer,
+          });
+          notifyPrivateChatOwedReplyGaveUp({
+            coworkStore,
+            sessionId,
+            externalConversationId,
+            peerName: (row.from_name as string | null) ?? null,
+            waitNoticeKey,
+            noticeText,
+            emitLog,
+            emitToRenderer,
+          });
+          clearPrivateChatOwedReply(coworkStore, waitNoticeKey, emitLog, 'wake budget exhausted without delivery');
+          markProcessed(db, row.id, saveDb);
+          return;
+        }
         // The host only runs this bot again when a NEW peer message arrives,
         // so a silent decision in an open conversation can strand both sides
         // (the 2026-09-16 deadlock). Arm a bounded wake that re-drives this
         // row under a wake notice; a wake turn that stays silent re-arms
-        // until the budget is exhausted.
+        // until the budget is exhausted. Promise-bearing rows use the denser
+        // owed-reply ladder and a promise-aware wake prompt.
         if (isWakeTurn) {
           armPrivateChatA2AWake({
             row,
@@ -6784,6 +7429,7 @@ async function processOne(
             metabotId: metabot.id,
             externalConversationId,
             fires: wakeEntry?.fires ?? 1,
+            promiseOutstanding,
             emitLog,
           });
         } else if (hasPriorLocalOutbound && !conversationClosedByBye) {
@@ -6793,13 +7439,14 @@ async function processOne(
             metabotId: metabot.id,
             externalConversationId,
             fires: 0,
+            promiseOutstanding,
             emitLog,
           });
         }
         markProcessed(db, row.id, saveDb);
       };
       if (isPrivateChatNoReplySentinel(trimmed)) {
-        deliverNothingForSilentTurn(
+        await deliverNothingForSilentTurn(
           `Bot chose silence for message ${row.id} (${PRIVATE_CHAT_NO_REPLY_SENTINEL})`
         );
         return;
@@ -6813,7 +7460,7 @@ async function processOne(
         messages: coworkStore.getRecentPrivateA2AMessages(sessionId, 24),
         replyText: trimmed,
       })) {
-        deliverNothingForSilentTurn(
+        await deliverNothingForSilentTurn(
           `Echo-loop guard matched for message ${row.id}: the reply repeats the last delivered outgoing messages verbatim`
         );
         return;
@@ -6972,6 +7619,9 @@ async function processOne(
         });
       }
       emitLog(`[PrivateChat] Replied to ${fromGlobalMetaId.slice(0, 12)}…`);
+      // The promised follow-up just landed: settle the owed-reply ledger so
+      // boot-time restore no longer sees this pin as outstanding.
+      clearPrivateChatOwedReply(coworkStore, getPrivateChatSkillWaitNoticeKey(row), emitLog, 'reply delivered');
       // A delivered reply (including bye) means the conversation tail is no
       // longer silent — any pending wake for it is obsolete.
       cancelPrivateChatA2AWakesForConversation(externalConversationId, 'a reply was delivered', emitLog);
@@ -7196,9 +7846,16 @@ export function startPrivateChatDaemon(
   /** Best-effort relationship gate for invites (S4 provider); optional. */
   resolveFriendPairState?: ResolveFriendPairStateFn,
   swapOrderTracker?: SwapOrderTrackerService,
+  /**
+   * Desktop-notification seam for D4 (owed-reply give-up): wired in main.ts to
+   * the same notifier ingredients as the owner-ask bridge. Optional so test
+   * harnesses keep working without Electron.
+   */
+  notifyOwner?: (notification: PrivateChatOwnerNotification) => void,
 ): void {
   void stopPrivateChatDaemon();
   const daemonGeneration = ++privateChatDaemonGeneration;
+  privateChatOwnerNotifier = notifyOwner ?? null;
   orderCowork = new PrivateChatOrderCowork({
     coworkRunner,
     coworkStore,
@@ -7332,6 +7989,12 @@ export function startPrivateChatDaemon(
       emitLog(`[PrivateChat] Display reconcile failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  // D2: re-arm owed-reply wake chains the previous process left behind —
+  // restarts used to erase them (the module-level wake Map) and the promised
+  // follow-up dangled forever.
+  void restorePrivateChatOwedReplyWakes({ db, coworkStore, emitLog }).catch((error) => {
+    emitLog(`[PrivateChat] Owed-reply restore crashed: ${error instanceof Error ? error.message : String(error)}`);
+  });
   pollTimer = setInterval(() => {
     runPollTick();
   }, POLL_INTERVAL_MS);
@@ -7341,6 +8004,7 @@ export function startPrivateChatDaemon(
 
 export async function stopPrivateChatDaemon(options?: { waitForTick?: boolean }): Promise<void> {
   privateChatDaemonGeneration += 1;
+  privateChatOwnerNotifier = null;
   const scheduler = activeRowScheduler;
   activeRowScheduler = null;
   const detachedWork = [...privateChatDetachedWork];

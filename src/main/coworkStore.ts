@@ -2999,6 +2999,103 @@ export class CoworkStore implements MemoryBackend {
     this.saveDb();
   }
 
+  /**
+   * Public string-oriented kv access for daemon-side durable bookkeeping
+   * (the private-chat owed-reply promise ledger). Values are plain strings;
+   * JSON encoding is the caller's concern. The existing private helpers
+   * double-encode strings (JSON.stringify at write, parse-back at read), and
+   * these wrappers ride the same convention so every kv reader stays
+   * consistent.
+   */
+  getKvString(key: string): string | null {
+    return this.getKvValue(key);
+  }
+
+  setKvString(key: string, value: string): void {
+    this.setKvValue(key, value);
+  }
+
+  deleteKvKey(key: string): void {
+    this.db.run('DELETE FROM kv WHERE key = ?', [key]);
+    this.saveDb();
+  }
+
+  listKvKeysWithPrefix(prefix: string): string[] {
+    const rows = this.getAll<{ key: string }>(
+      'SELECT key FROM kv WHERE substr(key, 1, ?) = ? ORDER BY key ASC',
+      [prefix.length, prefix],
+    );
+    return rows.map((row) => row.key);
+  }
+
+  /**
+   * Wait notices whose promised follow-up never landed: an outgoing
+   * private-chat skill wait notice with no delivered reply for the same
+   * inbound pin and no retraction closing it. Feeds the daemon's boot-time
+   * promise restore (restarts used to erase the in-memory wake that was
+   * supposed to fulfill the promise — the 2026-11-21 02:10 dangling case).
+   * Bounded by created_at and count; the pairing runs per notice because the
+   * pin lives inside free-form JSON metadata.
+   */
+  listRecentUnfulfilledPrivateChatWaitNotices(sinceMs: number, limit = 200): Array<{
+    sessionId: string;
+    messageId: string;
+    pinId: string;
+    externalConversationId: string | null;
+    promisedAt: number;
+  }> {
+    const noticeRows = this.getAll<{ id: string; session_id: string; created_at: number; metadata: string | null }>(`
+      SELECT id, session_id, created_at, metadata
+      FROM cowork_messages
+      WHERE type = 'assistant'
+        AND metadata LIKE '%"privateChatSkillWaitNotice":true%'
+        AND created_at > ?
+      ORDER BY created_at ASC
+      LIMIT ?
+    `, [sinceMs, limit]);
+    const result: Array<{
+      sessionId: string;
+      messageId: string;
+      pinId: string;
+      externalConversationId: string | null;
+      promisedAt: number;
+    }> = [];
+    for (const row of noticeRows) {
+      let metadata: Record<string, unknown> = {};
+      try {
+        metadata = row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : {};
+      } catch {
+        continue;
+      }
+      if (metadata.privateChatSkillWaitNotice !== true) continue;
+      const pinId = typeof metadata.privateChatSkillWaitNoticeForPinId === 'string'
+        ? metadata.privateChatSkillWaitNoticeForPinId.trim()
+        : '';
+      if (!pinId) continue;
+      const externalConversationId = typeof metadata.externalConversationId === 'string'
+        ? metadata.externalConversationId
+        : null;
+      const hasReply = this.getOne<{ found: number }>(`
+        SELECT 1 AS found FROM cowork_messages
+        WHERE session_id = ? AND metadata LIKE ? LIMIT 1
+      `, [row.session_id, `%privateChatReplyForPinId":"${pinId}"%`]) != null;
+      if (hasReply) continue;
+      const hasRetraction = this.getOne<{ found: number }>(`
+        SELECT 1 AS found FROM cowork_messages
+        WHERE session_id = ? AND metadata LIKE ? LIMIT 1
+      `, [row.session_id, `%privateChatWaitNoticeRetractionForPinId":"${pinId}"%`]) != null;
+      if (hasRetraction) continue;
+      result.push({
+        sessionId: row.session_id,
+        messageId: row.id,
+        pinId,
+        externalConversationId,
+        promisedAt: row.created_at,
+      });
+    }
+    return result;
+  }
+
   private resolveMemoryScopeSelector(input: {
     scope?: MemoryScope | null;
     scopeKind?: MemoryScope['kind'] | null;

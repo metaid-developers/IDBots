@@ -5118,6 +5118,35 @@ const startStartupMessageTier = (): void => {
     requestDaemonFriendActionApproval,
     resolveDaemonFriendPairState,
     getSwapOrderTrackerService(),
+    // D4 owed-reply give-up: same desktop-notification ingredients as the
+    // owner-ask bridge above — when a promise the bot made to a peer dies
+    // with every wake retry silent, the owner must hear it from the machine
+    // instead of noticing the silence. Foreground suppression carries over:
+    // a focused app already shows the give-up system row in the transcript.
+    (() => {
+      const ownerAskNotify = createOwnerAskNotifier({
+        isSupported: () => Notification.isSupported(),
+        isWindowForeground: () =>
+          Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()),
+        createNotification: ({ title, body }) => new Notification({ title, body }),
+        showWindow: () => {
+          if (!mainWindow || mainWindow.isDestroyed()) return;
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          if (!mainWindow.isVisible()) mainWindow.show();
+          if (!mainWindow.isFocused()) mainWindow.focus();
+        },
+        log: (message, error) => console.warn(message, error),
+      });
+      return (notification: { sessionId: string; pinId: string; title: string; body: string }) => {
+        ownerAskNotify({
+          kind: 'timeout',
+          sessionId: notification.sessionId,
+          requestId: `private-chat-owed-reply:${notification.pinId}:${Date.now()}`,
+          title: notification.title,
+          body: notification.body,
+        });
+      };
+    })(),
   );
   getSwapOrderTrackerService().startPolling();
 

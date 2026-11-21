@@ -85,6 +85,8 @@ tests/*
 !tests/unwired-exclusions.json
 !tests/dataGuard.test.mjs
 !tests/privateChatFileMessage.test.mjs
+!tests/privateChatWaitNoticeCancel.test.mjs
+!tests/privateChatWaitNoticeAnchor.test.ts
 !tests/a2aPendingAskBridge.test.mjs
 !tests/friendAgentTools.test.mjs
 !tests/friendRelationshipService.test.mjs
