@@ -348,3 +348,169 @@ test('P0-2: MetaSo rawFallback cannot forge verified:true and spoofed metasoLate
   assert.equal(regFallback.pinId, MODIFIED_CA_PIN);
   assert.equal(regFallback.officialBots.length, 2);
 });
+
+test('getNftCaRegistry falls back to MANAPI /content and base64 contentBody when file.metaid.io returns code=40400 for JSON pins', async () => {
+  const prevOverride = process.env.IDBOTS_NFT_CA_PINID;
+  process.env.IDBOTS_NFT_CA_PINID = MODIFIED_CA_PIN;
+  delete process.env.IDBOTS_MAN_P2P_LOCAL_BASE;
+  clearNftCaRegistryCache();
+
+  try {
+    // 1. file.metaid.io returns 200 {"code":40400,"message":"avatar not found","data":null};
+    //    manapi.metaid.io/content/<pinId> serves the v1.1 JSON payload.
+    const regViaManapiContent = await withFetchStub(async (input) => {
+      const url = String(input);
+      if (url.startsWith(`https://file.metaid.io/metafile-indexer/content/${MODIFIED_CA_PIN}`)) {
+        return jsonResponse({ code: 40400, message: 'avatar not found', data: null });
+      }
+      if (url === `https://manapi.metaid.io/content/${MODIFIED_CA_PIN}`) {
+        return jsonResponse(V11_PAYLOAD);
+      }
+      if (url === `https://manapi.metaid.io/pin/${MODIFIED_CA_PIN}`) {
+        return jsonResponse({
+          code: 1,
+          data: {
+            id: MODIFIED_CA_PIN,
+            createMetaId: OFFICIAL_IDBOTS_METAID,
+            metaid: OFFICIAL_IDBOTS_METAID,
+          },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }, () => getNftCaRegistry({ refresh: true }));
+
+    assert.equal(regViaManapiContent.verified, true);
+    assert.equal(regViaManapiContent.status, 'verified');
+    assert.equal(regViaManapiContent.collections.length, 1);
+    assert.equal(regViaManapiContent.officialBots.length, 2);
+
+    // 2. Both file.metaid.io and manapi /content fail -> falls back to base64 contentBody in getPinData.
+    clearNftCaRegistryCache();
+    const base64Body = Buffer.from(JSON.stringify(V11_PAYLOAD), 'utf8').toString('base64');
+    const regViaPinDataBody = await withFetchStub(async (input) => {
+      const url = String(input);
+      if (url.startsWith(`https://file.metaid.io/metafile-indexer/content/${MODIFIED_CA_PIN}`)) {
+        return jsonResponse({ code: 40400, message: 'avatar not found', data: null });
+      }
+      if (url === `https://manapi.metaid.io/content/${MODIFIED_CA_PIN}`) {
+        return jsonResponse({ code: 502 }, 502);
+      }
+      if (url === `https://manapi.metaid.io/pin/${MODIFIED_CA_PIN}`) {
+        return jsonResponse({
+          code: 1,
+          data: {
+            id: MODIFIED_CA_PIN,
+            createMetaId: OFFICIAL_IDBOTS_METAID,
+            contentBody: base64Body,
+          },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }, () => getNftCaRegistry({ refresh: true }));
+
+    assert.equal(regViaPinDataBody.verified, true);
+    assert.equal(regViaPinDataBody.collections.length, 1);
+    assert.equal(regViaPinDataBody.officialBots.length, 2);
+  } finally {
+    if (prevOverride) process.env.IDBOTS_NFT_CA_PINID = prevOverride;
+    else delete process.env.IDBOTS_NFT_CA_PINID;
+    clearNftCaRegistryCache();
+  }
+});
+
+test('getNftCaRegistry discovers newer Bob pin on /protocols/idbots-nft-ca path list and rejects transferred attacker pin', async () => {
+  delete process.env.IDBOTS_NFT_CA_PINID;
+  delete process.env.IDBOTS_MAN_P2P_LOCAL_BASE;
+  clearNftCaRegistryCache();
+
+  const NEW_PATH_PIN = `${'65'.repeat(32)}i0`;
+  const TRANSFERRED_ATTACKER_PIN = `${'ee'.repeat(32)}i0`;
+  const ATTACKER_METAID = 'ff'.repeat(32);
+  const fullRaw = JSON.stringify(V11_PAYLOAD);
+
+  const reg = await withFetchStub(async (input) => {
+    const url = String(input);
+    // MetaSo still serves older empty baseline d0c042b3...
+    if (url.includes('/api/mrc721/ca/registry')) {
+      return jsonResponse({
+        code: 0,
+        data: { pinId: ROOT_CA_PIN },
+      });
+    }
+    if (url.startsWith(`https://file.metaid.io/metafile-indexer/content/`)) {
+      return jsonResponse({ code: 40400, message: 'avatar not found', data: null });
+    }
+    if (url === `https://manapi.metaid.io/content/${ROOT_CA_PIN}`) {
+      return jsonResponse({ collections: [] });
+    }
+    if (url === `https://manapi.metaid.io/pin/${ROOT_CA_PIN}`) {
+      return jsonResponse({
+        code: 1,
+        data: {
+          id: ROOT_CA_PIN,
+          createMetaId: OFFICIAL_IDBOTS_METAID,
+          metaid: OFFICIAL_IDBOTS_METAID,
+          modify_history: null,
+        },
+      });
+    }
+    if (url.startsWith('https://manapi.metaid.io/pin/path/list?path=%2Fprotocols%2Fidbots-nft-ca')) {
+      return jsonResponse({
+        code: 1,
+        data: {
+          list: [
+            // Higher block height, BUT created by attacker and transferred to Bob (metaid == Bob, createMetaId == attacker) -> MUST be skipped!
+            {
+              id: TRANSFERRED_ATTACKER_PIN,
+              genesisHeight: 200000,
+              timestamp: 1796000000,
+              createMetaId: ATTACKER_METAID,
+              metaid: OFFICIAL_IDBOTS_METAID,
+              contentSummary: JSON.stringify({ collections: [] }),
+              contentLength: 18,
+            },
+            // Authentic Bob v1.1 pin with truncated contentSummary -> must hydrate via /content/<pinId>!
+            {
+              id: NEW_PATH_PIN,
+              genesisHeight: 199735,
+              timestamp: 1795249500,
+              createMetaId: OFFICIAL_IDBOTS_METAID,
+              metaid: OFFICIAL_IDBOTS_METAID,
+              contentSummary: fullRaw.slice(0, 40),
+              contentLength: fullRaw.length,
+            },
+          ],
+        },
+      });
+    }
+    if (url === `https://manapi.metaid.io/pin/${TRANSFERRED_ATTACKER_PIN}`) {
+      return jsonResponse({
+        code: 1,
+        data: {
+          id: TRANSFERRED_ATTACKER_PIN,
+          createMetaId: ATTACKER_METAID,
+          metaid: OFFICIAL_IDBOTS_METAID,
+        },
+      });
+    }
+    if (url === `https://manapi.metaid.io/pin/${NEW_PATH_PIN}`) {
+      return jsonResponse({
+        code: 1,
+        data: {
+          id: NEW_PATH_PIN,
+          createMetaId: OFFICIAL_IDBOTS_METAID,
+          metaid: OFFICIAL_IDBOTS_METAID,
+        },
+      });
+    }
+    if (url === `https://manapi.metaid.io/content/${NEW_PATH_PIN}`) {
+      return jsonResponse(V11_PAYLOAD);
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  }, () => getNftCaRegistry({ refresh: true }));
+
+  assert.equal(reg.verified, true);
+  assert.equal(reg.pinId, NEW_PATH_PIN);
+  assert.equal(reg.collections.length, 1);
+  assert.equal(reg.officialBots.length, 2);
+});

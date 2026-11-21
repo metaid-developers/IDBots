@@ -40,6 +40,8 @@ import { getMetasoApiBase } from './mrc721Service';
  */
 
 const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/content';
+const MANAPI_BASE = 'https://manapi.metaid.io';
+const NFT_CA_PATH = '/protocols/idbots-nft-ca';
 
 /**
  * The IDBots official identity (owner designation 2026-11-05): the local
@@ -392,7 +394,9 @@ export function parseNftCaPinContent(raw: string | null | undefined): NftCaColle
 export async function resolveNftCaPinCreator(pinId: string): Promise<string | null> {
   try {
     const row = await getPinData(pinId, false);
-    for (const field of ['globalMetaId', 'metaid', 'createMetaId', 'creator']) {
+    // Prefer immutable creator fields before current-owner fields so a pin
+    // created by an attacker and transferred to Bob cannot spoof creatorMetaId.
+    for (const field of ['createMetaId', 'creator', 'globalMetaId', 'metaid']) {
       const value = String(row?.[field] ?? '').trim();
       if (value && METAID_PATTERN.test(value)) {
         return value.toLowerCase();
@@ -404,23 +408,79 @@ export async function resolveNftCaPinCreator(pinId: string): Promise<string | nu
   }
 }
 
+function decodeManapiPinBodyText(rawBody: unknown, rawSummary: unknown): string | null {
+  if (typeof rawBody === 'string' && rawBody.trim()) {
+    const trimmed = rawBody.trim();
+    if (parseNftCaPinPayload(trimmed)) {
+      return trimmed;
+    }
+    try {
+      const decoded = Buffer.from(trimmed, 'base64').toString('utf8').trim();
+      if (decoded && parseNftCaPinPayload(decoded)) {
+        return decoded;
+      }
+    } catch {
+      // ignore non-base64 contentBody
+    }
+  }
+  if (typeof rawSummary === 'string' && rawSummary.trim()) {
+    const summary = rawSummary.trim();
+    if (parseNftCaPinPayload(summary)) {
+      return summary;
+    }
+  }
+  return null;
+}
+
 async function fetchCaPinContent(pinId: string): Promise<string | null> {
+  let fallbackCandidate: string | null = null;
   try {
     const response = await fetchContentWithFallback(
       pinId,
       `${METAID_CONTENT_BASE}/${encodeURIComponent(pinId)}`,
     );
-    if (!response.ok) {
-      return null;
+    if (response.ok) {
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length) {
+        const text = buffer.toString('utf8');
+        if (parseNftCaPinPayload(text)) {
+          return text;
+        }
+        fallbackCandidate = text;
+      }
     }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (!buffer.length) {
-      return null;
-    }
-    return buffer.toString('utf8');
   } catch {
-    return null;
+    // continue to MANAPI fallbacks
   }
+
+  // Fallback 1: MANAPI /content/<pinId> serves JSON protocol pins that
+  // file.metaid.io rejects with {"code":40400,"message":"avatar not found"}.
+  try {
+    const res = await fetch(`${MANAPI_BASE}/content/${encodeURIComponent(pinId)}`, {
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (res.ok) {
+      const text = (await res.text()).trim();
+      if (text && parseNftCaPinPayload(text)) {
+        return text;
+      }
+    }
+  } catch {
+    // continue to pin-record fallback
+  }
+
+  // Fallback 2: MANAPI / local SQLite pin record (contentBody / contentSummary).
+  try {
+    const row = await getPinData(pinId, false);
+    const decoded = decodeManapiPinBodyText(row?.contentBody, row?.contentSummary);
+    if (decoded) {
+      return decoded;
+    }
+  } catch {
+    // ignore
+  }
+
+  return fallbackCandidate;
 }
 
 interface NftCaCache {
@@ -503,6 +563,76 @@ async function resolveLatestPinIdFromHistory(rootPinId: string): Promise<string>
   return rootPinId;
 }
 
+async function resolveLatestCaFromManapiPath(): Promise<{
+  pinId: string;
+  raw: string;
+  creatorMetaId: string;
+} | null> {
+  const officialMetaId = OFFICIAL_IDBOTS_METAID.toLowerCase();
+  try {
+    const url = `${MANAPI_BASE}/pin/path/list?path=${encodeURIComponent(NFT_CA_PATH)}&size=20`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      code?: unknown;
+      list?: unknown[];
+      data?: { list?: unknown[] };
+    };
+    const code = Number(json?.code);
+    if (code !== 0 && code !== 1) return null;
+    const items = Array.isArray(json?.data?.list)
+      ? json.data.list
+      : Array.isArray(json?.list)
+        ? json.list
+        : [];
+    if (!items.length) return null;
+
+    const candidates = items
+      .filter((it): it is Record<string, unknown> => !!it && typeof it === 'object')
+      .slice()
+      .sort((a, b) => {
+        const ha = Number(a.genesisHeight ?? 0);
+        const hb = Number(b.genesisHeight ?? 0);
+        if (hb !== ha) return hb - ha;
+        const ta = Number(a.timestamp ?? 0);
+        const tb = Number(b.timestamp ?? 0);
+        if (tb !== ta) return tb - ta;
+        return String(b.id ?? '').localeCompare(String(a.id ?? ''));
+      });
+
+    const seen = new Set<string>();
+    for (const item of candidates) {
+      const candidateId = typeof item.id === 'string' ? item.id.trim().toLowerCase() : '';
+      if (!candidateId || !PIN_ID_PATTERN.test(candidateId) || seen.has(candidateId)) {
+        continue;
+      }
+      seen.add(candidateId);
+      // Skip unconfirmed negative-height entries on MANAPI path list unless no confirmed pin exists.
+      if (Number(item.genesisHeight ?? 0) < 0) {
+        continue;
+      }
+      const creatorMetaId = await resolveNftCaPinCreator(candidateId);
+      if (creatorMetaId !== officialMetaId) {
+        continue;
+      }
+      const inlineRaw = decodeManapiPinBodyText(item.contentBody, item.contentSummary);
+      const contentLength = Number(item.contentLength ?? 0);
+      const needsFullFetch =
+        !inlineRaw ||
+        (Number.isFinite(contentLength) &&
+          contentLength > 0 &&
+          Buffer.byteLength(inlineRaw, 'utf8') < contentLength);
+      const candidateRaw = needsFullFetch ? await fetchCaPinContent(candidateId) : inlineRaw;
+      if (candidateRaw && parseNftCaPinPayload(candidateRaw)) {
+        return { pinId: candidateId, raw: candidateRaw, creatorMetaId };
+      }
+    }
+  } catch {
+    // ignore MANAPI path list failures
+  }
+  return null;
+}
+
 async function fetchNftCaRegistryUncached(): Promise<NftCaRegistry> {
   const envOverridePinId = getEnvOverrideNftCaPinId();
   const officialMetaId = OFFICIAL_IDBOTS_METAID.toLowerCase();
@@ -524,6 +654,16 @@ async function fetchNftCaRegistryUncached(): Promise<NftCaRegistry> {
         raw = candidateRaw;
         resolvedCreatorMetaId = candidateCreator;
         acceptedMetaso = true;
+        // If MetaSo is still serving an empty baseline before syncing a newly
+        // mined CA pin, check MANAPI path list once for a newer Bob-signed pin.
+        if (candidateParsed.collections.length === 0 && candidateParsed.officialBots.length === 0) {
+          const pathLatest = await resolveLatestCaFromManapiPath();
+          if (pathLatest) {
+            pinId = pathLatest.pinId;
+            raw = pathLatest.raw;
+            resolvedCreatorMetaId = pathLatest.creatorMetaId;
+          }
+        }
       }
     }
     if (!acceptedMetaso) {
@@ -534,8 +674,21 @@ async function fetchNftCaRegistryUncached(): Promise<NftCaRegistry> {
           'IDBOTS_NFT_CA_PINID is unset or not a valid pin id; the IDBots NFT CA pin does not exist yet.',
         );
       }
-      pinId = await resolveLatestPinIdFromHistory(basePinId);
-      raw = await fetchCaPinContent(pinId);
+      const historyPinId = await resolveLatestPinIdFromHistory(basePinId);
+      if (historyPinId !== basePinId) {
+        pinId = historyPinId;
+        raw = await fetchCaPinContent(pinId);
+      } else {
+        const pathLatest = await resolveLatestCaFromManapiPath();
+        if (pathLatest) {
+          pinId = pathLatest.pinId;
+          raw = pathLatest.raw;
+          resolvedCreatorMetaId = pathLatest.creatorMetaId;
+        } else {
+          pinId = basePinId;
+          raw = await fetchCaPinContent(pinId);
+        }
+      }
     }
   }
 
