@@ -25,6 +25,7 @@ import {
 } from './mePointsStore';
 import MeBalanceOverviewCard from './MeBalanceOverviewCard';
 import { formatMeMoney } from './mePayment';
+import { summarizeMeBurnBreakdown, type MeBurnLine } from './meBurnBreakdown';
 
 const HISTORY_TYPES = ['', 'mint', 'topup', 'bonus', 'burn', 'transfer', 'reverse', 'adjust', 'expire'] as const;
 
@@ -100,6 +101,33 @@ export const meteringTagLabel = (refType: string | undefined): string | null => 
   return null;
 };
 
+const burnLineLabel = (line: MeBurnLine): string => {
+  switch (line) {
+    case 'llm': return i18nService.t('meUsageBreakdownLineLlm');
+    case 'agent': return i18nService.t('meUsageBreakdownLineAgent');
+    case 'traffic': return i18nService.t('meUsageBreakdownLineTraffic');
+    case 'brain': return i18nService.t('meUsageBreakdownLineBrain');
+    case 'other':
+    default: return i18nService.t('meUsageBreakdownLineOther');
+  }
+};
+
+const burnLineColorClass = (line: MeBurnLine): string => {
+  switch (line) {
+    case 'llm': return 'bg-claude-accent';
+    case 'agent': return 'bg-amber-500';
+    case 'traffic': return 'bg-emerald-500';
+    case 'brain': return 'bg-sky-500';
+    case 'other':
+    default: return 'bg-slate-400';
+  }
+};
+
+const formatBurnShare = (share: number): string => {
+  const pct = Math.round(share * 1000) / 10;
+  return `${pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1)}%`;
+};
+
 const formatOrderTime = (ts: number | undefined): string => {
   if (!ts || !Number.isFinite(ts)) return '—';
   try {
@@ -133,6 +161,7 @@ interface MePaymentRecordRow {
 const MeUsageAndCredits: React.FC = () => {
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [entries, setEntries] = useState<MeHistoryEntryInfo[]>([]);
+  const [burnEntries, setBurnEntries] = useState<MeHistoryEntryInfo[]>([]);
   const [nextCursor, setNextCursor] = useState<string>('');
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
@@ -191,20 +220,50 @@ const MeUsageAndCredits: React.FC = () => {
     }
   }, []);
 
+  const loadBurnHistory = useCallback(async () => {
+    try {
+      const res = await window.electron.mePoints.getHistory({
+        type: 'burn',
+        limit: 100,
+      });
+      if (res.success && res.history && Array.isArray(res.history.entries)) {
+        setBurnEntries(res.history.entries);
+      }
+    } catch {
+      // Breakdown falls back to loaded ledger entries when burn fetch fails.
+    }
+  }, []);
+
   useEffect(() => {
     if (!snapshot.balance) ensureMeSnapshot();
     void loadHistory(true);
     void loadOrders(true);
   }, [typeFilter]);
 
+  useEffect(() => {
+    void loadBurnHistory();
+  }, [loadBurnHistory]);
+
   const handleRefreshAll = useCallback(async () => {
     setRefreshing(true);
     void ensureMeSnapshot();
     setEntries([]);
     setNextCursor('');
-    await Promise.all([loadHistory(true), loadOrders(false)]);
+    await Promise.all([loadHistory(true), loadOrders(false), loadBurnHistory()]);
     setRefreshing(false);
-  }, [loadHistory, loadOrders]);
+  }, [loadHistory, loadOrders, loadBurnHistory]);
+
+  const effectiveBurnEntries = useMemo(() => {
+    if (typeFilter === 'burn' && entries.length > burnEntries.length) {
+      return entries;
+    }
+    return burnEntries.length > 0 ? burnEntries : entries;
+  }, [typeFilter, entries, burnEntries]);
+
+  const burnSummary = useMemo(
+    () => summarizeMeBurnBreakdown(effectiveBurnEntries),
+    [effectiveBurnEntries],
+  );
 
   const rates = snapshot.rates ?? [];
 
@@ -343,6 +402,85 @@ const MeUsageAndCredits: React.FC = () => {
           </p>
         )}
       </div>
+
+      {/* 消耗构成：按计费线与来源/模型汇总近期消耗 */}
+      {burnSummary.totalMilli > 0 && (
+        <div
+          data-slot="me-usage-burn-breakdown"
+          className="rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface/60 p-3.5 space-y-3"
+        >
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <h3 className="text-xs font-semibold text-claude-text dark:text-claude-darkText">
+              {i18nService.t('meUsageBreakdownTitle')}
+            </h3>
+            <span className="text-[11px] tabular-nums text-claude-textSecondary dark:text-claude-darkTextSecondary">
+              {i18nService.t('meUsageBreakdownSummary')
+                .replace('{total}', formatMe(meFromMilli(burnSummary.totalMilli)))
+                .replace('{count}', String(burnSummary.entryCount))}
+            </span>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="text-[10px] font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
+              {i18nService.t('meUsageBreakdownByLine')}
+            </div>
+            <div className="flex h-2 w-full overflow-hidden rounded-full bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset">
+              {burnSummary.byLine.map((item) => (
+                <div
+                  key={item.line}
+                  style={{ width: `${Math.max(item.share * 100, 2)}%` }}
+                  className={burnLineColorClass(item.line)}
+                  title={`${burnLineLabel(item.line)}: ${formatMe(meFromMilli(item.amountMilli))} ME (${formatBurnShare(item.share)})`}
+                />
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
+              {burnSummary.byLine.map((item) => (
+                <div key={item.line} className="flex items-center gap-1.5 text-[11px]">
+                  <span className={`inline-block h-2 w-2 rounded-full ${burnLineColorClass(item.line)}`} />
+                  <span className="text-claude-text dark:text-claude-darkText">{burnLineLabel(item.line)}</span>
+                  <span className="tabular-nums text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                    {formatMe(meFromMilli(item.amountMilli))} ME ({formatBurnShare(item.share)})
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {burnSummary.bySource.length > 0 && (
+            <div className="space-y-1.5 border-t border-claude-border/50 dark:border-claude-darkBorder/50 pt-2.5">
+              <div className="text-[10px] font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                {i18nService.t('meUsageBreakdownBySource')}
+              </div>
+              <div className="space-y-1">
+                {burnSummary.bySource.map((item) => (
+                  <div key={item.key} className="flex items-center justify-between gap-2 text-[11px]">
+                    <div className="min-w-0 flex items-center gap-1.5">
+                      <span className="rounded-md border border-dashed border-claude-border dark:border-claude-darkBorder px-1.5 py-0.5 text-[9px] tabular-nums text-claude-textSecondary dark:text-claude-darkTextSecondary shrink-0">
+                        {item.line.toUpperCase()}
+                      </span>
+                      <span className="truncate text-claude-text dark:text-claude-darkText" title={item.label}>
+                        {item.label}
+                      </span>
+                      <span className="text-[10px] tabular-nums text-claude-textSecondary dark:text-claude-darkTextSecondary shrink-0">
+                        {i18nService.t('meUsageBreakdownEntryCount').replace('{count}', String(item.count))}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 tabular-nums">
+                      <span className="text-claude-text dark:text-claude-darkText">
+                        {formatMe(meFromMilli(item.amountMilli))} ME
+                      </span>
+                      <span className="w-11 text-right text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                        {formatBurnShare(item.share)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ME 流水 */}
       <div className="rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface/60 p-3.5">

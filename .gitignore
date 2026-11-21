@@ -1162,3 +1162,6 @@ blob-report/
 !tests/meNftEscrowClient.test.ts
 !tests/sellerAutoFulfillDaemon.test.ts
 !tests/nftCardCommerceRender.test.tsx
+
+# ME cost governance UI & MetaBot global-default / bulk free-relay switch
+!tests/meCostGovernanceUi.test.ts
