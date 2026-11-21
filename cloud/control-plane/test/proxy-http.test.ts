@@ -51,6 +51,32 @@ describe('proxy HTTP routes (REQ-B-14, REQ-B-15)', () => {
     assert.equal(badCookie.status, 401);
   });
 
+  test('malformed percent encoding on a :param route answers 400 BAD_REQUEST, not 500', async () => {
+    // '%zz' makes decodeURIComponent throw URIError inside matchPath.
+    // Unguarded, that throw escaped through handle()'s catch-all as
+    // 500 INTERNAL on a pre-auth path; it is a client mistake and must read
+    // as one — the same posture as the tenant gateway's decodePathSegment
+    // (PR #175). Auth runs after routing, so no cookie is needed to observe
+    // the status. The 5-segment POST route proves the guard is router-level,
+    // not a /files special case.
+    for (const pathname of ['/files/%zz', '/files/%E0%A4%A', '/files/%']) {
+      const res = await fetch(`${t.cpBase}${pathname}`);
+      assert.equal(res.status, 400, `${pathname} must answer 400, not 500`);
+      const body = (await res.json()) as { error: { code: string } };
+      assert.equal(body.error.code, 'BAD_REQUEST', `${pathname} must carry the C3 error envelope`);
+    }
+    const nested = await fetch(`${t.cpBase}/internal/v1/tenants/%zz/notifications`, { method: 'POST' });
+    assert.equal(nested.status, 400, 'a malformed param on a 5-segment route answers 400 too');
+
+    // The control plane is still serving after every malformed hit.
+    const health = await fetch(`${t.cpBase}/health`);
+    assert.equal(health.status, 200, 'the control plane must survive malformed percent encoding');
+
+    // A well-formed param still routes (here: the usual 401 cookie gate).
+    const wellFormed = await fetch(`${t.cpBase}/files/report.txt`);
+    assert.equal(wellFormed.status, 401);
+  });
+
   test('POST /upload streams to the tenant and reports path/size/mime', async () => {
     const content = 'hello proxy upload\n';
     const res = await fetch(`${t.cpBase}/upload?name=${encodeURIComponent('note.txt')}`, {
