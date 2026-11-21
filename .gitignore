@@ -689,6 +689,9 @@ man_base_data_pebble/
 !tests/ftAutoFulfillDaemon.test.ts
 !tests/tokenOrderWatcher.test.ts
 !tests/ftCardsRender.test.tsx
+!tests/paybuzzCryptoAndService.test.ts
+!tests/payReadFulfillDaemon.test.ts
+!tests/paybuzzCardRender.test.tsx
 
 # dev-only isolated user-data dirs for "npm run electron:dev:fresh" (new-user simulation)
 .dev-userdata-fresh/

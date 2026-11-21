@@ -41,6 +41,18 @@ import {
   type FtCommerceGatewayDeps,
 } from './ftCommerceGatewayRoutes';
 import {
+  PAYBUZZ_ITEM_PATH,
+  PAYBUZZ_PUBLISH_PATH,
+  PAYBUZZ_UNLOCKED_PATH,
+  PAYBUZZ_UNLOCK_PATH,
+  handlePaybuzzItemGetRoute,
+  handlePaybuzzPublishRoute,
+  handlePaybuzzUnlockRoute,
+  handlePaybuzzUnlockedGetRoute,
+} from './paybuzzGatewayRoutes';
+import type { PaybuzzServiceDeps } from './paybuzzService';
+import { broadcastToRenderers } from '../ipc/broadcast';
+import {
   createPin,
   getPinData,
   setMetaidCoreStore,
@@ -3096,6 +3108,64 @@ export function startMetaidRpcServer(
           res.end(JSON.stringify({ success: false, error: 'Not found' }));
           return;
         }
+        res.writeHead(result.status);
+        res.end(JSON.stringify(result.body));
+        return;
+      }
+    }
+
+    // WS-5 PayBuzz Encrypted Reading Protocol Local RPC (`Contract C6`)
+    if (
+      pathname === PAYBUZZ_PUBLISH_PATH ||
+      pathname === PAYBUZZ_UNLOCK_PATH ||
+      pathname === PAYBUZZ_ITEM_PATH ||
+      pathname === PAYBUZZ_UNLOCKED_PATH
+    ) {
+      const paybuzzDeps: PaybuzzServiceDeps = {
+        getDb: () => getStore().getDatabase(),
+        saveDb: getStore().getSaveFunction(),
+        getMetabotStore: () => getMetabotStore(),
+        sendEncryptedPrivateMessage: async (fromMetabotId, toGlobalMetaId, plaintext) => {
+          await handlePrivateSendRoute(
+            chatGatewayDeps,
+            JSON.stringify({
+              metabot_id: fromMetabotId,
+              to_global_metaid: toGlobalMetaId,
+              content: plaintext,
+            }),
+          );
+        },
+        emitToRenderer: (channel, payload) => broadcastToRenderers(channel, payload),
+      };
+
+      if (req.method === 'GET' && pathname === PAYBUZZ_ITEM_PATH) {
+        const queryParams = new URLSearchParams(search || '');
+        const pinId = queryParams.get('pinId') ?? queryParams.get('pin_id') ?? '';
+        const metabotIdParam = queryParams.get('metabotId') ?? queryParams.get('metabot_id');
+        const result = await handlePaybuzzItemGetRoute(paybuzzDeps, pinId, metabotIdParam);
+        res.writeHead(result.status);
+        res.end(JSON.stringify(result.body));
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === PAYBUZZ_UNLOCKED_PATH) {
+        const queryParams = new URLSearchParams(search || '');
+        const pinId = queryParams.get('pinId') ?? queryParams.get('pin_id') ?? '';
+        const result = handlePaybuzzUnlockedGetRoute(paybuzzDeps, pinId);
+        res.writeHead(result.status);
+        res.end(JSON.stringify(result.body));
+        return;
+      }
+
+      if (req.method === 'POST' && (pathname === PAYBUZZ_PUBLISH_PATH || pathname === PAYBUZZ_UNLOCK_PATH)) {
+        const body = await readRpcJsonObjectBody(req, res, pathname, { emptyBody: 'object' });
+        if (body === null) {
+          return;
+        }
+        const result =
+          pathname === PAYBUZZ_PUBLISH_PATH
+            ? await handlePaybuzzPublishRoute(paybuzzDeps, body)
+            : await handlePaybuzzUnlockRoute(paybuzzDeps, body);
         res.writeHead(result.status);
         res.end(JSON.stringify(result.body));
         return;

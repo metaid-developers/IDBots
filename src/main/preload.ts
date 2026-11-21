@@ -1582,6 +1582,44 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('ftTrade:orderFilled', handler);
     },
   },
+  paybuzz: {
+    getItem: (input: { paybuzzPinId: string; metabotId?: number }) =>
+      ipcRenderer.invoke('paybuzz:getItem', input),
+    getUnlocked: (input: { paybuzzPinId: string }) =>
+      ipcRenderer.invoke('paybuzz:getUnlocked', input),
+    unlock: (input: {
+      paybuzzPinId: string;
+      metabotId?: number;
+      preferredTrack?: 'auto' | 'vip-nft' | 'token';
+      assetKey?: string;
+      paymentTxId?: string;
+      confirmTokenPay?: boolean;
+      waitTimeoutMs?: number;
+    }) => ipcRenderer.invoke('paybuzz:unlock', input),
+    publish: (input: {
+      metabotId: number;
+      title: string;
+      markdown: string;
+      preview?: string;
+      wordCount?: number;
+      unlockRules?: Record<string, unknown>;
+    }) => ipcRenderer.invoke('paybuzz:publish', input),
+    onUnlocked: (callback: (payload: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: Record<string, unknown>) => callback(payload);
+      ipcRenderer.on('paybuzz:unlocked', handler);
+      return () => ipcRenderer.removeListener('paybuzz:unlocked', handler);
+    },
+    onUnlockRejected: (callback: (payload: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: Record<string, unknown>) => callback(payload);
+      ipcRenderer.on('paybuzz:unlockRejected', handler);
+      return () => ipcRenderer.removeListener('paybuzz:unlockRejected', handler);
+    },
+    onRoyaltyEarned: (callback: (payload: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: Record<string, unknown>) => callback(payload);
+      ipcRenderer.on('paybuzz:royaltyEarned', handler);
+      return () => ipcRenderer.removeListener('paybuzz:royaltyEarned', handler);
+    },
+  },
   networkStatus: {
     send: (status: 'online' | 'offline') => ipcRenderer.send('network:status-change', status),
   },
