@@ -414,7 +414,9 @@ function startWakeHarnessDaemon(harness, logs, skillTurnImpl, notifyOwner) {
     async () => '我需要查询一下，请稍等。',
     // consumeA2AGuidance, getRecentDailySummaries, refreshA2APeerProfile,
     // getMetaIDCognitionPromptBlock, cerebellumMemoryRanker,
-    // getKnowledgeStore, requestFriendActionApproval, resolveFriendPairState:
+    // getKnowledgeStore, requestFriendActionApproval, resolveFriendPairState,
+    // swapOrderTracker:
+    undefined,
     undefined,
     undefined,
     undefined,
