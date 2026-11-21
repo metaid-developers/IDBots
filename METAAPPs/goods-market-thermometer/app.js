@@ -158,6 +158,18 @@
     return Boolean(body) && (body.code === 0 || body.code === 1) && body.data !== undefined;
   }
 
+  /* TESTABLE_EXTRACT_LIST_START */
+  /* Market endpoints (Contract C3) answer paginated envelopes
+   * { code: 0, data: { list: [...], total, cursor } }; legacy endpoints
+   * answer bare arrays. Accept both, reject everything else. */
+  function extractListData(body) {
+    if (!envelopeOk(body)) return null;
+    if (Array.isArray(body.data)) return body.data;
+    if (body.data && Array.isArray(body.data.list)) return body.data.list;
+    return null;
+  }
+  /* TESTABLE_EXTRACT_LIST_END */
+
   function sanitizeCollection(entry) {
     return entry && isValidPinId(entry.collectionPinId) ? entry : null;
   }
@@ -206,8 +218,9 @@
   function loadCollections() {
     fetchJson(state.apiBase + '/api/mrc721/market/collections?caOnly=true&size=30')
       .then(function (body) {
-        if (!envelopeOk(body) || !Array.isArray(body.data)) return;
-        var list = body.data.filter(sanitizeCollection);
+        var raw = extractListData(body);
+        if (!raw) return;
+        var list = raw.filter(sanitizeCollection);
         if (list.length || !state.collections.length) {
           state.collections = list;
           renderBoard();
@@ -220,8 +233,9 @@
     var pin = collection.collectionPinId;
     fetchJson(state.apiBase + '/api/mrc721/market/listings?collectionPinId=' + encodeURIComponent(pin) + '&size=60')
       .then(function (body) {
-        if (!envelopeOk(body) || !Array.isArray(body.data)) return;
-        var list = body.data.filter(function (x) { return x && isValidPinId(x.itemPinId); });
+        var raw = extractListData(body);
+        if (!raw) return;
+        var list = raw.filter(function (x) { return x && isValidPinId(x.itemPinId); });
         // price ascending client-side per C3 prices.me.amountMilli (missing price → bottom)
         list.sort(function (a, b) {
           var am = a.prices && a.prices.me && typeof a.prices.me.amountMilli === 'number' ? a.prices.me.amountMilli : Infinity;
@@ -235,8 +249,9 @@
 
     fetchJson(state.apiBase + '/api/mrc721/market/trades?collectionPinId=' + encodeURIComponent(pin) + '&size=20')
       .then(function (body) {
-        if (!envelopeOk(body) || !Array.isArray(body.data)) return;
-        state.trades = body.data.filter(function (x) { return x && typeof x.txId === 'string'; });
+        var raw = extractListData(body);
+        if (!raw) return;
+        state.trades = raw.filter(function (x) { return x && typeof x.txId === 'string'; });
         renderDrawerTrades();
       })
       .catch(function () { renderDrawerTrades(); });

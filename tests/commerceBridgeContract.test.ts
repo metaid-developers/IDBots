@@ -10,6 +10,7 @@ import {
   cleanCommerceText,
   normalizeItemPinId,
   normalizeGlobalMetaId,
+  normalizeMvcAddress,
   sanitizeAskTwinToBuy,
   sanitizeAddFriendPrompt,
   sanitizeOpenPromoPack,
@@ -208,4 +209,40 @@ test('tCommerce falls back to English for unknown languages and both dicts cover
   assert.equal(tCommerce('commerceSendToTwin', 'en'), 'Send to My Twin');
   assert.equal(tCommerce('commerceSendToTwin', 'fr'), 'Send to My Twin');
   assert.ok(tCommerce('commerceConfirmIntroBuy', 'zh').length > 10);
+});
+
+test('sanitizeAskTwinToBuy carries sellerAddress (MVC address) and degrades invalid values to undefined', () => {
+  const ok = sanitizeAskTwinToBuy({
+    itemPinId: VALID_PIN,
+    itemName: 'x',
+    sellerGlobalMetaId: VALID_OWNER,
+    sellerAddress: '1Mw6q8iZ2dYXd6vYwdYfd3ybUKNnWKj8ET',
+    tokenIndex: '1310',
+    shopMetaAppPinId: VALID_PIN,
+  });
+  assert.ok(!(ok instanceof SanitizeFailure));
+  if (!(ok instanceof SanitizeFailure)) {
+    assert.equal(ok.sellerAddress, '1Mw6q8iZ2dYXd6vYwdYfd3ybUKNnWKj8ET');
+    assert.equal(ok.tokenIndex, '1310');
+    assert.equal(ok.shopMetaAppPinId, VALID_PIN);
+  }
+  // invalid / empty / wrong-typed sellerAddress must NOT reject the intent
+  for (const bad of ['0xdeadbeef', 'bc1qxyz', '', '   ', 42, null, undefined, '1IIII0OIlinvalid']) {
+    const res = sanitizeAskTwinToBuy({
+      itemPinId: VALID_PIN,
+      itemName: 'x',
+      sellerGlobalMetaId: VALID_OWNER,
+      sellerAddress: bad,
+    });
+    assert.ok(!(res instanceof SanitizeFailure), `sellerAddress ${JSON.stringify(bad)} must not reject`);
+    if (!(res instanceof SanitizeFailure)) assert.equal(res.sellerAddress, undefined);
+  }
+});
+
+test('normalizeMvcAddress keeps base58 case and rejects non-mainnet shapes', () => {
+  assert.equal(normalizeMvcAddress('1AxUdSkVdDyDreYSYVoDRFeyS1pvQdvcJx'), '1AxUdSkVdDyDreYSYVoDRFeyS1pvQdvcJx');
+  assert.equal(normalizeMvcAddress(' 1Mw6q8iZ2dYXd6vYwdYfd3ybUKNnWKj8ET '), '1Mw6q8iZ2dYXd6vYwdYfd3ybUKNnWKj8ET');
+  assert.equal(normalizeMvcAddress('bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4'), '');
+  assert.equal(normalizeMvcAddress('3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy'), '');
+  assert.equal(normalizeMvcAddress('1with0zerO'), '');
 });

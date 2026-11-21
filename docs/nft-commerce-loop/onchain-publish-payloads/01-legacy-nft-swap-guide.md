@@ -11,7 +11,7 @@
 ## 1. 系列标识（元数据，禁止凭记忆填写，必须与核验结果一致）
 
 - 专辑名：`MetaBot Avatar`
-- 旧版 MetaContract 系列：`codehash = a3989523201851b625eedc2ef09dc837a7be737a`，`genesis = 075a1d198772e71ad2ca8fd5fb5f0fb1bd7fd680`
+- 旧版 MetaContract 系列：`codehash = e205939ad9956673ce7da9fbd40514b30f66dc35`，`genesis = 005d69cba8c80e6978157e146f998c21288a9d49`
 - 官方兑换站 `globalMetaId`：`idq1gtxzx45ktj8s738s6wjak0ha27d98g8h2n059n`（角色 `swap_station`，badgeLabel「官方兑换站」）
 - 兑换金库 `vaultAddress`：`1Mw6q8iZ2dYXd6vYwdYfd3ybUKNnWKj8ET`
 - 唯一根信任锚（Trust Root）：官方 MetaBot `Bob`，`metaid = 2379692b225136b2b54e83aac52174f622b80181b17254bb7b5cf7b0aa323212`，`globalMetaId = idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47`，`mvcAddress = 1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv`。CA 注册表同路径 Pin 只有由该 `metaid` 创建/修改才有效，其余一律视为伪造。
@@ -38,7 +38,7 @@ nft_swap_verify_official_station
 
 ### 步骤 2：清点用户旧版持仓
 
-用现有 MetaContract NFT 持仓工具（如 `wallet_nft_balance` / `nft-trade` 技能）按 `genesis=075a1d198772e71ad2ca8fd5fb5f0fb1bd7fd680`、`codehash=a3989523201851b625eedc2ef09dc837a7be737a` 过滤出用户**全部可兑换** token，向用户汇报清单（编号 + 数量）。
+用现有 MetaContract NFT 持仓工具（如 `wallet_nft_balance` / `nft-trade` 技能）按 `genesis=005d69cba8c80e6978157e146f998c21288a9d49`、`codehash=e205939ad9956673ce7da9fbd40514b30f66dc35` 过滤出用户**全部可兑换** token，向用户汇报清单（编号 + 数量）。
 
 ### 步骤 3：一次性批量提交兑换
 

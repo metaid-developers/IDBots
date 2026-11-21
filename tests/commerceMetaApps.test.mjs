@@ -19,6 +19,15 @@ const read = (dir, rel) => fs.readFileSync(path.join(dir, rel), 'utf8');
 const PIN_RE = /^[0-9a-f]{64}i\d+$/;
 const GLOBAL_META_ID_RE = /^idq1[a-z0-9]{30,64}$/;
 
+function extractTestableFunction(source, marker) {
+  const begin = source.indexOf('/* TESTABLE_EXTRACT_LIST_START */');
+  const end = source.indexOf('/* TESTABLE_EXTRACT_LIST_END */');
+  if (begin === -1 || end === -1) return null;
+  const body = source.slice(begin, end);
+  if (!body.includes(marker)) return null;
+  return body;
+}
+
 function checkAppMd(dir, name, entry) {
   const md = read(dir, 'APP.md');
   assert.match(md, /^---\n[\s\S]*?name: /);
@@ -184,4 +193,40 @@ test('mock snapshots are structurally valid against Contract C3', () => {
     assert.ok(['abs_escrow', 'chain_offer', 'escrow_bot'].includes(trade.verifiedSource));
   }
   for (const holder of msnap.holders) assert.ok(GLOBAL_META_ID_RE.test(holder.globalMetaId));
+});
+
+test('market pagination envelopes: extractListData accepts paginated {list,total,cursor} AND legacy bare arrays', () => {
+  const envelopeOk = (body) => Boolean(body) && (body.code === 0 || body.code === 1) && body.data !== undefined;
+  const cases = [
+    { dir: shopDir, file: 'app.js' },
+    { dir: thermoDir, file: 'app.js' },
+  ];
+  for (const { dir, file } of cases) {
+    const js = read(dir, file);
+    const fnSource = extractTestableFunction(js, 'function extractListData');
+    assert.ok(fnSource, file + ': TESTABLE_EXTRACT_LIST block with extractListData found');
+    const factory = new Function('envelopeOk', fnSource + '\nreturn extractListData;');
+    const extractListData = factory(envelopeOk);
+
+    // REAL metaso-p2p shape (mrc721/market.go: respondMarketOK + gin.H{list,total,cursor})
+    const paginated = { code: 0, message: 'success', data: { list: [{ itemPinId: 'a' }], total: 1, cursor: '1' } };
+    assert.deepEqual(extractListData(paginated), [{ itemPinId: 'a' }], file + ': paginated data.list extracted');
+    const bare = { code: 1, message: 'ok', data: [{ itemPinId: 'b' }] };
+    assert.deepEqual(extractListData(bare), [{ itemPinId: 'b' }], file + ': legacy bare array extracted');
+    assert.equal(extractListData({ code: 0, data: { total: 3 } }), null, file + ': data without list rejected');
+    assert.equal(extractListData({ code: 0 }), null, file + ': missing data rejected');
+    assert.equal(extractListData(null), null, file + ': null body rejected');
+    assert.equal(extractListData({ code: 50000, message: 'x', data: [] }), null, file + ': error envelope rejected');
+  }
+  assert.match(read(shopDir, 'app.js'), /extractListData\(body\)/);
+  const thermo = read(thermoDir, 'app.js');
+  // 1 definition line + 3 call sites (collections / drawer listings / drawer trades)
+  assert.equal((thermo.match(/extractListData\(body\)/g) || []).length, 4, 'thermometer routes all 3 fetches through extractListData');
+});
+
+test('shop askTwin passes sellerAddress, tokenIndex and shopMetaAppPinId for WS-D one-step escrow', () => {
+  const js = read(shopDir, 'app.js');
+  assert.match(js, /sellerAddress: seller\.address && typeof seller\.address === 'string' \? seller\.address : undefined/);
+  assert.match(js, /tokenIndex: item\.itemNumber != null \? String\(item\.itemNumber\) : \(item\.tokenIndex != null \? String\(item\.tokenIndex\) : undefined\)/);
+  assert.match(js, /shopMetaAppPinId: isValidPinId\(item\.shopMetaAppPinId\) \? String\(item\.shopMetaAppPinId\)\.toLowerCase\(\) : undefined/);
 });

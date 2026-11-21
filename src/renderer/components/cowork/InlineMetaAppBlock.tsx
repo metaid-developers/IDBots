@@ -71,8 +71,10 @@ import {
   SanitizeFailure,
   type CommerceIntentKind,
   type CommerceIntentSource,
+  type OpenPromoPackParams,
 } from '../commerce/commerceBridgeContract';
-import { tCommerce } from '../commerce/commercePromoI18n';
+import { resolveCommerceLang, tCommerce } from '../commerce/commercePromoI18n';
+import { PromoAmmoPackModal } from '../commerce/PromoAmmoPackModal';
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
@@ -147,6 +149,7 @@ const InlineMetaAppBlock: React.FC<InlineMetaAppBlockProps> = ({ uri, title }) =
   const [height, setHeight] = useState(INLINE_METAAPP_DEFAULT_HEIGHT);
   const [frameKey, setFrameKey] = useState(0);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
+  const [promoPackParams, setPromoPackParams] = useState<OpenPromoPackParams | null>(null);
   const [resizing, setResizing] = useState(false);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -180,6 +183,7 @@ const InlineMetaAppBlock: React.FC<InlineMetaAppBlockProps> = ({ uri, title }) =
     setErrorMessage('');
     setPrompt(null);
     promptRef.current = null;
+    setPromoPackParams(null);
     llmConsentRef.current = null;
     void (async () => {
       try {
@@ -402,6 +406,9 @@ const InlineMetaAppBlock: React.FC<InlineMetaAppBlockProps> = ({ uri, title }) =
       }
       sanitized = result as unknown as Record<string, unknown>;
     } else {
+      // Promo pack is seller-side tooling: after sanitizing + the ownership
+      // gate it opens the host-owned PromoAmmoPackModal right here — the
+      // user is the shop owner already, no "send to Twin" step involved.
       const result = sanitizeOpenPromoPack(params);
       if (result instanceof SanitizeFailure) {
         throw new BridgeFailure({ code: result.error.code, message: result.error.message });
@@ -410,7 +417,8 @@ const InlineMetaAppBlock: React.FC<InlineMetaAppBlockProps> = ({ uri, title }) =
       if (ownership instanceof SanitizeFailure) {
         throw new BridgeFailure({ code: ownership.error.code, message: ownership.error.message });
       }
-      sanitized = result as unknown as Record<string, unknown>;
+      if (mountedRef.current) setPromoPackParams(result);
+      return { opened: true };
     }
 
     const approved = await askUser({ kind: 'commerce', intent, params: sanitized });
@@ -594,6 +602,13 @@ const InlineMetaAppBlock: React.FC<InlineMetaAppBlockProps> = ({ uri, title }) =
             <div className="absolute inset-0 z-20 flex items-start justify-center overflow-auto bg-black/30 p-3 backdrop-blur-[1px]">
               <InlineMetaAppPromptCard prompt={prompt} appTitle={displayTitle} actor={actor} onClose={clearPrompt} />
             </div>
+          )}
+          {promoPackParams && (
+            <PromoAmmoPackModal
+              params={promoPackParams}
+              lang={resolveCommerceLang((i18nService as { getLanguage?: () => string }).getLanguage?.() ?? 'en')}
+              onClose={() => setPromoPackParams(null)}
+            />
           )}
         </div>
       )}

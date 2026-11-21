@@ -97,6 +97,7 @@ tests/*
 !tests/commerceBannedWords.test.mjs
 !tests/commercePublishScript.test.mjs
 !tests/commerceBridgeRelay.test.ts
+!tests/commercePromoModal.test.tsx
 !tests/a2aApprovalUi.test.tsx
 !tests/friendInviteOverlayChain.test.mjs
 !tests/friendGuidanceIntent.test.ts

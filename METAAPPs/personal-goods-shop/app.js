@@ -228,6 +228,18 @@
     return Boolean(body) && (body.code === 0 || body.code === 1) && body.data !== undefined;
   }
 
+  /* TESTABLE_EXTRACT_LIST_START */
+  /* Market endpoints (Contract C3) answer paginated envelopes
+   * { code: 0, data: { list: [...], total, cursor } }; legacy endpoints
+   * answer bare arrays. Accept both, reject everything else. */
+  function extractListData(body) {
+    if (!envelopeOk(body)) return null;
+    if (Array.isArray(body.data)) return body.data;
+    if (body.data && Array.isArray(body.data.list)) return body.data.list;
+    return null;
+  }
+  /* TESTABLE_EXTRACT_LIST_END */
+
   function boot() {
     state.isHost = window.parent !== window;
     var params = readUrlParams();
@@ -299,8 +311,9 @@
   function fetchListings() {
     fetchJson(state.apiBase + '/api/mrc721/market/listings?seller=' + encodeURIComponent(state.owner.globalMetaId) + '&size=50')
       .then(function (body) {
-        if (!envelopeOk(body) || !Array.isArray(body.data)) return;
-        var list = body.data.filter(function (item) { return item && isValidPinId(item.itemPinId); });
+        var raw = extractListData(body);
+        if (!raw) return;
+        var list = raw.filter(function (item) { return item && isValidPinId(item.itemPinId); });
         if (list.length || !state.listings.length) state.listings = list;
         renderGrid();
       })
@@ -527,18 +540,20 @@
 
   function askTwin(item, mode) {
     var prices = item.prices || {};
+    var seller = item.seller || {};
     var payload = {
       itemPinId: String(item.itemPinId),
       collectionId: isValidPinId(item.collectionPinId) ? String(item.collectionPinId).toLowerCase() : undefined,
       collectionName: cleanText(item.collectionName, 80),
       itemName: cleanText(item.itemName || item.name, 120) || '#' + String(item.itemPinId).slice(-6),
-      tokenIndex: undefined,
+      tokenIndex: item.itemNumber != null ? String(item.itemNumber) : (item.tokenIndex != null ? String(item.tokenIndex) : undefined),
       sellerGlobalMetaId: state.owner.globalMetaId,
+      sellerAddress: seller.address && typeof seller.address === 'string' ? seller.address : undefined,
       sellerName: cleanText(state.owner.name, 80) || undefined,
       priceMeMilli: prices.me && typeof prices.me.amountMilli === 'number' ? prices.me.amountMilli : undefined,
       priceCnyCents: prices.fiat && typeof prices.fiat.amountCents === 'number' ? prices.fiat.amountCents : undefined,
       mode: mode,
-      shopMetaAppPinId: undefined
+      shopMetaAppPinId: isValidPinId(item.shopMetaAppPinId) ? String(item.shopMetaAppPinId).toLowerCase() : undefined
     };
     if (!state.isHost) {
       openGuide(payload);

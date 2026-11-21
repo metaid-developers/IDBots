@@ -30,7 +30,6 @@ import {
   sanitizeAddFriendPrompt,
   sanitizeAskTwinToBuy,
   sanitizeOpenPromoPack,
-  checkPromoPackOwnership,
   type AddFriendPromptParams,
   type AskTwinToBuyParams,
   type OpenPromoPackParams,
@@ -204,7 +203,8 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
     const [loading, setLoading] = useState(false);
     const [commerceConfirm, setCommerceConfirm] = useState<CommerceConfirmState | null>(null);
     const [commercePromoPack, setCommercePromoPack] = useState<CommercePromoPackState | null>(null);
-    const actorGlobalMetaIdRef = useRef('');
+    /** globalMetaIds of EVERY usable local actor (not just the default): the promo-pack gate must not reject the shop owner merely because they switched the top-bar Actor. */
+    const actorGlobalMetaIdsRef = useRef<string[]>([]);
 
     callbacksRef.current = {
       onOpenConversation,
@@ -283,10 +283,12 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
             window.electron.botBrowser.getHumanActor().catch(() => null),
           ]);
           if (cancelled) return;
-          const { defaultActor } = resolveBrowserRuntimeActors(metabotsResult?.list ?? [], humanResult?.actor ?? null);
-          actorGlobalMetaIdRef.current = defaultActor?.globalMetaId ?? '';
+          const { actors } = resolveBrowserRuntimeActors(metabotsResult?.list ?? [], humanResult?.actor ?? null);
+          actorGlobalMetaIdsRef.current = actors
+            .map((actor: { globalMetaId?: string }) => (actor.globalMetaId ?? '').trim().toLowerCase())
+            .filter(Boolean);
         } catch {
-          if (!cancelled) actorGlobalMetaIdRef.current = '';
+          if (!cancelled) actorGlobalMetaIdsRef.current = [];
         }
       };
       void loadActor();
@@ -351,9 +353,12 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
       if (sanitized instanceof SanitizeFailure) {
         return fail(sanitized.error.code, sanitized.error.message);
       }
-      const ownership = checkPromoPackOwnership(sanitized, actorGlobalMetaIdRef.current);
-      if (ownership instanceof SanitizeFailure) {
-        return fail(ownership.error.code, ownership.error.message);
+      // Owner gate: ANY usable local actor identity matching the shop owner
+      // passes (switching the top-bar Actor must not lock the owner out of
+      // their own promo pack); a non-owner local actor is still forbidden.
+      const isOwner = actorGlobalMetaIdsRef.current.includes(sanitized.shopOwnerGlobalMetaId);
+      if (!isOwner) {
+        return fail('forbidden', 'Only the shop owner may open the promo pack.');
       }
       setCommercePromoPack({ relayId: data.relayId, requestId: data.requestId, params: sanitized });
       respondCommerce(data.relayId, data.requestId, true, { opened: true });

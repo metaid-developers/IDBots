@@ -69,6 +69,8 @@ export interface AskTwinToBuyParams {
   itemName: string;
   tokenIndex?: string;
   sellerGlobalMetaId: string;
+  /** Seller's MVC wallet address — lets WS-D's purchase modal lock the escrow in one step. Invalid/empty values degrade to undefined instead of rejecting the intent. */
+  sellerAddress?: string;
   sellerName?: string;
   priceMeMilli?: number;
   priceCnyCents?: number;
@@ -147,6 +149,15 @@ export function normalizeGlobalMetaId(value: unknown): string {
   return GLOBAL_META_ID_RE.test(raw) ? raw : '';
 }
 
+/** MVC mainnet addresses are `1`-prefixed base58 (no 0OIl); case matters, never lowercased. */
+const MVC_ADDRESS_RE = /^1[a-km-zA-HJ-NP-Z1-9]{25,34}$/;
+
+export function normalizeMvcAddress(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const raw = value.trim();
+  return MVC_ADDRESS_RE.test(raw) ? raw : '';
+}
+
 /** Truthiness-friendly price validation: undefined when acceptable. */
 function priceError(value: unknown, field: string): BridgeContractError | undefined {
   if (value === undefined || value === null || value === '') return undefined;
@@ -200,6 +211,7 @@ export function sanitizeAskTwinToBuy(value: unknown): SanitizeResult<AskTwinToBu
     collectionName: cleanCommerceText(value.collectionName, TEXT_CAPS.shortName) || '',
     itemName,
     sellerGlobalMetaId,
+    sellerAddress: normalizeMvcAddress(value.sellerAddress) || undefined,
     sellerName: cleanCommerceText(value.sellerName, TEXT_CAPS.shortName) || '',
     tokenIndex: /^\d{1,12}$/.test(tokenIndexRaw) ? tokenIndexRaw : '',
     collectionId: collectionId || undefined,
