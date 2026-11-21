@@ -13,7 +13,7 @@ import { mapWechatBracketCodesForDisplay } from '../chat/wechatEmojiDisplay';
 import TwemojiText from '@/components/chat/TwemojiText';
 import { mobileI18n, t } from '../../i18n';
 import { i18nService } from '@/services/i18n';
-import type { MockMetabot } from '../../bridge/types';
+import type { CoworkSessionSummary, MockMetabot } from '../../bridge/types';
 import type { useChat } from '../hooks/useChat';
 import { formatDiagnosticCopy, type ChatMessageView } from '../chatProjection';
 import { copyTextToClipboard } from '../../login/inAppBrowser';
@@ -78,6 +78,25 @@ export function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: bo
   const [renameFor, setRenameFor] = useState<{ id: string; title: string } | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [deleteFor, setDeleteFor] = useState<{ id: string; title: string } | null>(null);
+  // CM5: archived restore, lazy-expand.
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [archivedSessions, setArchivedSessions] = useState<CoworkSessionSummary[] | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const loadArchived = useCallback(async (): Promise<void> => {
+    const rows = await chat.listArchivedSessions();
+    setArchivedSessions(rows);
+  }, [chat]);
+  useEffect(() => {
+    if (archivedOpen && archivedSessions === null) void loadArchived();
+  }, [archivedOpen, archivedSessions, loadArchived]);
+  const restoreArchived = async (id: string): Promise<void> => {
+    setRestoringId(id);
+    const ok = await chat.unarchiveSession(id);
+    setRestoringId(null);
+    if (ok) {
+      setArchivedSessions((rows) => rows?.filter((row) => row.id !== id) ?? null);
+    }
+  };
   useNativeBackHandler(() => {
     props.onClose();
     return true;
@@ -91,6 +110,9 @@ export function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: bo
     setRenameFor(null);
     setRenameDraft('');
     setDeleteFor(null);
+    setArchivedOpen(false);
+    setArchivedSessions(null);
+    setRestoringId(null);
   }, [props.open]);
   if (!props.open) return null;
   const visibleSessions = filterSessionsByTitle(chat.sessions, searchQuery);
@@ -149,6 +171,57 @@ export function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: bo
             ) : null}
           </div>
         </div>
+        {chat.listArchivedSessions ? (
+          <div className="border-b border-[var(--border-color)] px-4 py-2">
+            <button
+              type="button"
+              onClick={() => setArchivedOpen((open) => !open)}
+              aria-expanded={archivedOpen}
+              data-testid="session-archived-toggle"
+              className="flex min-h-[44px] w-full items-center justify-between text-sm text-[var(--text-secondary)] active:text-[var(--text-primary)]"
+            >
+              {t('mobile.chat.archivedToggle')}
+              <span className="text-xs">
+                {archivedSessions !== null && archivedSessions.length > 0
+                  ? String(archivedSessions.length)
+                  : archivedOpen
+                    ? ''
+                    : '›'}
+              </span>
+            </button>
+            {archivedOpen ? (
+              <div data-testid="session-archived-list">
+                {archivedSessions === null ? (
+                  <p className="py-2 text-xs text-[var(--text-secondary)]">{t('mobile.common.loading')}</p>
+                ) : archivedSessions.length === 0 ? (
+                  <p className="py-2 text-xs text-[var(--text-secondary)]">{t('mobile.chat.archivedEmpty')}</p>
+                ) : (
+                  archivedSessions.map((session) => (
+                    <div
+                      key={session.id}
+                      className="flex items-center gap-2 border-b border-[var(--border-color)] py-1 last:border-b-0"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-sm text-[var(--text-secondary)]">
+                        {session.title}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={restoringId === session.id}
+                        onClick={() => {
+                          void restoreArchived(session.id);
+                        }}
+                        data-testid={`session-restore-${session.id}`}
+                        className="min-h-[36px] shrink-0 rounded-lg border border-[var(--border-color)] px-3 text-xs text-[var(--text-primary)] active:bg-[var(--bg-hover)] disabled:opacity-40"
+                      >
+                        {t('mobile.chat.archivedRestore')}
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div className="flex-1 overflow-y-auto" data-testid="session-drawer-list">
           {groups.length === 0 ? (
             <p

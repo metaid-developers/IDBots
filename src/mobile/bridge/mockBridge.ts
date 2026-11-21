@@ -271,6 +271,48 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
   // via unarchiveSession — mirrors the main-process reversibility contract
   // ("hard delete is intentionally not exposed").
   const archivedSessions = new Map<string, MockCoworkSession>();
+
+  // Memory entries (CM5 memory management). Mirrors the P2 cowork:memory:*
+  // channels: 'created' rows are active, 'stale' rows are archived (restorable
+  // via unarchiveMemoryEntry), deletes are soft (status 'deleted'). The
+  // self_identity fixtures are dream-written and protected from edit/delete,
+  // matching the desktop MemorySettings protection rule.
+  interface MockMemoryEntry {
+    id: string;
+    text: string;
+    confidence: number;
+    isExplicit: boolean;
+    status: 'created' | 'stale' | 'deleted';
+    usageClass?: 'profile_fact' | 'preference' | 'operational_preference' | 'self_identity' | 'work_review' | 'value_boundary';
+    origin?: 'conversation' | 'dream';
+    createdAt: number;
+    updatedAt: number;
+    lastUsedAt: number | null;
+  }
+  const memoryEntries = new Map<string, MockMemoryEntry>();
+  let memorySeq = 0;
+  function seedMemory(id: string, text: string, usageClass: MockMemoryEntry['usageClass'], origin: MockMemoryEntry['origin'], ageDays: number): void {
+    const ts = Date.now() - ageDays * 86_400_000;
+    memoryEntries.set(id, {
+      id,
+      text,
+      confidence: 1,
+      isExplicit: origin === 'conversation',
+      status: 'created',
+      usageClass,
+      origin,
+      createdAt: ts,
+      updatedAt: ts,
+      lastUsedAt: ts,
+    });
+  }
+  seedMemory('mem-fix-1', 'Prefers Simplified Chinese and concise replies.', 'preference', 'conversation', 3);
+  seedMemory('mem-fix-2', 'The IDBots mobile repo lives under IDBots/IDBots.', 'profile_fact', 'conversation', 6);
+  seedMemory('mem-fix-3', 'Runs a weekly work review every Sunday evening.', 'work_review', 'dream', 9);
+  seedMemory('mem-fix-4', 'Self intro: on-chain developer, usually known as Sunny.', 'self_identity', 'dream', 12);
+  function memoryResponse(entry: MockMemoryEntry): { success: true; entry: MockMemoryEntry } {
+    return { success: true, entry: { ...entry } };
+  }
   const liveMessages = new Map<string, MockCoworkMessage>(); // key: sessionId + messageId
   let sessionSeq = 0;
   let messageSeq = 0;
@@ -627,6 +669,81 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
         success: true,
         sessions: [...archivedSessions.values()].map(summaryOf),
       })),
+    // Memory entry management (CM5). Mirrors the desktop semantics: query
+    // filters by substring on text; default view is active rows only
+    // (status 'created'); archived rows come via status 'stale'; deletes are
+    // soft. self_identity entries reject edit/delete like the desktop UI.
+    listMemoryEntries: (input: { query?: string; status?: 'created' | 'stale' | 'deleted' | 'all'; includeArchived?: boolean; limit?: number } = {}) =>
+      guardOnline(async () => {
+        const status = input.status ?? 'created';
+        let rows = [...memoryEntries.values()].filter((entry) => entry.status !== 'deleted');
+        if (status !== 'all') rows = rows.filter((entry) => entry.status === status);
+        if (input.includeArchived !== true) rows = rows.filter((entry) => entry.status !== 'stale' || status === 'stale');
+        const query = input.query?.trim().toLowerCase();
+        if (query) rows = rows.filter((entry) => entry.text.toLowerCase().includes(query));
+        rows.sort((a, b) => b.updatedAt - a.updatedAt);
+        return { success: true, entries: rows.slice(0, input.limit ?? 100).map((entry) => ({ ...entry })) };
+      }),
+    createMemoryEntry: (input: { text?: string; usageClass?: MockMemoryEntry['usageClass'] }) =>
+      guardOnline(async () => {
+        const text = input.text?.trim();
+        if (!text) return { success: false, error: 'text must be non-empty' };
+        memorySeq += 1;
+        const ts = now();
+        const entry: MockMemoryEntry = {
+          id: `mem-${ts}-${memorySeq}`,
+          text,
+          confidence: 1,
+          isExplicit: true,
+          status: 'created',
+          usageClass: input.usageClass ?? 'profile_fact',
+          origin: 'conversation',
+          createdAt: ts,
+          updatedAt: ts,
+          lastUsedAt: null,
+        };
+        memoryEntries.set(entry.id, entry);
+        return memoryResponse(entry);
+      }),
+    updateMemoryEntry: (input: { id?: string; text?: string; status?: 'created' | 'stale' | 'deleted' }) =>
+      guardOnline(async () => {
+        const entry = input.id ? memoryEntries.get(input.id) : undefined;
+        if (!entry) return { success: false, error: 'entry not found' };
+        if (entry.usageClass === 'self_identity' && (input.text !== undefined || input.status !== undefined)) {
+          return { success: false, error: 'self_identity entries are protected' };
+        }
+        if (input.text !== undefined) {
+          const text = input.text.trim();
+          if (!text) return { success: false, error: 'text must be non-empty' };
+          entry.text = text;
+        }
+        if (input.status !== undefined) entry.status = input.status;
+        entry.updatedAt = now();
+        memoryEntries.set(entry.id, entry);
+        return memoryResponse(entry);
+      }),
+    deleteMemoryEntry: (input: { id?: string }) =>
+      guardOnline(async () => {
+        const entry = input.id ? memoryEntries.get(input.id) : undefined;
+        if (!entry) return { success: false, error: 'entry not found' };
+        if (entry.usageClass === 'self_identity') {
+          return { success: false, error: 'self_identity entries are protected' };
+        }
+        entry.status = 'deleted';
+        entry.updatedAt = now();
+        memoryEntries.set(entry.id, entry);
+        return { success: true };
+      }),
+    unarchiveMemoryEntry: (input: { id?: string }) =>
+      guardOnline(async () => {
+        const entry = input.id ? memoryEntries.get(input.id) : undefined;
+        if (!entry) return { success: false, error: 'entry is not found' };
+        if (entry.status !== 'stale') return { success: false, error: 'entry is not archived' };
+        entry.status = 'created';
+        entry.updatedAt = now();
+        memoryEntries.set(entry.id, entry);
+        return memoryResponse(entry);
+      }),
     stopSession: (sessionId: string) =>
       guardOnline(async () => {
         const session = sessions.get(sessionId);
