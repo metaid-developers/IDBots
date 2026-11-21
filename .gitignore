@@ -175,6 +175,7 @@ tests/*
 !tests/coworkUnreadAutoOrigin.test.ts
 !tests/longTermTaskStore.test.mjs
 !tests/longTermTaskStoreNotify.test.mjs
+!tests/longTermTaskChangeLiveStage.test.mjs
 !tests/trackedTaskDecisionBadge.test.ts
 !tests/twinDelegationAnchor.test.mjs
 !tests/longTermTaskAgentTools.test.mjs

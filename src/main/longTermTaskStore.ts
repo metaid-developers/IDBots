@@ -139,6 +139,26 @@ export interface LongTermSubtaskStatusChange {
 
 export type LongTermSubtaskStatusListener = (change: LongTermSubtaskStatusChange) => void;
 
+/**
+ * One task-ledger mutation, emitted to `onTaskChanged` listeners.
+ *
+ * Broader than `onSubtaskStatusChange` on purpose: a Worker's
+ * `ready_for_review` submission, a progress checkpoint, a task edit or a
+ * stage move all change what the board / Live Stage HUD must show WITHOUT
+ * flipping a subtask status. Subscribers therefore refresh on the ledger,
+ * not on the next chat message that happens to persist.
+ */
+export interface LongTermTaskChange {
+  taskId: string;
+  /** null when the changed row is the task itself (create/update/stage). */
+  subtaskId: string | null;
+  entity: 'task' | 'subtask';
+  /** Short machine reason, e.g. 'task_created' | 'subtask_submitted'. */
+  reason: string;
+}
+
+export type LongTermTaskChangeListener = (change: LongTermTaskChange) => void;
+
 /** Longest owner decision brief kept in `wait_note` on the proposal path. */
 const WAIT_NOTE_MAX_CHARS = 4000;
 
@@ -440,6 +460,8 @@ export class LongTermTaskStore {
   private readonly badgeThresholds: LongTermBadgeThresholds;
   /** Status-transition subscribers (main wires the push broadcast here). */
   private readonly statusListeners = new Set<LongTermSubtaskStatusListener>();
+  /** Ledger-change subscribers (main wires the Live Stage refresh here). */
+  private readonly taskChangeListeners = new Set<LongTermTaskChangeListener>();
 
   constructor(
     db: Database,
@@ -473,6 +495,23 @@ export class LongTermTaskStore {
   }
 
   /**
+   * Subscribe to EVERY ledger mutation that changes what the owner can see on
+   * the board / Live Stage HUD — task create/update/stage moves, subtask
+   * submit (all four outcomes), progress checkpoints, accepts and every other
+   * status transition. Returns the unsubscribe function.
+   *
+   * `onSubtaskStatusChange` deliberately stays silent when a write leaves the
+   * status alone (a `ready_for_review` submission keeps the subtask
+   * `in_progress`); that silence is exactly the staleness this outlet fixes.
+   */
+  onTaskChanged(listener: LongTermTaskChangeListener): () => void {
+    this.taskChangeListeners.add(listener);
+    return () => {
+      this.taskChangeListeners.delete(listener);
+    };
+  }
+
+  /**
    * Fire the transition listeners. Transitions that leave the status untouched
    * (re-recording a note on an already-waiting sub-project, rebinding a
    * session) stay silent — a push per keystroke would be noise, not news.
@@ -494,6 +533,25 @@ export class LongTermTaskStore {
       reason,
     };
     for (const listener of [...this.statusListeners]) {
+      try {
+        listener(change);
+      } catch {
+        // A subscriber must never break the store mutation it rides on.
+      }
+    }
+    this.emitTaskChanged(updated.taskId, updated.id, 'subtask', `subtask_${reason}`);
+  }
+
+  /**
+   * Fire ledger-change listeners. Called by every mutation that changes what
+   * the owner can see — including writes that leave the status alone
+   * (submission, progress note, field edits, stage moves). A throwing
+   * listener never breaks the mutation it was notified about.
+   */
+  private emitTaskChanged(taskId: string, subtaskId: string | null, entity: 'task' | 'subtask', reason: string): void {
+    if (!taskId) return;
+    const change: LongTermTaskChange = { taskId, subtaskId, entity, reason };
+    for (const listener of [...this.taskChangeListeners]) {
       try {
         listener(change);
       } catch {
@@ -685,7 +743,10 @@ export class LongTermTaskStore {
       [rootParent, nowIso(), tid],
     );
     const modified = (this.db as unknown as { getRowsModified?: () => number }).getRowsModified?.() ?? 1;
-    if (modified > 0) this.saveDb();
+    if (modified > 0) {
+      this.saveDb();
+      this.emitTaskChanged(tid, null, 'task', 'task_reparented');
+    }
     return modified > 0;
   }
 
@@ -730,6 +791,9 @@ export class LongTermTaskStore {
       closed.push(sib.id);
     }
     if (closed.length > 0) this.saveDb();
+    for (const closedTaskId of closed) {
+      this.emitTaskChanged(closedTaskId, null, 'task', 'task_superseded');
+    }
     return closed;
   }
 
@@ -1202,6 +1266,7 @@ export class LongTermTaskStore {
     }
     this.addEvent(taskId, null, 'created', actor, `created as draft with ${drafts.length} sub-project(s): ${title}`);
     this.saveDb();
+    this.emitTaskChanged(taskId, null, 'task', 'task_created');
     const detail = this.getTask(taskId);
     return detail ? { ok: true, value: detail } : { ok: false, code: 'NOT_FOUND', error: 'creation failed' };
   }
@@ -1456,6 +1521,7 @@ export class LongTermTaskStore {
     for (const begunId of initialBegunIds) {
       this.emitStatusChange(null, this.getSubtask(begunId), 'began');
     }
+    this.emitTaskChanged(taskId, null, 'task', 'task_created');
     const detail = this.getTask(taskId);
     return detail ? { ok: true, value: detail } : { ok: false, code: 'NOT_FOUND', error: 'creation failed' };
   }
@@ -1471,6 +1537,7 @@ export class LongTermTaskStore {
     this.addEvent(taskId, null, row.stage === 'paused' ? 'resumed' : 'created', actor,
       row.stage === 'paused' ? 'resumed' : 'plan confirmed, task activated');
     this.saveDb();
+    this.emitTaskChanged(taskId, null, 'task', 'task_activated');
     const detail = this.getTask(taskId);
     return detail ? { ok: true, value: detail } : { ok: false, code: 'NOT_FOUND', error: 'task not found' };
   }
@@ -1482,6 +1549,7 @@ export class LongTermTaskStore {
     this.db.run("UPDATE long_term_tasks SET stage = 'paused', updated_at = ? WHERE id = ?", [nowIso(), taskId]);
     this.addEvent(taskId, null, 'paused', actor, note || 'paused');
     this.saveDb();
+    this.emitTaskChanged(taskId, null, 'task', 'task_paused');
     const detail = this.getTask(taskId);
     return detail ? { ok: true, value: detail } : { ok: false, code: 'NOT_FOUND', error: 'task not found' };
   }
@@ -1495,6 +1563,7 @@ export class LongTermTaskStore {
     this.db.run("UPDATE long_term_tasks SET stage = 'cancelled', updated_at = ? WHERE id = ?", [nowIso(), taskId]);
     this.addEvent(taskId, null, 'note', actor, `cancelled${note ? `: ${note}` : ''}`);
     this.saveDb();
+    this.emitTaskChanged(taskId, null, 'task', 'task_cancelled');
     return { ok: true, value: null };
   }
 
@@ -1558,6 +1627,7 @@ export class LongTermTaskStore {
       .join(' — ');
     this.addEvent(taskId, null, 'completed', actor, detail);
     this.saveDb();
+    this.emitTaskChanged(taskId, null, 'task', 'task_completed');
     const detailTask = this.getTask(taskId);
     return detailTask ? { ok: true, value: detailTask } : { ok: false, code: 'NOT_FOUND', error: 'task not found' };
   }
@@ -1600,6 +1670,7 @@ export class LongTermTaskStore {
     this.touch(row.id);
     this.addEvent(row.id, null, 'replanned', actor, `updated: ${changes.join(', ')}`);
     this.saveDb();
+    this.emitTaskChanged(row.id, null, 'task', 'task_updated');
     const detail = this.getTask(row.id);
     return detail ? { ok: true, value: detail } : { ok: false, code: 'NOT_FOUND', error: 'task not found' };
   }
@@ -1806,6 +1877,7 @@ export class LongTermTaskStore {
     this.touch(current.taskId);
     this.addEvent(current.taskId, current.id, 'replanned', actor, `redefined: ${changes.join(', ')}`);
     this.saveDb();
+    this.emitTaskChanged(current.taskId, current.id, 'subtask', 'subtask_updated');
     const updated = this.getSubtask(current.id);
     return updated ? { ok: true, value: updated } : { ok: false, code: 'NOT_FOUND', error: 'sub-project not found' };
   }
@@ -1901,6 +1973,11 @@ export class LongTermTaskStore {
     this.saveDb();
     const updated = this.getSubtask(subtaskId);
     this.emitStatusChange(current, updated, input.kind === 'owner' ? 'waiting_owner' : 'waiting_external');
+    if (updated && updated.status === current.status) {
+      // Re-recording the brief on an already-waiting sub-project keeps the
+      // status but changes what the owner reads — still a ledger change.
+      this.emitTaskChanged(updated.taskId, updated.id, 'subtask', 'subtask_wait_note');
+    }
     return updated ? { ok: true, value: updated } : { ok: false, code: 'NOT_FOUND', error: 'sub-project not found' };
   }
 
@@ -2116,6 +2193,7 @@ export class LongTermTaskStore {
     this.addEvent(current.taskId, subtaskId, 'note', actor, `session bound: ${trimmed}`);
     this.touch(current.taskId);
     this.saveDb();
+    this.emitTaskChanged(current.taskId, subtaskId, 'subtask', 'subtask_session_bound');
     const updated = this.getSubtask(subtaskId);
     return updated ? { ok: true, value: updated } : { ok: false, code: 'NOT_FOUND', error: 'sub-project not found' };
   }
@@ -2170,6 +2248,7 @@ export class LongTermTaskStore {
     if (!sid) return { ok: false, code: 'VALIDATION', error: 'sessionId is required' };
     this.upsertSessionLinkRow(taskId, sid, options);
     this.saveDb();
+    this.emitTaskChanged(taskId, options.subtaskId ?? null, 'task', 'task_session_linked');
     const linkRow = this.getOne<SessionLinkRow>(
       'SELECT * FROM task_session_links WHERE task_id = ? AND session_id = ?',
       [taskId, sid],
@@ -2299,6 +2378,11 @@ export class LongTermTaskStore {
     this.saveDb();
     const updated = this.getSubtask(subtaskId);
     this.emitStatusChange(current, updated, 'assigned');
+    if (updated && updated.status === current.status) {
+      // Re-assigning a subtask that is already in progress keeps the status
+      // but changes the assignee the stage rail shows.
+      this.emitTaskChanged(updated.taskId, updated.id, 'subtask', 'subtask_assigned');
+    }
     return updated ? { ok: true, value: updated } : { ok: false, code: 'NOT_FOUND', error: 'subtask not found' };
   }
 
@@ -2329,14 +2413,19 @@ export class LongTermTaskStore {
     const current = this.getSubtask(subtaskId);
     if (!current) return false;
     if (typeof progressNote === 'string' && progressNote.trim()) {
+      const nextNote = progressNote.trim().slice(0, 280);
       this.db.run(
         'UPDATE long_term_subtasks SET last_activity_at = ?, progress_note = ?, updated_at = ? WHERE id = ?',
-        [activityAtIso, progressNote.trim().slice(0, 280), activityAtIso, subtaskId],
+        [activityAtIso, nextNote, activityAtIso, subtaskId],
       );
       this.touch(current.taskId);
-    } else {
-      this.db.run('UPDATE long_term_subtasks SET last_activity_at = ? WHERE id = ?', [activityAtIso, subtaskId]);
+      this.saveDb();
+      if (nextNote !== current.progressNote) {
+        this.emitTaskChanged(current.taskId, subtaskId, 'subtask', 'subtask_progress');
+      }
+      return true;
     }
+    this.db.run('UPDATE long_term_subtasks SET last_activity_at = ? WHERE id = ?', [activityAtIso, subtaskId]);
     this.saveDb();
     return true;
   }
@@ -2365,6 +2454,7 @@ export class LongTermTaskStore {
     this.addEvent(current.taskId, subtaskId, 'progress', actor, note);
     this.touch(current.taskId);
     this.saveDb();
+    this.emitTaskChanged(current.taskId, subtaskId, 'subtask', 'subtask_progress');
     const updated = this.getSubtask(subtaskId);
     return updated ? { ok: true, value: updated } : { ok: false, code: 'NOT_FOUND', error: 'subtask not found' };
   }
@@ -2489,6 +2579,11 @@ export class LongTermTaskStore {
     this.saveDb();
     const updated = this.getSubtask(subtaskId);
     this.emitStatusChange(current, updated, 'submitted');
+    if (updated && updated.status === current.status) {
+      // ready_for_review / blocked / failed keep the subtask in_progress, so
+      // the status channel stays silent — the submission itself is the news.
+      this.emitTaskChanged(updated.taskId, updated.id, 'subtask', 'subtask_submitted');
+    }
     return updated ? { ok: true, value: updated } : { ok: false, code: 'NOT_FOUND', error: 'subtask not found' };
   }
 
@@ -2656,6 +2751,7 @@ export class LongTermTaskStore {
     this.addEvent(taskId, subtaskId, 'note', actor, trimmed);
     this.touch(taskId);
     this.saveDb();
+    this.emitTaskChanged(taskId, subtaskId, 'task', 'task_note');
     return { ok: true, value: null };
   }
 
@@ -2935,6 +3031,7 @@ export class LongTermTaskStore {
     this.addEvent(current.taskId, current.id, 'replanned', actor, `moved ${direction} (#${current.ordinal} → #${neighbor.ordinal})`);
     this.touch(current.taskId);
     this.saveDb();
+    this.emitTaskChanged(current.taskId, current.id, 'subtask', 'subtask_moved');
     const updated = this.getSubtask(subtaskId);
     return updated ? { ok: true, value: updated } : { ok: false, code: 'NOT_FOUND', error: 'sub-project not found' };
   }
