@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type {
   ElectronNftSwapOrderCompletedEvent,
+  FtMandatePromptEventPayload,
   GoodsTradePurchaseSettledEvent,
 } from '../../types/electron';
 import {
@@ -12,11 +13,13 @@ import {
   type SocialFriendPromptDetail,
 } from './commerceTradeEvents';
 import GoodsPurchaseConfirmModal, { type GoodsPurchaseConfirmTarget } from './GoodsPurchaseConfirmModal';
+import FtMandateConfirmModal from './FtMandateConfirmModal';
 import PurchaseSuccessActionCard from './PurchaseSuccessActionCard';
 import SwapCompleteShopPromptCard from './SwapCompleteShopPromptCard';
 
 const CommerceTradeCoordinator: React.FC = () => {
   const [confirmTarget, setConfirmTarget] = useState<GoodsPurchaseConfirmTarget | null>(null);
+  const [ftMandatePrompt, setFtMandatePrompt] = useState<FtMandatePromptEventPayload | null>(null);
   const [swapCompleted, setSwapCompleted] = useState<ElectronNftSwapOrderCompletedEvent | null>(null);
   const [purchaseSettled, setPurchaseSettled] = useState<GoodsTradePurchaseSettledEvent | null>(null);
 
@@ -68,9 +71,15 @@ const CommerceTradeCoordinator: React.FC = () => {
         setPurchaseSettled(payload);
       }
     });
+    const unsubFtMandate = window.electron?.ftTrade?.onMandatePrompt?.((payload) => {
+      if (payload?.requestId && payload?.draft) {
+        setFtMandatePrompt(payload);
+      }
+    });
     return () => {
       unsubSwap?.();
       unsubSettled?.();
+      unsubFtMandate?.();
     };
   }, []);
 
@@ -78,6 +87,11 @@ const CommerceTradeCoordinator: React.FC = () => {
 
   return (
     <>
+      <FtMandateConfirmModal
+        open={Boolean(ftMandatePrompt)}
+        prompt={ftMandatePrompt}
+        onResolved={() => setFtMandatePrompt(null)}
+      />
       <GoodsPurchaseConfirmModal
         open={Boolean(confirmTarget)}
         target={confirmTarget}

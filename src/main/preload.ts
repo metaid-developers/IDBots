@@ -1564,6 +1564,24 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('goodsTrade:orderRejected', handler);
     },
   },
+  ftTrade: {
+    respondMandate: (input: { requestId: string; approved: boolean }) =>
+      ipcRenderer.invoke('ftTrade:mandateRespond', input),
+    getBatchProgress: (input: { batchGroupId: string }) =>
+      ipcRenderer.invoke('ftTrade:getBatchProgress', input),
+    cancelBatchOrders: (input: { batchGroupId: string }) =>
+      ipcRenderer.invoke('ftTrade:cancelBatchOrders', input),
+    onMandatePrompt: (callback: (payload: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: Record<string, unknown>) => callback(payload);
+      ipcRenderer.on('ftTrade:mandatePrompt', handler);
+      return () => ipcRenderer.removeListener('ftTrade:mandatePrompt', handler);
+    },
+    onOrderFilled: (callback: (payload: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: Record<string, unknown>) => callback(payload);
+      ipcRenderer.on('ftTrade:orderFilled', handler);
+      return () => ipcRenderer.removeListener('ftTrade:orderFilled', handler);
+    },
+  },
   networkStatus: {
     send: (status: 'online' | 'offline') => ipcRenderer.send('network:status-change', status),
   },
