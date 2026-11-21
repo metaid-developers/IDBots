@@ -286,6 +286,7 @@ export function buildEscrowAgentTools(deps: {
   orders: EscrowOrderStore;
   sessionId: string;
   resolveMetabotId: (sessionId: string) => number | null | undefined;
+  readOnly?: boolean;
 }): unknown[] {
   const { tool, control, orders, sessionId, resolveMetabotId } = deps;
 
@@ -777,6 +778,13 @@ export function buildEscrowAgentTools(deps: {
       return textResult(lines.join('\n'));
     }
   );
+
+  if (deps.readOnly) {
+    return [
+      escrowOrderList,
+      escrowOrderInfo,
+    ];
+  }
 
   return [
     escrowOrderCreate,

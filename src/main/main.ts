@@ -78,6 +78,7 @@ import { selectEffortWithCerebellum } from './cerebellum/effortSelector';
 import { classifyTurnAckNeedWithCerebellum } from './cerebellum/ackGate';
 import { askCerebellumIntuition } from './cerebellum/intuitionTool';
 import { runCerebellumTurnDecisions } from './cerebellum/turnDecisionBundle';
+import type { MobileToolExpansion } from './libs/toolCapabilityRegistry';
 import type { TaskIntentAssessment } from './cerebellum/taskIntentRubric';
 import {
   computeActiveTaskWatermark,
@@ -4074,6 +4075,8 @@ const createCerebellumTurnDecisionCaller = () =>
     knowledge: ReadonlyArray<{ id: string; topic: string; summary: string; kind: string }>;
     includeEffort?: boolean;
     includeTaskIntent?: boolean;
+    includeMobileToolExpansions?: boolean;
+    currentMobileExpansions?: readonly MobileToolExpansion[];
   }): Promise<{
     memoryScores: ReadonlyMap<string, number> | null;
     knowledgeScores: ReadonlyMap<string, number> | null;
@@ -4082,6 +4085,7 @@ const createCerebellumTurnDecisionCaller = () =>
     gateVerdicts: Record<string, boolean> | null;
     effortDistribution?: Record<'off' | 'low' | 'high' | 'max', number> | null;
     taskIntentAssessment?: TaskIntentAssessment | null;
+    mobileToolExpansions?: MobileToolExpansion[] | null;
   } | null> => {
     const context = await resolveCerebellumCallContext();
     if (!context) {
@@ -4132,6 +4136,8 @@ const createCerebellumTurnDecisionCaller = () =>
         includeGate: true,
         includeEffort: input.includeEffort === true,
         includeTaskIntent: input.includeTaskIntent === true,
+        includeMobileToolExpansions: input.includeMobileToolExpansions === true,
+        currentMobileExpansions: input.currentMobileExpansions,
       },
       onPayload: (stats) => {
         coworkLog('INFO', 'cerebellum:turnPayload', 'Cerebellum turn decision bundle payload', {
@@ -4156,6 +4162,7 @@ const createCerebellumTurnDecisionCaller = () =>
       skillsUsed: outcome?.skillRanking != null,
       servicesUsed: outcome?.serviceRanking != null,
       gateUsed: outcome?.gateVerdicts != null,
+      mobileIntentUsed: outcome?.mobileToolExpansions != null,
       latencyMs: Date.now() - startedAt,
       outcome: outcome === null ? 'degraded' : 'ok',
     });
@@ -4182,6 +4189,7 @@ const createCerebellumTurnDecisionCaller = () =>
       gateVerdicts: outcome.gateVerdicts,
       effortDistribution: outcome.effortDistribution ?? null,
       taskIntentAssessment: outcome.taskIntentAssessment ?? null,
+      mobileToolExpansions: outcome.mobileToolExpansions ?? null,
     };
   };
 

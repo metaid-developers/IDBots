@@ -506,9 +506,10 @@ const GIT_COMMIT_RE = /^[0-9a-f]{40}$/i;
 export function buildMetataskAgentTools(deps: {
   tool: SdkToolFactory;
   control: MetaTaskAgentControl;
-  createPin: ChainWriteCreatePin;
+  createPin?: ChainWriteCreatePin;
   sessionId: string;
   resolveMetabotId: (sessionId: string) => number | undefined;
+  readOnly?: boolean;
 }): unknown[] {
   const { tool, control } = deps;
   const refresher = () => control.refresher();
@@ -530,8 +531,11 @@ export function buildMetataskAgentTools(deps: {
     subpath: string,
     payload: Record<string, unknown>,
     origin: string,
-  ) =>
-    deps.createPin(
+  ) => {
+    if (!deps.createPin) {
+      throw new Error('createPin is required for MetaTask write operations');
+    }
+    return deps.createPin(
       metabotId,
       {
         operation: 'create',
@@ -543,6 +547,7 @@ export function buildMetataskAgentTools(deps: {
       },
       { origin },
     );
+  };
 
   const projectionAfterRefresh = async (rootPinId: string): Promise<MetaTaskTaskProjection | null> => {
     let detail = refresher().detail(rootPinId);
@@ -1825,6 +1830,14 @@ export function buildMetataskAgentTools(deps: {
       }
     },
   );
+
+  if (deps.readOnly) {
+    return [
+      listTasks,
+      getTask,
+      replayTask,
+    ];
+  }
 
   return [
     listTasks,
