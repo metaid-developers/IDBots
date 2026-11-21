@@ -63,6 +63,16 @@ const MVC_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{20,60}$/;
 const MAX_TEXT_FIELD = 64;
 const MAX_ACTION_FIELD = 16;
 
+export interface NftCardPriceToken {
+  assetKey: string;
+  chain: 'btc' | 'mvc';
+  symbol: string;
+  decimals: number;
+  amountBase: string;
+  amountDisplay: string;
+  sellerReceiveAddress?: string;
+}
+
 export interface NftCardData {
   /** Identity format. Absent payloads default to metacontract at parse time. */
   format: NftCardFormat;
@@ -95,6 +105,8 @@ export interface NftCardData {
   priceMeMilli?: number;
   /** v2.1 digital goods commerce reference price in CNY cents. */
   priceCnyCents?: number;
+  /** v2.2 digital goods commerce accepted token prices (MRC-20 / MVC-FT). */
+  priceTokens?: NftCardPriceToken[];
   /** Seller's GlobalMetaID for A2A negotiation & escrow notifications. */
   sellerGlobalMetaId?: string;
   /** Display name for the seller bot. */
@@ -179,6 +191,36 @@ const cleanNonNegInt = (value: unknown, max = 1_000_000_000_000): number | undef
   const num = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value.trim()) : NaN;
   if (!Number.isInteger(num) || num < 0 || num > max) return undefined;
   return num;
+};
+
+const cleanPriceTokens = (value: unknown): NftCardPriceToken[] | undefined => {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const out: NftCardPriceToken[] = [];
+  for (const raw of value.slice(0, 6)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const item = raw as Record<string, unknown>;
+    const assetKey = typeof item.assetKey === 'string' ? item.assetKey.trim().toLowerCase() : '';
+    if (!assetKey || (!assetKey.startsWith('mrc20:') && !assetKey.startsWith('mvc-ft:'))) continue;
+    const chain: 'btc' | 'mvc' = item.chain === 'btc' || assetKey.startsWith('mrc20:') ? 'btc' : 'mvc';
+    const symbol = cleanTextField(item.symbol, 24);
+    const amountBase = typeof item.amountBase === 'string' ? item.amountBase.trim() : '';
+    const amountDisplay = cleanTextField(item.amountDisplay, 40);
+    const decimals = cleanNonNegInt(item.decimals, 36) ?? 0;
+    if (!symbol || !/^[1-9]\d*$/.test(amountBase) || !amountDisplay) continue;
+    const sellerReceiveAddress = typeof item.sellerReceiveAddress === 'string' && item.sellerReceiveAddress.trim()
+      ? item.sellerReceiveAddress.trim().slice(0, 128)
+      : undefined;
+    out.push({
+      assetKey: assetKey.slice(0, 160),
+      chain,
+      symbol,
+      decimals,
+      amountBase,
+      amountDisplay,
+      ...(sellerReceiveAddress ? { sellerReceiveAddress } : {}),
+    });
+  }
+  return out.length > 0 ? out : undefined;
 };
 
 const cleanGlobalMetaId = (value: unknown): string | undefined => {
@@ -280,6 +322,8 @@ export const parseNftCardFence = (codeText: string): NftCardData | null => {
   if (priceMeMilli !== undefined) data.priceMeMilli = priceMeMilli;
   const priceCnyCents = cleanNonNegInt(row.priceCnyCents);
   if (priceCnyCents !== undefined) data.priceCnyCents = priceCnyCents;
+  const priceTokens = cleanPriceTokens(row.priceTokens);
+  if (priceTokens) data.priceTokens = priceTokens;
   const sellerGlobalMetaId = cleanGlobalMetaId(row.sellerGlobalMetaId);
   if (sellerGlobalMetaId) data.sellerGlobalMetaId = sellerGlobalMetaId;
   const sellerName = cleanTextField(row.sellerName);
@@ -407,7 +451,7 @@ export const groupAdjacentNftCardFences = (content: string): string => {
 const NFT_CARD_KEY_ORDER: Array<keyof NftCardData> = [
   'format', 'pinId', 'genesis', 'codehash', 'tokenIndex', 'number', 'name',
   'series', 'imgUrl', 'icon', 'owner', 'ownerLabel', 'issuer', 'issuerLabel',
-  'priceSats', 'priceMeMilli', 'priceCnyCents', 'sellerGlobalMetaId',
+  'priceSats', 'priceMeMilli', 'priceCnyCents', 'priceTokens', 'sellerGlobalMetaId',
   'sellerName', 'sellerOnline', 'shopMetaAppPinId', 'caVerified', 'action', 'hostStamp',
 ];
 

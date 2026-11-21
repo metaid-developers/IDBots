@@ -218,7 +218,14 @@ export type Mrc721ToolsControl = {
     priceMeMilli?: number;
     priceCnyYuan?: number;
     priceCnyCents?: number;
+    priceTokens?: Array<{
+      assetKey: string;
+      amountDisplay: string;
+      symbol?: string;
+      decimals?: number;
+    }>;
     autoFulfillMe?: boolean;
+    autoFulfillTokens?: boolean;
     negotiable?: boolean;
     shopMetaAppPinId?: string;
     priceHintSats?: number;
@@ -1712,21 +1719,28 @@ export function buildMrc721AgentTools(deps: {
   const mrc721SellIntent = tool(
     'mrc721_sell_intent',
     [
-      'Declare the intent to sell one MRC-721 digital item as an on-chain sell-intent pin (/protocols/mrc721sell v2.1) — the discoverable, currency-agnostic "I want to sell this" announcement.',
-      'Supports dual ME points pricing (price_me, minimum 1 ME, up to 3 decimals) and CNY fiat reference pricing (price_cny_yuan, minimum ¥1.00), plus auto_fulfill_me (default true, enables 24/7 automatic escrow fulfillment), negotiable (default true), and optional shop_metaapp_pin_id.',
-      'The pin moves no funds and transfers nothing: settlement later runs over ME Escrow (goods_buy_with_me), atomic swap (mrc721_sell), or guarantor escrow. The item must currently be held by this bot.',
+      'Declare the intent to sell one MRC-721 digital item as an on-chain sell-intent pin (/protocols/mrc721sell v2.2) — the discoverable, currency-agnostic "I want to sell this" announcement.',
+      'Supports ME points pricing (price_me, min 1 ME), CNY fiat reference pricing (price_cny_yuan, min ¥1.00), and direct FT token pricing (price_tokens: array of { asset_key: "mrc20:<id>" | "mvc-ft:<codehash>:<genesis>", amount_display, symbol?, decimals? }), plus auto_fulfill_me / auto_fulfill_tokens (default true), negotiable (default true), and optional shop_metaapp_pin_id.',
+      'The pin moves no funds and transfers nothing: settlement later runs over ME Escrow (goods_buy_with_me), direct Token settlement (goods_buy_with_token), atomic swap (mrc721_sell), or guarantor escrow. The item must currently be held by this bot.',
       'Broadcasts a declaration pin on /protocols/mrc721sell (append-only log, latest declaration per item wins) and appends an ```nft-card fence with action "selling" — include it verbatim in your announcement.',
     ].join(' '),
     {
       item_pin_id: z.string().min(1).describe('Item pinId from mrc721_item_info (64-hex txid + "i" + index).'),
       price_me: z.number().positive().min(1).optional().describe('Target price in ME points (minimum 1 ME, up to 3 decimals, converted to amountMilli).'),
       price_cny_yuan: z.number().positive().min(1).optional().describe('Optional CNY fiat reference price in Yuan (minimum ¥1.00, converted to amountCents).'),
+      price_tokens: z.array(z.object({
+        asset_key: z.string().min(1).describe('Canonical assetKey: mrc20:<mrc20Id> or mvc-ft:<codehash>:<genesis>.'),
+        amount_display: z.string().min(1).describe('Exact decimal display price, e.g. "200" or "12.5".'),
+        symbol: z.string().optional().describe('Optional token symbol override (auto-resolved when omitted).'),
+        decimals: z.number().int().min(0).max(36).optional().describe('Optional token decimals override (auto-resolved when omitted).'),
+      })).optional().describe('Optional accepted fungible token prices (MRC-20 or MVC MetaContract FT).'),
       auto_fulfill_me: z.boolean().optional().describe('Allow SellerAutoFulfillDaemon to automatically transfer the item when a buyer locks ME escrow (default true).'),
+      auto_fulfill_tokens: z.boolean().optional().describe('Allow SellerAutoFulfillDaemon to automatically verify and settle direct token purchases (default true).'),
       negotiable: z.boolean().optional().describe('Whether buyers can send an inquiry/quote before buying (default true).'),
       shop_metaapp_pin_id: z.string().optional().describe('Optional seller MetaApp shop pinId to display on cards and link buyers to.'),
       price_hint_sats: z.number().int().positive().optional().describe('Reference price in native SPACE sats, display only. Omit for "make an offer".'),
-      accepted_currencies: z.array(z.string().min(1)).optional().describe('Accepted settlement currencies, e.g. ["me","space","fiat:CNY"]. Auto-merges with priced currencies.'),
-      settlement: z.array(z.enum(['atomic-swap', 'escrow', 'me-escrow', 'fiat-escrow'])).optional().describe('Settlement rails the seller accepts. Auto-includes me-escrow when price_me is set and fiat-escrow when price_cny_yuan is set.'),
+      accepted_currencies: z.array(z.string().min(1)).optional().describe('Accepted settlement currencies, e.g. ["me","space","fiat:CNY","ft:mrc20:..."]. Auto-merges with priced currencies.'),
+      settlement: z.array(z.enum(['atomic-swap', 'escrow', 'me-escrow', 'fiat-escrow', 'token-direct'])).optional().describe('Settlement rails the seller accepts. Auto-includes me-escrow/fiat-escrow/token rails when priced.'),
       note: z.string().optional().describe('Free-text note for potential buyers.'),
       expires_in_hours: z.number().int().positive().optional().describe('Display-only expiry window in hours (e.g. 168 for a week). Omit = no stated expiry.'),
       network: z.enum(['mvc', 'btc']).optional().describe('Write network; default mvc (BTC writes are not yet supported in this version).'),
@@ -1735,7 +1749,9 @@ export function buildMrc721AgentTools(deps: {
       item_pin_id: string;
       price_me?: number;
       price_cny_yuan?: number;
+      price_tokens?: Array<{ asset_key: string; amount_display: string; symbol?: string; decimals?: number }>;
       auto_fulfill_me?: boolean;
+      auto_fulfill_tokens?: boolean;
       negotiable?: boolean;
       shop_metaapp_pin_id?: string;
       price_hint_sats?: number;
@@ -1757,7 +1773,14 @@ export function buildMrc721AgentTools(deps: {
           itemPinId: args.item_pin_id,
           priceMe: args.price_me,
           priceCnyYuan: args.price_cny_yuan,
+          priceTokens: args.price_tokens?.map((entry) => ({
+            assetKey: entry.asset_key,
+            amountDisplay: entry.amount_display,
+            ...(entry.symbol ? { symbol: entry.symbol } : {}),
+            ...(entry.decimals !== undefined ? { decimals: entry.decimals } : {}),
+          })),
           autoFulfillMe: args.auto_fulfill_me,
+          autoFulfillTokens: args.auto_fulfill_tokens,
           negotiable: args.negotiable,
           shopMetaAppPinId: args.shop_metaapp_pin_id,
           priceHintSats: args.price_hint_sats,
@@ -1774,6 +1797,7 @@ export function buildMrc721AgentTools(deps: {
           priceSats: result.intent.priceHintSats,
           priceMeMilli: result.intent.prices?.me?.amountMilli,
           priceCnyCents: result.intent.prices?.fiat?.amountCents,
+          priceTokens: result.intent.prices?.tokens,
           sellerGlobalMetaId: result.intent.sellerMetaId,
           shopMetaAppPinId: result.intent.shopMetaAppPinId,
           action: 'selling',
@@ -1785,15 +1809,18 @@ export function buildMrc721AgentTools(deps: {
         if (result.intent.prices?.fiat?.amountCents != null) {
           priceParts.push(`¥${(result.intent.prices.fiat.amountCents / 100).toFixed(2)}`);
         }
+        for (const tok of result.intent.prices?.tokens ?? []) {
+          priceParts.push(`${tok.amountDisplay} $${tok.symbol} (${tok.assetKey})`);
+        }
         if (result.intent.priceHintSats != null) {
           priceParts.push(`${result.intent.priceHintSats} sats`);
         }
         return textResult(appendNftCardBlock([
-          'Digital item sell intent declared on-chain (/protocols/mrc721sell v2.1).',
+          'Digital item sell intent declared on-chain (/protocols/mrc721sell v2.2).',
           `- item pinId: ${result.intent.itemPinId}`,
           `- sell-intent pin: pin://${result.sellPinId}`,
           `- pricing: ${priceParts.length ? priceParts.join(' / ') : 'make an offer'}`,
-          `- autoFulfillMe: ${result.intent.autoFulfillMe !== false ? 'enabled' : 'disabled'} | negotiable: ${result.intent.negotiable !== false ? 'yes' : 'no'}`,
+          `- autoFulfillMe: ${result.intent.autoFulfillMe !== false ? 'enabled' : 'disabled'} | autoFulfillTokens: ${result.intent.autoFulfillTokens !== false ? 'enabled' : 'disabled'} | negotiable: ${result.intent.negotiable !== false ? 'yes' : 'no'}`,
           `- accepted currencies: ${result.intent.acceptedCurrencies.join(', ')}`,
           `- settlement: ${result.intent.settlement.join(' / ')}`,
         ].join('\n'), withNftCardHostStamp(cardFields, sessionId)));
@@ -1861,6 +1888,9 @@ export function buildMrc721AgentTools(deps: {
           if (view.intent.prices?.fiat?.amountCents != null) {
             priceTags.push(`¥${(view.intent.prices.fiat.amountCents / 100).toFixed(2)}`);
           }
+          for (const tok of view.intent.prices?.tokens ?? []) {
+            priceTags.push(`${tok.amountDisplay} $${tok.symbol}`);
+          }
           if (view.intent.priceHintSats != null) {
             priceTags.push(`${view.intent.priceHintSats} sats`);
           }
@@ -1891,6 +1921,7 @@ export function buildMrc721AgentTools(deps: {
       collection_pinid: z.string().optional().describe('Filter to one collection by collectionid (collection_desc pinId).'),
       seller: z.string().optional().describe('Filter by seller: local MetaBot name, 64-hex MetaID, or MVC address.'),
       item_pin_id: z.string().optional().describe('Filter to one item.'),
+      token_asset_key: z.string().optional().describe('Filter to intents accepting this token assetKey (mrc20:<id> or mvc-ft:<codehash>:<genesis>).'),
       active: z.boolean().optional().describe('Only live intents when true; only withdrawn/closed ones when false. Default: all.'),
       cursor: z.string().optional().describe('Page cursor from the previous call.'),
       size: z.number().int().min(1).max(100).optional().describe('Page size (default 20).'),
@@ -1900,6 +1931,7 @@ export function buildMrc721AgentTools(deps: {
       collection_pinid?: string;
       seller?: string;
       item_pin_id?: string;
+      token_asset_key?: string;
       active?: boolean;
       cursor?: string;
       size?: number;
@@ -1918,6 +1950,7 @@ export function buildMrc721AgentTools(deps: {
           collectionPinId: asString(args.collection_pinid) || undefined,
           itemPinId: asString(args.item_pin_id) || undefined,
           sellerAddress,
+          tokenAssetKey: asString(args.token_asset_key) || undefined,
           active: args.active,
           cursor: args.cursor,
           size: args.size ?? 20,
@@ -1929,6 +1962,9 @@ export function buildMrc721AgentTools(deps: {
           const priceTags: string[] = [];
           if (row.prices?.me?.amountMilli != null) priceTags.push(`${row.prices.me.amountMilli / 1000} ME`);
           if (row.prices?.fiat?.amountCents != null) priceTags.push(`¥${(row.prices.fiat.amountCents / 100).toFixed(2)}`);
+          for (const tok of row.prices?.tokens ?? []) {
+            priceTags.push(`${tok.amountDisplay} $${tok.symbol}`);
+          }
           if (row.priceHintSats != null) priceTags.push(`${row.priceHintSats} sats`);
           const priceLabel = priceTags.length ? priceTags.join(' / ') : 'make an offer';
           lines.push(`- ${state} ${row.itemPinId}${row.collectionName ? ` · ${row.collectionName}` : ''} · ${priceLabel} · ${row.acceptedCurrencies?.join(',') ?? 'space'} · ${row.settlement?.join('/') ?? 'atomic-swap/escrow'} · seller ${row.sellerAddress ?? 'unknown'}`);
