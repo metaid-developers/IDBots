@@ -437,7 +437,10 @@ test('REQ-A-5 server mode never offers desktop-only agent tools to the model', (
   for (const name of [
     'bot_browser_tabs', 'bot_browser_open_uri', 'bot_browser_preview_local', 'bot_browser_read_page',
     'bot_browser_fork_current_app', 'bot_browser_publish_app', 'bot_browser_screenshot', 'bot_browser_act',
-    'browser_open', 'screenshot', 'open_metaapp', 'resolve_metaapp_url', 'project_query',
+    'browser_open', 'browser_tabs', 'projection_begin',
+    'studio_decision_enqueue', 'studio_decision_list', 'studio_decision_resolve',
+    'studio_decision_defer', 'studio_presence_mark', 'studio_task_focus', 'twin_stamp_publish',
+    'screenshot', 'open_metaapp', 'resolve_metaapp_url', 'project_query',
   ]) {
     assert.ok(disabled.has(name), `${name} must be in the server-mode disabled list`);
   }
@@ -574,3 +577,31 @@ test('mobile minimal tools are enforced again at the DSH request boundary', () =
   assert.match(runnerTs, /hostToolsBuilt\.filter\(\(tool\) => isMobileToolVisible\(tool\.name, this\.mobileToolExpansions\.get\(sessionId\) \?\? \[\]\)\)/);
   assert.match(runnerTs, /guardHostToolSchemas\(hostToolsForTurn\)/);
 });
+
+test('P0 cross-surface boundary: mobile exposes owner_update, hides Studio-only tools, and overrides reopened Studio lockouts', () => {
+  const visible = serverMode.isMobileToolVisible;
+  assert.equal(visible('owner_update', []), true, 'owner_update belongs to mobile core tools');
+
+  const allExpansions = ['metaweb', 'orchestration', 'memoryAdvanced', 'automation', 'financial', 'social', 'workerEconomy'];
+  for (const studioTool of [
+    'browser_tabs', 'projection_begin', 'studio_decision_enqueue', 'studio_decision_list',
+    'studio_decision_resolve', 'studio_decision_defer', 'studio_presence_mark', 'studio_task_focus', 'twin_stamp_publish',
+  ]) {
+    assert.equal(visible(studioTool, allExpansions), false, `${studioTool} stays hidden on mobile even with all expansions`);
+  }
+
+  assert.deepEqual(
+    serverMode.resolveMobileToolMountPolicy({ isStudioOwnerChat: true, isMobileOwnerChat: true, expansions: [] }),
+    { workerEconomy: false, financial: false, social: false, metaweb: false, orchestration: false, memoryAdvanced: false, automation: false },
+  );
+  assert.deepEqual(
+    serverMode.resolveMobileToolMountPolicy({ isStudioOwnerChat: true, isMobileOwnerChat: true, expansions: ['social', 'workerEconomy'] }),
+    { workerEconomy: true, financial: false, social: true, metaweb: false, orchestration: false, memoryAdvanced: false, automation: false },
+  );
+
+  const cosTs = fs.readFileSync(path.join(srcMainDir, 'services', 'studioChiefOfStaffService.ts'), 'utf8');
+  assert.match(cosTs, /isStudioOwnerSession\([^\)]*\): boolean \{\s*if \(isServerMode\(\)\) return false;/);
+  assert.match(mainTs, /getBrowserGuidePrompt: async \(sessionId: string\): Promise<string \| null> => \{\s*if \(isServerMode\(\)\) return null;/);
+  assert.match(mainTs, /getBrowserTabsPrompt: async \(sessionId: string\): Promise<string \| null> => \{\s*if \(isServerMode\(\)\) return null;/);
+});
+

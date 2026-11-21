@@ -483,3 +483,76 @@ test('a delivery opening via the deterministic builder keeps the per-turn budget
   const rejection = await callUpdate(runner, '收到，这是一条模型自己的开场。', 'opening')
   assert.deepEqual(JSON.parse(rejection.text), { shown: false, reason: 'opening already delivered; report only new milestones or problems' })
 })
+
+test('mobile owner chat mounts and executes owner_update while hiding Studio-only projector tools', async () => {
+  const prevServerMode = process.env.IDBOTS_SERVER_MODE
+  process.env.IDBOTS_SERVER_MODE = '1'
+  try {
+    const { CoworkRunner } = loadRunner()
+    const messages = []
+    const session = {
+      id: 'm1',
+      title: 'Mobile chat',
+      sessionType: 'browser',
+      assistantMode: true,
+      autoOrigin: null,
+      cwd: '/tmp/mobile-workspace',
+      metabotId: 1,
+      messages: [],
+    }
+    const store = {
+      getSession: () => session,
+      getSessionWithoutMessages: () => session,
+      getConversationSourceContextBySession: () => ({ sourceChannel: 'cowork_ui' }),
+      getConfig: () => ({}),
+      addMessage: (sessionId, message) => {
+        const stored = { id: `m-${messages.length + 1}`, timestamp: Date.now(), ...message }
+        messages.push({ sessionId, ...stored })
+        return stored
+      },
+    }
+    const runner = new CoworkRunner(store, {
+      localTurnStallTimeoutMs: 0,
+      assistantOwnerWaitTimeoutMs: 0,
+      getBrowserTabsPrompt: async () => '<browser_tabs />',
+    })
+    runner.isTwinSession = () => true
+    runner.buildSessionInlineTools = () => []
+    const active = {
+      sessionId: 'm1',
+      permissionMode: 'bypassPermissions',
+      assistantOwnerUpdateCount: 0,
+      dshTurnAckVisibleTextSeen: false,
+      abortController: new AbortController(),
+      autoApproveTools: new Set(),
+      workspaceRoot: '/tmp/mobile-workspace',
+    }
+    runner.activeSessions.set('m1', active)
+
+    const tools = runner.buildDshHostTools('m1')
+    runner.dshHostToolRegistry.set('m1', new Map(tools.map((tool) => [tool.name, tool])))
+    assert.equal(tools.some((tool) => tool.name === 'owner_update'), true, 'mobile owner chat exposes owner_update')
+    assert.equal(tools.some((tool) => tool.name === 'projection_begin'), false, 'mobile hides projection_begin even for reopened Studio sessions')
+    assert.equal(tools.some((tool) => tool.name === 'browser_tabs'), false, 'mobile hides browser_tabs even for reopened Studio sessions')
+
+    const updateRes = await runner.executeDshHostTool('m1', 'owner_update', {
+      message: 'Checking the latest file now.',
+      kind: 'opening',
+    })
+    assert.equal(updateRes.ok, true)
+    assert.deepEqual(JSON.parse(updateRes.text), { shown: true, remaining: 5 })
+    assert.equal(messages.length, 1)
+    assert.equal(messages[0].content, 'Checking the latest file now.')
+    assert.equal(messages[0].metadata.ownerUpdateKind, 'opening')
+
+    const writePolicy = await runner.evaluateDshToolPolicy('m1', 'write', {
+      file_path: '/tmp/mobile-workspace/notes.md',
+      content: 'hello',
+    })
+    assert.equal(writePolicy.decision, 'allow', 'reopened Studio Twin session is not blocked by desktop Studio front-office guard on mobile')
+  } finally {
+    if (prevServerMode === undefined) delete process.env.IDBOTS_SERVER_MODE
+    else process.env.IDBOTS_SERVER_MODE = prevServerMode
+  }
+})
+

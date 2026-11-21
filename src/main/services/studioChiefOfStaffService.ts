@@ -22,6 +22,7 @@ import type { TwinStampPublishItemInput } from '../libs/studioChiefOfStaffAgentT
 import { buildStudioDecisionReportHtml } from '../libs/studioDecisionReportHtml';
 import { formatCompactTwinTodosPromptBlock } from '../libs/twinTodoAgentTools';
 import type { TwinTodoItem } from '../twinTodoStore';
+import { isServerMode } from '../server/serverMode';
 
 export const STUDIO_CHIEF_OF_STAFF_INTERVAL_MS = 5_000;
 export const DEFAULT_SUPERVISION_COALESCE_MS = 1_200;
@@ -551,6 +552,7 @@ export class StudioChiefOfStaffService {
   }
 
   isStudioOwnerSession(sessionId: string | null | undefined): boolean {
+    if (isServerMode()) return false;
     if (!sessionId || !sessionId.trim()) return false;
     const session = this.deps.coworkStore().getSession(sessionId.trim());
     if (!session) return false;
