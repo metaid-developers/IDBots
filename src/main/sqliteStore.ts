@@ -28,6 +28,7 @@ import { ensureBotWalletTransferSchema } from './services/botWalletTransferStore
 import { ensureNftSwapClientOrderSchema } from './services/swapOrderTrackerService';
 import { ensureMeNftSellerFulfillmentsSchema } from './services/sellerAutoFulfillDaemon';
 import { ensureFtOrderTables } from './services/ftOrderStore';
+import { ensurePaybuzzTables } from './services/paybuzzStore';
 import { ensureProactiveFollowUpSchema } from './proactiveFollowUpStore';
 
 type ChangePayload<T = unknown> = {
@@ -3115,6 +3116,8 @@ export class SqliteStore {
     ensureMeNftSellerFulfillmentsSchema(this.db);
     // WS-1 FT active orders & ME seller auto-fulfill ledger (ft_active_orders, me_ft_seller_fulfillments).
     ensureFtOrderTables(this.db);
+    // WS-5 PayBuzz encrypted reading protocol tables (paybuzz_authored_items, paybuzz_used_payments, paybuzz_unlocked_cache, paybuzz_royalty_ledger).
+    ensurePaybuzzTables(this.db);
     // Proactive Follow-Up Events (proactive_follow_ups + settle points):
     // lightweight world/A2A awareness, 1-turn owner rulings, and task proposals.
     ensureProactiveFollowUpSchema(this.db);
