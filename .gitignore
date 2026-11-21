@@ -51,6 +51,8 @@ docs/*
 !docs/cloud-mobile/
 !docs/nft-commerce-loop/
 !docs/nft-commerce-loop/**
+!docs/ft-commerce-loop/
+!docs/ft-commerce-loop/**
 !docs/metaid_protocols/
 !docs/metaid_protocols/**
 !docs/deepseek-optimization.md
