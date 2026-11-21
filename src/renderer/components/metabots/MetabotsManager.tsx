@@ -22,7 +22,6 @@ import MetaBotCreateSuccessModal, { type SyncStepKey } from './MetaBotCreateSucc
 import MetaBotDeleteConfirmModal from './MetaBotDeleteConfirmModal';
 import MetaBotRestoreMnemonicModal from './MetaBotRestoreMnemonicModal';
 import MetaBotListCard from './MetaBotListCard';
-import { summarizeFreeRelayUsage } from './freeBrainBulkSwitch';
 import { normalizeAllowChatSkills } from './allowChatSkills.ts';
 import { DEFAULT_METABOT_LIMIT, METABOT_LIMIT_REACHED_ERROR } from '../../../main/shared/metabotLimit';
 
@@ -565,50 +564,6 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
     }));
   }, [settingsClosedTrigger]);
 
-  const [bulkSwitching, setBulkSwitching] = useState(false);
-  const [selectedBulkProvider, setSelectedBulkProvider] = useState('');
-  const freeRelayUsage = useMemo(
-    () => summarizeFreeRelayUsage(list, configService.getConfig()),
-    [list, settingsClosedTrigger],
-  );
-  const effectiveBulkProviderKey = freeRelayUsage.paidProviders.some((p) => p.id === selectedBulkProvider)
-    ? selectedBulkProvider
-    : (freeRelayUsage.paidProviders[0]?.id ?? '');
-  const effectiveBulkProvider = freeRelayUsage.paidProviders.find((p) => p.id === effectiveBulkProviderKey) ?? null;
-
-  const handleBulkSwitchOffFree = async () => {
-    if (!effectiveBulkProvider || bulkSwitching) return;
-    setBulkSwitching(true);
-    setActionError('');
-    try {
-      const res = await window.electron.brainSwitch.switchFreeBrainsTo({ providerKey: effectiveBulkProvider.id });
-      if (res?.success) {
-        await configService.init().catch(() => undefined);
-        await loadList({ silent: true });
-        dispatchMetabotsChanged({
-          metabotIds: res.result?.switchedBotIds ?? freeRelayUsage.freeBrainBotIds,
-          reason: 'edit',
-        });
-        window.dispatchEvent(new CustomEvent('app:showToast', {
-          detail: i18nService.t('quotaNudgeSwitchSuccess')
-            .replace('{name}', effectiveBulkProvider.name)
-            .replace('{count}', String(res.result?.switchedBotIds?.length ?? freeRelayUsage.freeBrainBotCount)),
-        }));
-      } else {
-        window.dispatchEvent(new CustomEvent('app:showToast', {
-          detail: i18nService.t('quotaNudgeSwitchFailed').replace('{error}', res?.error || 'unknown error'),
-        }));
-      }
-    } catch (error) {
-      window.dispatchEvent(new CustomEvent('app:showToast', {
-        detail: i18nService.t('quotaNudgeSwitchFailed')
-          .replace('{error}', error instanceof Error ? error.message : String(error)),
-      }));
-    } finally {
-      setBulkSwitching(false);
-    }
-  };
-
   if (viewMode === 'add') {
     return (
       <div className="space-y-4 relative">
@@ -1117,59 +1072,6 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
       <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
         {i18nService.t('metabotsDescription')}
       </p>
-
-      {!loading && freeRelayUsage.freeBrainBotCount > 0 && (
-        <div
-          data-slot="metabot-bulk-free-banner"
-          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/35 dark:border-amber-400/35 bg-amber-500/10 dark:bg-amber-400/10 px-4 py-2.5"
-        >
-          <span className="text-xs text-amber-700 dark:text-amber-300">
-            {i18nService.t('metabotBulkFreeBanner').replace('{count}', String(freeRelayUsage.freeBrainBotCount))}
-          </span>
-          {effectiveBulkProvider ? (
-            <div className="flex items-center gap-2 shrink-0">
-              {freeRelayUsage.paidProviders.length > 1 && (
-                <select
-                  aria-label="Target LLM provider"
-                  value={effectiveBulkProvider.id}
-                  disabled={bulkSwitching}
-                  onChange={(e) => setSelectedBulkProvider(e.target.value)}
-                  className="rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-2 py-1 text-xs dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-1 focus:ring-claude-accent"
-                >
-                  {freeRelayUsage.paidProviders.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-              <button
-                type="button"
-                data-slot="metabot-bulk-free-switch"
-                disabled={bulkSwitching}
-                onClick={() => void handleBulkSwitchOffFree()}
-                className="rounded-lg bg-amber-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-500 transition-colors disabled:opacity-60"
-              >
-                {bulkSwitching
-                  ? i18nService.t('quotaNudgeSwitching')
-                  : freeRelayUsage.paidProviders.length === 1
-                    ? i18nService.t('metabotBulkFreeSwitchAction').replace('{name}', effectiveBulkProvider.name)
-                    : i18nService.t('metabotBulkFreeSwitchButton')}
-              </button>
-            </div>
-          ) : (
-            onRequestModelSettings && (
-              <button
-                type="button"
-                onClick={onRequestModelSettings}
-                className="text-xs font-medium text-amber-700 dark:text-amber-300 underline hover:no-underline shrink-0"
-              >
-                {i18nService.t('metabotBulkFreeConfigureProvider')}
-              </button>
-            )
-          )}
-        </div>
-      )}
 
       {actionError && (
         <div

@@ -1,65 +1,24 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import {
-  isBotPrimaryBrainOnFreeRelay,
-  summarizeFreeRelayUsage,
-} from '../src/renderer/components/metabots/freeBrainBulkSwitch';
 import {
   extractBurnSourceLabel,
   normalizeBurnLine,
   summarizeMeBurnBreakdown,
 } from '../src/renderer/components/me/meBurnBreakdown';
 import MeUsageAndCredits from '../src/renderer/components/me/MeUsageAndCredits';
-import type { AppConfig } from '../src/renderer/config';
 
-const sampleConfig = {
-  model: {
-    defaultModel: 'glm-5.3-flash',
-    defaultProvider: 'idbots',
-  },
-  providers: {
-    idbots: {
-      enabled: true,
-      apiKey: 'idbots-token',
-      name: 'ID.Bots',
-      models: [{ id: 'glm-5.3-flash', name: 'GLM 5.3 Flash' }],
-    },
-    deepseek: {
-      enabled: true,
-      apiKey: 'sk-ds-123',
-      name: 'DeepSeek',
-      models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat' }],
-    },
-    disabledOne: {
-      enabled: false,
-      apiKey: 'sk-disabled',
-      name: 'Disabled',
-      models: [{ id: 'm1', name: 'M1' }],
-    },
-  },
-} as unknown as AppConfig;
-
-test('freeBrainBulkSwitch identifies bots riding idbots/metaid-free and lists usable paid providers', () => {
-  assert.equal(isBotPrimaryBrainOnFreeRelay({ llm_id: 'glm-5.3-flash', llm_provider: 'idbots' }, sampleConfig), true);
-  assert.equal(isBotPrimaryBrainOnFreeRelay({ llm_id: 'glm-5.3-flash', llm_provider: 'metaid-free' }, sampleConfig), true);
-  assert.equal(isBotPrimaryBrainOnFreeRelay({ llm_id: 'glm-5.3-flash', llm_provider: '' }, sampleConfig), true);
-  assert.equal(isBotPrimaryBrainOnFreeRelay({ llm_id: 'deepseek-chat', llm_provider: 'deepseek' }, sampleConfig), false);
-  assert.equal(isBotPrimaryBrainOnFreeRelay({ llm_id: '', llm_provider: '' }, sampleConfig), false);
-
-  const summary = summarizeFreeRelayUsage([
-    { id: 1, llm_id: 'glm-5.3-flash', llm_provider: 'idbots' },
-    { id: 2, llm_id: 'glm-5.3-flash', llm_provider: null },
-    { id: 3, llm_id: 'deepseek-chat', llm_provider: 'deepseek' },
-    { id: 4, llm_id: null, llm_provider: null },
-  ], sampleConfig);
-
-  assert.deepEqual(summary.freeBrainBotIds, [1, 2]);
-  assert.equal(summary.freeBrainBotCount, 2);
-  assert.equal(summary.defaultRidesFree, true);
-  assert.deepEqual(summary.paidProviders.map((p) => p.id), ['deepseek']);
+test('MetabotsManager does not render a bulk switch-off-idbots nudge banner', () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), 'src/renderer/components/metabots/MetabotsManager.tsx'),
+    'utf8',
+  );
+  assert.doesNotMatch(source, /metabot-bulk-free-banner/);
+  assert.doesNotMatch(source, /freeBrainBulkSwitch/);
 });
 
 test('meBurnBreakdown aggregates burn entries by metering line and source/model', () => {
