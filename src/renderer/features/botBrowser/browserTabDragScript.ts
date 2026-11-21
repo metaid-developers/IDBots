@@ -11,8 +11,9 @@
  *
  * DATA FLOW (owner feedback 2026-11-21 01:32: the strip did not reorder):
  *   dragstart  -> remember the dragged `data-tab-id`, mark it half transparent
- *   dragover   -> compute the insertion boundary from pointer X, draw the 1 px
- *                 insertion line at that boundary
+ *   dragover   -> compute the insertion boundary from pointer X and let the
+ *                 neighbours slide aside (FLIP); there is NO insertion line —
+ *                 the yielding itself is the only insertion-point expression
  *   drop       -> rewrite `state.tabs` order (ids mapped back to tab objects)
  *                 AND move the DOM nodes in the same order, then persist the
  *                 URI order. Both halves are required: reordering only the DOM
@@ -61,7 +62,8 @@ export const BROWSER_TAB_DRAG_MARKERS = [
   '__idbotsBrowserTabDragInstalled',
   'idbots.botBrowser.tabOrder',
   'data-browser-tabs-container',
-  'browser-tab-insert-line',
+  'previewYield',
+  'settleFrom',
   'is-dragging',
   'is-drag-armed',
 ] as const;
@@ -93,7 +95,6 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
   var TAB_SELECTOR = '.browser-tab';
   var CLOSE_SELECTOR = '.browser-tab-close';
   var NEW_TAB_SELECTOR = '.browser-tab-new';
-  var LINE_CLASS = 'browser-tab-insert-line';
   var STORAGE_KEY = '${BROWSER_TAB_ORDER_STORAGE_KEY}';
   var MAX_SAVED_ORDER = 50;
   var NARROW_QUERY = '${BROWSER_TAB_DRAG_NARROW_QUERY}';
@@ -102,7 +103,6 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
   var ARM_CLICK_SUPPRESS_MS = 700;
   var GRAB_MS = 120;
   var SETTLE_MS = 150;
-  var INDICATOR_MS = 100;
   var SETTLE_EASING = 'cubic-bezier(.2,0,0,1)';
   var REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
   var DRAG_STYLE_ID = 'idbots-browser-tab-drag-style';
@@ -110,7 +110,6 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
   var BOOT_RETRY_LIMIT = 60;
 
   var container = null;
-  var indicator = null;
   var draggedTabId = null;
   var pendingInsertIndex = null;
   var armedTabId = null;
@@ -161,6 +160,15 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
     element.style.transform = value || '';
   }
 
+  function remainingTabElements() {
+    var tabs = tabElements();
+    var out = [];
+    for (var index = 0; index < tabs.length; index += 1) {
+      if (tabIdOf(tabs[index]) !== draggedTabId) out.push(tabs[index]);
+    }
+    return out;
+  }
+
   /**
    * Clear every inline transform this layer may have written (yield previews
    * and FLIP residue). Called at dragstart so rapid consecutive drags never
@@ -170,6 +178,9 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
     var tabs = tabElements();
     for (var index = 0; index < tabs.length; index += 1) {
       setTabTransform(tabs[index], '');
+    }
+    if (container && typeof container.removeAttribute === 'function') {
+      container.removeAttribute('data-tab-drag-slot');
     }
     dragOriginIndex = null;
     yieldStep = 0;
@@ -200,27 +211,26 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
   }
 
   /**
-   * FLIP-style preview: while the pointer asks for a different boundary, the
-   * tabs between the origin and that boundary shift by exactly one slot, so the
-   * strip transitions instead of jumping. Nothing here touches state.
+   * Two visual quantities, added on the SAME transform (owner ruling 21:33):
+   *   - collapse: every tab AFTER the dragged one slides left by one slot, so
+   *     the original slot visually disappears while the source keeps its
+   *     layout position (the element itself is never repositioned);
+   *   - opening: every remaining tab at/after the pointer boundary slides right
+   *     by one slot, so the drop target opens.
+   * Net transform is one of {-slot, 0, +slot}; nothing here touches state.
    */
   function previewYield(boundary) {
     if (draggedTabId === null || dragOriginIndex === null) return;
     if (boundary === lastPreviewIndex) return;
     lastPreviewIndex = boundary;
-    clearYieldTransforms();
-    if (boundary === dragOriginIndex || boundary === dragOriginIndex + 1) return;
-    var tabs = tabElements();
+    var order = visibleTabIds();
+    var tabs = remainingTabElements();
     for (var index = 0; index < tabs.length; index += 1) {
       var id = tabIdOf(tabs[index]);
-      if (id === null || id === draggedTabId) continue;
-      var dx = 0;
-      if (boundary > dragOriginIndex + 1 && index > dragOriginIndex && index < boundary) {
-        dx = -yieldStep;
-      } else if (boundary < dragOriginIndex && index >= boundary && index < dragOriginIndex) {
-        dx = yieldStep;
-      }
-      if (dx) setTabTransform(tabs[index], 'translateX(' + dx + 'px)');
+      if (id === null) continue;
+      var afterOrigin = order.indexOf(id) > dragOriginIndex;
+      var dx = (afterOrigin ? -yieldStep : 0) + (index >= boundary ? yieldStep : 0);
+      setTabTransform(tabs[index], dx ? 'translateX(' + dx + 'px)' : '');
     }
   }
 
@@ -235,13 +245,22 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
     return out;
   }
 
+  function clearInlineTransitionLater(element, ms) {
+    if (!element || !element.style) return;
+    if (typeof window === 'undefined' || typeof window.setTimeout !== 'function') return;
+    window.setTimeout(function () {
+      if (element.style) element.style.transition = '';
+    }, Number(ms) + 30);
+  }
+
   /**
-   * Drop settle: every tab that changed place is first put back at its
-   * pre-drop X with transitions off, then released, so the 150 ms curve plays
-   * from the old geometry to the new one (FLIP). Under reduced motion the CSS
-   * disables the transition and the final state lands instantly.
+   * FLIP settle: put each moved tab back at its recorded X with transitions
+   * off, then release it so the curve plays from the old geometry to the new
+   * one. Reduced motion zeroes the transition via CSS !important and the final
+   * state lands instantly.
    */
-  function settleFrom(before) {
+  function settleFrom(before, duration) {
+    var ms = Number(duration) > 0 ? Number(duration) : SETTLE_MS;
     var tabs = tabElements();
     for (var index = 0; index < tabs.length; index += 1) {
       var id = tabIdOf(tabs[index]);
@@ -255,10 +274,21 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
       element.style.transform = 'translateX(' + dx + 'px)';
       // Force the browser to read the inverse position before releasing it.
       void element.getBoundingClientRect();
-      element.style.transition = '';
+      element.style.transition = 'transform ' + ms + 'ms ' + SETTLE_EASING;
       element.style.transform = '';
+      clearInlineTransitionLater(element, ms);
     }
   }
+
+
+  /**
+   * Stable identity for the persisted order. Tab ids are minted per launch, so
+   * the order is stored against something that survives a restart: the URI. A
+   * blank tab ("New Tab") has no URI yet — it still has to hold a slot, so it
+   * gets an occurrence token (blank#1, blank#2, ...). Two blanks keep their
+   * relative order because the token carries the occurrence index.
+   */
+  var BLANK_KEY_PREFIX = 'blank#';
 
   function browserState() {
     var current = globalThis.state;
@@ -322,7 +352,6 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
    * gets an occurrence token (blank#1, blank#2, ...). Two blanks keep their
    * relative order because the token carries the occurrence index.
    */
-  var BLANK_KEY_PREFIX = 'blank#';
 
   function tabKeysOf(ids) {
     var keys = [];
@@ -424,8 +453,7 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
   function applyDomOrder(orderedIds) {
     if (!container || typeof container.insertBefore !== 'function') return;
     // The "+" button follows the LAST tab (ABC's own render contract), so it is
-    // the insertion anchor; the absolutely positioned line is not a layout
-    // participant and must never be used as one.
+    // the insertion anchor (there is no insertion line any more).
     var anchor = typeof container.querySelector === 'function'
       ? container.querySelector(NEW_TAB_SELECTOR)
       : null;
@@ -451,79 +479,48 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
       '.browser-tab {',
       '  transition: transform ' + SETTLE_MS + 'ms ' + SETTLE_EASING + ', opacity ' + GRAB_MS + 'ms ease-out, border-color ' + GRAB_MS + 'ms ease-out;',
       '}',
-      /* Grab: 120 ms ease-out lift; the class removal is the 120 ms spring back. */
+      /* Grab: the SOURCE tab itself never moves in layout (Chrome cancels a
+         native drag when the source is relocated); it just fades to ~0.05 and
+         the native drag image does the following. */
       '.browser-tab.is-dragging {',
       '  transform: scale(1.02) translateY(-1px);',
-      '  opacity: .85;',
+      '  opacity: .05;',
       '  border-color: var(--browser-accent);',
       '  transition: transform ' + GRAB_MS + 'ms ease-out, opacity ' + GRAB_MS + 'ms ease-out, border-color ' + GRAB_MS + 'ms ease-out;',
       '  z-index: 2;',
       '}',
       /* Touch long-press arming: same accent edge, no shadow decoration. */
       '.browser-tab.is-drag-armed { border-color: var(--browser-accent); }',
-      '.browser-tab-insert-line {',
-      '  position: absolute;',
-      '  top: 4px;',
-      '  bottom: 0;',
-      '  width: 1px;',
-      '  background: var(--browser-accent);',
-      '  pointer-events: none;',
-      '  z-index: 3;',
-      '  opacity: 0;',
-      '  transition: left ' + INDICATOR_MS + 'ms ease-out, opacity ' + INDICATOR_MS + 'ms ease-out;',
-      '}',
-      '.browser-tab-insert-line.is-visible { opacity: 1; }',
       /* Accessibility: every animation in this layer collapses to an instant
          state change; the final order/visibility stays exact. */
       '@media ' + REDUCED_MOTION_QUERY + ' {',
-      '  .browser-tab, .browser-tab.is-dragging, .browser-tab-insert-line { transition: none !important; }',
+      '  .browser-tab, .browser-tab.is-dragging { transition: none !important; }',
       '}',
     ].join('\\n');
     var head = document.head || document.body;
     if (head && typeof head.appendChild === 'function') head.appendChild(style);
   }
 
-  function ensureIndicator() {
-    if (indicator && indicator.parentNode === container) return indicator;
-    if (!container) return null;
-    indicator = document.createElement('div');
-    indicator.className = LINE_CLASS;
-    indicator.setAttribute('aria-hidden', 'true');
-    container.appendChild(indicator);
-    return indicator;
+  /**
+   * The drop boundary is expressed ONLY by the neighbours' displacement
+   * (owner ruling 21:07: delete the blue insertion line — it was the "low"
+   * source). The computed index is still remembered for the drop itself.
+   */
+  function clampRemainingBoundary(index) {
+    var dragged = draggedTabId === null ? null : tabById(draggedTabId);
+    if (!dragged || dragged.pinned) return index;
+    var floor = pinnedCount();
+    return index < floor ? floor : index;
   }
 
-  function boundaryLeft(index) {
-    var tabs = tabElements();
-    if (!tabs.length) return 0;
-    var box = typeof container.getBoundingClientRect === 'function'
-      ? container.getBoundingClientRect()
-      : { left: 0 };
-    var scroll = Number(container.scrollLeft) || 0;
-    if (index >= tabs.length) {
-      var lastBox = tabs[tabs.length - 1].getBoundingClientRect();
-      return Math.max(0, lastBox.right - box.left + scroll);
-    }
-    var rect = tabs[Math.max(0, index)].getBoundingClientRect();
-    return Math.max(0, rect.left - box.left + scroll);
-  }
-
-  function showIndicator(index) {
-    var line = ensureIndicator();
-    if (!line) return;
-    // The line previews where the drop would actually put the tab.
-    var clamped = draggedTabId === null ? index : clampIndexForTab(index, draggedTabId);
-    if (line.classList && line.classList.add) line.classList.add('is-visible');
-    line.style.left = boundaryLeft(clamped) + 'px';
+  function updateDropTarget(index) {
+    var clamped = clampRemainingBoundary(index);
     pendingInsertIndex = clamped;
     previewYield(clamped);
   }
 
-  function hideIndicator() {
+  function clearDropTarget() {
     pendingInsertIndex = null;
-    if (indicator && indicator.classList && indicator.classList.remove) {
-      indicator.classList.remove('is-visible');
-    }
   }
 
   function clearDragging() {
@@ -553,7 +550,7 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
 
   /** Insertion boundary for a pointer X: before the first tab past its midpoint. */
   function insertionIndexFor(clientX) {
-    var tabs = tabElements();
+    var tabs = remainingTabElements();
     for (var index = 0; index < tabs.length; index += 1) {
       var rect = tabs[index].getBoundingClientRect();
       if (clientX < rect.left + rect.width / 2) return index;
@@ -712,6 +709,9 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
     dragOriginIndex = visibleTabIds().indexOf(id);
     yieldStep = computeYieldStep(draggedElement);
     if (draggedElement.classList && draggedElement.classList.add) draggedElement.classList.add('is-dragging');
+    if (container && typeof container.setAttribute === 'function') {
+      container.setAttribute('data-tab-drag-slot', String(Math.round(yieldStep)));
+    }
     var transfer = event.dataTransfer;
     if (transfer) {
       try {
@@ -721,7 +721,11 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
         // Some embedders expose a read-only DataTransfer; the id is in memory.
       }
     }
-    showIndicator(visibleTabIds().indexOf(id));
+    // The source tab NEVER leaves its layout position (relocating it makes
+    // Chrome cancel the native drag). It only fades; the browser's own drag
+    // image is the floating body.
+    var remainingCount = remainingTabElements().length;
+    updateDropTarget(Math.min(dragOriginIndex, Math.max(0, remainingCount)));
   }
 
   function onDragOver(event) {
@@ -734,36 +738,40 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
         // Effect hint only.
       }
     }
-    if (!tabElements().length) return;
-    showIndicator(insertionIndexFor(clientXOf(event)));
+    if (!remainingTabElements().length) return;
+    updateDropTarget(insertionIndexFor(clientXOf(event)));
   }
 
   function onDrop(event) {
     if (dragDisabled() || draggedTabId === null) return;
     if (event.preventDefault) event.preventDefault();
-    var targetIndex = pendingInsertIndex === null
+    var boundary = pendingInsertIndex === null
       ? insertionIndexFor(clientXOf(event))
       : pendingInsertIndex;
     var dragged = draggedTabId;
+    var from = dragOriginIndex === null ? visibleTabIds().indexOf(dragged) : dragOriginIndex;
+    // The boundary indexes the REMAINING row; moveTab expects the full row.
+    var fullBoundary = boundary <= from ? boundary : boundary + 1;
     var before = captureTabLefts();
-    hideIndicator();
+    clearDropTarget();
     clearYieldTransforms();
     clearDragging();
-    if (moveTab(dragged, targetIndex)) settleFrom(before);
+    if (moveTab(dragged, fullBoundary)) settleFrom(before);
     resetMotionState();
   }
 
   function onDragEnd() {
-    hideIndicator();
+    clearDropTarget();
+    clearYieldTransforms();
     clearDragging();
     resetMotionState();
   }
 
   function onDragLeave(event) {
-    // Leaving the container itself (not a child) drops the preview line.
+    // Leaving the container itself (not a child) returns the yielded neighbours.
     var related = event && event.relatedTarget;
     if (related && container && typeof container.contains === 'function' && container.contains(related)) return;
-    hideIndicator();
+    clearDropTarget();
     clearYieldTransforms();
     lastPreviewIndex = null;
   }
@@ -852,7 +860,7 @@ export function buildBrowserTabDragScript(labels?: BrowserTabDragLabels): string
     if (!event || event.key !== 'Escape') return;
     clearArmed();
     onDragEnd();
-    hideIndicator();
+    clearDropTarget();
   }
 
   function installHandlers() {
