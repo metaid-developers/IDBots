@@ -85,11 +85,11 @@ allowBuilds:
   utf-8-validate: true
 
 minimumReleaseAgeExclude:
-  - '@openagentinternet/agent-browser-core@0.7.1 || 0.8.0 || 0.8.1 || 0.9.0 || 0.10.0 || 0.10.1 || 0.10.2 || 0.11.0 || 0.11.1'
-  - '@openagentinternet/agent-browser-host-contract@0.7.1 || 0.8.0 || 0.8.1 || 0.9.0 || 0.10.0 || 0.10.1 || 0.10.2 || 0.11.0 || 0.11.1'
-  - '@openagentinternet/agent-browser-name-resolvers@0.7.1 || 0.8.0 || 0.8.1 || 0.9.0 || 0.10.0 || 0.10.1 || 0.10.2 || 0.11.0 || 0.11.1'
-  - '@openagentinternet/agent-browser-renderers@0.7.1 || 0.8.0 || 0.8.1 || 0.9.0 || 0.10.0 || 0.10.1 || 0.10.2 || 0.11.0 || 0.11.1'
-  - '@openagentinternet/agent-browser-ui@0.7.1 || 0.8.0 || 0.8.1 || 0.9.0 || 0.10.0 || 0.10.1 || 0.10.2 || 0.11.0 || 0.11.1'
+  - '@openagentinternet/agent-browser-core@0.7.1 || 0.8.0 || 0.8.1 || 0.9.0 || 0.10.0 || 0.10.1 || 0.10.2 || 0.11.0 || 0.11.1 || 0.11.2'
+  - '@openagentinternet/agent-browser-host-contract@0.7.1 || 0.8.0 || 0.8.1 || 0.9.0 || 0.10.0 || 0.10.1 || 0.10.2 || 0.11.0 || 0.11.1 || 0.11.2'
+  - '@openagentinternet/agent-browser-name-resolvers@0.7.1 || 0.8.0 || 0.8.1 || 0.9.0 || 0.10.0 || 0.10.1 || 0.10.2 || 0.11.0 || 0.11.1 || 0.11.2'
+  - '@openagentinternet/agent-browser-renderers@0.7.1 || 0.8.0 || 0.8.1 || 0.9.0 || 0.10.0 || 0.10.1 || 0.10.2 || 0.11.0 || 0.11.1 || 0.11.2'
+  - '@openagentinternet/agent-browser-ui@0.7.1 || 0.8.0 || 0.8.1 || 0.9.0 || 0.10.0 || 0.10.1 || 0.10.2 || 0.11.0 || 0.11.1 || 0.11.2'
 
 # pnpm 11 hard-errors when a patchedDependencies key stops matching any
 # installed package (ERR_PNPM_UNUSED_PATCH). The previous allow-forms patch
@@ -98,5 +98,5 @@ minimumReleaseAgeExclude:
 allowUnusedPatches: true
 
 patchedDependencies:
-  '@openagentinternet/agent-browser-ui@0.11.0': patches/@openagentinternet__agent-browser-ui@0.11.0.patch
   '@openagentinternet/agent-browser-ui@0.11.1': patches/@openagentinternet__agent-browser-ui@0.11.1.patch
+  '@openagentinternet/agent-browser-ui@0.11.2': patches/@openagentinternet__agent-browser-ui@0.11.2.patch
