@@ -21,8 +21,10 @@ test('kill-switch wiring: service exports, provider gates, IPC, preload, UI, i18
 
   const main = readSrc('src/main/main.ts')
   // Every invoke channel registers through the IPC registry (REQ-A-12); the
-  // registry module is the only place allowed to call ipcMain.handle.
-  assert.match(main, /import \{ registerIpcHandler \} from '\.\/ipc\/registry'/)
+  // registry module is the only place allowed to call ipcMain.handle. main.ts
+  // also imports isGatewayInvokeEvent from the same module, so the import is
+  // a multi-name statement — pin the binding, not the exact bracing.
+  assert.match(main, /import \{[^}]*\bregisterIpcHandler\b[^}]*\} from '\.\/ipc\/registry'/)
 
   // Both runtime providers consult the global gate before the per-bot
   // switch. The gates live in the shared metabotAutomationProviders resolver
