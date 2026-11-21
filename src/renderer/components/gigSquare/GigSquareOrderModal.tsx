@@ -150,11 +150,13 @@ function resolveGigSquareSettlement(service: GigSquareService | null): ResolvedG
 }
 
 function formatBalance(
-  balance: { value: number; unit: string } | undefined,
+  balance: { value: number | null; unit: string } | undefined,
   loading?: boolean
 ): string {
   if (loading) return '…';
-  if (!balance) return '—';
+  // `value: null` = the read failed (2026-11-21 balance-truth line): show the
+  // unavailable dash instead of crashing or rendering a fake 0.
+  if (!balance || balance.value == null) return '—';
   return `${balance.value.toFixed(8)} ${balance.unit}`;
 }
 

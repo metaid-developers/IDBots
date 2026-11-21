@@ -228,6 +228,7 @@ import {
   getWalletBalanceSnapshot,
   withMvcBalanceHint,
   type WalletQueryChain,
+  type WalletQueryOptions,
 } from './services/walletQueryService';
 import { executeWalletMvcTransfer } from './services/walletTransferService';
 import { executeWalletTokenSend } from './services/walletTokenSendService';
@@ -8617,8 +8618,8 @@ const getCoworkRunner = () => {
       // toggle) with every attempt recorded in the audit ledger.
       walletTools: {
         getBalances: (input) => getMetabotWalletBalances(getMetabotStore(), input),
-        getBalanceForAddress: (chain: WalletQueryChain, address: string) =>
-          getWalletBalanceSnapshot(chain, address),
+        getBalanceForAddress: (chain: WalletQueryChain, address: string, options?: WalletQueryOptions) =>
+          getWalletBalanceSnapshot(chain, address, options),
         resolveMetabotIdByName: (name) => resolveMetabotIdByName(getMetabotStore(), name),
         getMetabotMvcAddress: (metabotId) =>
           getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
@@ -21136,27 +21137,40 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         mvcAddr = options.addresses.mvc ?? mvcAddr;
         dogeAddr = options.addresses.doge ?? dogeAddr;
       }
-      const results: { btc?: { value: number; unit: string }; mvc?: { value: number; unit: string }; doge?: { value: number; unit: string } } = {};
+      // 2026-11-21 balance-truth line: a failed or degraded read must never
+      // render as a fake 0 — that showed an empty wallet during indexer
+      // outages while the chain held funds. `value: null` + error text means
+      // "unavailable" to the renderer; a degraded MVC snapshot carries its
+      // verdict reason so the panel can flag it instead of stating it.
+      const results: Record<string, { value: number | null; unit: string; degraded?: string; error?: string }> = {};
       const promises: Promise<void>[] = [];
       if (btcAddr) {
         promises.push(
           getAddressBalance('btc', btcAddr)
             .then((r) => { results.btc = { value: r.value, unit: r.unit }; })
-            .catch(() => { results.btc = { value: 0, unit: 'BTC' }; })
+            .catch((error) => { results.btc = { value: null, unit: 'BTC', error: error instanceof Error ? error.message : String(error) }; })
         );
       }
       if (mvcAddr) {
         promises.push(
-          getAddressBalance('mvc', mvcAddr)
-            .then((r) => { results.mvc = { value: r.value, unit: r.unit }; })
-            .catch(() => { results.mvc = { value: 0, unit: 'SPACE' }; })
+          getWalletBalanceSnapshot('mvc', mvcAddr)
+            .then((snapshot) => {
+              results.mvc = {
+                value: snapshot.total_sats / 100_000_000,
+                unit: snapshot.unit,
+                ...(snapshot.mvc_truth?.verdict === 'degraded'
+                  ? { degraded: snapshot.mvc_truth.reason || 'indexer read looks unreliable' }
+                  : {}),
+              };
+            })
+            .catch((error) => { results.mvc = { value: null, unit: 'SPACE', error: error instanceof Error ? error.message : String(error) }; })
         );
       }
       if (dogeAddr) {
         promises.push(
           getAddressBalance('doge', dogeAddr)
             .then((r) => { results.doge = { value: r.value, unit: r.unit }; })
-            .catch(() => { results.doge = { value: 0, unit: 'DOGE' }; })
+            .catch((error) => { results.doge = { value: null, unit: 'DOGE', error: error instanceof Error ? error.message : String(error) }; })
         );
       }
       await Promise.all(promises);

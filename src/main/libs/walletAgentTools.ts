@@ -19,6 +19,7 @@ import type {
   WalletBalanceQueryResult,
   WalletBalanceSnapshot,
   WalletQueryChain,
+  WalletQueryOptions,
 } from '../services/walletQueryService';
 import type { MvcNftBalance, MvcNftSellOrders, MvcNftSellOrder } from '../services/mvcNftService';
 import type { Mrc20Asset } from '../services/mrc20Service';
@@ -32,8 +33,8 @@ import { withNftCardHostStamp } from './tradeActivityStamp';
  * the channel-B gate renders the host's approval dialog.
  */
 export type WalletToolsControl = {
-  getBalances(input: { metabotIds?: number[]; chains?: WalletQueryChain[] }): Promise<WalletBalanceQueryResult>;
-  getBalanceForAddress(chain: WalletQueryChain, address: string): Promise<WalletBalanceSnapshot>;
+  getBalances(input: { metabotIds?: number[]; chains?: WalletQueryChain[]; options?: WalletQueryOptions }): Promise<WalletBalanceQueryResult>;
+  getBalanceForAddress(chain: WalletQueryChain, address: string, options?: WalletQueryOptions): Promise<WalletBalanceSnapshot>;
   resolveMetabotIdByName(name: string): number | null;
   getMetabotMvcAddress(metabotId: number): string | null;
   transfer(
@@ -176,6 +177,24 @@ function formatSnapshot(snapshot: WalletBalanceSnapshot): string {
       `- carrier-locked: ${snapshot.carrier_locked_sats} sats in sub-1000-sat UTXOs ` +
         `(MRC20/inscription carriers — NOT plain-spendable; plain-spendable = ${snapshot.total_sats - (snapshot.carrier_locked_sats ?? 0)} sats)`,
     );
+  }
+  const truth = snapshot.mvc_truth;
+  if (truth) {
+    if (truth.verdict === 'ok') {
+      if (truth.history_complete === true && truth.history_total_sats != null) {
+        lines.push(`- verified: transaction history sum agrees (${truth.history_total_sats} sats over ${truth.history_tx_count} txs)`);
+      }
+    } else {
+      // Degraded read: surface the verdict, the numbers behind it, and the
+      // fixed rule — the agent must never report a broken read as fact.
+      lines.push(`- verdict: DEGRADED — ${truth.reason || 'read path unreliable'}`);
+      lines.push(
+        `- cross-check: indexer view ${truth.index_total_sats} sats / UTXO list sum ${truth.utxo_listed_sum_sats} sats (${truth.utxo_listed_count} listed` +
+          `${truth.index_utxo_count != null ? ` of ${truth.index_utxo_count} counted` : ''})` +
+          `${truth.history_total_sats != null ? ` / history sum ${truth.history_total_sats} sats (${truth.history_complete === false ? 'partial walk' : 'complete walk'} over ${truth.history_tx_count} txs)` : ''}`,
+      );
+      lines.push(`- rule: ${truth.guidance}`);
+    }
   }
   return lines.join('\n');
 }
@@ -354,9 +373,11 @@ export function buildWalletAgentTools(deps: {
   const walletBalance = tool(
     'wallet_balance',
     [
-      'Query wallet balances (UTXO sums) for local MetaBots by id, name, or raw address, optionally per chain.',
+      'Query wallet balances for local MetaBots by id, name, or raw address, optionally per chain.',
       'Use when the user asks for a bot wallet balance, "全班余额一览", or before planning on-chain work that costs fees. Batch multiple metabot_ids in ONE call (add names for name-based lookup).',
-      'Read-only public chain data: MVC/DOGE walk the Metalet utxo-list (flag pagination), BTC uses the v3 btc-utxo endpoint. Balance is the spendable total in sats (confirmed + unconfirmed — unconfirmed funds are usable on these chains) plus the query time.',
+      'Read-only public chain data. The MVC headline equals what Metalet displays (indexer confirmed + unconfirmed — unconfirmed funds are usable on these chains) and is cross-checked against the UTXO list; suspicious reads are escalated to a transaction-history verification.',
+      'A DEGRADED verdict means the indexer read path looks unreliable (outage, lag, or missing rows): NEVER report the wallet as spent-out/empty/zero from a degraded read — surface the verdict, cross-check Metalet/on-chain, and tell the owner. This class of misreport caused a real incident (a funded wallet read as 0).',
+      'Pass deep=true when a balance number is disputed or a chain write just failed with a funding error: it walks the address transaction history (bounded) and verifies the headline against it.',
       'Batch queries cover the LOCAL metabot roster plus explicitly passed addresses only.',
     ].join(' '),
     {
@@ -376,14 +397,23 @@ export function buildWalletAgentTools(deps: {
         .enum(['mvc', 'btc', 'doge'])
         .optional()
         .describe('Limit to one chain; omit for all three.'),
+      deep: z
+        .boolean()
+        .optional()
+        .describe('MVC only: force transaction-history verification of the balance. Use for disputed numbers or after funding failures.'),
     },
     async (args: {
       metabot_ids?: number[];
       names?: string[];
       address?: string;
       chain?: WalletQueryChain;
+      deep?: boolean;
     }) => {
       const chains: WalletQueryChain[] | undefined = args.chain ? [args.chain] : undefined;
+      // Deep history verification is an MVC per-address question: batched
+      // roster queries keep the light path (auto-escalation still covers
+      // suspicious reads there).
+      const queryOptions = args.chain === 'mvc' && args.deep === true ? { deep: true as const } : {};
       const metabotIds: number[] = [];
       for (const raw of args.metabot_ids ?? []) {
         const id = Number(raw);
@@ -402,7 +432,7 @@ export function buildWalletAgentTools(deps: {
       const sections: string[] = [];
       try {
         if (metabotIds.length > 0) {
-          const result = await control.getBalances({ metabotIds, chains });
+          const result = await control.getBalances({ metabotIds, chains, options: queryOptions });
           sections.push(...result.entries.map(formatBalanceEntry));
         }
         const address = asString(args.address);
@@ -410,7 +440,7 @@ export function buildWalletAgentTools(deps: {
           const list = chains ?? (['mvc', 'btc', 'doge'] as WalletQueryChain[]);
           for (const chain of list) {
             try {
-              sections.push(formatSnapshot(await control.getBalanceForAddress(chain, address)));
+              sections.push(formatSnapshot(await control.getBalanceForAddress(chain, address, queryOptions)));
             } catch (error) {
               sections.push(`- ${chain}: lookup failed: ${error instanceof Error ? error.message : String(error)}`);
             }

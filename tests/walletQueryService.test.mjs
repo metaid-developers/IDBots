@@ -63,13 +63,16 @@ function createMetabotStore() {
   };
 }
 
-test('v4 utxo-list: flag pagination summed into confirmed/unconfirmed/total', async () => {
+test('mvc truth layer: headline from balance-info (Metalet parity), cross-checked against the utxo walk', async () => {
   const { getWalletBalanceSnapshot } = loadWalletQueryService();
   const originalFetch = global.fetch;
   const seenUrls = [];
   global.fetch = async (url) => {
     const href = String(url);
     seenUrls.push(href);
+    if (href.includes('/mvc/address/balance-info')) {
+      return jsonResponse({ code: 0, data: { address: '1MvcAddr1', confirmed: 125, unconfirmed: 50, utxoCount: 3 } });
+    }
     if (!href.includes('/wallet-api/v4/mvc/address/utxo-list')) {
       throw new Error(`unexpected fetch: ${href}`);
     }
@@ -95,14 +98,182 @@ test('v4 utxo-list: flag pagination summed into confirmed/unconfirmed/total', as
   };
   try {
     const snapshot = await getWalletBalanceSnapshot('mvc', '1MvcAddr1');
-    assert.equal(snapshot.confirmed_sats, 125);
+    assert.equal(snapshot.confirmed_sats, 125, 'headline confirmed comes from the balance endpoint');
     assert.equal(snapshot.unconfirmed_sats, 50);
     assert.equal(snapshot.total_sats, 175);
-    assert.equal(snapshot.utxo_count, 3);
+    assert.equal(snapshot.utxo_count, 3, 'utxo_count is the listed row count');
     assert.equal(snapshot.unit, 'SPACE');
-    assert.equal(seenUrls.length, 2);
-    assert.ok(seenUrls[1].includes('flag=page-2'));
-    assert.ok(seenUrls[0].includes('net=livenet'));
+    assert.equal(snapshot.mvc_truth.verdict, 'ok');
+    assert.equal(snapshot.mvc_truth.index_utxo_count, 3);
+    assert.equal(snapshot.mvc_truth.utxo_listed_sum_sats, 175);
+    assert.ok(seenUrls.some((u) => u.includes('/mvc/address/balance-info')), 'the balance endpoint is read');
+    assert.ok(seenUrls.some((u) => u.includes('flag=page-2')), 'the utxo walk still paginates');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('mvc truth layer: degraded fallback when the balance endpoint is down', async () => {
+  const { getWalletBalanceSnapshot } = loadWalletQueryService();
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes('/mvc/address/balance-info')) {
+      return new Response('404 page not found', { status: 404 });
+    }
+    if (href.includes('/mvc/address/utxo-list')) {
+      return jsonResponse({ code: 0, data: { list: [{ txid: 'a', outIndex: 0, value: 175, height: 100 }] } });
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  try {
+    const snapshot = await getWalletBalanceSnapshot('mvc', '1MvcAddr1');
+    assert.equal(snapshot.total_sats, 175, 'figures fall back to the utxo walk');
+    assert.equal(snapshot.mvc_truth.verdict, 'degraded');
+    assert.match(snapshot.mvc_truth.reason, /balance endpoint unavailable/);
+    assert.match(snapshot.mvc_truth.guidance, /Do NOT report this wallet as spent-out/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('mvc truth layer: empty-wallet reading with history escalates and degrades', async () => {
+  const { getWalletBalanceSnapshot } = loadWalletQueryService();
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes('/mvc/address/balance-info')) {
+      return jsonResponse({ code: 0, data: { confirmed: 0, unconfirmed: 0, utxoCount: 0 } });
+    }
+    if (href.includes('/mvc/address/utxo-list')) {
+      return jsonResponse({ code: 0, data: { list: [] } });
+    }
+    if (href.includes('/mvc/address/tx-list')) {
+      // One page, churn-only net (income == outcome): the probe reads
+      // serverTotal > 0 → the index may be under-reporting even though the
+      // history sum agrees the wallet nets to zero.
+      return jsonResponse({ code: 0, data: { total: 500, list: [{ txid: 'a'.repeat(64), income: 1000, outcome: 1000, height: 100, flag: '2' }] } });
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  try {
+    const snapshot = await getWalletBalanceSnapshot('mvc', '1MvcAddr1');
+    assert.equal(snapshot.mvc_truth.verdict, 'degraded');
+    assert.match(snapshot.mvc_truth.reason, /empty wallet but the address has transaction history/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('mvc truth layer: genuine zero when history is also empty', async () => {
+  const { getWalletBalanceSnapshot } = loadWalletQueryService();
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes('/mvc/address/balance-info')) {
+      return jsonResponse({ code: 0, data: { confirmed: 0, unconfirmed: 0, utxoCount: 0 } });
+    }
+    if (href.includes('/mvc/address/utxo-list')) {
+      return jsonResponse({ code: 0, data: { list: [] } });
+    }
+    if (href.includes('/mvc/address/tx-list')) {
+      return jsonResponse({ code: 0, data: { total: 0, list: [] } });
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  try {
+    const snapshot = await getWalletBalanceSnapshot('mvc', '1MvcAddr1');
+    assert.equal(snapshot.total_sats, 0);
+    assert.equal(snapshot.mvc_truth.verdict, 'ok', 'a wallet with no history at all is genuinely empty');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('mvc truth layer: deep verification switches the headline to the history sum on divergence', async () => {
+  const { getWalletBalanceSnapshot } = loadWalletQueryService();
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes('/mvc/address/balance-info')) {
+      return jsonResponse({ code: 0, data: { confirmed: 8169543, unconfirmed: 0, utxoCount: 32 } });
+    }
+    if (href.includes('/mvc/address/utxo-list')) {
+      return jsonResponse({ code: 0, data: { list: [{ txid: 'a', outIndex: 0, value: 8169543, height: 100 }] } });
+    }
+    if (href.includes('/mvc/address/tx-list')) {
+      if (!href.includes('flag=')) {
+        const rows = Array.from({ length: 10 }, (_, i) => ({
+          txid: `${String(i).padStart(2, '0')}${'a'.repeat(62)}`,
+          income: 55_000_000,
+          outcome: 0,
+          height: 100,
+          flag: 'page-2',
+        }));
+        return jsonResponse({ code: 0, data: { total: 20, list: rows } });
+      }
+      return jsonResponse({ code: 0, data: { total: 20, list: [] } });
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  try {
+    const snapshot = await getWalletBalanceSnapshot('mvc', '1MvcAddr1', { deep: true });
+    assert.equal(snapshot.total_sats, 550_000_000, 'the on-chain history sum wins the headline');
+    assert.equal(snapshot.mvc_truth.verdict, 'degraded');
+    assert.match(snapshot.mvc_truth.reason, /disagrees with transaction history/);
+    assert.equal(snapshot.mvc_truth.history_complete, true);
+    assert.equal(snapshot.mvc_truth.index_total_sats, 8_169_543, 'the index view is preserved for the cross-check line');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('mvc truth layer: deep on an oversized history reports the bound instead of verifying', async () => {
+  const { getWalletBalanceSnapshot } = loadWalletQueryService();
+  const originalFetch = global.fetch;
+  let page = 0;
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes('/mvc/address/balance-info')) {
+      return jsonResponse({ code: 0, data: { confirmed: 1000, unconfirmed: 0, utxoCount: 1 } });
+    }
+    if (href.includes('/mvc/address/utxo-list')) {
+      return jsonResponse({ code: 0, data: { list: [{ txid: 'a', outIndex: 0, value: 1000, height: 100 }] } });
+    }
+    if (href.includes('/mvc/address/tx-list')) {
+      page += 1;
+      const rows = Array.from({ length: 10 }, (_, i) => ({
+        txid: `${String(page % 100).padStart(2, '0')}${String(i).padStart(2, '0')}${'b'.repeat(60)}`,
+        income: 10,
+        outcome: 10,
+        height: 100,
+        flag: `p${page + 1}`,
+      }));
+      return jsonResponse({ code: 0, data: { total: 999999, list: rows } });
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  try {
+    const snapshot = await getWalletBalanceSnapshot('mvc', '1MvcAddr1', { deep: true });
+    assert.equal(snapshot.mvc_truth.verdict, 'degraded');
+    assert.match(snapshot.mvc_truth.reason, /could not be fully verified from history/);
+    assert.equal(snapshot.mvc_truth.history_complete, false);
+    assert.equal(snapshot.total_sats, 1000, 'the headline stays on the index view when history is unverified');
+    assert.ok(page > 1, 'the walk actually paged');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('mvc truth layer: both endpoints failing throws the aggregate error', async () => {
+  const { getWalletBalanceSnapshot } = loadWalletQueryService();
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response('503 service unavailable', { status: 503 });
+  try {
+    await assert.rejects(
+      () => getWalletBalanceSnapshot('mvc', '1MvcAddr1'),
+      /mvc balance unavailable: balance-info .+ utxo-list /,
+    );
   } finally {
     global.fetch = originalFetch;
   }
@@ -155,6 +326,9 @@ test('getMetabotWalletBalances batches bots and isolates per-chain errors', asyn
   const originalFetch = global.fetch;
   global.fetch = async (url) => {
     const href = String(url);
+    if (href.includes('/mvc/address/balance-info')) {
+      return jsonResponse({ code: 0, data: { confirmed: 5, unconfirmed: 0, utxoCount: 1 } });
+    }
     if (href.includes('/mvc/address/utxo-list')) {
       return jsonResponse({ code: 0, data: { list: [{ txid: 'x', outIndex: 0, value: 5, height: 9 }] } });
     }
@@ -189,6 +363,9 @@ test('appendMvcBalanceHint enriches balance errors only', async () => {
   const originalFetch = global.fetch;
   global.fetch = async (url) => {
     const href = String(url);
+    if (href.includes('/mvc/address/balance-info')) {
+      return jsonResponse({ code: 0, data: { confirmed: 1200, unconfirmed: 0, utxoCount: 1 } });
+    }
     if (href.includes('/mvc/address/utxo-list')) {
       return jsonResponse({
         code: 0,
@@ -209,6 +386,23 @@ test('appendMvcBalanceHint enriches balance errors only', async () => {
     assert.match(enriched, /insufficient balance: have 1200 sats \(0\.00001200 SPACE\)/);
     assert.match(enriched, /need ~6000 sats/);
     assert.match(enriched, /confirmed 1200 sats \/ unconfirmed 0 sats at 1MvcAddr1/);
+    assert.doesNotMatch(enriched, /DEGRADED/, 'a healthy read carries no degraded warning');
+
+    // Broken balance endpoint: the hint must warn instead of implying an
+    // empty wallet (2026-11-20: bots claimed "funds are gone" on this read).
+    global.fetch = async (url) => {
+      const href = String(url);
+      if (href.includes('/mvc/address/balance-info')) {
+        return new Response('404 page not found', { status: 404 });
+      }
+      if (href.includes('/mvc/address/utxo-list')) {
+        return jsonResponse({ code: 0, data: { list: [{ txid: 'x', outIndex: 0, value: 1200, height: 5 }] } });
+      }
+      throw new Error(`unexpected fetch: ${href}`);
+    };
+    const degraded = await appendMvcBalanceHint(createMetabotStore(), 1, 'no utxo available for spend');
+    assert.match(degraded, /WARNING the balance read is DEGRADED/);
+    assert.match(degraded, /may NOT actually be empty/);
   } finally {
     global.fetch = originalFetch;
   }
@@ -219,6 +413,9 @@ test('withMvcBalanceHint rethrows the SAME error with data preserved, mvc only',
   const originalFetch = global.fetch;
   global.fetch = async (url) => {
     const href = String(url);
+    if (href.includes('/mvc/address/balance-info')) {
+      return jsonResponse({ code: 0, data: { confirmed: 42, unconfirmed: 0, utxoCount: 1 } });
+    }
     if (href.includes('/mvc/address/utxo-list')) {
       return jsonResponse({ code: 0, data: { list: [{ txid: 'x', outIndex: 0, value: 42, height: 5 }] } });
     }
