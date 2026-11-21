@@ -25,13 +25,16 @@ import { getMeBalance } from '../services/mePointsService';
 import { noteOwnerAskCancelled } from '../services/pendingOwnerAskBridge';
 import {
   filterServerModeAgentTools,
-  isMobileOwnerChatSession as isMobileOwnerChatSessionProfile,
-  isMobileToolVisible,
   resolveDshRuntimeIdleTtlMs,
-  resolveMobileToolExpansions,
-  resolveMobileToolMountPolicy,
-  type MobileToolExpansion,
 } from '../server/serverMode';
+import { resolveConversationProfile, type ConversationProfile, type ExecutionRole } from './conversationProfile';
+import {
+  isMobileToolVisible,
+  resolveMobileToolExpansions,
+  resolveToolMountPolicy,
+  type MobileToolExpansion,
+} from './toolCapabilityRegistry';
+import { buildOwnerInteractionPrompt, type OwnerPromptCapabilities } from './ownerInteractionPrompt';
 import { isDshShutdownError } from './dshShutdownError';
 import { DSH_RUNTIME_BOOT_ERROR_CODE, isDshRuntimeBootError } from './dshRuntimeBootError';
 import { truncateUtf16Units } from './llmSafeText';
@@ -6988,20 +6991,44 @@ export class CoworkRunner extends EventEmitter {
    * effort rung. Unattended runs forked FROM a projector session are separate
    * unmarked sessions, so the autoOrigin guard keeps them professional.
    */
+  private resolveSessionExecutionRole(sessionId: string): ExecutionRole {
+    if (this.isWelcomeSession(sessionId)) return 'welcome';
+    if (this.isTwinSession(sessionId)) return 'twin';
+    return 'standard';
+  }
+
+  /**
+   * Single unified ConversationProfile for the current session/turn (P1).
+   * Centralizes hostEnv, surface, interactionStyle, presentation, and
+   * orthogonal policy flags so prompt composition, tool mounting, effort
+   * selection, and turn-ack streaming never disagree on the same session.
+   */
+  private resolveConversationProfile(sessionId: string): ConversationProfile {
+    const session = this.store.getSessionWithoutMessages?.(sessionId) ?? this.store.getSession?.(sessionId);
+    const sourceChannel = this.store.getConversationSourceContextBySession?.(sessionId)?.sourceChannel;
+    const activeSession = this.activeSessions.get(sessionId);
+    const imToolsAllowed = activeSession?.imTrust ? imTrustAllowsTools(activeSession.imTrust) : true;
+    const isUnattendedActiveMarker = Boolean(
+      activeSession?.metawebStudySession
+      || activeSession?.metawebSurfSession
+      || activeSession?.practiceSession,
+    );
+    return resolveConversationProfile({
+      serverMode: isServerMode(),
+      session,
+      sourceChannel,
+      executionRole: this.resolveSessionExecutionRole(sessionId),
+      imToolsAllowed,
+      isUnattendedActiveMarker,
+    });
+  }
+
   private isAssistantModeOwnerChatSession(sessionId: string): boolean {
-    const session = this.store.getSession(sessionId);
-    if (!session) return false;
-    if (session.assistantMode && !session.autoOrigin) return true;
-    return false;
+    return this.resolveConversationProfile(sessionId).isStudioOwnerChat;
   }
 
   private isMobileOwnerChatSession(sessionId: string): boolean {
-    if (!isServerMode()) return false;
-    return isMobileOwnerChatSessionProfile({
-      serverMode: true,
-      session: this.store.getSession?.(sessionId),
-      sourceChannel: this.store.getConversationSourceContextBySession?.(sessionId)?.sourceChannel,
-    });
+    return this.resolveConversationProfile(sessionId).isMobileOwnerChat;
   }
 
   /**
@@ -7037,54 +7064,15 @@ export class CoworkRunner extends EventEmitter {
    * section; the renderer embed policy mirrors this from the session payload.
    */
   isProjectorModeSession(sessionId: string): boolean {
-    if (isServerMode()) return false;
-    const session = this.store.getSession(sessionId);
-    return !!session?.assistantMode && (session.sessionType ?? 'standard') === 'browser';
+    return this.resolveConversationProfile(sessionId).isProjectorMode;
   }
 
   /**
    * Whether this session's turns are machine-driven rather than a human
-   * waiting on the reply: auto-created runs (schedule/longterm/orchestration),
-   * Meta-to-Meta A2A and MetaWeb group/order conversations, group tasks, and
-   * Bot Browser pages are unattended; regular cowork UI chats and human IM
-   * (Telegram etc.) conversations are not. The "auto" reasoning-effort rung
-   * keys off this split: human-sent messages classify per message through the
-   * cerebellum effort selector (dialogue latency is the scarce resource),
-   * unattended turns resolve straight to the bot brain pick / max (see
-   * resolveUnattendedAutoEffort — the work product is the only output that
-   * matters). Mirrors the assistant-mode gate's session read, including its
-   * cowork_ui→metaweb_private episode flip, so the two postures never
-   * disagree about the same session — with one explicit exemption: Studio
-   * assistant-mode owner chats (browser-type sessions carrying the
-   * assistantMode marker) are interactive owner conversations, so they take
-   * the attended path (per-message cerebellum classification + the
-   * assistant-mode effort rung) instead of the browser session type's
-   * unattended default. Without this exemption the browser branch below
-   * classifies every Studio turn unattended: the cerebellum never fires and
-   * "auto" resolves to max on every turn, so the assistant mode's
-   * no-reasoning promise was unreachable for exactly the sessions it was
-   * built for (2026-11-11 production forensics: Studio turns mapped 'max'
-   * 33/33 while BotWorks stayed off/low on the same models).
+   * waiting on the reply (delegated to `resolveConversationProfile`).
    */
   private isUnattendedAutomationSession(sessionId: string): boolean {
-    const session = this.store.getSession(sessionId);
-    if (!session) return false;
-    if (session.autoOrigin) return true;
-    const sourceChannel = this.store.getConversationSourceContextBySession(sessionId).sourceChannel;
-    // IM conversations (im:<platform>[:direct|:group]) carry human messages —
-    // including direct chats, which the IM gateway stores under the 'a2a'
-    // session type; check the channel BEFORE the session type.
-    if (typeof sourceChannel === 'string' && sourceChannel.startsWith('im:')) return false;
-    if (this.isMobileOwnerChatSession(sessionId)) return false;
-    // Studio assistant-mode owner chats: a human is waiting on every reply.
-    // Checked before the session-type branch — the assistantMode marker is
-    // the more specific signal (isAssistantModeOwnerChatSession itself
-    // excludes autoOrigin sessions, so forked unattended runs stay here).
-    if (this.isAssistantModeOwnerChatSession(sessionId)) return false;
-    if ((session.sessionType ?? 'standard') !== 'standard') return true;
-    // getConversationSourceContextBySession defaults to 'cowork_ui' when no
-    // mapping row exists (pre-mapping legacy sessions are UI-created chats).
-    return sourceChannel !== 'cowork_ui';
+    return this.resolveConversationProfile(sessionId).isUnattendedAutomation;
   }
 
   private buildMemoryStrategyPrompt(memoryEnabled: boolean, includeMemoryStrategy: boolean, implicitUpdateEnabled = false): string | null {
@@ -7628,8 +7616,20 @@ export class CoworkRunner extends EventEmitter {
     assistantMode = false,
     projectorMode = false,
     projectorHeld = false,
-    mobileMode = false
+    mobileMode = false,
+    ownerCapabilities?: OwnerPromptCapabilities
   ): string {
+    const ownerInteractionCapabilities: OwnerPromptCapabilities | null =
+      assistantMode || mobileMode
+        ? (ownerCapabilities ?? {
+            surface: mobileMode ? 'mobile_cloud' : 'desktop_studio',
+            presentation: mobileMode ? 'mobile_phone' : projectorMode ? 'projector_right_pane' : 'chat_only',
+            hasOwnerUpdate: true,
+            hasProjector: !mobileMode && projectorMode,
+            hasDesktopBrowser: !mobileMode,
+            hasWebSearch: true,
+          })
+        : null;
     return composePromptSections([
       { name: 'persona:metabot', order: PROMPT_SECTION_ORDER.PERSONA, text: personaBlock },
       {
@@ -7693,15 +7693,31 @@ export class CoworkRunner extends EventEmitter {
       // caller passes the full catalog-inline section instead.
       { name: 'idbots:skills', order: PROMPT_SECTION_ORDER.SKILLS, text: skillsSection ?? '' },
       { name: 'idbots:base', order: PROMPT_SECTION_ORDER.BASE, text: baseSystemPrompt?.trim() },
-      // Assistant chat-experience mode: mounted AFTER idbots:base so its
-      // personal-assistant reporting rules read as an override of the base
-      // prompt's User Update Protocol. Gated by the caller to regular
-      // interactive owner chats (see isAssistantModeOwnerChatSession).
+      // Shared owner-interaction contract: mounted once before surface-specific
+      // Studio/Mobile mode sections so language, <instant_ack>, owner_update,
+      // recall, and active capability boundaries have a single source of truth.
+      ...(ownerInteractionCapabilities
+        ? [{
+            name: 'idbots:owner-interaction',
+            order: PROMPT_SECTION_ORDER.OWNER_INTERACTION,
+            text: buildOwnerInteractionPrompt(ownerInteractionCapabilities),
+          }]
+        : []),
+      // Assistant chat-experience mode: mounted AFTER idbots:owner-interaction
+      // with Studio-specific reporting and inline embed overrides.
       ...(assistantMode
-        ? [{ name: 'idbots:assistant-mode', order: PROMPT_SECTION_ORDER.ASSISTANT_MODE, text: buildAssistantModePrompt(projectorMode) }]
+        ? [{
+            name: 'idbots:assistant-mode',
+            order: PROMPT_SECTION_ORDER.ASSISTANT_MODE,
+            text: buildAssistantModePrompt(projectorMode, { includeSharedOwnerRules: false }),
+          }]
         : []),
       ...(mobileMode
-        ? [{ name: 'idbots:mobile-mode', order: PROMPT_SECTION_ORDER.MOBILE_MODE, text: buildMobileModePrompt() }]
+        ? [{
+            name: 'idbots:mobile-mode',
+            order: PROMPT_SECTION_ORDER.MOBILE_MODE,
+            text: buildMobileModePrompt({ includeSharedOwnerRules: false }),
+          }]
         : []),
       // Bot Internet projector mode (owner ruling 2026-11-07): mounted only
       // for sessions carrying the per-session assistantMode marker from the
@@ -10081,7 +10097,25 @@ export class CoworkRunner extends EventEmitter {
       const systemPromptProfile = this.getSystemPromptProfileForSession(sessionId);
       const { skillsSection, skillsCatalogMode } = this.resolveSkillsPromptForTurn(sessionId, activeSession, baseSystemPrompt);
       activeSession.skillsCatalogMode = skillsCatalogMode;
-      const mobileOwnerChatMode = this.isMobileOwnerChatSession(sessionId);
+      const conversationProfile = this.resolveConversationProfile(sessionId);
+      const mobileExpansionsForPrompt = conversationProfile.isMobileOwnerChat
+        ? this.updateMobileToolExpansions(sessionId, prompt)
+        : [];
+      const ownerPromptCapabilities: OwnerPromptCapabilities | undefined = conversationProfile.isOwnerProgressChat
+        ? {
+            surface: conversationProfile.isMobileOwnerChat ? 'mobile_cloud' : 'desktop_studio',
+            presentation: conversationProfile.presentation === 'mobile_phone'
+              ? 'mobile_phone'
+              : conversationProfile.isProjectorMode
+                ? 'projector_right_pane'
+                : 'chat_only',
+            hasOwnerUpdate: conversationProfile.isOwnerProgressChat,
+            hasProjector: conversationProfile.isProjectorMode,
+            hasDesktopBrowser: conversationProfile.hostEnv === 'desktop',
+            hasWebSearch: true,
+            mobileExpansions: mobileExpansionsForPrompt,
+          }
+        : undefined;
       const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
         baseSystemPrompt,
         this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
@@ -10096,10 +10130,11 @@ export class CoworkRunner extends EventEmitter {
           systemPromptProfile.metawebMode,
           this.getMetawebPromptTier(sessionId, activeSession),
         ),
-        !mobileOwnerChatMode && this.isAssistantModeOwnerChatSession(sessionId),
-        !mobileOwnerChatMode && this.isProjectorModeSession(sessionId),
-        !mobileOwnerChatMode && this.isProjectorHeldByStage?.(sessionId) === true,
-        mobileOwnerChatMode
+        conversationProfile.isStudioOwnerChat,
+        conversationProfile.isProjectorMode,
+        conversationProfile.isProjectorMode && this.isProjectorHeldByStage?.(sessionId) === true,
+        conversationProfile.isMobileOwnerChat,
+        ownerPromptCapabilities
       );
       this.trackSystemPromptHash(activeSession, sessionId, effectiveSystemPrompt);
 
@@ -10236,7 +10271,25 @@ export class CoworkRunner extends EventEmitter {
       const systemPromptProfile = this.getSystemPromptProfileForSession(sessionId);
       const { skillsSection, skillsCatalogMode } = this.resolveSkillsPromptForTurn(sessionId, activeSession, baseSystemPrompt);
       activeSession.skillsCatalogMode = skillsCatalogMode;
-      const mobileOwnerChatMode = this.isMobileOwnerChatSession(sessionId);
+      const conversationProfile = this.resolveConversationProfile(sessionId);
+      const mobileExpansionsForPrompt = conversationProfile.isMobileOwnerChat
+        ? this.updateMobileToolExpansions(sessionId, prompt)
+        : [];
+      const ownerPromptCapabilities: OwnerPromptCapabilities | undefined = conversationProfile.isOwnerProgressChat
+        ? {
+            surface: conversationProfile.isMobileOwnerChat ? 'mobile_cloud' : 'desktop_studio',
+            presentation: conversationProfile.presentation === 'mobile_phone'
+              ? 'mobile_phone'
+              : conversationProfile.isProjectorMode
+                ? 'projector_right_pane'
+                : 'chat_only',
+            hasOwnerUpdate: conversationProfile.isOwnerProgressChat,
+            hasProjector: conversationProfile.isProjectorMode,
+            hasDesktopBrowser: conversationProfile.hostEnv === 'desktop',
+            hasWebSearch: true,
+            mobileExpansions: mobileExpansionsForPrompt,
+          }
+        : undefined;
       const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
         baseSystemPrompt,
         this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
@@ -10251,10 +10304,11 @@ export class CoworkRunner extends EventEmitter {
           systemPromptProfile.metawebMode,
           this.getMetawebPromptTier(sessionId, activeSession),
         ),
-        !mobileOwnerChatMode && this.isAssistantModeOwnerChatSession(sessionId),
-        !mobileOwnerChatMode && this.isProjectorModeSession(sessionId),
-        !mobileOwnerChatMode && this.isProjectorHeldByStage?.(sessionId) === true,
-        mobileOwnerChatMode
+        conversationProfile.isStudioOwnerChat,
+        conversationProfile.isProjectorMode,
+        conversationProfile.isProjectorMode && this.isProjectorHeldByStage?.(sessionId) === true,
+        conversationProfile.isMobileOwnerChat,
+        ownerPromptCapabilities
       );
       this.trackSystemPromptHash(activeSession, sessionId, effectiveSystemPrompt);
 
@@ -12874,9 +12928,14 @@ export class CoworkRunner extends EventEmitter {
       const promptImagesPromise = this.collectDshPromptImages(prompt, cwd, modelLimits?.supportsVision === true);
       promptImagesPromise.catch(() => undefined);
       await this.syncDshSkillSessionEnv(dshSessionId, sessionId, cwd);
+      const conversationProfile = this.resolveConversationProfile(sessionId)
       const hostToolsBuilt = this.buildDshHostTools(sessionId, prompt)
-      const hostToolsForTurn = this.isMobileOwnerChatSession(sessionId)
-        ? hostToolsBuilt.filter((tool) => isMobileToolVisible(tool.name, this.mobileToolExpansions.get(sessionId) ?? []))
+      const hostToolsForTurn = conversationProfile.isMobileOwnerChat
+        ? hostToolsBuilt.filter((tool) => isMobileToolVisible(
+            tool.name,
+            this.mobileToolExpansions.get(sessionId) ?? [],
+            { executionRole: conversationProfile.executionRole },
+          ))
         : hostToolsBuilt
       // Hand-off boundary #1 (registry + pre-warm): a single tool whose
       // parameters are not a top-level object schema rejects the WHOLE
@@ -13042,11 +13101,9 @@ export class CoworkRunner extends EventEmitter {
       // mode check would strip marker sessions of the no-reasoning promise).
       // Group tasks, A2A/IM, long-term and scheduled automation sessions —
       // and every BotWorks owner chat — keep the professional chain.
-      const assistantMode = this.isAssistantModeOwnerChatSession(sessionId);
-      // Cloud mobile owner chats use the mobile personal-agent prompt and the
-      // same low-latency interaction posture as Studio; explicit picks still win.
-      const mobileOwnerChatMode = this.isMobileOwnerChatSession(sessionId);
-      const fastOwnerChatMode = assistantMode || mobileOwnerChatMode;
+      const assistantMode = conversationProfile.isStudioOwnerChat;
+      const mobileOwnerChatMode = conversationProfile.isMobileOwnerChat;
+      const fastOwnerChatMode = conversationProfile.fastEffortMode;
       const sessionEffortPicked = effectiveEffortRung != null;
       // "Auto" rung verdict: null (no selector, unconfigured cerebellum,
       // timeout, malformed verdict) keeps the existing default chain below
@@ -15363,14 +15420,15 @@ export class CoworkRunner extends EventEmitter {
     // additionally start with financial/social families unmounted and expand
     // only on explicit intent. Expansions are sticky for the session so a
     // follow-up "continue" keeps its tool set.
-    const isStudioOwnerChat = this.isAssistantModeOwnerChatSession(sessionId);
-    const isMobileOwnerChat = this.isMobileOwnerChatSession(sessionId);
+    const conversationProfile = this.resolveConversationProfile(sessionId);
+    const isStudioOwnerChat = conversationProfile.isStudioOwnerChat;
+    const isMobileOwnerChat = conversationProfile.isMobileOwnerChat;
     const mobileExpansions = this.updateMobileToolExpansions(sessionId, currentUserText);
     const {
       workerEconomy: mountWorkerEconomyTools,
       financial: mountFinancialTools,
       social: mountSocialTools,
-    } = resolveMobileToolMountPolicy({ isStudioOwnerChat, isMobileOwnerChat, expansions: mobileExpansions });
+    } = resolveToolMountPolicy(conversationProfile, mobileExpansions);
     const memoryTools: any[] = [
       tool(
         'conversation_search',
@@ -16995,7 +17053,11 @@ export class CoworkRunner extends EventEmitter {
     // REQ-A-5: server mode never offers tools that depend on desktop-only
     // features (Bot Browser, OS screenshots, local MetaApps/Projects).
     const visibleMemoryTools = isMobileOwnerChat
-      ? memoryTools.filter((item) => isMobileToolVisible(String(item?.name ?? ''), mobileExpansions))
+      ? memoryTools.filter((item) => isMobileToolVisible(
+          String(item?.name ?? ''),
+          mobileExpansions,
+          { executionRole: conversationProfile.executionRole },
+        ))
       : memoryTools;
     return filterServerModeAgentTools(visibleMemoryTools);
   }

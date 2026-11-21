@@ -17,35 +17,42 @@ const coworkRunnerSource = readFileSync(join(here, '../src/main/libs/coworkRunne
 const claudeSettingsSource = readFileSync(join(here, '../src/main/libs/claudeSettings.ts'), 'utf8');
 
 test('the assistant-mode prompt section mounts only behind the per-turn gate', () => {
-  // The composer mounts the section only when its assistantMode argument is
-  // on — professional mode never carries the section.
+  // The composer mounts idbots:owner-interaction + idbots:assistant-mode only
+  // when its assistantMode argument is on — professional mode never carries them.
   assert.ok(
-    coworkRunnerSource.includes("assistantMode\n        ? [{ name: 'idbots:assistant-mode'"),
-    'composeEffectiveSystemPrompt must mount the section only when its assistantMode argument is on',
+    coworkRunnerSource.includes("name: 'idbots:assistant-mode'"),
+    'composeEffectiveSystemPrompt must mount idbots:assistant-mode',
   );
-  // Both call sites (session start and continue) must resolve the gate
-  // per turn — never a value cached at session start.
-  const gateCalls = coworkRunnerSource.match(/this\.isAssistantModeOwnerChatSession\(sessionId\)/g) ?? [];
+  assert.ok(
+    coworkRunnerSource.includes("name: 'idbots:owner-interaction'"),
+    'composeEffectiveSystemPrompt must mount the shared idbots:owner-interaction layer',
+  );
+  // Both call sites (session start and continue) resolve ConversationProfile per turn.
+  const gateCalls = coworkRunnerSource.match(/const conversationProfile = this\.resolveConversationProfile\(sessionId\);/g) ?? [];
   assert.ok(
     gateCalls.length >= 2,
-    'composeEffectiveSystemPrompt call sites must evaluate the gate per turn (start + continue)',
+    'composeEffectiveSystemPrompt call sites must evaluate ConversationProfile per turn (start + continue)',
   );
 });
 
 test('the gate is marker-only under the 2026-11-09 surface ruling', () => {
+  const profileSource = readFileSync(join(here, '../src/main/libs/conversationProfile.ts'), 'utf8');
   const gate = coworkRunnerSource.match(
     /private isAssistantModeOwnerChatSession\(sessionId: string\): boolean \{[\s\S]*?\n  \}/,
   );
   assert.ok(gate, 'isAssistantModeOwnerChatSession must exist');
-  const body = gate[0];
   assert.ok(
-    body.includes('session.assistantMode && !session.autoOrigin'),
-    'the gate must keep the per-session Studio marker branch with its autoOrigin guard',
+    gate[0].includes('return this.resolveConversationProfile(sessionId).isStudioOwnerChat;'),
+    'isAssistantModeOwnerChatSession must delegate to resolveConversationProfile',
+  );
+  assert.ok(
+    profileSource.includes('session.autoOrigin') && profileSource.includes("hostEnv === 'desktop' && Boolean(session.assistantMode)"),
+    'ConversationProfile must keep the per-session Studio marker branch with its autoOrigin guard',
   );
   // The retired Settings value must not be read anywhere in the runner —
   // the mode is decided by the face (renderer) and the marker (backend).
   assert.ok(
-    !body.includes('getPersistedChatExperienceMode'),
+    !gate[0].includes('getPersistedChatExperienceMode'),
     'the gate must not read the retired persisted chat experience mode',
   );
   assert.ok(
@@ -64,25 +71,25 @@ test('the gate is marker-only under the 2026-11-09 surface ruling', () => {
 // The host ack owns the instant acknowledgment now; the model's opener must
 // carry substance instead, while the structural rules stay.
 test('the opening line bans bare-acknowledgment openers — the host ack owns the echo', () => {
-  const promptSource = readFileSync(join(here, '../src/main/libs/assistantModePrompt.ts'), 'utf8');
+  const sharedSource = readFileSync(join(here, '../src/main/libs/ownerInteractionPrompt.ts'), 'utf8');
   assert.ok(
-    promptSource.includes('NEVER open with a bare acknowledgment'),
+    sharedSource.includes('NEVER open with a bare acknowledgment'),
     'the opening line must ban bare acknowledgments (the host ack bubble already delivers one)',
   );
   assert.ok(
-    promptSource.includes('"收到"'),
+    sharedSource.includes('"收到"'),
     'the ban must name the observed Chinese opener',
   );
   assert.ok(
-    !promptSource.includes('fast first response'),
+    !sharedSource.includes('fast first response'),
     'the obsolete speed rationale is gone — the host ack owns first-response latency now',
   );
   assert.ok(
-    promptSource.includes('never start a task with tool calls alone'),
+    sharedSource.includes('never start a task with tool calls alone'),
     'the structural rules stay: no silent tool-call starts',
   );
   assert.ok(
-    promptSource.includes('never end a turn with only a promise'),
+    sharedSource.includes('never end a turn with only a promise'),
     'the structural rules stay: no promise-only endings',
   );
 });
@@ -98,64 +105,65 @@ test('the opening line bans bare-acknowledgment openers — the host ack owns th
 // suggestions.
 test('the assistant-mode prompt hard-pins the owner_update protocol, language, tone, and the final-report contract', () => {
   const promptSource = readFileSync(join(here, '../src/main/libs/assistantModePrompt.ts'), 'utf8');
+  const sharedSource = readFileSync(join(here, '../src/main/libs/ownerInteractionPrompt.ts'), 'utf8');
   // Language + tone hard prohibitions (unchanged incidents: 2026-10-13
   // English monologue, 2026-10-22 asymmetric language rule).
   // 2026-11-17: the hard rule now also covers user-visible tool
   // `description`/`title` fields, so the pin follows the strengthened
   // phrasing (head + tail, split to stay robust to the quoted field name).
   assert.ok(
-    promptSource.includes('NEVER narrate or fill user-visible tool')
-      && promptSource.includes('fields in English inside a non-English conversation'),
+    sharedSource.includes('NEVER narrate or fill user-visible tool')
+      && sharedSource.includes('fields in English inside a non-English conversation'),
     'the language rule must be a hard prohibition (English narration only when the user writes English)',
   );
   assert.ok(
-    promptSource.includes('中文 →'),
+    sharedSource.includes('中文 →'),
     'the language rule must carry an explicit Chinese example',
   );
   assert.ok(
-    promptSource.includes('NEVER self-talk'),
+    sharedSource.includes('NEVER self-talk'),
     'the tone rule must ban internal monologue ("let me check", "I miscounted")',
   );
   assert.ok(
-    promptSource.includes('已找到中文版的文件'),
+    sharedSource.includes('已找到中文版的文件'),
     'the tone rule must carry the user-facing status example',
   );
   // The visibility protocol: owner_update is the ONLY progress channel, with
   // the opening kind, a hard per-turn budget, and the three accepted kinds.
   assert.ok(
-    promptSource.includes('owner_update({ message, kind })'),
+    sharedSource.includes('owner_update({ message, kind })'),
     'owner_update({message,kind}) must be the only way to show progress before the final reply',
   );
   assert.ok(
-    promptSource.includes('kind: "opening"'),
+    sharedSource.includes('kind: "opening"'),
     'the opening update kind must be mandated for multi-step work',
   );
   assert.ok(
-    promptSource.includes('AT MOST 5 further owner_update calls'),
+    sharedSource.includes('AT MOST 5 further owner_update calls'),
     'at most 5 further updates after the opening',
   );
   assert.ok(
-    promptSource.includes('6 total including the opening'),
+    sharedSource.includes('6 total including the opening'),
     'the total per-turn budget must be stated (6 including the opening)',
   );
   assert.ok(
-    promptSource.includes('"milestone"'),
+    sharedSource.includes('"milestone"'),
     'kind "milestone" must be defined for meaningful results',
   );
   assert.ok(
-    promptSource.includes('"problem"'),
+    sharedSource.includes('"problem"'),
     'kind "problem" must be defined for owner-relevant blockers',
   );
   assert.ok(
-    promptSource.includes('ordinary mid-turn commentary is hidden'),
+    sharedSource.includes('ordinary mid-turn commentary is hidden'),
     'the prompt must state that plain commentary never reaches the owner',
   );
   assert.ok(
-    promptSource.includes('retries and self-corrections are internal'),
+    sharedSource.includes('retries and self-corrections are internal'),
     'routine retries and setup must stay internal',
   );
   assert.ok(
-    !promptSource.includes('2-4 narrations'),
+    !sharedSource.includes('2-4 narrations') && !promptSource.includes('2-4 narrations'),
     'the soft "2-4 narrations" budget is gone — it produced 20 bubbles in one turn (2026-10-24)',
   );
   // The final-report contract for complex tasks.
@@ -190,21 +198,21 @@ test('the assistant-mode prompt hard-pins the owner_update protocol, language, t
 // Chinese. The rule must stay symmetric: BOTH languages mandatory in their
 // own conversations, prohibited in the other's.
 test('the language rule is symmetric — English is as mandatory as 中文', () => {
-  const promptSource = readFileSync(join(here, '../src/main/libs/assistantModePrompt.ts'), 'utf8');
+  const sharedSource = readFileSync(join(here, '../src/main/libs/ownerInteractionPrompt.ts'), 'utf8');
   assert.ok(
-    !promptSource.includes('only if the user writes English may they be English'),
+    !sharedSource.includes('only if the user writes English may they be English'),
     'the permissive English phrasing regressed once and flipped English installs to Chinese output; English must be mandatory, not permitted',
   );
   assert.ok(
-    promptSource.includes('the user writes English → every narration, tool description/title, and the final reply are in English'),
+    sharedSource.includes('the user writes English → every narration, tool description/title, and the final reply are in English'),
     'the rule must state the English direction as mandatory, mirroring the 中文 direction',
   );
   assert.ok(
-    promptSource.includes('NEVER write 中文 in an English conversation'),
+    sharedSource.includes('NEVER write 中文 in an English conversation'),
     'the rule must prohibit Chinese output in English conversations just as it prohibits English narration in non-English ones',
   );
   assert.ok(
-    promptSource.includes('Found the Chinese edition of the file'),
+    sharedSource.includes('Found the Chinese edition of the file'),
     'the narration example must not be Chinese-only — a Chinese-only "Good" example pulls flash models toward Chinese even in English chats',
   );
 });
@@ -218,6 +226,7 @@ test('the language rule is symmetric — English is as mandatory as 中文', () 
 // they write.
 test('the section anchors the UI language for zero-user-input turns', () => {
   const promptSource = readFileSync(join(here, '../src/main/libs/assistantModePrompt.ts'), 'utf8');
+  const sharedSource = readFileSync(join(here, '../src/main/libs/ownerInteractionPrompt.ts'), 'utf8');
   const runnerSource = readFileSync(join(here, '../src/main/libs/coworkRunner.ts'), 'utf8');
   const mainSource = readFileSync(join(here, '../src/main/main.ts'), 'utf8');
   assert.ok(
@@ -229,19 +238,19 @@ test('the section anchors the UI language for zero-user-input turns', () => {
     'a frozen const cannot carry a locale-resolved anchor',
   );
   assert.ok(
-    promptSource.includes('tApp(ASSISTANT_MODE_LANGUAGE_ANCHOR_ZH, ASSISTANT_MODE_LANGUAGE_ANCHOR_EN)'),
+    sharedSource.includes('tApp(OWNER_LANGUAGE_ANCHOR_DESKTOP_ZH, OWNER_LANGUAGE_ANCHOR_DESKTOP_EN)'),
     'the anchor must ride tApp — the same persisted-app-language source the UI uses',
   );
   assert.ok(
-    promptSource.includes('until they write in another language, every visible line in this conversation'),
+    sharedSource.includes('until they write in another language, every visible line in this conversation'),
     'the English anchor must mandate English output for the whole conversation until the user writes otherwise',
   );
   assert.ok(
-    promptSource.includes('一律使用中文'),
+    sharedSource.includes('一律使用中文'),
     'the Chinese anchor must mandate Chinese output for the whole conversation until the owner writes otherwise',
   );
   assert.ok(
-    runnerSource.includes('text: buildAssistantModePrompt(projectorMode)'),
+    runnerSource.includes('text: buildAssistantModePrompt(projectorMode'),
     'the composer must mount the built section, not a stale const',
   );
   assert.ok(
@@ -272,8 +281,8 @@ test('the projector section exists, mounts after assistant-mode, and swaps the i
     'the projector section mounts right after assistant-mode (55)',
   );
   assert.ok(
-    runnerSource.includes('this.isProjectorModeSession(sessionId)'),
-    'the composer must gate the projector section on the per-session marker',
+    runnerSource.includes('conversationProfile.isProjectorMode'),
+    'the composer must gate the projector section on ConversationProfile',
   );
   assert.ok(
     runnerSource.includes("name: 'idbots:projector-mode'"),
@@ -285,32 +294,32 @@ test('the projector section exists, mounts after assistant-mode, and swaps the i
 // the Twin loses verbatim access to early turns. The prompts must point it at
 // conversation_recall for THIS conversation's earlier details — and forbid
 // naming the summarization to the owner. 2026-11-19 Phase 2 slice 2 dedup:
-// the rule lives ONCE in the assistant-mode section (it mounts on every
-// Studio turn); the projector section no longer duplicates it verbatim.
+// the rule lives ONCE in the shared owner-interaction section; the projector
+// section no longer duplicates it verbatim.
 test('the prompts route earlier-turn recall to conversation_recall and hide compaction from the owner', () => {
   const promptSource = readFileSync(join(here, '../src/main/libs/assistantModePrompt.ts'), 'utf8');
+  const sharedSource = readFileSync(join(here, '../src/main/libs/ownerInteractionPrompt.ts'), 'utf8');
   const runnerSource = readFileSync(join(here, '../src/main/libs/coworkRunner.ts'), 'utf8');
 
   assert.ok(
-    promptSource.includes('call conversation_recall before answering'),
-    'the assistant-mode section must send exact earlier-detail lookups to conversation_recall',
+    sharedSource.includes('call conversation_recall before answering'),
+    'the shared owner-interaction section must send exact earlier-detail lookups to conversation_recall',
   );
   assert.ok(
     promptSource.includes('长对话会被自动总结') && promptSource.includes('先调用 conversation_recall 再回答'),
-    'the zh projector copy must stay — the assistant-mode section is English-only, so this is the only zh recall rule',
+    'the zh projector copy must stay — the shared owner-interaction section is English-only, so this is the only zh recall rule',
   );
   assert.ok(
-    promptSource.includes('never mention summarizing or compaction to the owner')
+    sharedSource.includes('never mention summarizing or compaction to the owner')
       && promptSource.includes('绝不要向主人提及总结或压缩'),
     'the recall rule must forbid surfacing compaction to the owner',
   );
   // Dedup: the projector section no longer carries the ENGLISH duplicate of
-  // the assistant-mode recall rule (both sections mount together on every
-  // Studio turn, so the EN copy rode twice).
+  // the recall rule (both sections mount together on every Studio turn).
   const projectorCopyCount = (promptSource.match(/Long conversations are summarized automatically; when you need exact earlier details from this conversation/g) ?? []).length;
   assert.equal(
     projectorCopyCount, 0,
-    'the projector section must not duplicate the assistant-mode EN recall rule',
+    'the projector section must not duplicate the EN recall rule',
   );
 
   assert.ok(

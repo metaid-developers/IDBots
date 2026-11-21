@@ -95,8 +95,8 @@ test('assistant chat-experience mode defaults reasoning off behind the auto rung
   // marker; the effort chain keys on the per-turn GATE, not on any persisted
   // Settings value (the toggle is retired).
   assert.ok(
-    coworkRunnerSource.includes('const assistantMode = this.isAssistantModeOwnerChatSession(sessionId);'),
-    'coworkRunner: effort resolution must read the per-turn assistant-mode gate (marker-only under the surface ruling)',
+    coworkRunnerSource.includes('const assistantMode = conversationProfile.isStudioOwnerChat;'),
+    'coworkRunner: effort resolution must read the per-turn assistant-mode gate from ConversationProfile (marker-only under the surface ruling)',
   );
   const overrideFirstChains = coworkRunnerSource.match(
     /sessionEffortPicked\s*\?\s*toLlmEffortLevel\(effectiveEffortRung\)\s*:\s*(?:unattendedTurn\s*\?\s*resolveUnattendedAutoEffort\(\{[\s\S]*?\}\)\s*:\s*)?pinned(?:Fallback)?AutoEffortRung\s*\?\?/g,
