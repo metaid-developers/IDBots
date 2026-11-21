@@ -435,6 +435,10 @@ const POST_FREEZE_INVOKE: Record<string, AllowlistEntry> = {
   'ftTrade:mandateRespond': { tier: 'P1', note: 'WS-1 FT single-tap mandate confirmation response.' },
   'ftTrade:getBatchProgress': { tier: 'P1', note: 'WS-1 FT multi-lot batch order progress read.' },
   'ftTrade:cancelBatchOrders': { tier: 'P1', note: 'WS-1 FT batch remaining active orders cancellation.' },
+  'paybuzz:getItem': { tier: 'P1', note: 'WS-5 PayBuzz article metadata, unlock rules, and VIP eligibility read.' },
+  'paybuzz:getUnlocked': { tier: 'P1', note: 'WS-5 PayBuzz local decrypted article cache read.' },
+  'paybuzz:unlock': { tier: 'P1', note: 'WS-5 PayBuzz dual-track article unlock (VIP MRC-721 or FT micropayment).' },
+  'paybuzz:publish': { tier: 'N', note: 'WS-5 PayBuzz desktop encrypted publishing; denied on mobile gateway.' },
 };
 
 export const INVOKE_ALLOWLIST: Record<string, AllowlistEntry> = {
@@ -503,6 +507,9 @@ export const EVENT_ALLOWLIST: Record<string, AllowlistEntry> = {
   'goodsTrade:orderRejected': { tier: 'P1', note: 'WS-D seller escrow rejection notification.' },
   'ftTrade:mandatePrompt': { tier: 'P1', note: 'WS-1 FT single-tap mandate confirmation prompt event.' },
   'ftTrade:orderFilled': { tier: 'P1', note: 'WS-1 FT order fill / ME FT escrow settlement event.' },
+  'paybuzz:unlocked': { tier: 'P1', note: 'WS-5 PayBuzz decrypted article key-grant event.' },
+  'paybuzz:unlockRejected': { tier: 'P1', note: 'WS-5 PayBuzz author unlock rejection event.' },
+  'paybuzz:royaltyEarned': { tier: 'P1', note: 'WS-5 PayBuzz silent royalty earned event.' },
   'store:changed': { tier: 'P1', restrictions: ['R-store'], note: '`02`: P1-R — only key `app_config`, redacted like R-store.' },
   'groupTask:statusChanged': { tier: 'P2' },
   'groupTask:checkpointChanged': { tier: 'P2' },

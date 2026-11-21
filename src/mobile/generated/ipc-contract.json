@@ -2886,6 +2886,53 @@
       ]
     },
     {
+      "path": "paybuzz.getItem",
+      "kind": "invoke",
+      "channel": "paybuzz:getItem",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "paybuzz.getUnlocked",
+      "kind": "invoke",
+      "channel": "paybuzz:getUnlocked",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "paybuzz.onRoyaltyEarned",
+      "kind": "on",
+      "channel": "paybuzz:royaltyEarned"
+    },
+    {
+      "path": "paybuzz.onUnlockRejected",
+      "kind": "on",
+      "channel": "paybuzz:unlockRejected"
+    },
+    {
+      "path": "paybuzz.onUnlocked",
+      "kind": "on",
+      "channel": "paybuzz:unlocked"
+    },
+    {
+      "path": "paybuzz.publish",
+      "kind": "invoke",
+      "channel": "paybuzz:publish",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "paybuzz.unlock",
+      "kind": "invoke",
+      "channel": "paybuzz:unlock",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "paymentInfo.clear",
       "kind": "invoke",
       "channel": "paymentInfo:clear",

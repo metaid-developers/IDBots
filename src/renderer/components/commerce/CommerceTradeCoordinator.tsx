@@ -14,6 +14,10 @@ import {
 } from './commerceTradeEvents';
 import GoodsPurchaseConfirmModal, { type GoodsPurchaseConfirmTarget } from './GoodsPurchaseConfirmModal';
 import FtMandateConfirmModal from './FtMandateConfirmModal';
+import PaybuzzReaderView, {
+  IDBOTS_PAYBUZZ_OPEN_READER_EVENT,
+  type PaybuzzReaderPayload,
+} from './PaybuzzReaderView';
 import PurchaseSuccessActionCard from './PurchaseSuccessActionCard';
 import SwapCompleteShopPromptCard from './SwapCompleteShopPromptCard';
 
@@ -22,6 +26,7 @@ const CommerceTradeCoordinator: React.FC = () => {
   const [ftMandatePrompt, setFtMandatePrompt] = useState<FtMandatePromptEventPayload | null>(null);
   const [swapCompleted, setSwapCompleted] = useState<ElectronNftSwapOrderCompletedEvent | null>(null);
   const [purchaseSettled, setPurchaseSettled] = useState<GoodsTradePurchaseSettledEvent | null>(null);
+  const [paybuzzArticle, setPaybuzzArticle] = useState<PaybuzzReaderPayload | null>(null);
 
   useEffect(() => {
     const onIntent = (event: Event) => {
@@ -52,11 +57,20 @@ const CommerceTradeCoordinator: React.FC = () => {
       window.dispatchEvent(new CustomEvent('cowork:newChatWithDraft', { detail: { text: draft } }));
     };
 
+    const onOpenPaybuzzReader = (event: Event) => {
+      const detail = (event as CustomEvent<PaybuzzReaderPayload>).detail;
+      if (detail?.paybuzzPinId && typeof detail.decryptedMarkdown === 'string') {
+        setPaybuzzArticle(detail);
+      }
+    };
+
     window.addEventListener(IDBOTS_COMMERCE_INTENT_EVENT, onIntent);
     window.addEventListener(IDBOTS_SOCIAL_FRIEND_PROMPT_EVENT, onSocialFriendPrompt);
+    window.addEventListener(IDBOTS_PAYBUZZ_OPEN_READER_EVENT, onOpenPaybuzzReader);
     return () => {
       window.removeEventListener(IDBOTS_COMMERCE_INTENT_EVENT, onIntent);
       window.removeEventListener(IDBOTS_SOCIAL_FRIEND_PROMPT_EVENT, onSocialFriendPrompt);
+      window.removeEventListener(IDBOTS_PAYBUZZ_OPEN_READER_EVENT, onOpenPaybuzzReader);
     };
   }, []);
 
@@ -91,6 +105,11 @@ const CommerceTradeCoordinator: React.FC = () => {
         open={Boolean(ftMandatePrompt)}
         prompt={ftMandatePrompt}
         onResolved={() => setFtMandatePrompt(null)}
+      />
+      <PaybuzzReaderView
+        open={Boolean(paybuzzArticle)}
+        article={paybuzzArticle}
+        onClose={() => setPaybuzzArticle(null)}
       />
       <GoodsPurchaseConfirmModal
         open={Boolean(confirmTarget)}

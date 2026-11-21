@@ -2831,6 +2831,99 @@ interface IElectronAPI {
     onMandatePrompt: (callback: (payload: FtMandatePromptEventPayload) => void) => () => void;
     onOrderFilled: (callback: (payload: FtOrderFilledEventPayload) => void) => () => void;
   };
+  paybuzz: {
+    getItem: (input: { paybuzzPinId: string; metabotId?: number }) => Promise<{
+      success: boolean;
+      item?: Record<string, unknown> | null;
+      unlocked?: {
+        paybuzzPinId: string;
+        contentKeyHex: string;
+        decryptedMarkdown: string;
+        grantedVia: 'vip-nft' | 'token' | 'author';
+        title?: string;
+        authorMetaId?: string;
+        unlockedAt: number;
+      } | null;
+      vipMatch?: {
+        collectionPinId: string;
+        collectionName: string;
+        itemCount: number;
+      } | null;
+      error?: string;
+    }>;
+    getUnlocked: (input: { paybuzzPinId: string }) => Promise<{
+      success: boolean;
+      unlocked?: {
+        paybuzzPinId: string;
+        contentKeyHex: string;
+        decryptedMarkdown: string;
+        grantedVia: 'vip-nft' | 'token' | 'author';
+        title?: string;
+        authorMetaId?: string;
+        unlockedAt: number;
+      } | null;
+      error?: string;
+    }>;
+    unlock: (input: {
+      paybuzzPinId: string;
+      metabotId?: number;
+      preferredTrack?: 'auto' | 'vip-nft' | 'token';
+      assetKey?: string;
+      paymentTxId?: string;
+      confirmTokenPay?: boolean;
+      waitTimeoutMs?: number;
+    }) => Promise<{
+      success: boolean;
+      status?: 'unlocked' | 'pending_key' | 'payment_required';
+      track?: 'cache' | 'author' | 'vip-nft' | 'token';
+      paybuzzPinId?: string;
+      grantedVia?: 'vip-nft' | 'token' | 'author';
+      decryptedMarkdown?: string;
+      title?: string;
+      authorMetaId?: string;
+      vipMatch?: { collectionPinId: string; collectionName: string };
+      paymentTxId?: string;
+      assetKey?: string;
+      error?: string;
+    }>;
+    publish: (input: {
+      metabotId: number;
+      title: string;
+      markdown: string;
+      preview?: string;
+      wordCount?: number;
+      unlockRules?: Record<string, unknown>;
+    }) => Promise<{
+      success: boolean;
+      paybuzzPinId?: string;
+      txids?: string[];
+      paybuzzCardFence?: string;
+      error?: string;
+    }>;
+    onUnlocked: (callback: (payload: {
+      paybuzzPinId: string;
+      grantedVia: 'vip-nft' | 'token' | 'author';
+      title?: string;
+      authorMetaId?: string;
+      decryptedMarkdown: string;
+      unlockedAt: number;
+    }) => void) => () => void;
+    onUnlockRejected: (callback: (payload: {
+      paybuzzPinId: string;
+      code: string;
+      reason: string;
+    }) => void) => () => void;
+    onRoyaltyEarned: (callback: (payload: {
+      metabotId: number;
+      paybuzzPinId: string;
+      title?: string;
+      symbol: string;
+      amountDisplay: string;
+      assetKey: string;
+      paymentTxId: string;
+      dailyCount: number;
+    }) => void) => () => void;
+  };
   permissions: {
     checkCalendar: () => Promise<{ success: boolean; status?: string; error?: string; autoRequested?: boolean }>;
     requestCalendar: () => Promise<{ success: boolean; granted?: boolean; status?: string; error?: string }>;

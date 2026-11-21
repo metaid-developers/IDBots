@@ -2759,7 +2759,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     'deepseek', 'appEvents', 'fs', 'autoLaunch', 'experimentalAutomation', 'feeRates',
     'appUpdate', 'im', 'longtermTask', 'metatask', 'preference', 'groupTask', 'openTeamCollab',
     'idbots', 'chainBackup', 'metaWebListener', 'dream', 'knowledgeBase', 'metawebStudy',
-    'surf', 'nftSwap', 'goodsTrade', 'ftTrade', 'permissions', 'networkStatus', 'mcp', 'projects', 'p2p', 'providerDiscovery',
+    'surf', 'nftSwap', 'goodsTrade', 'ftTrade', 'paybuzz', 'permissions', 'networkStatus', 'mcp', 'projects', 'p2p', 'providerDiscovery',
     'jevRelay',
   ] as const;
   for (const name of namespaceNames) {

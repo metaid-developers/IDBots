@@ -84,6 +84,8 @@ import {
 } from './chat/ftCardSyntax';
 import MobilePageCard from './chat/MobilePageCard';
 import { isMobilePageCardFenceLanguage, parseMobilePageCardFence } from './chat/mobilePageCardSyntax';
+import PaybuzzCard from './chat/PaybuzzCard';
+import { isPaybuzzCardFenceLanguage, parsePaybuzzCardFence } from '../utils/paybuzzCardSyntax';
 import { splitStreamingMarkdownBlocks } from './streamingMarkdownSplit';
 
 /**
@@ -579,6 +581,14 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
       const fillData = parseFtFillCardFence(trimmedCodeText);
       if (fillData) {
         return <FtFillCard data={fillData} />;
+      }
+    }
+
+    // WS-5 PayBuzz encrypted article preview & dual-track unlock card (`paybuzz-card`).
+    if (isPaybuzzCardFenceLanguage(fenceLanguage)) {
+      const paybuzzData = parsePaybuzzCardFence(trimmedCodeText);
+      if (paybuzzData) {
+        return <PaybuzzCard data={paybuzzData} />;
       }
     }
 

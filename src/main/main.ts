@@ -288,6 +288,15 @@ import { formatGoodsTradeWireMessage } from './services/goodsTradeWireProtocol';
 import { SellerAutoFulfillDaemon } from './services/sellerAutoFulfillDaemon';
 import { PayReadFulfillDaemon } from './services/payReadFulfillDaemon';
 import {
+  fetchPaybuzzItem,
+  findMatchingVipNftHolding,
+  publishPaybuzzArticle,
+  unlockPaybuzzArticle,
+  type PaybuzzServiceDeps,
+  type PaybuzzUnlockRules,
+} from './services/paybuzzService';
+import { getPaybuzzUnlockedCache } from './services/paybuzzStore';
+import {
   cancelMrc721OpenOffer,
   listMrc721MyOpenOffers,
   mrc721OpenOffersFromSqlite,
@@ -22051,6 +22060,126 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         errors,
         progress,
       };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // WS-5 PayBuzz Encrypted Reading Protocol IPC
+  const buildPaybuzzServiceDeps = (): PaybuzzServiceDeps => ({
+    getDb: () => getStore().getDatabase(),
+    saveDb: getStore().getSaveFunction(),
+    getMetabotStore: () => getMetabotStore(),
+    sendEncryptedPrivateMessage: async (fromMetabotId, toGlobalMetaId, plaintext) => {
+      const mStore = getMetabotStore();
+      const wallet = mStore.getMetabotWalletByMetabotId(fromMetabotId);
+      if (!wallet?.mnemonic?.trim()) {
+        throw new Error('the PayBuzz MetaBot wallet is unavailable');
+      }
+      const peerChatPubkey = await resolveChatPubkeyForProvider(toGlobalMetaId);
+      if (!peerChatPubkey) {
+        throw new Error('author has no chatPublicKey on chain');
+      }
+      return withChainWriteBudget('paybuzz_dm', () => sendEncryptedSimplemsg({
+        metabotId: fromMetabotId,
+        wallet,
+        peerGlobalMetaId: toGlobalMetaId,
+        peerChatPubkey,
+        plaintext,
+        contentType: 'text/plain',
+        createPin: (id, payload) => createPin(mStore, id, payload, { feeRate: getGlobalFeeRate('mvc') }),
+      }));
+    },
+    emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+  });
+
+  registerIpcHandler('paybuzz:getItem', async (_event, rawInput: unknown) => {
+    try {
+      const input = (rawInput && typeof rawInput === 'object' ? rawInput : {}) as Record<string, unknown>;
+      const paybuzzPinId = String(input.paybuzzPinId ?? input.pinId ?? '').trim().toLowerCase();
+      if (!paybuzzPinId) {
+        return { success: false, error: 'paybuzzPinId is required' };
+      }
+      const deps = buildPaybuzzServiceDeps();
+      const unlocked = getPaybuzzUnlockedCache(deps.getDb(), paybuzzPinId);
+      const item = await fetchPaybuzzItem(deps, paybuzzPinId);
+      let vipMatch: { collectionPinId: string; collectionName: string; itemCount: number } | null = null;
+      if (!unlocked && item && item.unlockRules.vipMrc721Collections.length > 0) {
+        const mStore = getMetabotStore();
+        const metabots = mStore.listMetabots().filter((m) => m.enabled !== false);
+        const metabotId = input.metabotId != null ? Number(input.metabotId) : undefined;
+        const bot =
+          metabotId && Number.isInteger(metabotId) && metabotId > 0
+            ? mStore.getMetabotById(metabotId)
+            : metabots.find((m) => m.metabot_type === 'twin') ?? metabots[0] ?? null;
+        if (bot?.mvc_address) {
+          try {
+            vipMatch = await findMatchingVipNftHolding(deps, {
+              holderAddress: bot.mvc_address,
+              collections: item.unlockRules.vipMrc721Collections,
+            });
+          } catch {
+            vipMatch = null;
+          }
+        }
+      }
+      return { success: true, item: item ?? null, unlocked: unlocked ?? null, vipMatch };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerIpcHandler('paybuzz:getUnlocked', async (_event, rawInput: unknown) => {
+    try {
+      const input = (rawInput && typeof rawInput === 'object' ? rawInput : {}) as Record<string, unknown>;
+      const paybuzzPinId = String(input.paybuzzPinId ?? input.pinId ?? '').trim().toLowerCase();
+      if (!paybuzzPinId) {
+        return { success: false, error: 'paybuzzPinId is required' };
+      }
+      const unlocked = getPaybuzzUnlockedCache(getStore().getDatabase(), paybuzzPinId);
+      return { success: true, unlocked: unlocked ?? null };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerIpcHandler('paybuzz:unlock', async (_event, rawInput: unknown) => {
+    try {
+      const input = (rawInput && typeof rawInput === 'object' ? rawInput : {}) as Record<string, unknown>;
+      const paybuzzPinId = String(input.paybuzzPinId ?? input.pinId ?? '').trim().toLowerCase();
+      if (!paybuzzPinId) {
+        return { success: false, error: 'paybuzzPinId is required' };
+      }
+      const preferredTrackRaw = String(input.preferredTrack ?? 'auto').trim();
+      const preferredTrack: 'auto' | 'vip-nft' | 'token' =
+        preferredTrackRaw === 'vip-nft' || preferredTrackRaw === 'token' ? preferredTrackRaw : 'auto';
+      const result = await unlockPaybuzzArticle(buildPaybuzzServiceDeps(), {
+        paybuzzPinId,
+        ...(input.metabotId != null ? { metabotId: Number(input.metabotId) } : {}),
+        preferredTrack,
+        ...(typeof input.assetKey === 'string' ? { assetKey: input.assetKey } : {}),
+        ...(typeof input.paymentTxId === 'string' ? { paymentTxId: input.paymentTxId } : {}),
+        confirmTokenPay: input.confirmTokenPay === true,
+        waitTimeoutMs: input.waitTimeoutMs != null ? Number(input.waitTimeoutMs) : 15000,
+      });
+      return { success: true, ...result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerIpcHandler('paybuzz:publish', async (_event, rawInput: unknown) => {
+    try {
+      const input = (rawInput && typeof rawInput === 'object' ? rawInput : {}) as Record<string, unknown>;
+      const result = await publishPaybuzzArticle(buildPaybuzzServiceDeps(), {
+        metabotId: Number(input.metabotId),
+        title: String(input.title ?? ''),
+        markdown: String(input.markdown ?? ''),
+        ...(typeof input.preview === 'string' ? { preview: input.preview } : {}),
+        ...(input.wordCount != null ? { wordCount: Number(input.wordCount) } : {}),
+        unlockRules: input.unlockRules as Partial<PaybuzzUnlockRules> | undefined,
+      });
+      return { success: true, ...result };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
