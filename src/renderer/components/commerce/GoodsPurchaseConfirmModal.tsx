@@ -18,6 +18,15 @@ export interface GoodsPurchaseConfirmTarget {
   collectionPinId?: string;
   priceMeMilli: number;
   priceCnyCents?: number;
+  paymentAssetKey?: string;
+  selectedToken?: {
+    assetKey: string;
+    chain?: 'btc' | 'mvc';
+    symbol: string;
+    amountDisplay: string;
+    amountBase?: string;
+    sellerReceiveAddress?: string;
+  };
   sellerAddress?: string;
   sellerGlobalMetaId?: string;
   sellerName?: string;
@@ -109,6 +118,17 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
     }
   }, []);
 
+  const activePaymentAssetKey = target?.paymentAssetKey || target?.selectedToken?.assetKey || '';
+  const isTokenMode = Boolean(activePaymentAssetKey);
+  const selectedToken = target?.selectedToken ?? (activePaymentAssetKey
+    ? {
+        assetKey: activePaymentAssetKey,
+        chain: activePaymentAssetKey.startsWith('mrc20:') ? 'btc' : 'mvc',
+        symbol: 'TOKEN',
+        amountDisplay: '',
+      }
+    : null);
+
   useEffect(() => {
     if (!open || !target) return;
     setSubmitError('');
@@ -116,6 +136,10 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
     setTopupPhase('idle');
     setTopupQrUrl('');
     setTopupOrderId('');
+    if (isTokenMode) {
+      // Token mode delegates balance verification & settlement to goods_buy_with_token
+      return;
+    }
     if (initialTradeSpendableMilli === undefined) {
       void refreshBalance();
     } else {
@@ -124,7 +148,7 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
     return () => {
       stopPolling();
     };
-  }, [open, target, initialTradeSpendableMilli, refreshBalance, stopPolling]);
+  }, [open, target, isTokenMode, initialTradeSpendableMilli, refreshBalance, stopPolling]);
 
   const requiredMilli = target?.priceMeMilli ?? 0;
   const shortfallMilli = Math.max(0, requiredMilli - tradeSpendableMilli);
@@ -209,7 +233,21 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
   }, [selectedPackageId, gateway, stopPolling, refreshBalance]);
 
   const handleConfirmBuy = useCallback(async () => {
-    if (!target || !hasSufficientBalance || submitting) return;
+    if (!target || submitting) return;
+    if (isTokenMode && activePaymentAssetKey) {
+      const amountText = selectedToken?.amountDisplay?.trim();
+      const maxTokenArg = amountText || '0';
+      const symbolLabel = selectedToken?.symbol ? `$${selectedToken.symbol}` : activePaymentAssetKey;
+      const sellerRef = target.sellerAddress || target.sellerGlobalMetaId || '';
+      const draft = ct(
+        `Buy digital item ${target.itemPinId} with token using goods_buy_with_token (asset_key=${activePaymentAssetKey}${amountText ? `, max_token_amount=${maxTokenArg}` : ''}${sellerRef ? `, seller=${sellerRef}` : ''}). Payment token: ${amountText ? `${amountText} ` : ''}${symbolLabel}.`,
+        `请调用 goods_buy_with_token 使用代币购买数字商品 ${target.itemPinId}（asset_key=${activePaymentAssetKey}${amountText ? `，max_token_amount=${maxTokenArg}` : ''}${sellerRef ? `，卖家=${sellerRef}` : ''}），支付 ${amountText ? `${amountText} ` : ''}${symbolLabel}。`,
+      );
+      window.dispatchEvent(new CustomEvent('cowork:newChatWithDraft', { detail: { text: draft } }));
+      onClose();
+      return;
+    }
+    if (!hasSufficientBalance) return;
     setSubmitting(true);
     setSubmitError('');
     try {
@@ -243,7 +281,7 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
     } finally {
       setSubmitting(false);
     }
-  }, [target, hasSufficientBalance, submitting, buyerMetabotId, onOrderSubmitted, onClose]);
+  }, [target, isTokenMode, activePaymentAssetKey, selectedToken, hasSufficientBalance, submitting, buyerMetabotId, onOrderSubmitted, onClose]);
 
   const selectedPkg = useMemo(
     () => packages.find((p) => p.packageId === selectedPackageId) ?? null,
@@ -255,10 +293,11 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
   return (
     <div
       data-commerce-modal="goods-purchase-confirm"
+      data-payment-asset-key={activePaymentAssetKey || undefined}
       className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
-      aria-label={ct('Confirm ME Escrow Purchase', '确认 ME 担保购买')}
+      aria-label={isTokenMode ? ct('Confirm Token Purchase', '确认代币购买') : ct('Confirm ME Escrow Purchase', '确认 ME 担保购买')}
       onClick={onClose}
     >
       <div
@@ -269,7 +308,7 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
           <div className="flex items-center gap-2">
             <ShieldCheckIcon className="h-5 w-5 text-claude-accent" />
             <h3 className="text-sm font-semibold text-claude-text dark:text-claude-darkText">
-              {ct('Confirm ME Escrow Purchase', '确认 ME 担保购买')}
+              {isTokenMode ? ct('Confirm Token Purchase', '确认代币购买') : ct('Confirm ME Escrow Purchase', '确认 ME 担保购买')}
             </h3>
           </div>
           <button
@@ -294,17 +333,33 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
             )}
             <div className="mt-2 flex items-center justify-between border-t border-claude-border/60 pt-2 dark:border-claude-darkBorder/60">
               <span className="text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                {ct('Escrow Price', '担保交易价格')}
+                {isTokenMode ? ct('Token Price', '代币价格') : ct('Escrow Price', '担保交易价格')}
               </span>
-              <span className="text-sm font-semibold text-claude-accent">
-                {formatMeDisplay(requiredMilli)}
-                {target.priceCnyCents != null && target.priceCnyCents > 0 && (
-                  <span className="ml-1.5 text-xs font-normal text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                    ({formatCnyDisplay(target.priceCnyCents)})
-                  </span>
-                )}
-              </span>
+              {isTokenMode && selectedToken ? (
+                <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                  {selectedToken.amountDisplay
+                    ? `${selectedToken.amountDisplay} $${selectedToken.symbol}`
+                    : `$${selectedToken.symbol}`}
+                </span>
+              ) : (
+                <span className="text-sm font-semibold text-claude-accent">
+                  {formatMeDisplay(requiredMilli)}
+                  {target.priceCnyCents != null && target.priceCnyCents > 0 && (
+                    <span className="ml-1.5 text-xs font-normal text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      ({formatCnyDisplay(target.priceCnyCents)})
+                    </span>
+                  )}
+                </span>
+              )}
             </div>
+            {isTokenMode && (
+              <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                <span>{ct('Asset ID', '资产标识')}</span>
+                <span className="truncate font-mono" data-token-asset-key={activePaymentAssetKey}>
+                  {activePaymentAssetKey}
+                </span>
+              </div>
+            )}
             <div className="mt-1 flex items-center justify-between text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
               <span>{ct('Seller', '卖方')}</span>
               <span className="truncate font-mono">
@@ -316,7 +371,25 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
             </div>
           </div>
 
-          <div className="rounded-xl border border-claude-border/80 p-3 dark:border-claude-darkBorder/80">
+          {isTokenMode ? (
+            <div
+              data-token-settlement-info="true"
+              className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-emerald-800 dark:text-emerald-300"
+            >
+              <div className="font-semibold">
+                {selectedToken?.chain === 'mvc'
+                  ? ct('Same-Chain Atomic Swap (MVC FT <-> MRC-721)', '同链单笔原子互换（一手交币一手交货）')
+                  : ct('5-Min Exclusive Lock + Verified Auto-Delivery', '5 分钟排他锁 + 链上验资自动发货')}
+              </div>
+              <div className="mt-1 text-[11px] opacity-90">
+                {ct(
+                  'Your TwinBot will verify exact asset identity and seller online lock before asking for your final signing confirmation.',
+                  '你的 TwinBot 将核对完整资产标识与卖家在线锁单后再执行转账，付款前仍有最终确认。',
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-claude-border/80 p-3 dark:border-claude-darkBorder/80">
             <div className="flex items-center justify-between">
               <span className="text-claude-textSecondary dark:text-claude-darkTextSecondary">
                 {ct('Trade-Eligible ME Balance', '可用于商品交易的持久化 ME')}
@@ -336,9 +409,10 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
             {balanceError && (
               <div className="mt-1.5 text-[11px] text-rose-600 dark:text-rose-400">{balanceError}</div>
             )}
-          </div>
+            </div>
+          )}
 
-          {!loadingBalance && !hasSufficientBalance && (
+          {!isTokenMode && !loadingBalance && !hasSufficientBalance && (
             <div
               data-insufficient-me="true"
               className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-amber-800 dark:text-amber-300"
@@ -453,14 +527,16 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
             </button>
             <button
               type="button"
-              data-action="confirm-me-buy"
-              disabled={!hasSufficientBalance || submitting || loadingBalance}
+              data-action={isTokenMode ? 'confirm-token-buy' : 'confirm-me-buy'}
+              disabled={!isTokenMode && (!hasSufficientBalance || submitting || loadingBalance)}
               onClick={handleConfirmBuy}
               className="rounded-lg bg-claude-accent px-3.5 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
             >
-              {submitting
-                ? ct('Locking Escrow…', '正在锁定担保…')
-                : ct('Confirm ME Escrow Buy', '确认 ME 担保购买')}
+              {isTokenMode
+                ? ct('Start Token Purchase', '开始代币购买')
+                : (submitting
+                    ? ct('Locking Escrow…', '正在锁定担保…')
+                    : ct('Confirm ME Escrow Buy', '确认 ME 担保购买'))}
             </button>
           </div>
         </div>
