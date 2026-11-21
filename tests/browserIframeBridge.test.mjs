@@ -141,8 +141,19 @@ test('only the active Stage frame can open its own final report via openTab', as
   };
   context.window = context;
   vm.runInNewContext(buildBrowserIframeBridgeScript(), context);
-  const messageListener = listeners.find((entry) => entry.type === 'message').listener;
-  const send = (data, source = frame) => messageListener({ source, data });
+  // The composed script registers SEVERAL window message listeners: the
+  // commerce/social relay claims agent-browser:request first (capture phase,
+  // injected ahead of the rest), and the bridge's own listener handles
+  // open-report / open-uri / tab-command after it. A real 'message' event
+  // reaches every listener, so dispatch to all of them instead of grabbing
+  // whichever one registered first.
+  const messageListeners = listeners
+    .filter((entry) => entry.type === 'message')
+    .map((entry) => entry.listener);
+  assert.ok(messageListeners.length >= 2, 'the bridge must register its own message listener besides the commerce relay');
+  const send = (data, source = frame) => {
+    for (const listener of messageListeners) listener({ source, data });
+  };
   const action = (overrides = {}) => ({
     source: 'idbots-live-stage',
     type: 'open-report',

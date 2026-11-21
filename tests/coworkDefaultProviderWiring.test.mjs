@@ -38,8 +38,8 @@ test('resolveMatchedProvider prefers model.defaultProvider over config-order sca
     'resolveMatchedProvider must consult model.defaultProvider'
   );
   assert.ok(
-    body.includes("name.toLowerCase() === defaultProviderKey"),
-    'the default provider must be matched by key'
+    body.includes("canonicalFreeProviderKey(name) === defaultProviderKey"),
+    'the default provider must be matched by canonical key (the free-provider rename made stored labels like "MetaID Free" resolve to the canonical key)'
   );
   // The explicit default-provider preference only applies to global/default
   // sessions — a requestedOverride (metabot llm_id) is a provider choice of

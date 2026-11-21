@@ -92,7 +92,14 @@ test('shell lands on Bot Internet by default (persisted last choice) with guarde
 
 test('App forwards host tab commands through the renderer and iframe response bridge', () => {
   assert.match(appSource, /window\.electron\.botBrowser\.onTabCommand/);
-  assert.match(appSource, /botBrowserShell\.controlTabs\(command\)/);
+  // Background host commands (dock/taskbar activation from botBrowserTabBridge)
+  // must NOT steal the surface: they route through controlTabsSilent, while
+  // foreground commands keep revealing it via controlTabs.
+  assert.match(
+    appSource,
+    /command\.background === true\s*\?\s*botBrowserShell\.controlTabsSilent\s*:\s*botBrowserShell\.controlTabs/,
+  );
+  assert.match(appSource, /return controlTabs\(command\);/);
   assert.match(appSource, /window\.electron\.botBrowser\.respondToTabCommand/);
   assert.match(surfaceSource, /type: 'tab-command-response'/);
   assert.match(bridgeSource, /globalThis\.AgentBrowserTabs\.getActiveTab\(\)/);
