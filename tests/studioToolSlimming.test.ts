@@ -23,7 +23,7 @@ const GATED = [
 test('worker-economy families are gated off the Studio owner-chat surface', () => {
   // The shared gate const exists with the census rationale…
   assert.ok(
-    runnerSource.includes('const isStudioOwnerChat = this.isAssistantModeOwnerChatSession(sessionId);'),
+    runnerSource.includes('const isStudioOwnerChat = conversationProfile.isStudioOwnerChat;'),
     'coworkRunner: the Studio owner-chat gate must be defined in buildSessionInlineTools',
   );
   // …and each family mount consults it.

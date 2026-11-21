@@ -50,10 +50,11 @@ test('mobile product and onboarding knowledge removes desktop workspace teaching
 });
 
 test('mobile mode replaces Studio and projector prompts for both new and continued sessions', () => {
+  assert.match(runnerSource, /name: 'idbots:owner-interaction'/);
   assert.match(runnerSource, /name: 'idbots:mobile-mode'/);
-  assert.match(runnerSource, /text: buildMobileModePrompt\(\)/);
-  const desktopOverrides = runnerSource.match(/!mobileOwnerChatMode && this\.isAssistantModeOwnerChatSession\(sessionId\)/g) ?? [];
-  assert.equal(desktopOverrides.length, 2);
+  assert.match(runnerSource, /text: buildMobileModePrompt\(\{ includeSharedOwnerRules: false \}\)/);
+  const profileAssistantCalls = runnerSource.match(/conversationProfile\.isStudioOwnerChat/g) ?? [];
+  assert.ok(profileAssistantCalls.length >= 2, 'both startSession and continueSession derive Studio gate from ConversationProfile');
   assert.match(runnerSource, /if \(this\.isMobileOwnerChatSession\(sessionId\)\) return buildMobileWelcomeGuidePrompt\(\)/);
   assert.match(runnerSource, /if \(this\.isMobileOwnerChatSession\(sessionId\)\) return buildMobileTwinProductPrimerSection\(\)/);
   assert.match(runnerSource, /buildMobileTwinOrchestrationPrompt\(\)/);

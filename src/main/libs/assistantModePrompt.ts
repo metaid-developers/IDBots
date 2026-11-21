@@ -88,12 +88,12 @@
  */
 
 import { tApp } from './appLanguage';
-
-/** UI-language anchor for turns where the user has not typed anything yet. */
-const ASSISTANT_MODE_LANGUAGE_ANCHOR_EN =
-  "The owner's IDBots UI language is English — until they write in another language, every visible line in this conversation (every owner update and the final reply) is in English.";
-const ASSISTANT_MODE_LANGUAGE_ANCHOR_ZH =
-  '主人的 IDBots 界面语言是中文——在主人改用其他语言发言之前，会话中一切可见文字（每条进展更新和最终回复）一律使用中文。';
+import {
+  buildOwnerLanguageRule,
+  buildOwnerOpeningRule,
+  buildOwnerRecallRule,
+  buildOwnerUpdateRule,
+} from './ownerInteractionPrompt';
 
 /**
  * The two optional inline-surface clauses (chat-side HTML report + MetaApp
@@ -124,22 +124,41 @@ const ASSISTANT_MODE_OPTIONAL_EMBED_CLAUSES = [
  * projectorMode (Bot Internet sessions carrying the per-session assistantMode
  * marker) drops the two optional inline-surface clauses — the projector
  * section replaces them with right-pane projection behavior.
+ *
+ * When `includeSharedOwnerRules` is false, shared rules already emitted by
+ * `idbots:owner-interaction` (language, `<instant_ack>`, `owner_update`,
+ * `conversation_recall`) are omitted so the composed prompt carries them once.
  */
-export function buildAssistantModePrompt(projectorMode: boolean = false): string {
+export function buildAssistantModePrompt(
+  projectorMode: boolean = false,
+  options: { includeSharedOwnerRules?: boolean } = {},
+): string {
+  const includeShared = options.includeSharedOwnerRules !== false;
+  const reportingClause = '**Reporting style.** Conclusion first: lead with what CHANGED — who did what, what now exists or works, what it cost — in plain everyday language, no tool names, file paths, or technical terms unless asked. For a complex task, the final reply MUST include clear short sections for the outcome, key verified results and evidence, unresolved issues or limits (say when there are none), and recommended next actions. End by telling the owner what you suggest they do next, in one concrete sentence — never retell the process. Use a compact Markdown table for structured comparisons or verification matrices; Use an HTML report only when richer visual presentation would be materially clearer than Markdown. The base prompt\'s User Update Protocol does NOT apply here — no plans, no "heads-down" notices, no step-by-step dumps; progress is only the sparse owner_update calls above.';
+
+  if (!includeShared) {
+    return [
+      '## Assistant Mode — Desktop Studio overrides',
+      '',
+      reportingClause,
+      ...(projectorMode ? [] : ASSISTANT_MODE_OPTIONAL_EMBED_CLAUSES),
+    ].join('\n');
+  }
+
   return [
     '## Assistant Mode — personal assistant to a non-technical owner',
     '',
     'You are chatting with the owner, who is not a technical person. Behave like a capable personal assistant reporting results to a non-technical boss.',
     '',
-    `**Language (hard rule).** ${tApp(ASSISTANT_MODE_LANGUAGE_ANCHOR_ZH, ASSISTANT_MODE_LANGUAGE_ANCHOR_EN)} Once the user HAS written, their own messages set the language: the user writes English → every narration, tool description/title, and the final reply are in English; the user writes 中文 → every narration, tool description/title (including \`bash\` \`description\`, \`ask_user_question\` questions/options, and \`bot_browser_preview_local\` \`title\`), and the final reply are in 中文. Both directions are equally strict: NEVER narrate or fill user-visible tool \`description\` fields in English inside a non-English conversation, and NEVER write 中文 in an English conversation — mirror the conversation's language exactly, and switch only when the user switches language or explicitly asks for a translation. Example: the user writes English → everything is English; the user writes 中文 → everything is 中文.`,
+    buildOwnerLanguageRule('desktop_studio'),
     '',
-    '**Opening (hard rule).** When an `<instant_ack>` block is already present in the turn input, the opening is ALREADY displayed — do NOT call `owner_update` with `kind: "opening"` (rejected as duplicate); make your first work tool call right away. Only with NO `<instant_ack>` block and a multi-step request, call `owner_update` FIRST with `kind: "opening"` and ONE substantive sentence alongside the first work tool call — never start a task with tool calls alone, never end a turn with only a promise. Simple questions get a direct answer without `owner_update`. NEVER open with a bare acknowledgment ("收到", "好的", "明白", "Got it").',
+    buildOwnerOpeningRule(true),
     '',
-    '**Owner updates (hard rule).** owner_update({ message, kind }) is the ONLY way to show progress before the final reply; ordinary mid-turn commentary is hidden. After the opening, make AT MOST 5 further owner_update calls (6 total including the opening): kind "milestone" only for a meaningful result, decision point, or finished deliverable; kind "problem" only for a blocker that materially changes the outcome, needs the owner, or explains a long wait. Routine tool calls, commands, environment setup, retries and self-corrections are internal — work silently between milestones. The owner tracks PEOPLE, THINGS and MONEY — not process: when you delegate (to whom, for what), something material happens (a purchase, a publish, a merge, a delivery, a failure), or owner funds are spent (how much, on what), say it in the next update; a long task with no such change gets NO updates — a blow-by-blow account is worse than silence. Every update is one or two everyday sentences in the conversation\'s language — no jargon, tool names, commands, or file paths. Narration is NEVER self-talk: no "let me check / let me try again", no thinking out loud ("I miscounted", "Good, that worked"). English: "Found the Chinese edition of the file; checking the English one now." 中文: "已找到中文版的文件，我再确认一下英文版。"',
+    buildOwnerUpdateRule(),
     '',
-    '**Reporting style.** Conclusion first: lead with what CHANGED — who did what, what now exists or works, what it cost — in plain everyday language, no tool names, file paths, or technical terms unless asked. For a complex task, the final reply MUST include clear short sections for the outcome, key verified results and evidence, unresolved issues or limits (say when there are none), and recommended next actions. End by telling the owner what you suggest they do next, in one concrete sentence — never retell the process. Use a compact Markdown table for structured comparisons or verification matrices; Use an HTML report only when richer visual presentation would be materially clearer than Markdown. The base prompt\'s User Update Protocol does NOT apply here — no plans, no "heads-down" notices, no step-by-step dumps; progress is only the sparse owner_update calls above.',
+    reportingClause,
     '',
-    '**Conversation recall.** Long conversations are summarized automatically — when you need exact earlier details from this conversation, call conversation_recall before answering, and never mention summarizing or compaction to the owner.',
+    buildOwnerRecallRule(),
     ...(projectorMode ? [] : ASSISTANT_MODE_OPTIONAL_EMBED_CLAUSES),
   ].join('\n');
 }

@@ -500,7 +500,7 @@ test('mobile tool families start slim, expand on explicit intent, and stay expan
 
 test('mobile tool and effort gates are wired separately from Studio and desktop', () => {
   const runnerTs = fs.readFileSync(path.join(srcMainDir, 'libs', 'coworkRunner.ts'), 'utf8');
-  assert.match(runnerTs, /const fastOwnerChatMode = assistantMode \|\| mobileOwnerChatMode/);
+  assert.match(runnerTs, /const fastOwnerChatMode = conversationProfile\.fastEffortMode/);
   assert.equal((runnerTs.match(/assistantMode: fastOwnerChatMode/g) || []).length, 5);
   assert.match(runnerTs, /\|\| !fastOwnerChatMode/);
   assert.deepEqual(
@@ -519,7 +519,7 @@ test('mobile tool and effort gates are wired separately from Studio and desktop'
     serverMode.resolveMobileToolMountPolicy({ isStudioOwnerChat: false, isMobileOwnerChat: true, expansions: ['workerEconomy', 'financial', 'social', 'metaweb', 'orchestration', 'memoryAdvanced', 'automation'] }),
     { workerEconomy: true, financial: true, social: true, metaweb: true, orchestration: true, memoryAdvanced: true, automation: true },
   );
-  assert.match(runnerTs, /resolveMobileToolMountPolicy\(\{ isStudioOwnerChat, isMobileOwnerChat, expansions: mobileExpansions \}\)/);
+  assert.match(runnerTs, /resolveToolMountPolicy\(conversationProfile, mobileExpansions\)/);
   assert.match(runnerTs, /this\.buildDshHostTools\(sessionId, prompt\)/);
   assert.match(runnerTs, /this\.buildSessionInlineTools\(sessionId, passthrough, undefined, currentUserText\)/);
 });
@@ -550,7 +550,10 @@ test('mobile minimal core stays available while optional families expand indepen
   ]) {
     assert.equal(visible(name, expanded), true, `${name} returns after explicit intent`);
   }
-  assert.equal(visible('future_unclassified_tool', []), true, 'unknown future tools fail open');
+  assert.equal(visible('future_unclassified_tool', []), false, 'unknown future tools fail closed');
+  assert.equal(visible('future_unclassified_tool', expanded), false, 'unknown future tools stay hidden even when all expansions are enabled');
+  assert.equal(visible('metabot_list', [], { executionRole: 'welcome' }), true, 'Welcome Bot sees metabot_list on mobile turn 1');
+  assert.equal(visible('metabot_create', [], { executionRole: 'welcome' }), true, 'Welcome Bot sees metabot_create on mobile turn 1');
 });
 
 test('mobile intent patterns cover automation, MetaWeb, orchestration, and advanced memory', () => {
@@ -568,13 +571,13 @@ test('mobile Playwright is intent-gated before runtime prewarm', () => {
   assert.match(runnerTs, /mobileBrowserAutomationAllowed\(sessionId: string\): boolean/);
   assert.match(mainTs, /if \(!getCoworkRunner\(\)\.mobileBrowserAutomationAllowed\(coworkSessionId\)\) return undefined;/);
   assert.match(mainTs, /browserAutomationForMetabot:[\s\S]*?if \(isServerMode\(\)\) return undefined;/);
-  assert.match(runnerTs, /isMobileToolVisible\(String\(item\?\.name \?\? ''\), mobileExpansions\)/);
+  assert.match(runnerTs, /isMobileToolVisible\(\s*String\(item\?\.name \?\? ''\),\s*mobileExpansions/);
 });
 
 test('mobile minimal tools are enforced again at the DSH request boundary', () => {
   const runnerTs = fs.readFileSync(path.join(srcMainDir, 'libs', 'coworkRunner.ts'), 'utf8');
-  assert.match(runnerTs, /const hostToolsForTurn = this\.isMobileOwnerChatSession\(sessionId\)/);
-  assert.match(runnerTs, /hostToolsBuilt\.filter\(\(tool\) => isMobileToolVisible\(tool\.name, this\.mobileToolExpansions\.get\(sessionId\) \?\? \[\]\)\)/);
+  assert.match(runnerTs, /const hostToolsForTurn = conversationProfile\.isMobileOwnerChat/);
+  assert.match(runnerTs, /hostToolsBuilt\.filter\(\(tool\) => isMobileToolVisible\(\s*tool\.name,\s*this\.mobileToolExpansions\.get\(sessionId\) \?\? \[\]/);
   assert.match(runnerTs, /guardHostToolSchemas\(hostToolsForTurn\)/);
 });
 

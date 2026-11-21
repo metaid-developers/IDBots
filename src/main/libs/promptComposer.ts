@@ -97,6 +97,12 @@ export const PROMPT_SECTION_ORDER = {
   /** Caller-provided base prompt (renderer-combined routing + user config). */
   BASE: 50,
   /**
+   * Shared owner-interaction contract (`idbots:owner-interaction`) mounted for
+   * interactive 1:1 owner chats (Desktop Studio and Cloud Mobile) right before
+   * the surface-specific mode section.
+   */
+  OWNER_INTERACTION: 54,
+  /**
    * Assistant chat-experience mode: the personal-assistant style override for
    * non-technical owners. Renders right after BASE so its rules read as an
    * override of the base prompt's User Update Protocol. Only mounted for

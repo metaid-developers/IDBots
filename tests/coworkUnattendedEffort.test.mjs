@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const coworkRunnerSource = readFileSync(join(here, '../src/main/libs/coworkRunner.ts'), 'utf8');
+const conversationProfileSource = readFileSync(join(here, '../src/main/libs/conversationProfile.ts'), 'utf8');
 
 test('the cerebellum effort selector never fires for unattended automation turns', () => {
   // The auto-selector kick must be gated on the unattended classification —
@@ -27,25 +28,24 @@ test('the cerebellum effort selector never fires for unattended automation turns
 });
 
 test('the unattended classifier keys off auto-origin, session type, and source channel', () => {
-  const classifier = coworkRunnerSource.match(
-    /private isUnattendedAutomationSession\(sessionId: string\): boolean \{[\s\S]*?\n  \}/,
-  );
-  assert.ok(classifier, 'isUnattendedAutomationSession must exist');
-  const body = classifier[0];
   assert.ok(
-    body.includes('session.autoOrigin'),
+    coworkRunnerSource.includes('return this.resolveConversationProfile(sessionId).isUnattendedAutomation;'),
+    'isUnattendedAutomationSession must delegate to resolveConversationProfile',
+  );
+  assert.ok(
+    conversationProfileSource.includes('session.autoOrigin'),
     'the classifier must treat auto-created runs (schedule/longterm/orchestration) as unattended',
   );
   assert.ok(
-    body.includes("startsWith('im:')"),
+    conversationProfileSource.includes("startsWith('im:')"),
     'the classifier must keep human IM conversations (im:<platform>[:direct|:group]) on the interactive path',
   );
   assert.ok(
-    body.includes("sessionType ?? 'standard') !== 'standard'"),
+    conversationProfileSource.includes("sessionType !== 'standard'"),
     'the classifier must treat non-standard session types (A2A metaweb/browser/group) as unattended',
   );
   assert.ok(
-    body.includes("sourceChannel !== 'cowork_ui'"),
+    conversationProfileSource.includes("sourceChannel !== 'cowork_ui'"),
     'the classifier must keep cowork UI chats interactive and treat other channels as unattended',
   );
 });
@@ -55,22 +55,17 @@ test('Studio assistant-mode owner chats are exempt from the unattended classific
   // assistantMode marker classified unattended, so the cerebellum never fired
   // and every "auto" turn resolved to max (33/33 turns mapped max) — the
   // assistant mode's no-reasoning promise was unreachable for exactly the
-  // sessions it was built for. The exemption must sit BEFORE the session-type
-  // branch to take effect.
-  const classifier = coworkRunnerSource.match(
-    /private isUnattendedAutomationSession\(sessionId: string\): boolean \{[\s\S]*?\n  \}/,
-  );
-  assert.ok(classifier, 'isUnattendedAutomationSession must exist');
-  const body = classifier[0];
-  const exemptionAt = body.indexOf('this.isAssistantModeOwnerChatSession(sessionId)');
+  // sessions it was built for. The exemption must sit BEFORE the non-standard
+  // session-type branch to take effect.
+  const exemptionAt = conversationProfileSource.indexOf("hostEnv === 'desktop' && Boolean(session.assistantMode)");
   assert.ok(
     exemptionAt >= 0,
     'the classifier must exempt assistant-mode owner chats from the unattended classification',
   );
-  const sessionTypeAt = body.indexOf("sessionType ?? 'standard') !== 'standard'");
+  const sessionTypeAt = conversationProfileSource.indexOf("sessionType !== 'standard'");
   assert.ok(
     sessionTypeAt >= 0 && exemptionAt < sessionTypeAt,
-    'the assistant-mode exemption must be checked BEFORE the browser session-type branch',
+    'the assistant-mode exemption must be checked BEFORE the non-standard session-type branch',
   );
 });
 
@@ -103,7 +98,7 @@ test('both per-turn effort chains pin an assistant-mode off verdict to the GLM-e
   // resolveAutoEffortFallback input must carry the fallback route's GLM
   // family so its no-verdict branch stays honest there too.
   const pins = coworkRunnerSource.match(
-    /resolveAssistantModeExpressibleRung\(autoEffortRung, \{ assistantMode, glmFamily: isGlmFamilyModelId\((route|routeOverride)\.model\) \}\)/g,
+    /resolveAssistantModeExpressibleRung\(autoEffortRung, \{ assistantMode: fastOwnerChatMode, glmFamily: isGlmFamilyModelId\((route|routeOverride)\.model\) \}\)/g,
   ) ?? [];
   assert.ok(
     pins.length >= 2,
