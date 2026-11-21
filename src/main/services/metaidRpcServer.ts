@@ -18,6 +18,29 @@ import type { MetabotStore } from '../metabotStore';
 import type { MemoryBackend } from '../memory/memoryBackend';
 import { handleMemoryCreateRoute, handleMemoryListRoute } from './memoryGatewayRoutes';
 import {
+  FT_ESCROW_BUY_PATH,
+  FT_ESCROW_ORDER_PREFIX,
+  FT_MANDATE_CONFIRM_PATH,
+  FT_MVC_SPLIT_PATH,
+  FT_MVC_TOKEN_SELL_BUY_PATH,
+  FT_MVC_TOKEN_SELL_CANCEL_PATH,
+  FT_MVC_TOKEN_SELL_LIST_PATH,
+  FT_MVC_TOKEN_SELL_VERIFY_PATH,
+  FT_WATCH_LIST_PATH,
+  FT_WATCH_REGISTER_PATH,
+  handleFtEscrowBuyRoute,
+  handleFtEscrowGetOrderRoute,
+  handleFtMandateConfirmRoute,
+  handleFtWatchListRoute,
+  handleFtWatchRegisterRoute,
+  handleMvcFtSplitRoute,
+  handleMvcTokenSellBuyRoute,
+  handleMvcTokenSellCancelRoute,
+  handleMvcTokenSellListRoute,
+  handleMvcTokenSellVerifyRoute,
+  type FtCommerceGatewayDeps,
+} from './ftCommerceGatewayRoutes';
+import {
   createPin,
   getPinData,
   setMetaidCoreStore,
@@ -3000,6 +3023,83 @@ export function startMetaidRpcServer(
       res.writeHead(result.status);
       res.end(JSON.stringify(result.body));
       return;
+    }
+
+    // WS-1 FT Commerce & TokenSell Local RPC Primitives (`Contract C4.1`)
+    if (
+      pathname === FT_MANDATE_CONFIRM_PATH ||
+      pathname === FT_MVC_SPLIT_PATH ||
+      pathname === FT_MVC_TOKEN_SELL_VERIFY_PATH ||
+      pathname === FT_MVC_TOKEN_SELL_LIST_PATH ||
+      pathname === FT_MVC_TOKEN_SELL_BUY_PATH ||
+      pathname === FT_MVC_TOKEN_SELL_CANCEL_PATH ||
+      pathname === FT_ESCROW_BUY_PATH ||
+      pathname.startsWith(FT_ESCROW_ORDER_PREFIX) ||
+      pathname === FT_WATCH_REGISTER_PATH ||
+      pathname === FT_WATCH_LIST_PATH
+    ) {
+      const ftGatewayDeps: FtCommerceGatewayDeps = {
+        getDb: () => getStore().getDatabase(),
+        saveDb: getStore().getSaveFunction(),
+        getMetabotStore: () => getMetabotStore(),
+        sendEncryptedPrivateMessage: async (fromMetabotId, toGlobalMetaId, plaintext) => {
+          await handlePrivateSendRoute(
+            chatGatewayDeps,
+            JSON.stringify({
+              metabot_id: fromMetabotId,
+              to_global_metaid: toGlobalMetaId,
+              content: plaintext,
+            }),
+          );
+        },
+      };
+
+      if (req.method === 'GET' && pathname.startsWith(FT_ESCROW_ORDER_PREFIX)) {
+        const orderId = decodeURIComponent(pathname.slice(FT_ESCROW_ORDER_PREFIX.length));
+        const queryParams = new URLSearchParams(search || '');
+        const result = await handleFtEscrowGetOrderRoute(
+          ftGatewayDeps,
+          orderId,
+          queryParams.get('metabotId') ?? queryParams.get('metabot_id'),
+        );
+        res.writeHead(result.status);
+        res.end(JSON.stringify(result.body));
+        return;
+      }
+
+      if (req.method === 'POST') {
+        const body = await readRpcJsonObjectBody(req, res, pathname, { emptyBody: 'object' });
+        if (body === null) {
+          return;
+        }
+        let result;
+        if (pathname === FT_MANDATE_CONFIRM_PATH) {
+          result = await handleFtMandateConfirmRoute(ftGatewayDeps, body);
+        } else if (pathname === FT_MVC_SPLIT_PATH) {
+          result = await handleMvcFtSplitRoute(ftGatewayDeps, body);
+        } else if (pathname === FT_MVC_TOKEN_SELL_VERIFY_PATH) {
+          result = await handleMvcTokenSellVerifyRoute(ftGatewayDeps, body);
+        } else if (pathname === FT_MVC_TOKEN_SELL_LIST_PATH) {
+          result = await handleMvcTokenSellListRoute(ftGatewayDeps, body);
+        } else if (pathname === FT_MVC_TOKEN_SELL_BUY_PATH) {
+          result = await handleMvcTokenSellBuyRoute(ftGatewayDeps, body);
+        } else if (pathname === FT_MVC_TOKEN_SELL_CANCEL_PATH) {
+          result = await handleMvcTokenSellCancelRoute(ftGatewayDeps, body);
+        } else if (pathname === FT_ESCROW_BUY_PATH) {
+          result = await handleFtEscrowBuyRoute(ftGatewayDeps, body);
+        } else if (pathname === FT_WATCH_REGISTER_PATH) {
+          result = await handleFtWatchRegisterRoute(ftGatewayDeps, body);
+        } else if (pathname === FT_WATCH_LIST_PATH) {
+          result = handleFtWatchListRoute(ftGatewayDeps, body);
+        } else {
+          res.writeHead(404);
+          res.end(JSON.stringify({ success: false, error: 'Not found' }));
+          return;
+        }
+        res.writeHead(result.status);
+        res.end(JSON.stringify(result.body));
+        return;
+      }
     }
 
     if (req.method !== 'POST' || pathname !== '/api/metaid/create-pin') {

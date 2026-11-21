@@ -370,8 +370,10 @@ export class SellerAutoFulfillDaemon {
       return { handled: false, type: msg.type, orderId: msg.inquiryId };
     }
 
-    // GOODS_INQUIRY_V1 passes through to conversational handling
-    return { handled: false, type: msg.type, orderId: msg.inquiryId };
+    if (msg.type === 'GOODS_INQUIRY_V1') {
+      return { handled: false, type: msg.type, orderId: msg.inquiryId };
+    }
+    return { handled: false, type: msg.type, orderId: msg.orderId };
   }
 
   /**
