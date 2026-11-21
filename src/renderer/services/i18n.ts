@@ -173,6 +173,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botInternet: 'Studio',
     botBrowser: 'Bot Browser',
     botHome: 'BotWorks',
+    // Bot Browser 标签条拖拽重排（先生 2026-11-21 01:32 反馈）：title 提示 +
+    // 触控屏长按进入移动模式时的 toast 文案。两语必须齐（见接线测试）。
+    botBrowserTabDragHint: '拖拽调整标签顺序',
+    botBrowserTabDragArmedHint: '移动模式：点击目标标签落位，按 Esc 取消',
 
     // 三栏骨架（切片一）：左图标栏 / Codex 式工作台下拉 / 中栏列表
     workspaceRailLabel: '功能栏',
@@ -4061,6 +4065,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botInternet: 'Studio',
     botBrowser: 'Bot Browser',
     botHome: 'BotWorks',
+    // Bot Browser tab-strip reorder (owner feedback 2026-11-21 01:32): the
+    // discoverability title plus the touch-panel move-mode toast.
+    botBrowserTabDragHint: 'Drag to reorder tabs',
+    botBrowserTabDragArmedHint: 'Move mode: click a target tab to place it, Esc to cancel',
 
     // Three-column shell (slice 1): the icon rail, the Codex-style surface
     // menu, and the middle column's list sections.
