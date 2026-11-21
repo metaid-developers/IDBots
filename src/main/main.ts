@@ -11002,6 +11002,12 @@ const getLongTermTaskStore = () => {
         }
       }
     });
+    // Task-ledger changes (Worker submit, progress checkpoint, accept, stage
+    // move, task edit) reach the Live Stage HUD as they land: agent tools and
+    // the heartbeat write straight to the store, so there is no persisted chat
+    // message for the existing hook to ride on. Same 1500ms trailing debounce
+    // as the chat hook — this adds a trigger, not a poller.
+    longTermTaskStore.onTaskChanged(() => scheduleLiveStageCompanionsRefresh());
   }
   return longTermTaskStore;
 };
