@@ -39,7 +39,10 @@ import { agentGameService } from './services/agentGame';
 import { enqueuePendingConsent, dequeuePendingConsent } from './store/slices/agentGameSlice';
 import { scheduledTaskService } from './services/scheduledTask';
 import { groupTaskService } from './services/groupTaskService';
-import { checkForAppUpdate, type AppUpdateInfo, type AppUpdateDownloadProgress, type ChangeLogEntry, UPDATE_POLL_INTERVAL_MS, UPDATE_HEARTBEAT_INTERVAL_MS } from './services/appUpdate';
+import { checkForAppUpdate, type AppUpdateInfo, type AppUpdateDownloadProgress, type ChangeLogEntry } from './services/appUpdate';
+import { runAppUpdateCheck, type UpdateCheckResult } from './services/appUpdateCheck';
+import { startAppUpdatePolling } from './services/appUpdatePolling';
+import { loadAutoCheckUpdates, saveAutoCheckUpdates } from './services/updatePreferences';
 import {
   type UpdatePhase,
   modalStateForUpdatePhase,
@@ -63,6 +66,8 @@ import { i18nService } from './services/i18n';
 import { matchesShortcut } from './services/shortcuts';
 import { metaAppService } from './services/metaApp';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
+import RailUpdateModule from './components/update/RailUpdateModule';
+import { resolveUpdateStatus, shouldShowUpdateDot } from './services/softwareUpdateStatus';
 import UpdateChangeLogPanel from './components/update/UpdateChangeLogPanel';
 import AppUpdateModal, { type UpdateModalState } from './components/update/AppUpdateModal';
 import { openSelectedMetaApp } from './components/metaapps/metaAppLaunch.js';
@@ -290,6 +295,15 @@ const App: React.FC = () => {
     setIsSidebarTweening(false);
   }, []);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  // 更新机制的主动权在用户手里（owner order 2026-11-21）：开关默认开，保持
+  // 存量用户的原有行为；关掉后轮询循环完全不注册，手动检查发现新版也只以
+  // 「立即更新 / 暂不」待选弹窗呈现，绝不后台静默下载。
+  const [autoCheckUpdates, setAutoCheckUpdates] = useState<boolean>(() => loadAutoCheckUpdates());
+  // 最近一次检查的结果（自动心跳与手动按钮都回写）——通用页状态行与软件更新
+  // 子面板共用它，避免两处对「已是最新/发现新版」给出不同说法。
+  const [lastUpdateCheck, setLastUpdateCheck] = useState<UpdateCheckResult | null>(null);
+  // 左下版本块 popover 的展开态由 App 持有：设置页「软件更新」状态行也要能打开同一处。
+  const [railUpdatePopoverOpen, setRailUpdatePopoverOpen] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [updateModalState, setUpdateModalState] = useState<UpdateModalState>('info');
   const [downloadProgress, setDownloadProgress] = useState<AppUpdateDownloadProgress | null>(null);
@@ -1408,45 +1422,62 @@ const App: React.FC = () => {
     }
   }, [changeUpdatePhase, installDownloadedUpdate]);
 
-  const runUpdateCheck = useCallback(async () => {
-    if (mockUpdateModeRef.current) {
-      return;
-    }
-    const phase = updatePhaseRef.current;
-    // 静默下载/替换进行中，或已替换待重启时，不再重复检查
-    if (phase === 'downloading' || phase === 'applying' || phase === 'restartReady') {
-      return;
-    }
-    try {
-      const currentVersion = await window.electron.appInfo.getVersion();
-      const nextUpdate = await checkForAppUpdate(currentVersion);
-      if (!nextUpdate) {
+  // 自动心跳与设置页「检查更新」按钮共用这一条通路（同一 checkForAppUpdate），
+  // 差别只在发现新版后的处置：开关开 → 既有静默下载；开关关 → 待选弹窗。
+  // 每次检查结果回写 lastUpdateCheck：通用页状态行与软件更新子面板同读它。
+  const runUpdateCheck = useCallback(async (): Promise<UpdateCheckResult> => {
+    const result = await runAppUpdateCheck({
+      autoCheckEnabled: autoCheckUpdates,
+      silentWorkInFlight: (
+        updatePhaseRef.current === 'downloading'
+        || updatePhaseRef.current === 'applying'
+        || updatePhaseRef.current === 'restartReady'
+      ),
+      mockUpdateMode: mockUpdateModeRef.current,
+      getCurrentVersion: () => window.electron.appInfo.getVersion(),
+      checkForUpdate: checkForAppUpdate,
+      downloadedVersion: downloadedUpdateFileRef.current?.version ?? null,
+      onFound: (nextUpdate, action) => {
+        setUpdateInfo(nextUpdate);
+        if (action === 'silent-download') {
+          void startSilentDownload(nextUpdate);
+          return;
+        }
+        // 开关关闭：只呈现「检查到新版本」的待选状态，等用户选立即更新/暂不。
+        setUpdateError(null);
+        setDownloadProgress(null);
+        setUpdateModalState('prompt');
+        setShowUpdateModal(true);
+      },
+      onNoUpdate: () => {
         // 服务器端无更新：仅在本地没有待处理的已下载更新时清理提示
         if (!downloadedUpdateFileRef.current) {
           setUpdateInfo(null);
           setShowUpdateModal(false);
         }
-        return;
-      }
-      if (downloadedUpdateFileRef.current?.version === nextUpdate.latestVersion) {
-        return;
-      }
-      setUpdateInfo(nextUpdate);
-      void startSilentDownload(nextUpdate);
-    } catch (error) {
-      console.error('Failed to check app update:', error);
-    }
-  }, [startSilentDownload]);
+      },
+      onError: (error) => {
+        console.error('Failed to check app update:', error);
+      },
+    });
+    setLastUpdateCheck(result);
+    return result;
+  }, [autoCheckUpdates, startSilentDownload]);
 
   const handleOpenUpdateModal = useCallback(() => {
     if (!updateInfo) return;
-    setUpdateModalState(modalStateForUpdatePhase(updatePhase));
+    // 自动检查关闭时，正在等待安装的新版仍走 info；仅「已发现未下载」走待选面。
+    setUpdateModalState(
+      !autoCheckUpdates && updatePhase === 'idle'
+        ? 'prompt'
+        : modalStateForUpdatePhase(updatePhase),
+    );
     setUpdateError(null);
     if (!shouldPreserveDownloadProgress(updatePhase)) {
       setDownloadProgress(null);
     }
     setShowUpdateModal(true);
-  }, [updateInfo, updatePhase]);
+  }, [autoCheckUpdates, updateInfo, updatePhase]);
 
   // Keep an already-open modal in lockstep with silent download/apply so it
   // never sits at 100% with only Cancel after the background flow has moved on.
@@ -1792,39 +1823,34 @@ const App: React.FC = () => {
     return () => window.removeEventListener('cowork:viewSession', handleViewSession);
   }, [botBrowserShell.switchToHome]);
 
+  // 自动检查更新开关（owner order 2026-11-21）：关掉时 startAppUpdatePolling
+  // 直接返回 null —— 不注册 30 分钟心跳、不注册 visibilitychange、也不做首查。
   useEffect(() => {
     if (!isInitialized) return;
 
-    let cancelled = false;
-    let lastCheckTime = 0;
-
-    const maybeCheck = async () => {
-      if (cancelled) return;
-      const now = Date.now();
-      if (lastCheckTime > 0 && now - lastCheckTime < UPDATE_POLL_INTERVAL_MS) return;
-      lastCheckTime = now;
-      await runUpdateCheck();
-    };
-
-    void maybeCheck();
-
-    const timer = window.setInterval(() => {
-      void maybeCheck();
-    }, UPDATE_HEARTBEAT_INTERVAL_MS);
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        void maybeCheck();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
+    const polling = startAppUpdatePolling({
+      enabled: autoCheckUpdates,
+      check: () => {
+        void runUpdateCheck();
+      },
+    });
 
     return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      polling?.stop();
     };
-  }, [isInitialized, runUpdateCheck]);
+  }, [isInitialized, autoCheckUpdates, runUpdateCheck]);
+
+  const handleToggleAutoCheckUpdates = useCallback((enabled: boolean) => {
+    setAutoCheckUpdates(enabled);
+    saveAutoCheckUpdates(enabled);
+  }, []);
+
+  // Settings 的「检查更新」按钮：复用同一 runUpdateCheck 通路，结果原样回给
+  // 设置页做即时反馈（已是最新 / 发现新版本 / 失败）。
+  const handleCheckForUpdate = useCallback(
+    (): Promise<UpdateCheckResult> => runUpdateCheck(),
+    [runUpdateCheck],
+  );
 
   const isOverlayActive = showSettings || showUpdateModal || pendingConsents.length > 0;
   // 按当前 UI 语言解析更新说明（该语言无内容时回退到另一种语言），用于悬停徽章时展示
@@ -1842,7 +1868,10 @@ const App: React.FC = () => {
   })();
   // 静默下载中显示带进度的徽章（非打扰式后台状态）；静默替换中隐藏；就绪/待重启时显示徽章；
   // 静默下载失败时以警示色显示，提示将自动重试
-  const updateBadge = updateInfo && updatePhase !== 'applying' ? (
+  // 分工（owner order 2026-11-21 17:25）：左下角版本块负责「已发现新版本、尚未开始
+  // 后台工作」的安静红点 + 主入口；这个 header 徽章只报下载/安装/就绪/失败的过程
+  // 状态 —— 同一个 updateInfo，但同一时刻只有一处亮，避免双报。
+  const updateBadge = updateInfo && updatePhase !== 'applying' && (updatePhase !== 'idle' || silentDownloadFailed) ? (
     <AppUpdateBadge
       latestVersion={updateInfo.latestVersion}
       label={
@@ -1864,6 +1893,39 @@ const App: React.FC = () => {
       ) : undefined}
     />
   ) : null;
+  // Apple 式更新面（owner order 2026-11-21 17:29）：通用页状态行与软件更新
+  // 子面板同读这一份 descriptor；rail 设置按钮红点 = 「有可用更新」信号。
+  const updateStatus = resolveUpdateStatus({
+    phase: updatePhase,
+    downloadPercent: (
+      downloadProgress?.percent != null && Number.isFinite(downloadProgress.percent)
+        ? Math.round(downloadProgress.percent * 100)
+        : null
+    ),
+    latestVersion: updateInfo?.latestVersion ?? null,
+    silentDownloadFailed,
+    lastCheck: lastUpdateCheck,
+  });
+  const showUpdateDot = shouldShowUpdateDot({
+    latestVersion: updateInfo?.latestVersion ?? null,
+    phase: updatePhase,
+    silentDownloadFailed,
+  });
+  // 左下版本块 = 唯一控制面（owner order 17:46）：红点、开关、检查、状态、亮点区
+  // 全在这一个 popover 里；设置页只打印同一份 updateStatus。
+  const railUpdateModule = (
+    <RailUpdateModule
+      status={updateStatus}
+      showDot={showUpdateDot}
+      autoCheckUpdates={autoCheckUpdates}
+      onToggleAutoCheckUpdates={handleToggleAutoCheckUpdates}
+      onCheckForUpdate={handleCheckForUpdate}
+      onOpenUpdate={handleOpenUpdateModal}
+      changeLog={updateChangeLog}
+      open={railUpdatePopoverOpen}
+      onOpenChange={setRailUpdatePopoverOpen}
+    />
+  );
   const windowsStandaloneTitleBar = isWindows ? (
     <div className="draggable relative h-9 shrink-0 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted">
       <WindowTitleBar isOverlayActive={isOverlayActive} />
@@ -2118,7 +2180,9 @@ const App: React.FC = () => {
                 faces' mid-column header (below the Studio/BotWorks band — the
                 HomeSidebar actions row here, the Studio task header's
                 top-right row on the browser face); the rail gets none on
-                either face (one badge per screen). */}
+                either face (one badge per screen). The rail's own bottom-left
+                slot carries the DIFFERENT version/update module (owner order
+                2026-11-21 17:25), passed in as `updateModule`. */}
             <WorkspaceRail
               mode={botBrowserShell.surfaceMode}
               internetPane={botBrowserShell.internetPane}
@@ -2137,6 +2201,7 @@ const App: React.FC = () => {
               }}
               onNewChat={handleBlankNewChat}
               onShowSettings={() => handleShowSettings()}
+              updateModule={railUpdateModule}
             />
             <HomeSidebar
               onShowCowork={handleShowCowork}
@@ -2176,6 +2241,7 @@ const App: React.FC = () => {
                 handleBlankNewChat();
               }}
               onShowSettings={() => handleShowSettings()}
+              updateModule={railUpdateModule}
             />
             <Sidebar
               onShowLogin={handleShowLogin}
@@ -2399,7 +2465,12 @@ const App: React.FC = () => {
           readyToInstall={updatePhase === 'ready'}
           onConfirm={handleConfirmUpdate}
           onCancel={() => {
-            if (updateModalState === 'info' || updateModalState === 'error' || updateModalState === 'restart') {
+            if (
+              updateModalState === 'info'
+              || updateModalState === 'error'
+              || updateModalState === 'restart'
+              || updateModalState === 'prompt'
+            ) {
               setShowUpdateModal(false);
             }
           }}

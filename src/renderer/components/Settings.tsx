@@ -431,7 +431,13 @@ const contextWindowClampHint = (raw: string): string | null => {
   return i18nService.t('contextWindowOutputClampHint').replace('{value}', formatContextWindowSize(effective));
 };
 
-const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNewProjectForm, requestNonce }) => {
+const Settings: React.FC<SettingsProps> = ({
+  onClose,
+  initialTab,
+  notice,
+  openNewProjectForm,
+  requestNonce,
+}) => {
   const dispatch = useDispatch();
   // Sandbox settings are temporarily hidden; fall back to general.
   const resolvedInitialTab: TabType = initialTab === 'coworkSandbox' ? 'general' : (initialTab ?? 'general');

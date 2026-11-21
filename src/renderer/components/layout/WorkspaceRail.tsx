@@ -231,6 +231,13 @@ interface WorkspaceRailProps {
    * of their own. The prop stays for a surface that would genuinely need
    * the entry hidden. */
   showSettings?: boolean;
+  /**
+   * The bottom-left version/update block (owner order 2026-11-21 17:46 — the
+   * ONE update control surface: version, red dot, status, check action and the
+   * auto-check switch all live in its popover). App passes one node shared by
+   * both faces; the rail only lays it out under the Settings gear.
+   */
+  updateModule?: React.ReactNode;
 }
 
 /**
@@ -258,6 +265,7 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
   onNewChat,
   onShowSettings,
   showSettings = true,
+  updateModule,
 }) => {
   // Row-1 top band is platform+face aware (owner alignment ruling
   // 2026-11-17): darwin keeps the 42.375 px traffic-light reservation; win32
@@ -406,7 +414,10 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
         {/* The update badge does NOT ride the rail (it squeezed into the 64px
             column on the browser face): BOTH faces render it in their mid
             column's header instead — HomeSidebar's actions row on the home
-            face, Sidebar's Studio task header row on the browser face. */}
+            face, Sidebar's Studio task header row on the browser face.
+            Owner order 2026-11-21 17:46: the bottom-left slot under the
+            Settings gear carries the version/update module — the ONE control
+            surface (red dot, status, check action, auto-check switch). */}
         {showSettings ? (
           <RailButton
             itemId="settings"
@@ -417,6 +428,7 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
             <Cog6ToothIcon className="h-6 w-6" />
           </RailButton>
         ) : null}
+        {updateModule}
         {/* The old compact ME badge is GONE from the rail (owner ruling
             2026-11-09 10:05, D5): the standalone user page — opened from the
             header's top-left User pill — is now the ONE home of the ME credits

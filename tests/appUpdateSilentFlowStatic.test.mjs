@@ -170,7 +170,9 @@ test('Update badge shows a hover panel with the changelog in the current UI lang
 test('Update modal supports restart state and ready-to-install copy', () => {
   const source = read('src/renderer/components/update/AppUpdateModal.tsx');
 
-  assert.match(source, /export type UpdateModalState = 'info' \| 'downloading' \| 'installing' \| 'error' \| 'restart';/);
+  // Union supersession (owner order 2026-11-21): 'prompt' was added so an
+  // auto-check-OFF install only OFFERS the update instead of downloading it.
+  assert.match(source, /export type UpdateModalState = 'info' \| 'prompt' \| 'downloading' \| 'installing' \| 'error' \| 'restart';/);
   assert.match(source, /readyToInstall\?: boolean;/);
   assert.match(source, /modalState === 'restart' &&/);
   assert.match(source, /i18nService\.t\('updateRestartNow'\)/);
