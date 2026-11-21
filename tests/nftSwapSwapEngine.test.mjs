@@ -213,10 +213,11 @@ test('the ledger lock releases on failure paths: a failed run leaves the lock fr
 // ---------------------------------------------------------------------------
 
 test('itemPathForToken pads to four digits and refuses out-of-range indexes', () => {
+  assert.equal(itemPathForToken(0), 'item-0000');
   assert.equal(itemPathForToken(1), 'item-0001');
   assert.equal(itemPathForToken(817), 'item-0817');
   assert.equal(itemPathForToken(9560), 'item-9560');
-  assert.throws(() => itemPathForToken(0), (error) => error.code === 'TOKEN_INDEX_INVALID');
+  assert.throws(() => itemPathForToken(-1), (error) => error.code === 'TOKEN_INDEX_INVALID');
   assert.throws(() => itemPathForToken(1.5), (error) => error.code === 'TOKEN_INDEX_INVALID');
   assert.throws(() => itemPathForToken(10000), (error) => error.code === 'TOKEN_INDEX_INVALID');
 });
