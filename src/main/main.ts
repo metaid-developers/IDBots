@@ -286,6 +286,7 @@ import {
 } from './services/meNftEscrowService';
 import { formatGoodsTradeWireMessage } from './services/goodsTradeWireProtocol';
 import { SellerAutoFulfillDaemon } from './services/sellerAutoFulfillDaemon';
+import { PayReadFulfillDaemon } from './services/payReadFulfillDaemon';
 import {
   cancelMrc721OpenOffer,
   listMrc721MyOpenOffers,
@@ -4573,6 +4574,70 @@ function getTokenOrderWatcher(): TokenOrderWatcher {
   return tokenOrderWatcher;
 }
 
+let payReadFulfillDaemon: PayReadFulfillDaemon | null = null;
+function getPayReadFulfillDaemon(): PayReadFulfillDaemon {
+  if (!payReadFulfillDaemon) {
+    payReadFulfillDaemon = new PayReadFulfillDaemon(
+      getStore().getDatabase(),
+      getStore().getSaveFunction(),
+      {
+        getDb: () => getStore().getDatabase(),
+        saveDb: getStore().getSaveFunction(),
+        getMetabotStore: () => getMetabotStore(),
+        sendPayReadMessage: async ({ metabotId, toGlobalMetaId, content }) => {
+          const mStore = getMetabotStore();
+          const wallet = mStore.getMetabotWalletByMetabotId(metabotId);
+          if (!wallet?.mnemonic?.trim()) {
+            throw new Error('the PayBuzz MetaBot wallet is unavailable');
+          }
+          const peerChatPubkey = await resolveChatPubkeyForProvider(toGlobalMetaId);
+          if (!peerChatPubkey) {
+            throw new Error('peer has no chatPublicKey on chain');
+          }
+          return withChainWriteBudget('payread_fulfill_dm', () => sendEncryptedSimplemsg({
+            metabotId,
+            wallet,
+            peerGlobalMetaId: toGlobalMetaId,
+            peerChatPubkey,
+            plaintext: content,
+            contentType: 'text/plain',
+            createPin: (id, payload) => createPin(mStore, id, payload, { feeRate: getGlobalFeeRate('mvc') }),
+          }));
+        },
+        sendEncryptedPrivateMessage: async (fromMetabotId, toGlobalMetaId, plaintext) => {
+          const mStore = getMetabotStore();
+          const wallet = mStore.getMetabotWalletByMetabotId(fromMetabotId);
+          if (!wallet?.mnemonic?.trim()) {
+            throw new Error('the PayBuzz MetaBot wallet is unavailable');
+          }
+          const peerChatPubkey = await resolveChatPubkeyForProvider(toGlobalMetaId);
+          if (!peerChatPubkey) {
+            throw new Error('peer has no chatPublicKey on chain');
+          }
+          return withChainWriteBudget('payread_fulfill_dm', () => sendEncryptedSimplemsg({
+            metabotId: fromMetabotId,
+            wallet,
+            peerGlobalMetaId: toGlobalMetaId,
+            peerChatPubkey,
+            plaintext,
+            contentType: 'text/plain',
+            createPin: (id, payload) => createPin(mStore, id, payload, { feeRate: getGlobalFeeRate('mvc') }),
+          }));
+        },
+        recordNotification: (notif) => {
+          try {
+            getNotificationService().record(notif);
+          } catch (err) {
+            console.warn('[PayReadFulfill] recordNotification failed:', err);
+          }
+        },
+        emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+      },
+    );
+  }
+  return payReadFulfillDaemon;
+}
+
 interface SqliteBackedRestartState {
   restartScheduler: boolean;
   restartListener: boolean;
@@ -4615,6 +4680,7 @@ const resetSqliteBackedSingletons = async (): Promise<void> => {
     tokenOrderWatcher.stopPolling();
     tokenOrderWatcher = null;
   }
+  payReadFulfillDaemon = null;
   if (providerDiscoveryService) {
     providerDiscoveryService.dispose();
   }
@@ -5322,6 +5388,7 @@ const startStartupMessageTier = (): void => {
     })(),
     getSellerAutoFulfillDaemon(),
     (a2aEvent) => getProactiveWorldPerceptionService().observeA2ATurn(a2aEvent).then(() => undefined),
+    getPayReadFulfillDaemon(),
   );
   getSwapOrderTrackerService().startPolling();
   getSellerAutoFulfillDaemon().startPolling();

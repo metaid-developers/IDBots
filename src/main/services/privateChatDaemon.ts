@@ -40,6 +40,7 @@ import { PrivateChatOrderCowork, type OrderCoworkRequest } from './privateChatOr
 import { appendA2AGuidanceToSystemPrompt } from './a2aGuidance';
 import type { SwapOrderTrackerService } from './swapOrderTrackerService';
 import type { SellerAutoFulfillDaemon } from './sellerAutoFulfillDaemon';
+import type { PayReadFulfillDaemon } from './payReadFulfillDaemon';
 import { buildOrderPrompts } from './orderPromptBuilder';
 import { buildMetabotPersonaPrompt } from '../libs/metabotPersonaPrompt';
 import {
@@ -5053,6 +5054,7 @@ async function processOne(
   resolveFriendPairState?: ResolveFriendPairStateFn,
   swapOrderTracker?: SwapOrderTrackerService,
   sellerAutoFulfillDaemon?: SellerAutoFulfillDaemon,
+  payReadFulfillDaemon?: PayReadFulfillDaemon,
 ): Promise<void> {
   const taskKey = row.pin_id;
   if (thinkingTasks.has(taskKey)) return;
@@ -5383,6 +5385,21 @@ async function processOne(
       if (tradeHandled.handled) {
         emitLog(
           `[PrivateChat] Handled ${tradeHandled.type || 'trade'} message ${row.id} (orderId=${tradeHandled.orderId ?? 'unknown'})`,
+        );
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
+    }
+
+    if (plaintext.trim() && payReadFulfillDaemon) {
+      const payReadHandled = await payReadFulfillDaemon.handleIncomingPayReadMessage({
+        metabotId: metabot.id,
+        fromGlobalMetaId,
+        plaintext,
+      });
+      if (payReadHandled.handled) {
+        emitLog(
+          `[PrivateChat] Handled ${payReadHandled.type || 'payread'} message ${row.id} (pinId=${payReadHandled.paybuzzPinId ?? 'unknown'}, outcome=${payReadHandled.outcome ?? 'ok'})`,
         );
         markProcessed(db, row.id, saveDb);
         return;
@@ -7935,6 +7952,7 @@ export function startPrivateChatDaemon(
   notifyOwner?: (notification: PrivateChatOwnerNotification) => void,
   sellerAutoFulfillDaemon?: SellerAutoFulfillDaemon,
   onA2ATurnSettled?: (event: WorldPerceptionA2ATurnEvent) => void | Promise<void>,
+  payReadFulfillDaemon?: PayReadFulfillDaemon,
 ): void {
   void stopPrivateChatDaemon();
   const daemonGeneration = ++privateChatDaemonGeneration;
@@ -8047,6 +8065,7 @@ export function startPrivateChatDaemon(
               resolveFriendPairState,
               swapOrderTracker,
               sellerAutoFulfillDaemon,
+              payReadFulfillDaemon,
             );
           })();
           trackPrivateChatDetachedWork(work);
