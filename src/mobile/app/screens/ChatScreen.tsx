@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Bars3Icon, PlusIcon, PaperClipIcon, FaceSmileIcon, StopIcon, EllipsisHorizontalIcon, MagnifyingGlassIcon, PencilSquareIcon, TrashIcon, XMarkIcon, ArrowDownIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '@/components/MarkdownContent';
 import MobileArtifactPreview from '../components/MobileArtifactPreview';
@@ -9,6 +9,7 @@ import ChatComposerAttachments from '../components/ChatComposerAttachments';
 import { EmojiPickerPanel, rememberRecentEmoji } from '../components/EmojiPickerPanel';
 import { insertEmojiAtCaret } from '../chat/emojiTextInsert';
 import { isNearBottom } from '../chat/autoScroll';
+import { useSmoothStreamingText } from '../chat/smoothStreaming';
 import { mapWechatBracketCodesForDisplay } from '../chat/wechatEmojiDisplay';
 import TwemojiText from '@/components/chat/TwemojiText';
 import { mobileI18n, t } from '../../i18n';
@@ -508,7 +509,58 @@ function DiagnosticCopyButton({ message, sessionId }: { message: ChatMessageView
   );
 }
 
-function MessageRow({ message, sessionId, onOpenFile, onOpenUri, onDismissError }: { message: ChatMessageView; sessionId: string | null; onOpenFile: (filePath: string) => boolean; onOpenUri?: (uri: string) => void; onDismissError: (id: string) => void }): JSX.Element {
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
+interface MessageRowProps {
+  message: ChatMessageView;
+  sessionId: string | null;
+  onOpenFile: (filePath: string) => boolean;
+  onOpenUri?: (uri: string) => void;
+  onDismissError: (id: string) => void;
+  onStreamingAdvance?: () => void;
+}
+
+function areMessageRowsEqual(prev: MessageRowProps, next: MessageRowProps): boolean {
+  return (
+    prev.message.id === next.message.id
+    && prev.message.role === next.message.role
+    && prev.message.text === next.message.text
+    && prev.message.streaming === next.message.streaming
+    && prev.message.diagnostic === next.message.diagnostic
+    && prev.message.diagnosticReason === next.message.diagnosticReason
+    && prev.sessionId === next.sessionId
+    && prev.onOpenFile === next.onOpenFile
+    && prev.onOpenUri === next.onOpenUri
+    && prev.onDismissError === next.onDismissError
+    && prev.onStreamingAdvance === next.onStreamingAdvance
+  );
+}
+
+function AssistantMessageRow({ message, onOpenFile, onOpenUri, onStreamingAdvance }: {
+  message: ChatMessageView;
+  onOpenFile: (filePath: string) => boolean;
+  onOpenUri?: (uri: string) => void;
+  onStreamingAdvance?: () => void;
+}): JSX.Element {
+  const displayedText = useSmoothStreamingText(message.text, message.streaming, message.id);
+  useIsomorphicLayoutEffect(() => {
+    if (message.streaming) {
+      onStreamingAdvance?.();
+    }
+  }, [displayedText, message.streaming, onStreamingAdvance]);
+  return (
+    <div className="twin-message flex justify-start">
+      <div className="twin-message-assistant">
+        {/* Display-only mapping (wechatEmojiDisplay.ts); emojiImages renders
+            catalog emoji as bundled Twemoji artwork inside the markdown. */}
+        <MarkdownContent content={mapWechatBracketCodesForDisplay(displayedText)} chatExperienceMode="assistant" compact isStreaming={message.streaming} onOpenLocalFile={onOpenFile} onOpenBotBrowserUri={onOpenUri} emojiImages />
+        {message.streaming ? <span className="mt-1 inline-block h-4 w-2 animate-pulse bg-[var(--color-primary)]" aria-hidden /> : null}
+      </div>
+    </div>
+  );
+}
+
+const MessageRow = memo(function MessageRow({ message, sessionId, onOpenFile, onOpenUri, onDismissError, onStreamingAdvance }: MessageRowProps): JSX.Element {
   if (message.role === 'user') {
     return (
       <div className="twin-message flex justify-end">
@@ -567,16 +619,14 @@ function MessageRow({ message, sessionId, onOpenFile, onOpenUri, onDismissError 
     );
   }
   return (
-    <div className="twin-message flex justify-start">
-      <div className="twin-message-assistant">
-        {/* Display-only mapping (wechatEmojiDisplay.ts); emojiImages renders
-            catalog emoji as bundled Twemoji artwork inside the markdown. */}
-        <MarkdownContent content={mapWechatBracketCodesForDisplay(message.text)} chatExperienceMode="assistant" compact onOpenLocalFile={onOpenFile} onOpenBotBrowserUri={onOpenUri} emojiImages />
-        {message.streaming ? <span className="mt-1 inline-block h-4 w-2 animate-pulse bg-[var(--color-primary)]" aria-hidden /> : null}
-      </div>
-    </div>
+    <AssistantMessageRow
+      message={message}
+      onOpenFile={onOpenFile}
+      onOpenUri={onOpenUri}
+      onStreamingAdvance={onStreamingAdvance}
+    />
   );
-}
+}, areMessageRowsEqual);
 
 function SubmissionStatus({ chat }: { chat: Chat }): JSX.Element | null {
   const attempts = (chat.attempts ?? []).filter((attempt) => attempt.status !== 'sending' && attempt.status !== 'verified');
@@ -624,16 +674,20 @@ export default function ChatScreen(props: {
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [, refreshDismissedErrors] = useState(0);
   const visibleMessages = filterDismissedErrorMessages(chat.messages);
-  const hideError = (id: string) => {
+  const hideError = useCallback((id: string) => {
     dismissErrorMessage(id);
     refreshDismissedErrors((version) => version + 1);
-  };
+  }, []);
   // Refs (caret notes: emojiTextInsert.ts).
   const listRef = useRef<HTMLDivElement | null>(null);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
   // Scroll guard (autoScroll.ts): follow new content only while the
   // viewport hugs the transcript bottom; reading history keeps the scroll
   // position frozen and shows the "new messages" pill instead.
   const stickToBottomRef = useRef(true);
+  const pinningScrollRef = useRef(false);
+  const pinningResetFrameRef = useRef<number | null>(null);
+  const lastScrollTopRef = useRef(0);
   const [showNewMessages, setShowNewMessages] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingCaretRef = useRef<number | null>(null);
@@ -745,31 +799,82 @@ export default function ChatScreen(props: {
     return mobileI18n.subscribe(syncLanguage);
   }, []);
 
+  const pinToBottomIfSticky = useCallback(() => {
+    const list = listRef.current;
+    if (!list || !stickToBottomRef.current) return;
+    const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
+    if (list.scrollTop >= maxScrollTop - 0.5) return;
+    pinningScrollRef.current = true;
+    list.scrollTop = list.scrollHeight;
+    lastScrollTopRef.current = list.scrollTop;
+    if (typeof requestAnimationFrame === 'function') {
+      if (pinningResetFrameRef.current !== null) {
+        cancelAnimationFrame(pinningResetFrameRef.current);
+      }
+      pinningResetFrameRef.current = requestAnimationFrame(() => {
+        pinningResetFrameRef.current = null;
+        pinningScrollRef.current = false;
+      });
+    } else {
+      pinningScrollRef.current = false;
+    }
+  }, []);
+
   // Track stickiness on user scroll: leaving the near-bottom zone releases
   // auto-follow; returning to it re-arms follow and dismisses the pill.
+  // Synthetic scroll events fired by programmatic bottom-pinning are ignored
+  // unless the user actively scrolled upward.
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
+    lastScrollTopRef.current = list.scrollTop;
     const onScroll = () => {
+      const currentTop = list.scrollTop;
+      const scrolledUp = currentTop < lastScrollTopRef.current - 2;
+      lastScrollTopRef.current = currentTop;
+      if (pinningScrollRef.current && !scrolledUp) return;
       const near = isNearBottom(list);
       stickToBottomRef.current = near;
       if (near) setShowNewMessages(false);
     };
     list.addEventListener('scroll', onScroll, { passive: true });
-    return () => list.removeEventListener('scroll', onScroll);
+    return () => {
+      list.removeEventListener('scroll', onScroll);
+      if (pinningResetFrameRef.current !== null) {
+        cancelAnimationFrame(pinningResetFrameRef.current);
+        pinningResetFrameRef.current = null;
+      }
+      pinningScrollRef.current = false;
+    };
   }, []);
-  // Auto-scroll on message/streaming updates, guarded by stickiness: near
-  // the bottom this preserves the original follow exactly; further up the
-  // position must not move at all — only flag the pill.
+
+  // Keep the bottom pinned across async layout changes (e.g. keyboard resize,
+  // markdown image load, or activity indicator wrapping) while sticky.
   useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const list = listRef.current;
+    const transcript = transcriptRef.current;
+    if (!list && !transcript) return undefined;
+    const observer = new ResizeObserver(() => {
+      pinToBottomIfSticky();
+    });
+    if (list) observer.observe(list);
+    if (transcript) observer.observe(transcript);
+    return () => observer.disconnect();
+  }, [pinToBottomIfSticky]);
+
+  // Auto-scroll on message/streaming updates before paint (useLayoutEffect)
+  // so newly revealed lines never flash downward for a frame before snapping.
+  useIsomorphicLayoutEffect(() => {
     const list = listRef.current;
     if (!list) return;
     if (stickToBottomRef.current) {
-      list.scrollTop = list.scrollHeight;
+      pinToBottomIfSticky();
     } else {
       setShowNewMessages(true);
     }
-  }, [chat.messages, chat.isStreaming]);
+  }, [chat.sessionId, chat.messages, chat.isStreaming, pinToBottomIfSticky]);
+
   const scrollToLatest = () => {
     const list = listRef.current;
     if (!list) return;
@@ -777,7 +882,11 @@ export default function ChatScreen(props: {
     setShowNewMessages(false);
     list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
   };
-  useEffect(() => setPreviewPath(null), [chat.sessionId]);
+  useEffect(() => {
+    setPreviewPath(null);
+    stickToBottomRef.current = true;
+    setShowNewMessages(false);
+  }, [chat.sessionId]);
 
   // Insertion point: DOM selection (focused) / pending caret / end.
   const currentEmojiSelection = (): { start: number; end: number } | null => {
@@ -871,36 +980,48 @@ export default function ChatScreen(props: {
       {/* Relative wrapper anchors the floating new-messages pill to the
           transcript's bottom edge (just above the composer). */}
       <div className="relative min-h-0 flex-1">
-        <div ref={listRef} className="twin-scroll h-full px-4 py-4">
-          {chat.hasMoreHistory ? (
-            <button type="button" onClick={() => void chat.loadEarlierMessages()} className="twin-button twin-button-secondary twin-button-full mb-3">
-              {t('mobile.chat.loadEarlier')}
-            </button>
-          ) : null}
-          {visibleMessages.length === 0 ? (
-            <div className="twin-empty h-full">
-              <p className="twin-empty-title">
-                {chat.restoring ? t('mobile.common.loading') : t('mobile.chat.emptyTitle')}
-              </p>
-              {!chat.restoring ? <p className="twin-empty-copy">{t('mobile.chat.emptyBody')}</p> : null}
-            </div>
-          ) : (
-            visibleMessages.map((message) => <MessageRow key={message.id} message={message} sessionId={chat.sessionId ?? null} onOpenFile={openPreview} onOpenUri={props.onOpenUri} onDismissError={hideError} />)
-          )}
-          {['starting', 'running', 'steering', 'stopping', 'waiting_permission', 'offline_unknown'].includes(turnPhase) ? (
-            <div className="px-2" data-testid="turn-phase">
-              <AssistantActivityIndicator
-                messages={chat.activityMessages}
-                avatar={headerBot.avatar}
-                fallbackText={turnPhase === 'stopping' || turnPhase === 'offline_unknown'
-                  ? t(`mobile.chat.phase.${turnPhase}`)
-                  : undefined}
-                inline
-                sessionId={chat.sessionId}
-                waitingForOwner={turnPhase === 'waiting_permission'}
-              />
-            </div>
-          ) : null}
+        <div ref={listRef} className="twin-scroll overflow-anchor-none h-full px-4 py-4">
+          <div ref={transcriptRef} className={visibleMessages.length === 0 ? 'h-full' : undefined}>
+            {chat.hasMoreHistory ? (
+              <button type="button" onClick={() => void chat.loadEarlierMessages()} className="twin-button twin-button-secondary twin-button-full mb-3">
+                {t('mobile.chat.loadEarlier')}
+              </button>
+            ) : null}
+            {visibleMessages.length === 0 ? (
+              <div className="twin-empty h-full">
+                <p className="twin-empty-title">
+                  {chat.restoring ? t('mobile.common.loading') : t('mobile.chat.emptyTitle')}
+                </p>
+                {!chat.restoring ? <p className="twin-empty-copy">{t('mobile.chat.emptyBody')}</p> : null}
+              </div>
+            ) : (
+              visibleMessages.map((message) => (
+                <MessageRow
+                  key={message.id}
+                  message={message}
+                  sessionId={chat.sessionId ?? null}
+                  onOpenFile={openPreview}
+                  onOpenUri={props.onOpenUri}
+                  onDismissError={hideError}
+                  onStreamingAdvance={pinToBottomIfSticky}
+                />
+              ))
+            )}
+            {['starting', 'running', 'steering', 'stopping', 'waiting_permission', 'offline_unknown'].includes(turnPhase) ? (
+              <div className="px-2" data-testid="turn-phase">
+                <AssistantActivityIndicator
+                  messages={chat.activityMessages}
+                  avatar={headerBot.avatar}
+                  fallbackText={turnPhase === 'stopping' || turnPhase === 'offline_unknown'
+                    ? t(`mobile.chat.phase.${turnPhase}`)
+                    : undefined}
+                  inline
+                  sessionId={chat.sessionId}
+                  waitingForOwner={turnPhase === 'waiting_permission'}
+                />
+              </div>
+            ) : null}
+          </div>
         </div>
         {showNewMessages ? (
           <button

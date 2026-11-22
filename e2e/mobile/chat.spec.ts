@@ -308,6 +308,80 @@ test.describe('chat', () => {
     await closeMockArtifact(page, 'refresh.md');
     await expect(page.getByPlaceholder('Type a message…')).toHaveValue('draft during refresh');
   });
+
+  test('streaming in an overflowing transcript advances smoothly with monotonic auto-scroll and no downward drop', async ({ page }) => {
+    await page.goto('/app/');
+    // Fill the viewport with enough turns so the transcript overflows and scrolls.
+    for (let i = 0; i < 4; i += 1) {
+      await sendMessage(page, `turn ${i + 1}`);
+      await expect(page.getByTestId('chat-composer-input')).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0, { timeout: 30_000 });
+    }
+
+    const overflowAnchor = await page.locator('.twin-scroll').evaluate(
+      (el) => getComputedStyle(el).overflowAnchor,
+    );
+    expect(overflowAnchor).toBe('none');
+
+    // Sample scrollTop, scrollHeight, and active assistant text length every rAF.
+    await page.evaluate(() => {
+      const scroller = document.querySelector('.twin-scroll');
+      if (!scroller) throw new Error('missing .twin-scroll');
+      const samples: Array<{ scrollTop: number; scrollHeight: number; clientHeight: number; textLen: number }> = [];
+      let active = true;
+      (window as unknown as { __streamScrollMonitor?: { stop: () => typeof samples } }).__streamScrollMonitor = {
+        stop: () => {
+          active = false;
+          return samples;
+        },
+      };
+      const tick = () => {
+        if (!active) return;
+        const bubbles = document.querySelectorAll('.twin-message-assistant');
+        const lastBubble = bubbles[bubbles.length - 1];
+        samples.push({
+          scrollTop: scroller.scrollTop,
+          scrollHeight: scroller.scrollHeight,
+          clientHeight: scroller.clientHeight,
+          textLen: lastBubble ? (lastBubble.textContent?.length ?? 0) : 0,
+        });
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+
+    await sendMessage(page, 'hello');
+    await expect(page.getByText('Every reply in this demo is streamed token by token')).toHaveCount(5, {
+      timeout: 30_000,
+    });
+    await expect(page.getByText('Every reply in this demo is streamed token by token').nth(4)).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0, { timeout: 30_000 });
+
+    const samples = await page.evaluate(() => {
+      const monitor = (window as unknown as { __streamScrollMonitor?: { stop: () => Array<{ scrollTop: number; scrollHeight: number; clientHeight: number; textLen: number }> } }).__streamScrollMonitor;
+      return monitor ? monitor.stop() : [];
+    });
+
+    expect(samples.length).toBeGreaterThan(5);
+    // Once the assistant bubble begins streaming (and before the final turn-phase indicator vanishes),
+    // scrollTop must not drop backward while content is growing.
+    let prevScrollTop = samples[0]!.scrollTop;
+    let maxScrollHeight = samples[0]!.scrollHeight;
+    const distinctLengths = new Set<number>();
+    for (const sample of samples) {
+      distinctLengths.add(sample.textLen);
+      if (sample.scrollHeight >= maxScrollHeight) {
+        expect(sample.scrollTop).toBeGreaterThanOrEqual(prevScrollTop - 1);
+        maxScrollHeight = sample.scrollHeight;
+      }
+      prevScrollTop = sample.scrollTop;
+    }
+    expect(distinctLengths.size).toBeGreaterThan(4);
+    const last = samples[samples.length - 1]!;
+    expect(last.scrollHeight - last.clientHeight - last.scrollTop).toBeLessThanOrEqual(2);
+  });
 });
 
 async function openMockArtifact(page: import('@playwright/test').Page, filename: string): Promise<void> {
