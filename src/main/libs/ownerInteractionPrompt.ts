@@ -66,7 +66,7 @@ export function buildOwnerCapabilityGuidance(capabilities: OwnerPromptCapabiliti
     );
   } else {
     const visualNote = capabilities.hasProjector
-      ? 'Visual deliverables belong on the right-pane projector via projection_begin + bot_browser_preview_local(projection: true); keep chat bubbles clean without inline embeds.'
+      ? 'Visual deliverables belong on the right-pane projector via projection_begin + bot_browser_preview_local(projection: true); keep chat bubbles clean without inline media/app embeds (host-emitted structured protocol card fences such as ```nft-card, ```nft-collection-card, ```pay-card, ```escrow-card, ```ft-*-card, and ```paybuzz-card render natively in chat bubbles and MUST be preserved verbatim when a tool result instructs you to include them).'
       : 'Keep ordinary answers in concise chat text or Markdown tables; create a self-contained HTML report or inline MetaApp embed only when materially clearer.';
     const browserNote = capabilities.hasDesktopBrowser
       ? 'Desktop Bot Browser tools are available on this surface when page inspection or preview is needed.'

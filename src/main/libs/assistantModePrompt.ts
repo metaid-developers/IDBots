@@ -205,7 +205,7 @@ export function buildProjectorModePrompt(): string {
       '',
       '**链上发布凭证（硬规则）。** 凡是本轮完成了链上发布（文章、动态、MetaApp、NFT 等），**左侧聊天回复和右侧投影页面都必须同时明文列出两项核心凭证**：① **发布账号**（写清是哪个 Bot 身份签发的，例如 `AI_Sunny（Twin 分身）` 及其链上地址/GlobalMetaID）；② **完整明文 Pin ID**（既给可点击链接，也直接把完整 `pin://<txid>i0` 或 `metaapp://<txid>i0` 明文写出来，绝不能只藏在「阅读链接」四个字背后让主人看不到 Pin ID！）。严禁在主人明确说「只看文稿 / 暂不动代码」后强行在投影页塞入未要求的代码改造拍板项。',
       '',
-      '**聊天保持干净（硬规则）。** 在本标签页中绝不要在气泡里内嵌任何东西：不要 `![名字](metaapp://…)`，不要 `[报告](file:///…)`。提到应用时用普通链接 `[名字](metaapp://pinId)`，提到本地文件时用 `[文件名](preview-file://localhost/…)` 或 `[名字](preview-metaapp://localhost/…)`——它们都只是链接，会在右侧浏览器打开；一切视觉内容都走投影仪。',
+      '**聊天保持干净（硬规则）。** 在本标签页中绝不要在气泡里内嵌普通媒体或应用预览：不要 `![名字](metaapp://…)`，不要 `[报告](file:///…)`。提到应用时用普通链接 `[名字](metaapp://pinId)`，提到本地文件时用 `[文件名](preview-file://localhost/…)` 或 `[名字](preview-metaapp://localhost/…)`——它们都只是链接，会在右侧浏览器打开；除宿主工具产出的结构化协议卡片代码块（如 ```nft-card、```nft-collection-card、```pay-card、```escrow-card、```ft-quote-card、```ft-order-card、```ft-fill-card、```paybuzz-card，当工具结果要求原样附带时必须原样保留在聊天气泡里）外，其余视觉内容都走投影仪。',
     ].join('\n'),
     [
       '## Projector Mode — the Bot Internet meeting room',
@@ -234,7 +234,7 @@ export function buildProjectorModePrompt(): string {
       '',
       '**On-chain publication receipt (hard rule).** Whenever a turn publishes anything on-chain (article, buzz, MetaApp, NFT…), **BOTH your chat reply and the projected HTML page MUST visibly state two key facts**: (1) **Published by** (the exact Bot name + role, e.g. `AI_Sunny (Twin)` and its MetaID/address), and (2) **Full verbatim Pin ID** (`pin://<txid>i0` or `metaapp://<txid>i0` shown visibly in plain/code text alongside the clickable link — NEVER hide the Pin ID behind generic `[Read link]` text alone!). Never push unrequested code-change decisions onto the projector when the owner explicitly asked for drafts/text only.',
       '',
-      '**Chat stays clean (hard rule).** In this tab NEVER embed anything in a bubble: no `![name](metaapp://…)`, no `[report](file:///…)`. Mention apps with a plain link `[name](metaapp://pinId)`, and local files with `[file name](preview-file://localhost/…)` or `[name](preview-metaapp://localhost/…)` — these are ordinary links that open in the right-side browser, not embeds; everything visual goes to the projector.',
+      '**Chat stays clean (hard rule).** In this tab NEVER embed media or app previews in a bubble: no `![name](metaapp://…)`, no `[report](file:///…)`. Mention apps with a plain link `[name](metaapp://pinId)`, and local files with `[file name](preview-file://localhost/…)` or `[name](preview-metaapp://localhost/…)` — these are ordinary links that open in the right-side browser, not embeds; except for host-emitted structured protocol card fences (```nft-card, ```nft-collection-card, ```pay-card, ```escrow-card, ```ft-quote-card, ```ft-order-card, ```ft-fill-card, ```paybuzz-card — which MUST be included verbatim in the chat bubble whenever a tool result instructs you to include them), everything visual goes to the projector.',
     ].join('\n'),
   );
 }
@@ -256,7 +256,7 @@ export function buildProjectorWelcomeHoldPrompt(): string {
       '',
       '**欢迎阶段不投影（硬规则，优先于「首轮必须投影」）。** 不要调用 projection_begin，不要用 projection: true 调用 bot_browser_preview_local，也不要为投影写任何 HTML 页面。直接在聊天里回复，用很短的段落。等主人交给你真正的任务时，宿主会自动恢复正常的投影模式。',
       '',
-      '**聊天保持干净（硬规则）。** 不要在气泡里内嵌任何东西：不要 `![名字](metaapp://…)`，不要 `[报告](file:///…)`；`preview-file://localhost/…` 和 `preview-metaapp://localhost/…` 只是普通链接，可以使用。',
+      '**聊天保持干净（硬规则）。** 不要在气泡里内嵌普通媒体或应用预览：不要 `![名字](metaapp://…)`，不要 `[报告](file:///…)`；`preview-file://localhost/…` 和 `preview-metaapp://localhost/…` 只是普通链接，可以使用（宿主工具结果要求原样附带的 ```nft-card 等协议卡片代码块除外）。',
     ].join('\n'),
     [
       '## Projector Mode — welcome in progress',
@@ -265,7 +265,7 @@ export function buildProjectorWelcomeHoldPrompt(): string {
       '',
       '**No projections during the welcome (hard rule, overrides the first-turn projection rule).** Do not call projection_begin, do not call bot_browser_preview_local with projection: true, and do not write HTML pages for the projector. Reply in the chat in short paragraphs. The host restores the normal projector mode as soon as the owner gives you real work.',
       '',
-      '**Chat stays clean (hard rule).** Never embed anything in a bubble: no `![name](metaapp://…)`, no `[report](file:///…)`; `preview-file://localhost/…` and `preview-metaapp://localhost/…` are ordinary links and are fine.',
+      '**Chat stays clean (hard rule).** Never embed media or app previews in a bubble: no `![name](metaapp://…)`, no `[report](file:///…)`; `preview-file://localhost/…` and `preview-metaapp://localhost/…` are ordinary links and are fine (host-emitted protocol card fences such as ```nft-card are excepted when a tool result asks you to include them).',
     ].join('\n'),
   );
 }

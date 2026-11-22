@@ -76,15 +76,16 @@ test('NftCard SSR: de-NFTified fallback title, Verified badge, dual ME/CNY curre
     }),
   );
 
-  // De-NFTified default item fallback + Verified badge + Dual pricing + Seller online + Action capsules
+  // De-NFTified default item fallback + LISTED badge + Verified badge + Dual pricing + Seller online + Action capsules
+  assert.match(html, /LISTED/);
   assert.match(html, /Digital Item|数字商品/);
   assert.match(html, /Verified|官方认证/);
   assert.match(html, /12\.5 ME/);
   assert.match(html, /¥19\.90/);
   assert.match(html, /MerchantBot/);
-  assert.match(html, /Buy with ME|用 ME 购买/);
+  assert.match(html, /Buy with ME|ME 购买|用 ME 购买/);
   assert.match(html, /Negotiate|议价/);
-  assert.match(html, /Visit Shop|逛店铺/);
+  assert.match(html, /Visit Shop|进店|逛店铺/);
 
   // Unverified card without selling actions omits Verified badge and Buy button
   const unverifiedHtml = renderToStaticMarkup(
@@ -99,7 +100,7 @@ test('NftCard SSR: de-NFTified fallback title, Verified badge, dual ME/CNY curre
     }),
   );
   assert.doesNotMatch(unverifiedHtml, /Verified|官方认证/);
-  assert.doesNotMatch(unverifiedHtml, /Buy with ME|用 ME 购买/);
+  assert.doesNotMatch(unverifiedHtml, /Buy with ME|ME 购买|用 ME 购买/);
   assert.match(unverifiedHtml, /50,000 sats/);
 });
 
