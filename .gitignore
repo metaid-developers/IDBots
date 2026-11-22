@@ -85,6 +85,7 @@ docs/*
 !docs/qq-channel-pr.md
 tests/*
 !tests/unwired-exclusions.json
+!tests/runtimeDiagLogger.test.ts
 !tests/dataGuard.test.mjs
 !tests/privateChatFileMessage.test.mjs
 !tests/privateChatWaitNoticeCancel.test.mjs

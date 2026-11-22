@@ -68,6 +68,7 @@ import {
 import { rankMemoriesWithCerebellum } from './cerebellum/memoryRank';
 import { startEventLoopLagMonitor } from './libs/eventLoopLagMonitor';
 import { startRendererHangMonitor } from './libs/rendererHangMonitor';
+import { initRuntimeDiagLog, runtimeDiagLog } from './libs/runtimeDiagLogger';
 import { rankConversationsWithCerebellum } from './cerebellum/conversationSearchRank';
 import { decideGroupReplyWithCerebellum } from './cerebellum/groupReplyGate';
 import { classifySessionFollowUpWithCerebellum } from './cerebellum/sessionFollowUpGate';
@@ -2891,6 +2892,19 @@ const startupLog = (stage: string): void => {
 };
 setStartupTierLogger(startupLog);
 startupLog(`boot marker ${new Date(startupStartedAt).toISOString()}`);
+// Runtime diagnostics: every forced reload, renderer crash, child-process
+// death and main-frame navigation lands in logs/runtime-diag.log, so the
+// dev-only blank-then-reload-to-home incidents can be attributed afterwards
+// (terminal scrollback is long gone by the time anyone investigates).
+initRuntimeDiagLog(path.join(app.getPath('userData'), 'logs'));
+// Session delimiter for runtime-diag.log: every reload/crash entry below sits
+// between two boot markers, so an incident can be tied to the exact session.
+runtimeDiagLog('app-boot', {
+  node: process.versions.node,
+  electron: process.versions.electron,
+  isDev: process.env.NODE_ENV === 'development',
+  userData: app.getPath('userData'),
+});
 
 const isDev = process.env.NODE_ENV === 'development';
 const isLinux = process.platform === 'linux';
@@ -3110,6 +3124,7 @@ app.on('ready', () => {
 // 添加错误处理
 app.on('render-process-gone', (_event, webContents, details) => {
   console.error('Render process gone:', details);
+  runtimeDiagLog('render-process-gone', { details: { ...details }, ...captureDiagMemorySnapshot() });
   const shouldReload =
     details.reason === 'crashed' ||
     details.reason === 'killed' ||
@@ -3123,6 +3138,7 @@ app.on('render-process-gone', (_event, webContents, details) => {
 
 app.on('child-process-gone', (_event, details) => {
   console.error('Child process gone:', details);
+  runtimeDiagLog('child-process-gone', { details: { ...details }, ...captureDiagMemorySnapshot() });
   if (reloadOnChildProcessGone && (details.type === 'GPU' || details.type === 'Utility')) {
     scheduleReload(`child-process-gone (${details.type}/${details.reason})`);
   }
@@ -14442,6 +14458,31 @@ const showSystemMenu = (position?: { x?: number; y?: number }, win?: BrowserWind
   });
 };
 
+// Memory context attached to every runtime-diag entry: the dev-only
+// blank-then-reload incidents are suspected to be the OS killing the renderer
+// under memory pressure, so free/system memory and the summed renderer
+// working sets at the moment of the event are the discriminating evidence.
+const captureDiagMemorySnapshot = (): Record<string, unknown> => {
+  const snapshot: Record<string, unknown> = {};
+  try {
+    snapshot.totalMB = Math.round(os.totalmem() / 1048576);
+    snapshot.freeMB = Math.round(os.freemem() / 1048576);
+  } catch {
+    // os failures leave the snapshot without memory fields.
+  }
+  try {
+    let rendererWorkingSetKB = 0;
+    for (const metric of app.getAppMetrics()) {
+      if (String(metric.type).toLowerCase() !== 'renderer') continue;
+      rendererWorkingSetKB += metric.memory?.workingSetSize ?? 0;
+    }
+    snapshot.rendererWorkingSetMB = Math.round(rendererWorkingSetKB / 1024);
+  } catch {
+    // Metrics failures leave the snapshot without renderer fields.
+  }
+  return snapshot;
+};
+
 const scheduleReload = (reason: string, webContents?: WebContents) => {
   const target = webContents ?? mainWindow?.webContents;
   if (!target || target.isDestroyed()) {
@@ -14450,10 +14491,12 @@ const scheduleReload = (reason: string, webContents?: WebContents) => {
   const now = Date.now();
   if (now - lastReloadAt < MIN_RELOAD_INTERVAL_MS) {
     console.warn(`Skipping reload (${reason}); last reload was ${now - lastReloadAt}ms ago.`);
+    runtimeDiagLog('window-reload-skipped', { reason, msSinceLast: now - lastReloadAt });
     return;
   }
   lastReloadAt = now;
   console.warn(`Reloading window due to ${reason}`);
+  runtimeDiagLog('window-reload', { reason, ...captureDiagMemorySnapshot() });
   target.reloadIgnoringCache();
 };
 
@@ -23910,6 +23953,15 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       startupLog('main frame did-finish-load');
       emitWindowState(win);
     });
+    // Main-frame navigations land in runtime-diag.log: a vite full reload
+    // (dep re-optimization or HMR server restart) arrives here as a main-frame
+    // navigation WITHOUT a preceding window-reload entry, while a crash-driven
+    // reload always logs window-reload/render-process-gone first. That pairing
+    // is what tells the two root-cause families apart.
+    win.webContents.on('did-start-navigation', (_event, url, isInPlace, isMainFrame) => {
+      if (!isMainFrame) return;
+      runtimeDiagLog('main-frame-navigation', { url, isInPlace });
+    });
     win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
       if (isDev) {
         console.log(`[Renderer:${level}] ${sourceId}:${line} ${message}`);
@@ -23975,6 +24027,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     // 处理渲染进程崩溃或退出
     win.webContents.on('render-process-gone', (_event, details) => {
       console.error('Window render process gone:', details);
+      runtimeDiagLog('window-render-process-gone', { details: { ...details }, ...captureDiagMemorySnapshot() });
       scheduleReload('webContents-crashed', win.webContents);
     });
 
@@ -24037,6 +24090,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       if (errorCode === -3 || !isMainFrame) {
         return;
       }
+      runtimeDiagLog('did-fail-load', { errorCode, errorDescription, isMainFrame });
       // 如果加载失败，尝试重新加载
       if (isDev) {
         setTimeout(() => {
