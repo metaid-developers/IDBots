@@ -6,6 +6,8 @@ const require = createRequire(import.meta.url);
 const {
   resolveDshRuntimeIdleTtlMsForMemory,
   shouldSkipSecondaryCleanWarmupForMemory,
+  parseDarwinVmStatAvailableMb,
+  getAvailableSystemMemoryMb,
   DSH_RUNTIME_IDLE_TTL_MS,
   DSH_RUNTIME_PRESSURE_IDLE_TTL_MS,
   DSH_RUNTIME_CRITICAL_PRESSURE_IDLE_TTL_MS,
@@ -78,4 +80,22 @@ test('shouldSkipSecondaryCleanWarmupForMemory caps startup warmup to one slot on
     }),
     false,
   );
+});
+
+test('parseDarwinVmStatAvailableMb includes reclaimable inactive/speculative/purgeable pages', () => {
+  const sample = [
+    'Mach Virtual Memory Statistics: (page size of 16384 bytes)',
+    'Pages free:                                     8989.',
+    'Pages active:                                 202035.',
+    'Pages inactive:                               195835.',
+    'Pages speculative:                              3295.',
+    'Pages wired down:                             207780.',
+    'Pages purgeable:                                 303.',
+  ].join('\n');
+  const availableMb = parseDarwinVmStatAvailableMb(sample);
+  assert.ok(availableMb !== null && Math.abs(availableMb - 3256.59375) < 0.01);
+  assert.equal(resolveDshRuntimeIdleTtlMsForMemory(DSH_RUNTIME_IDLE_TTL_MS, availableMb), DSH_RUNTIME_IDLE_TTL_MS);
+  assert.equal(parseDarwinVmStatAvailableMb(''), null);
+  assert.equal(parseDarwinVmStatAvailableMb('no page size header'), null);
+  assert.ok(getAvailableSystemMemoryMb() > 0);
 });
