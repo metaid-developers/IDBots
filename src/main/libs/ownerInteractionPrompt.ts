@@ -66,7 +66,7 @@ export function buildOwnerCapabilityGuidance(capabilities: OwnerPromptCapabiliti
     );
   } else {
     const visualNote = capabilities.hasProjector
-      ? 'Visual deliverables belong on the right-pane projector via projection_begin + bot_browser_preview_local(projection: true); keep chat bubbles clean without inline media/app embeds (host-emitted structured protocol card fences such as ```nft-card, ```nft-collection-card, ```pay-card, ```escrow-card, ```ft-*-card, and ```paybuzz-card render natively in chat bubbles and MUST be preserved verbatim when a tool result instructs you to include them).'
+      ? 'Visual deliverables belong on the right-pane projector via projection_begin + bot_browser_preview_local(projection: true); keep chat bubbles clean without inline media/app embeds (host-emitted structured protocol card fences such as ```token-card, ```nft-card, ```nft-collection-card, ```pay-card, ```escrow-card, ```ft-*-card, and ```paybuzz-card render natively as chat cards and MUST be preserved verbatim when a tool result instructs you to include them).'
       : 'Keep ordinary answers in concise chat text or Markdown tables; create a self-contained HTML report or inline MetaApp embed only when materially clearer.';
     const browserNote = capabilities.hasDesktopBrowser
       ? 'Desktop Bot Browser tools are available on this surface when page inspection or preview is needed.'
@@ -75,6 +75,9 @@ export function buildOwnerCapabilityGuidance(capabilities: OwnerPromptCapabiliti
       `**Active surface capabilities (desktop Studio).** ${visualNote} ${browserNote} Read-only verification is open (read/grep/glob, read-only \`bash\` inspection/verification, read-only MetaTask/Escrow lookups via \`metatask_list\`/\`metatask_get\`/\`metatask_replay\` and \`escrow_order_list\`/\`escrow_order_info\`, and read-only social/MetaWeb lookup tools); heavy economy/social write tools stay off-surface. Under the Chief-of-Staff boundary, NEVER use \`write\`, \`edit\`, or mutating/build \`bash\` commands to author code or deliverables directly in Studio chat (outside \`reports/*.html\`) — delegate execution to Worker Bots via \`local_worker_delegate\`.`.replace(/\s+/g, ' ').trim(),
     );
   }
+  lines.push(
+    '**Token visualization (`wallet_token_card`).** Whenever `wallet_token_card` is available and the owner asks about a token or coin ($TICKER, price, 24h change, market overview, floor price, market cap, or how much of a token this Bot holds), call `wallet_token_card` (`mode: "simple"` for quick price/holding checks or casual mentions; `mode: "detailed"` for full market overviews) and include its ```token-card block verbatim without repeating the card\'s numbers as a text list.',
+  );
   lines.push(
     '**Delivery & authorization boundary.** Lead with verified results and concrete evidence, name real limits honestly, and never perform payments, transfers, public publishing, private messaging, or destructive actions without the owner\'s explicit bounded approval.',
   );

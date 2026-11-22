@@ -9256,6 +9256,17 @@ const getCoworkRunner = () => {
         return params.dryRun ? run() : withChainWriteBudget('wallet_token_mint', run);
       },
       listIssuedTokens: (filter) => listMvcFtIssuances(getStore().getDatabase(), filter),
+      getMetabotSummary: (metabotId) => {
+        const bot = getMetabotStore().getMetabotById(metabotId);
+        if (!bot) return null;
+        return {
+          id: bot.id,
+          name: bot.name,
+          mvcAddress: bot.mvc_address,
+          btcAddress: bot.btc_address ?? undefined,
+          dogeAddress: bot.doge_address ?? undefined,
+        };
+      },
       },
       // mrc721_* tool backends (MRC-721 pin-based MetaID NFTs, R6): one
       // chain-write budget per tool op (collection_create / collection_update

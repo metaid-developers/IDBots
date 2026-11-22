@@ -58,6 +58,11 @@ import MessageFeedbackControls from './MessageFeedbackControls';
 import FeedbackNudgeHint from './FeedbackNudgeHint';
 import { ThinkingBlock, splitThinkTaggedContent } from './ThinkingBlock';
 import { AssistantActivityIndicator } from './AssistantActivityIndicator';
+import TokenCard, { TokenCardStreamingPlaceholder } from '../chat/TokenCard';
+import {
+  hasStandaloneTokenCardSegment,
+  splitTokenCardMessageSegments,
+} from '../chat/tokenCardSyntax';
 import { drawTurnAckPhrase, findTailTurnAck } from './turnAckPhrases';
 import { shouldHideA2AInternalMessage, lastA2AErrorDetail } from './a2aInternalMessageFilter';
 import { anchorPrivateChatWaitNoticesBeforeReplies } from '../../utils/privateChatWaitNoticeOrder';
@@ -1672,64 +1677,123 @@ const AssistantMessageItem: React.FC<{
           // state (an in-flow row used to add ~32px under each bubble once
           // the turn completed, and the old in-bubble overlay covered reply
           // text); z-10 keeps the strip above the next bubble's rounded top.
-          <div className="relative w-fit max-w-[min(720px,82%)]">
-            {/* The id also rides the bubble: the quote-jump ring wraps the
-                innermost data-message-id mount, so it hugs this bubble's
-                own outline — w-fit width, its 22px radius. */}
-            <div
-              className="assistant-bubble rounded-[22px] px-[16px] py-[10px] dark:text-claude-darkText text-claude-text shadow-subtle"
-              data-message-id={message.id}
-            >
-              {/* emojiImages: same display-only Twemoji pipeline as the user
-                  bubble — assistant narration renders catalog emoji identically. */}
-              <MarkdownContent
-                content={replyContent}
-                isStreaming={Boolean(message.metadata?.isStreaming)}
-                emojiImages
-                className="prose dark:prose-invert max-w-none"
-                resolveLocalFilePath={resolveLocalFilePath}
-                onOpenLocalFile={onOpenLocalFile}
-                chatExperienceMode={isAssistantMode ? 'assistant' : 'professional'}
-              />
-            </div>
-            {tradeActivity && (
-              // Trade chip right under the bubble: the message announced an
-              // NFT trade (same slot family as the A2A meta-row chip).
-              <div className="mt-0.5 px-1">
-                <TradeActivityBadge kind={tradeActivity.kind} variant="chip" />
-              </div>
-            )}
-            {shouldShowAssistantBubbleActions({ isAssistantMode, showCopyButton }) && (
-              // Hover design (owner, 2026-10-19): a single "⋯" beside the bubble
-              // opens quote / copy / branch — the old inline strip is gone, so a
-              // turn split into many narration segments no longer stacks a full
-              // action row under every one of them. The turn-end line keeps only
-              // the timestamp and the feedback thumbs, which is what makes
-              // "did I react to this?" visible without opening a menu.
-              <>
-                <div className="absolute z-10 left-full top-1 ml-1">
-                  <CoworkMessageActionsMenu
-                    visible={isHovered}
-                    text={replyContent}
-                    onQuote={() => onQuoteReply?.(message, replyContent)}
-                    onBranch={onBranch ? () => void onBranch(message) : undefined}
-                  />
-                </div>
-                {isTurnEnd && (
-                  <div className="mt-1 flex items-center gap-1.5">
-                    <MessageTimestamp
-                      timestamp={message.timestamp}
-                      visible={isHovered}
-                    />
-                    <MessageFeedbackControls
-                      messageId={message.id}
-                      visible={isHovered}
+          (() => {
+            const isMsgStreaming = Boolean(message.metadata?.isStreaming);
+            const tokenSegments = splitTokenCardMessageSegments(replyContent, {
+              isStreaming: isMsgStreaming,
+            });
+            const standaloneTokenCards = hasStandaloneTokenCardSegment(tokenSegments);
+
+            return (
+              <div className="relative w-fit max-w-[min(720px,82%)]">
+                {standaloneTokenCards ? (
+                  <div
+                    className="flex flex-col items-start gap-1.5"
+                    data-message-id={message.id}
+                  >
+                    {tokenSegments.map((seg, segIdx) => {
+                      const isLastSeg = segIdx === tokenSegments.length - 1;
+                      if (seg.kind === 'token-card') {
+                        return (
+                          <div
+                            key={`tc-${segIdx}`}
+                            data-standalone-token-bubble="true"
+                            className="w-full max-w-[364px]"
+                          >
+                            <TokenCard data={seg.data} />
+                          </div>
+                        );
+                      }
+                      if (seg.kind === 'token-card-streaming') {
+                        return (
+                          <div
+                            key={`tcs-${segIdx}`}
+                            data-standalone-token-bubble="streaming"
+                            className="w-full max-w-[364px]"
+                          >
+                            <TokenCardStreamingPlaceholder />
+                          </div>
+                        );
+                      }
+                      return (
+                        <div
+                          key={`md-${segIdx}`}
+                          className="assistant-bubble rounded-[22px] px-[16px] py-[10px] dark:text-claude-darkText text-claude-text shadow-subtle"
+                        >
+                          <MarkdownContent
+                            content={seg.content}
+                            isStreaming={isMsgStreaming && isLastSeg}
+                            emojiImages
+                            className="prose dark:prose-invert max-w-none"
+                            resolveLocalFilePath={resolveLocalFilePath}
+                            onOpenLocalFile={onOpenLocalFile}
+                            chatExperienceMode={isAssistantMode ? 'assistant' : 'professional'}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  /* The id also rides the bubble: the quote-jump ring wraps the
+                     innermost data-message-id mount, so it hugs this bubble's
+                     own outline — w-fit width, its 22px radius. */
+                  <div
+                    className="assistant-bubble rounded-[22px] px-[16px] py-[10px] dark:text-claude-darkText text-claude-text shadow-subtle"
+                    data-message-id={message.id}
+                  >
+                    {/* emojiImages: same display-only Twemoji pipeline as the user
+                        bubble — assistant narration renders catalog emoji identically. */}
+                    <MarkdownContent
+                      content={replyContent}
+                      isStreaming={isMsgStreaming}
+                      emojiImages
+                      className="prose dark:prose-invert max-w-none"
+                      resolveLocalFilePath={resolveLocalFilePath}
+                      onOpenLocalFile={onOpenLocalFile}
+                      chatExperienceMode={isAssistantMode ? 'assistant' : 'professional'}
                     />
                   </div>
                 )}
-              </>
-            )}
-          </div>
+                {tradeActivity && (
+                  // Trade chip right under the bubble: the message announced an
+                  // NFT trade (same slot family as the A2A meta-row chip).
+                  <div className="mt-0.5 px-1">
+                    <TradeActivityBadge kind={tradeActivity.kind} variant="chip" />
+                  </div>
+                )}
+                {shouldShowAssistantBubbleActions({ isAssistantMode, showCopyButton }) && (
+                  // Hover design (owner, 2026-10-19): a single "⋯" beside the bubble
+                  // opens quote / copy / branch — the old inline strip is gone, so a
+                  // turn split into many narration segments no longer stacks a full
+                  // action row under every one of them. The turn-end line keeps only
+                  // the timestamp and the feedback thumbs, which is what makes
+                  // "did I react to this?" visible without opening a menu.
+                  <>
+                    <div className="absolute z-10 left-full top-1 ml-1">
+                      <CoworkMessageActionsMenu
+                        visible={isHovered}
+                        text={replyContent}
+                        onQuote={() => onQuoteReply?.(message, replyContent)}
+                        onBranch={onBranch ? () => void onBranch(message) : undefined}
+                      />
+                    </div>
+                    {isTurnEnd && (
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <MessageTimestamp
+                          timestamp={message.timestamp}
+                          visible={isHovered}
+                        />
+                        <MessageFeedbackControls
+                          messageId={message.id}
+                          visible={isHovered}
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()
         ) : (
           // Professional mode: bare full-width text, actions in a flow row.
           <div className="dark:text-claude-darkText text-claude-text">

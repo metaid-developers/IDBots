@@ -33,6 +33,12 @@ import type {
 } from '../services/mvcFtIssueService';
 import { appendNftCardBlock, findNftCardDetail, type NftCardEmitFields } from './nftCardMarkdown';
 import { withNftCardHostStamp } from './tradeActivityStamp';
+import {
+  buildTokenCardSnapshot,
+  type BuildTokenCardInput,
+  type BuildTokenCardResult,
+  type TokenCardMetabotSummary,
+} from '../services/tokenCardService';
 
 /**
  * Host control surface for the wallet tools, wired in main.ts: UTXO-sum
@@ -165,6 +171,8 @@ export type WalletToolsControl = {
     symbol?: string;
     limit?: number;
   }): MvcFtIssuanceRecord[];
+  getMetabotSummary?(metabotId: number): TokenCardMetabotSummary | null;
+  getTokenCard?(input: BuildTokenCardInput): Promise<BuildTokenCardResult>;
 };
 
 /** Minimal shape of the claude-agent-sdk tool() helper we depend on. */
@@ -2079,9 +2087,85 @@ export function buildWalletAgentTools(deps: {
     },
   );
 
+  const walletTokenCard = tool(
+    'wallet_token_card',
+    [
+      'Fetch live token market data + THIS session MetaBot\'s current wallet balance and emit a native visual ```token-card bubble.',
+      'ALWAYS call this tool first whenever the user asks about a token or coin ($METAID, $MOON, $MSP, $BTC, $SPACE, $DOGE, any MRC-20 / ID-Coin / MVC FT) — even if external market skills are also installed — so the chat displays a clean visual Token Card instead of a plain-text number dump.',
+      'Mode selection (YOU decide based on user intent):',
+      '- mode="simple": use when the user casually mentions a token, asks "how much is $X?", checks 24h gain/loss, or asks how much $X their Bot wallet holds (displays Ticker, current price, 24h change, and Bot wallet balance).',
+      '- mode="detailed": use when the user asks for full market overview / 行情概览 / details, floor price vs market spread, market cap, trading volume, holder/follower counts, or supply/mint status (displays full Modular Bento card + quick-action chips).',
+      'Include the returned ```token-card fenced block VERBATIM in your reply. Do NOT repeat the card\'s numbers as a bullet list or table — keep accompanying text to 1-2 short takeaway sentences (or none if the card answers completely).',
+    ].join(' '),
+    {
+      token: z
+        .string()
+        .min(1)
+        .describe(
+          'Token ticker symbol (e.g. "METAID", "$MOON", "BTC", "SPACE", "DOGE"), canonical asset_key ("mrc20:<pinId>" or "mvc-ft:<codehash>:<genesis>"), or mrc20Id ("<64hex>i0").',
+        ),
+      mode: z
+        .enum(['simple', 'detailed'])
+        .default('simple')
+        .describe(
+          'Card mode: "simple" for quick price, 24h change, and Bot holding checks; "detailed" for full market overview (floor spread, market cap, volume, holders/followers, supply/mint status).',
+        ),
+      chain: z
+        .enum(['btc', 'mvc', 'doge'])
+        .optional()
+        .describe(
+          'Optional chain hint ("btc" for MRC-20 / ID-Coin / BTC, "mvc" for MVC MetaContract FT / SPACE, "doge" for DOGE) when disambiguating identical symbols.',
+        ),
+      metabot_id: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Optional local MetaBot id whose holding should be displayed; defaults to THIS session MetaBot.'),
+    },
+    async (args: {
+      token: string;
+      mode?: 'simple' | 'detailed';
+      chain?: 'btc' | 'mvc' | 'doge';
+      metabot_id?: number;
+    }) => {
+      const tokenQuery = asString(args.token);
+      if (!tokenQuery) {
+        return textResult('wallet_token_card requires `token` (e.g. "METAID" or "mrc20:<pinId>").', true);
+      }
+      const targetMetabotId = args.metabot_id ?? resolveMetabotId(sessionId);
+      const cardInput: BuildTokenCardInput = {
+        query: tokenQuery,
+        mode: args.mode === 'detailed' ? 'detailed' : 'simple',
+        chain: args.chain,
+        metabotId: targetMetabotId,
+      };
+      try {
+        const result = control.getTokenCard
+          ? await control.getTokenCard(cardInput)
+          : await buildTokenCardSnapshot(cardInput, {
+              getBalances: (input) => control.getBalances(input),
+              listMrc20s: (input) => control.listMrc20s(input),
+              listMvcFtTokens: (input) => control.listMvcFtTokens(input),
+              listIssuedTokens: control.listIssuedTokens
+                ? (filter) => control.listIssuedTokens!(filter)
+                : undefined,
+              getMetabotSummary: control.getMetabotSummary
+                ? (id) => control.getMetabotSummary!(id)
+                : undefined,
+            });
+        return textResult(result.summaryText);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_token_card failed: ${msg}`, true);
+      }
+    },
+  );
+
   return [
     walletBalance,
     walletMrc20Balance,
+    walletTokenCard,
     walletTransfer,
     walletNftBalance,
     walletNftTransfer,

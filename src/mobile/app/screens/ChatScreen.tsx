@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Bars3Icon, PlusIcon, PaperClipIcon, FaceSmileIcon, StopIcon, EllipsisHorizontalIcon, MagnifyingGlassIcon, PencilSquareIcon, TrashIcon, XMarkIcon, ArrowDownIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '@/components/MarkdownContent';
+import TokenCard, { TokenCardStreamingPlaceholder } from '@/components/chat/TokenCard';
+import {
+  hasStandaloneTokenCardSegment,
+  splitTokenCardMessageSegments,
+} from '@/components/chat/tokenCardSyntax';
 import MobileArtifactPreview from '../components/MobileArtifactPreview';
 import CoworkPermissionPanel from '@/components/cowork/CoworkPermissionPanel';
 import { AssistantActivityIndicator } from '@/components/cowork/AssistantActivityIndicator';
@@ -566,6 +571,60 @@ function MessageRow({ message, sessionId, onOpenFile, onOpenUri, onDismissError 
       </div>
     );
   }
+  const tokenSegments = splitTokenCardMessageSegments(message.text, {
+    isStreaming: Boolean(message.streaming),
+  });
+  if (hasStandaloneTokenCardSegment(tokenSegments)) {
+    return (
+      <div className="flex flex-col items-start gap-2">
+        {tokenSegments.map((seg, segIdx) => {
+          const isLastSeg = segIdx === tokenSegments.length - 1;
+          if (seg.kind === 'token-card') {
+            return (
+              <div
+                key={`tc-${segIdx}`}
+                data-standalone-token-bubble="true"
+                className="twin-message flex w-full max-w-[364px] justify-start"
+              >
+                <TokenCard data={seg.data} />
+              </div>
+            );
+          }
+          if (seg.kind === 'token-card-streaming') {
+            return (
+              <div
+                key={`tcs-${segIdx}`}
+                data-standalone-token-bubble="streaming"
+                className="twin-message flex w-full max-w-[364px] justify-start"
+              >
+                <TokenCardStreamingPlaceholder />
+              </div>
+            );
+          }
+          return (
+            <div key={`md-${segIdx}`} className="twin-message flex justify-start">
+              <div className="twin-message-assistant">
+                <MarkdownContent
+                  content={mapWechatBracketCodesForDisplay(seg.content)}
+                  chatExperienceMode="assistant"
+                  compact
+                  onOpenLocalFile={onOpenFile}
+                  onOpenBotBrowserUri={onOpenUri}
+                  emojiImages
+                />
+                {message.streaming && isLastSeg ? (
+                  <span
+                    className="mt-1 inline-block h-4 w-2 animate-pulse bg-[var(--color-primary)]"
+                    aria-hidden
+                  />
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div className="twin-message flex justify-start">
       <div className="twin-message-assistant">
@@ -744,6 +803,24 @@ export default function ChatScreen(props: {
     syncLanguage();
     return mobileI18n.subscribe(syncLanguage);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleFocusInput = (event: Event) => {
+      const detail = (event as CustomEvent<{ text?: string; clear?: boolean }>).detail;
+      if (typeof detail?.text === 'string') {
+        setVoiceComposerMode('text');
+        chat.setDraft(detail.text);
+      } else if (detail?.clear) {
+        chat.setDraft('');
+      }
+      window.requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+    };
+    window.addEventListener('cowork:focus-input', handleFocusInput);
+    return () => window.removeEventListener('cowork:focus-input', handleFocusInput);
+  }, [chat]);
 
   // Track stickiness on user scroll: leaving the near-bottom zone releases
   // auto-follow; returning to it re-arms follow and dismisses the pill.

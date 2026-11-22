@@ -4,6 +4,11 @@ import { useDispatch, useSelector } from 'react-redux';
 import { ChevronDownIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { BookOpenIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '../../components/MarkdownContent';
+import TokenCard, { TokenCardStreamingPlaceholder } from '../../components/chat/TokenCard';
+import {
+  hasStandaloneTokenCardSegment,
+  splitTokenCardMessageSegments,
+} from '../../components/chat/tokenCardSyntax';
 import CoworkPromptInput, { type CoworkPromptInputRef } from '../../components/cowork/CoworkPromptInput';
 import { UserMessageBody } from '../../components/cowork/UserAttachmentBody';
 import { resolveLocalPathAgainstCwd, type LocalFilePathResolver } from '../../utils/localPath';
@@ -110,6 +115,28 @@ const PROJECTOR_DRAFT_SESSION_IDENTITY = {
   autoOrigin: null,
   assistantMode: true,
 };
+
+function renderPanelAssistantMarkdown(
+  message: { content: string },
+  options: {
+    isStreaming: boolean;
+    onOpenUri: (uri: string) => void;
+    resolveLocalFilePath?: LocalFilePathResolver;
+    onOpenLocalFile?: (filePath: string, event: React.MouseEvent) => boolean | void;
+  },
+): React.ReactElement {
+  return (
+    <MarkdownContent
+      content={message.content}
+      isStreaming={options.isStreaming}
+      compact
+      onOpenBotBrowserUri={options.onOpenUri}
+      resolveLocalFilePath={options.resolveLocalFilePath}
+      onOpenLocalFile={options.onOpenLocalFile}
+      emojiImages
+    />
+  );
+}
 
 export const PanelMessage: React.FC<{
   message: CoworkMessage;
@@ -329,24 +356,73 @@ export const PanelMessage: React.FC<{
   if (isAssistantMode) {
     // Assistant mode aligns the panel with the main cowork chat: bot answers
     // (narration and final alike) sit in the neutral-gray .assistant-bubble
-    // instead of bare full-width text, so both surfaces read the same way.
+    // instead of bare full-width text, while `token-card` segments split out
+    // into their own standalone card bubbles (never wrapped inside the gray
+    // prose bubble).
+    const isMsgStreaming = Boolean(message.metadata?.isStreaming);
+    const tokenSegments = splitTokenCardMessageSegments(message.content, {
+      isStreaming: isMsgStreaming,
+    });
+    const standaloneTokenCards = hasStandaloneTokenCardSegment(tokenSegments);
+    const renderSegmentFooter = (isLastSeg: boolean) => (isLastSeg ? <>{bubbleFooter}</> : null);
+    const proseBubbleClassName =
+      'assistant-bubble w-fit max-w-[92%] rounded-[22px] px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all';
+
     return (
-      <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-start">
-        <div
-          onContextMenu={handleBubbleContextMenu}
-          className="assistant-bubble w-fit max-w-[92%] rounded-[22px] px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all"
-        >
-          <MarkdownContent
-            content={message.content}
-            isStreaming={Boolean(message.metadata?.isStreaming)}
-            compact
-            onOpenBotBrowserUri={onOpenUri}
-            resolveLocalFilePath={resolveLocalFilePath}
-            onOpenLocalFile={onOpenLocalFile}
-            emojiImages
-          />
-          {bubbleFooter}
-        </div>
+      <div
+        data-panel-message-id={message.id}
+        className={
+          standaloneTokenCards
+            ? 'flex w-full min-w-0 flex-col items-start gap-1.5'
+            : 'flex min-w-0 flex-col items-start'
+        }
+      >
+        {tokenSegments.map((seg, segIdx) => {
+          const isLastSeg = segIdx === tokenSegments.length - 1;
+          if (seg.kind === 'token-card') {
+            return (
+              <div
+                key={`tc-${segIdx}`}
+                data-standalone-token-bubble="true"
+                onContextMenu={handleBubbleContextMenu}
+                className="w-full max-w-[364px]"
+              >
+                <TokenCard data={seg.data} />
+                {renderSegmentFooter(isLastSeg)}
+              </div>
+            );
+          }
+          if (seg.kind === 'token-card-streaming') {
+            return (
+              <div
+                key={`tcs-${segIdx}`}
+                data-standalone-token-bubble="streaming"
+                className="w-full max-w-[364px]"
+              >
+                <TokenCardStreamingPlaceholder />
+                {renderSegmentFooter(isLastSeg)}
+              </div>
+            );
+          }
+          return (
+            <div
+              key={`md-${segIdx}`}
+              onContextMenu={handleBubbleContextMenu}
+              className={proseBubbleClassName}
+            >
+              {renderPanelAssistantMarkdown(
+                { content: seg.content },
+                {
+                  isStreaming: isMsgStreaming && isLastSeg,
+                  onOpenUri,
+                  resolveLocalFilePath,
+                  onOpenLocalFile,
+                },
+              )}
+              {renderSegmentFooter(isLastSeg)}
+            </div>
+          );
+        })}
       </div>
     );
   }
