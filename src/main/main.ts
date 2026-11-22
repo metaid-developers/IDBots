@@ -241,6 +241,7 @@ import { broadcastBtcTx, fetchBtcUtxos } from './libs/btcApi';
 import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
 import { executeMvcTokenSellTrade, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
 import { broadcastMvcFtTransferBundle, listMvcFtAssets, mvcFtTokenBalanceFromAssets } from './services/mvcFtService';
+import { executeMvcFtIssue, executeMvcFtMint, listMvcFtIssuances } from './services/mvcFtIssueService';
 import { executeMrc20Transfer, listMrc20Assets } from './services/mrc20Service';
 import { TokenOrderWatcher } from './services/tokenOrderWatcher';
 import { defaultFtMandateGate } from './services/ftMandateGateService';
@@ -9204,6 +9205,37 @@ const getCoworkRunner = () => {
           feeRate: getGlobalFeeRate('mvc'),
         }),
       ),
+      issueToken: (params, host) => {
+        const run = () =>
+          executeMvcFtIssue(
+            {
+              getDb: () => getStore().getDatabase(),
+              saveDb: getStore().getSaveFunction(),
+              metabotStore: getMetabotStore(),
+              transferStore: getBotWalletTransferStore(),
+              getFeeRate: () => getGlobalFeeRate('mvc'),
+              confirmIssue: host?.confirmIssue,
+            },
+            params,
+          );
+        return params.dryRun ? run() : withChainWriteBudget('wallet_token_issue', run);
+      },
+      mintToken: (params, host) => {
+        const run = () =>
+          executeMvcFtMint(
+            {
+              getDb: () => getStore().getDatabase(),
+              saveDb: getStore().getSaveFunction(),
+              metabotStore: getMetabotStore(),
+              transferStore: getBotWalletTransferStore(),
+              getFeeRate: () => getGlobalFeeRate('mvc'),
+              confirmIssue: host?.confirmIssue,
+            },
+            params,
+          );
+        return params.dryRun ? run() : withChainWriteBudget('wallet_token_mint', run);
+      },
+      listIssuedTokens: (filter) => listMvcFtIssuances(getStore().getDatabase(), filter),
       },
       // mrc721_* tool backends (MRC-721 pin-based MetaID NFTs, R6): one
       // chain-write budget per tool op (collection_create / collection_update

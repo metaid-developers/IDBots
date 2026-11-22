@@ -41,6 +41,15 @@ import {
   type FtCommerceGatewayDeps,
 } from './ftCommerceGatewayRoutes';
 import {
+  FT_MVC_ISSUED_LIST_PATH,
+  FT_MVC_ISSUE_PATH,
+  FT_MVC_MINT_PATH,
+  handleMvcFtIssueRoute,
+  handleMvcFtIssuedListRoute,
+  handleMvcFtMintRoute,
+  type MvcFtIssueGatewayDeps,
+} from './mvcFtIssueGatewayRoutes';
+import {
   PAYBUZZ_ITEM_PATH,
   PAYBUZZ_PUBLISH_PATH,
   PAYBUZZ_UNLOCKED_PATH,
@@ -3108,6 +3117,43 @@ export function startMetaidRpcServer(
           res.end(JSON.stringify({ success: false, error: 'Not found' }));
           return;
         }
+        res.writeHead(result.status);
+        res.end(JSON.stringify(result.body));
+        return;
+      }
+    }
+
+    // MVC MetaContract FT (MCP02 v2) Issuance & Mint Local RPC
+    if (
+      pathname === FT_MVC_ISSUE_PATH ||
+      pathname === FT_MVC_MINT_PATH ||
+      pathname === FT_MVC_ISSUED_LIST_PATH
+    ) {
+      const ftIssueDeps: MvcFtIssueGatewayDeps = {
+        getDb: () => getStore().getDatabase(),
+        saveDb: getStore().getSaveFunction(),
+        getMetabotStore: () => getMetabotStore(),
+        getTransferStore: () => getWalletTransferStore(),
+        resolveMvcFeeRate: () => getGlobalFeeRate('mvc'),
+      };
+
+      if (req.method === 'GET' && pathname === FT_MVC_ISSUED_LIST_PATH) {
+        const queryParams = new URLSearchParams(search || '');
+        const result = handleMvcFtIssuedListRoute(ftIssueDeps, queryParams);
+        res.writeHead(result.status);
+        res.end(JSON.stringify(result.body));
+        return;
+      }
+
+      if (req.method === 'POST' && (pathname === FT_MVC_ISSUE_PATH || pathname === FT_MVC_MINT_PATH)) {
+        const body = await readRpcJsonObjectBody(req, res, pathname, { emptyBody: 'object' });
+        if (body === null) {
+          return;
+        }
+        const result =
+          pathname === FT_MVC_ISSUE_PATH
+            ? await handleMvcFtIssueRoute(ftIssueDeps, body)
+            : await handleMvcFtMintRoute(ftIssueDeps, body);
         res.writeHead(result.status);
         res.end(JSON.stringify(result.body));
         return;

@@ -267,6 +267,9 @@ const TOOLS_BY_DOMAIN: Record<Exclude<ToolDomain, 'browser_automation'>, readonl
     'wallet_token_balance',
     'wallet_token_buy',
     'wallet_token_cancel_sell',
+    'wallet_token_issue',
+    'wallet_token_issued_list',
+    'wallet_token_mint',
     'wallet_token_sell',
     'wallet_token_sell_orders',
     'wallet_token_send',
@@ -449,7 +452,7 @@ export function isToolAllowedForHostEnv(toolName: string, hostEnv: HostEnv): boo
 
 const MOBILE_TOOL_PATTERNS: Record<MobileToolExpansion, RegExp> = {
   workerEconomy: /\b(?:metatask|agentpedia|escrow|prediction_record|metaprotocol|group[_ -]?task)\b|群任务|托管订单|预测账本|元协议|竞赛任务/i,
-  financial: /\b(?:wallet|btc|mrc20|mrc721|nft|token|tokens|payment|multisig|goods)\b|钱包|转账|余额|比特币|代币|支付|付款|收款|充值|积分|手续费|矿工费|商品/i,
+  financial: /\b(?:wallet|btc|mrc20|mrc721|nft|token|tokens|issue|mint|payment|multisig|goods)\b|钱包|转账|余额|比特币|代币|发币|铸造|增发|支付|付款|收款|充值|积分|手续费|矿工费|商品/i,
   social: /\b(?:buzz|simpleqa|simplequestion|simplenote|simplelog|omni_cast|group[_ -]?chat|private[_ -]?chat)\b|动态|私聊|群聊|问答|笔记|日志|点赞|评论|发帖|发文章|发短文|发长文|好友|关注|转发/i,
   metaweb: /\b(?:metaweb|metaid|metaapp|chain|pin|protocol)\b|链上|协议|动态|问答|帖子| agent internet|agent 互联网/i,
   orchestration: /\b(?:task|tasks|subagent|delegate|orchestrat\w*|longterm|schedule|todo|worker)\b|任务|督办|长期|定时|编排|委派|员工|团队|分身|子代理|子任务|待办/i,

@@ -23,6 +23,14 @@ import type {
 } from '../services/walletQueryService';
 import type { MvcNftBalance, MvcNftSellOrders, MvcNftSellOrder } from '../services/mvcNftService';
 import type { Mrc20Asset } from '../services/mrc20Service';
+import type {
+  ExecuteMvcFtIssueInput,
+  ExecuteMvcFtIssueOutcome,
+  ExecuteMvcFtMintInput,
+  ExecuteMvcFtMintOutcome,
+  MvcFtIssuanceRecord,
+  MvcFtIssueConfirmationInfo,
+} from '../services/mvcFtIssueService';
 import { appendNftCardBlock, findNftCardDetail, type NftCardEmitFields } from './nftCardMarkdown';
 import { withNftCardHostStamp } from './tradeActivityStamp';
 
@@ -141,6 +149,22 @@ export type WalletToolsControl = {
     metabotId: number;
     listing: import('../services/walletRawTxService').MvcTokenSellListingRef;
   }): Promise<{ txId: string; fundingTxIds: string[] }>;
+  // ----- MVC MetaContract FT (MCP02 v2) Issuance & Mint -----
+  issueToken?(
+    params: ExecuteMvcFtIssueInput,
+    host?: { confirmIssue?: (info: MvcFtIssueConfirmationInfo) => Promise<boolean> },
+  ): Promise<ExecuteMvcFtIssueOutcome>;
+  mintToken?(
+    params: ExecuteMvcFtMintInput,
+    host?: { confirmIssue?: (info: MvcFtIssueConfirmationInfo) => Promise<boolean> },
+  ): Promise<ExecuteMvcFtMintOutcome>;
+  listIssuedTokens?(filter?: {
+    metabotId?: number;
+    assetKey?: string;
+    sensibleId?: string;
+    symbol?: string;
+    limit?: number;
+  }): MvcFtIssuanceRecord[];
 };
 
 /** Minimal shape of the claude-agent-sdk tool() helper we depend on. */
@@ -367,6 +391,8 @@ export function buildWalletAgentTools(deps: {
   resolveMetabotId: (sessionId: string) => number | undefined;
   /** Renders the channel-B owner approval dialog; wired by coworkRunner. */
   confirmExternalTransfer?: (info: ExternalTransferInfo) => Promise<boolean>;
+  /** Renders the fail-closed owner approval dialog for MVC FT issuance/minting. */
+  confirmTokenIssue?: (info: MvcFtIssueConfirmationInfo) => Promise<boolean>;
 }): unknown[] {
   const { tool, control, sessionId, resolveMetabotId } = deps;
 
@@ -1762,6 +1788,297 @@ export function buildWalletAgentTools(deps: {
     }
   );
 
+  const formatSpaceSats = (sats: number): string =>
+    `${sats} sats (${(sats / SATOSHI_PER_UNIT).toFixed(8)} SPACE)`;
+
+  const walletTokenIssue = tool(
+    'wallet_token_issue',
+    [
+      'Issue a new MVC MetaContract fungible token (MCP02 v2) from THIS session MetaBot\'s own wallet.',
+      'Use for utility credits, community points, service vouchers, or access tokens (never make financial-return claims).',
+      'Pass name (1..40 UTF-8 bytes), symbol (1..10 UTF-8 bytes, no whitespace), decimals (0..18, default 8), and initial_supply as a plain decimal string (e.g. "1000000").',
+      'Supply policy: allow_increase_mints defaults to false (fixed supply — TokenGenesis is consumed during the initial mint so supply is permanently locked on-chain). Set allow_increase_mints=true ONLY when the owner explicitly wants ongoing minting via wallet_token_mint.',
+      'Pass dry_run=true to compute exact SPACE fees, sensibleId, genesis, and canonical assetKey without broadcasting or prompting. Live issuance requires explicit owner approval via the host confirmation dialog.',
+    ].join(' '),
+    {
+      name: z.string().min(1).describe('Token full name (1..40 UTF-8 bytes), e.g. "Sunny Read Credits".'),
+      symbol: z.string().min(1).describe('Token ticker symbol (1..10 UTF-8 bytes, no whitespace), e.g. "SREAD".'),
+      decimals: z.number().int().min(0).max(18).default(8).describe('Decimal places (0..18, default 8).'),
+      initial_supply: z.string().min(1).describe('Initial supply in human display units as a plain decimal string, e.g. "1000000" or "500.25".'),
+      receiver: z.string().optional().describe('Optional recipient: MVC address, local metabot_id, or local MetaBot name. Defaults to this session MetaBot\'s own MVC address.'),
+      allow_increase_mints: z.boolean().default(false).describe('Whether to retain TokenGenesis mint authority for future mints (default false = permanently fixed supply).'),
+      memo: z.string().optional().describe('Optional local utility purpose note.'),
+      dry_run: z.boolean().optional().describe('If true, builds and verifies the genesis+mint txs locally and returns exact fees and assetKey without broadcasting.'),
+      owner_confirmed: z.boolean().optional().describe('Host-internal flag for pre-confirmed non-interactive execution when no UI approval callback is attached.'),
+    },
+    async (args: {
+      name: string;
+      symbol: string;
+      decimals?: number;
+      initial_supply: string;
+      receiver?: string;
+      allow_increase_mints?: boolean;
+      memo?: string;
+      dry_run?: boolean;
+      owner_confirmed?: boolean;
+    }) => {
+      const metabotId = resolveMetabotId(sessionId);
+      if (metabotId == null) {
+        return textResult(
+          'wallet_token_issue could not determine which MetaBot owns this session; token issuance must spend the session bot\'s own wallet.',
+          true,
+        );
+      }
+      if (!control.issueToken) {
+        return textResult('wallet_token_issue backend is not configured on this host.', true);
+      }
+      try {
+        const outcome = await control.issueToken(
+          {
+            metabotId,
+            tokenName: asString(args.name),
+            tokenSymbol: asString(args.symbol),
+            decimals: args.decimals ?? 8,
+            initialSupply: asString(args.initial_supply),
+            receiver: asString(args.receiver) || undefined,
+            allowIncreaseMints: args.allow_increase_mints === true,
+            memo: asString(args.memo) || undefined,
+            dryRun: args.dry_run === true,
+            ownerConfirmed: args.owner_confirmed === true,
+            sessionId,
+            origin: 'tool:wallet_token_issue',
+          },
+          { confirmIssue: deps.confirmTokenIssue },
+        );
+
+        if (outcome.status === 'dry_run') {
+          return textResult(
+            [
+              'MVC FT issuance dry-run verified locally (NOT broadcast):',
+              `- token: ${outcome.tokenName} (${outcome.tokenSymbol}), decimals ${outcome.decimals}`,
+              `- initial supply: ${outcome.supplyDisplay} ${outcome.tokenSymbol} (${outcome.supplyBase} base units)`,
+              `- supply policy: ${outcome.allowIncreaseMints ? 'MINTABLE (retains TokenGenesis authority)' : 'FIXED SUPPLY (permanently locked after initial mint)'}`,
+              `- assetKey: ${outcome.assetKey}`,
+              `- codehash: ${outcome.codehash}`,
+              `- genesis: ${outcome.genesis}`,
+              `- sensibleId: ${outcome.sensibleId}`,
+              `- issuer: ${outcome.issuerAddress}`,
+              `- receiver: ${outcome.receiverAddress}`,
+              `- total SPACE cost: ${formatSpaceSats(outcome.totalFeeSats)} [miner fee ${outcome.minerFeeSats} sats + contract dust ${outcome.lockedDustSats} sats @ ${outcome.feeRate} sat/B]`,
+              '- Call wallet_token_issue without dry_run=true when ready to request owner approval and broadcast.',
+            ].join('\n'),
+          );
+        }
+
+        if (outcome.status === 'confirmation_required' || outcome.status === 'denied') {
+          return textResult(
+            [
+              `MVC FT issuance not broadcast (${outcome.errorCode}): ${outcome.error}`,
+              `- token: ${outcome.tokenName} (${outcome.tokenSymbol}), decimals ${outcome.decimals}`,
+              `- supply: ${outcome.supplyDisplay} ${outcome.tokenSymbol} (${outcome.supplyModel})`,
+              `- assetKey: ${outcome.assetKey}`,
+              `- total SPACE cost: ${formatSpaceSats(outcome.totalFeeSats)}`,
+            ].join('\n'),
+            true,
+          );
+        }
+
+        return textResult(
+          [
+            'MVC MetaContract FT issued and broadcast on-chain.',
+            `- token: ${outcome.tokenName} (${outcome.tokenSymbol}), decimals ${outcome.decimals}`,
+            `- minted supply: ${outcome.supplyDisplay} ${outcome.tokenSymbol} (${outcome.supplyBase} base units)`,
+            `- supply policy: ${outcome.allowIncreaseMints ? 'MINTABLE (can mint more via wallet_token_mint)' : 'FIXED SUPPLY (permanently locked on-chain)'}`,
+            `- assetKey: ${outcome.assetKey}`,
+            `- codehash: ${outcome.codehash}`,
+            `- genesis: ${outcome.genesis}`,
+            `- sensibleId: ${outcome.sensibleId}`,
+            `- genesis txid: ${outcome.genesisTxId}`,
+            outcome.mintTxId ? `- initial mint txid: ${outcome.mintTxId}` : '- initial mint txid: (none; supply=0 genesis only)',
+            `- receiver: ${outcome.receiverAddress}`,
+            `- total SPACE cost: ${formatSpaceSats(outcome.totalFeeSats)} (miner fee ${outcome.minerFeeSats} sats + contract dust ${outcome.lockedDustSats} sats)`,
+            '- Verify holdings with wallet_token_balance or inspect local issuance records with wallet_token_issued_list.',
+          ].join('\n'),
+        );
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_token_issue failed: ${msg}`, true);
+      }
+    },
+  );
+
+  const walletTokenMint = tool(
+    'wallet_token_mint',
+    [
+      'Mint additional supply for an existing MVC MetaContract FT (MCP02 v2) that was issued with allow_increase_mints=true by THIS session MetaBot\'s wallet.',
+      'Identify the token by sensible_id (72-hex), asset_key ("mvc-ft:<codehash>:<genesis>"), or genesis (40-hex); tokens issued locally resolve automatically from the local issuance ledger.',
+      'allow_increase_mints defaults to true (keeps mint authority for future mints); set allow_increase_mints=false to permanently burn/lock future mint authority after this mint.',
+      'Pass dry_run=true to preview exact fees without broadcasting. Live minting requires explicit owner approval.',
+    ].join(' '),
+    {
+      sensible_id: z.string().optional().describe('72-hex sensibleId of the token (optional if asset_key or genesis matches a locally issued token).'),
+      asset_key: z.string().optional().describe('Canonical assetKey "mvc-ft:<codehash>:<genesis>" (optional).'),
+      genesis: z.string().optional().describe('40-hex token genesis hash (optional).'),
+      amount: z.string().min(1).describe('Additional supply to mint in human display units as a plain decimal string, e.g. "50000".'),
+      receiver: z.string().optional().describe('Optional recipient: MVC address, local metabot_id, or local MetaBot name. Defaults to this session MetaBot\'s own MVC address.'),
+      allow_increase_mints: z.boolean().default(true).describe('Keep TokenGenesis authority for further mints (default true). Set false to permanently cap supply after this mint.'),
+      memo: z.string().optional().describe('Optional local utility purpose note.'),
+      dry_run: z.boolean().optional().describe('If true, builds and verifies the mint tx locally without broadcasting.'),
+      owner_confirmed: z.boolean().optional().describe('Host-internal flag for pre-confirmed non-interactive execution.'),
+    },
+    async (args: {
+      sensible_id?: string;
+      asset_key?: string;
+      genesis?: string;
+      amount: string;
+      receiver?: string;
+      allow_increase_mints?: boolean;
+      memo?: string;
+      dry_run?: boolean;
+      owner_confirmed?: boolean;
+    }) => {
+      const metabotId = resolveMetabotId(sessionId);
+      if (metabotId == null) {
+        return textResult(
+          'wallet_token_mint could not determine which MetaBot owns this session; minting must spend the session bot\'s own wallet.',
+          true,
+        );
+      }
+      if (!control.mintToken) {
+        return textResult('wallet_token_mint backend is not configured on this host.', true);
+      }
+      const sensibleId = asString(args.sensible_id) || undefined;
+      const assetKey = asString(args.asset_key) || undefined;
+      const genesis = asString(args.genesis) || undefined;
+      if (!sensibleId && !assetKey && !genesis) {
+        return textResult(
+          'wallet_token_mint requires sensible_id, asset_key, or genesis (use wallet_token_issued_list to inspect locally issued tokens).',
+          true,
+        );
+      }
+      try {
+        const outcome = await control.mintToken(
+          {
+            metabotId,
+            sensibleId,
+            assetKey,
+            genesis,
+            amount: asString(args.amount),
+            receiver: asString(args.receiver) || undefined,
+            allowIncreaseMints: args.allow_increase_mints !== false,
+            memo: asString(args.memo) || undefined,
+            dryRun: args.dry_run === true,
+            ownerConfirmed: args.owner_confirmed === true,
+            sessionId,
+            origin: 'tool:wallet_token_mint',
+          },
+          { confirmIssue: deps.confirmTokenIssue },
+        );
+
+        if (outcome.status === 'dry_run') {
+          return textResult(
+            [
+              'MVC FT follow-up mint dry-run verified locally (NOT broadcast):',
+              `- token: ${outcome.tokenName} (${outcome.tokenSymbol}), decimals ${outcome.decimals}`,
+              `- mint amount: +${outcome.supplyDisplay} ${outcome.tokenSymbol} (${outcome.supplyBase} base units)`,
+              `- authority after mint: ${outcome.allowIncreaseMints ? 'MINTABLE (retains TokenGenesis)' : 'LOCKED FOREVER (no further mints possible)'}`,
+              `- assetKey: ${outcome.assetKey}`,
+              `- receiver: ${outcome.receiverAddress}`,
+              `- total SPACE cost: ${formatSpaceSats(outcome.totalFeeSats)}`,
+            ].join('\n'),
+          );
+        }
+
+        if (outcome.status === 'confirmation_required' || outcome.status === 'denied') {
+          return textResult(
+            `MVC FT mint not broadcast (${outcome.errorCode}): ${outcome.error}`,
+            true,
+          );
+        }
+
+        return textResult(
+          [
+            'MVC MetaContract FT follow-up mint broadcast on-chain.',
+            `- token: ${outcome.tokenName} (${outcome.tokenSymbol}), decimals ${outcome.decimals}`,
+            `- minted amount: +${outcome.supplyDisplay} ${outcome.tokenSymbol} (${outcome.supplyBase} base units)`,
+            outcome.record ? `- cumulative minted: ${outcome.record.totalMintedDisplay} ${outcome.tokenSymbol}` : '',
+            `- authority after mint: ${outcome.allowIncreaseMints ? 'MINTABLE' : 'FIXED / LOCKED FOREVER'}`,
+            `- assetKey: ${outcome.assetKey}`,
+            `- mint txid: ${outcome.mintTxId}`,
+            `- receiver: ${outcome.receiverAddress}`,
+            `- total SPACE cost: ${formatSpaceSats(outcome.totalFeeSats)}`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        );
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_token_mint failed: ${msg}`, true);
+      }
+    },
+  );
+
+  const walletTokenIssuedList = tool(
+    'wallet_token_issued_list',
+    [
+      'List MVC MetaContract FT (MCP02 v2) tokens issued on this machine from the local issuance ledger.',
+      'Read-only and instant (no external indexer lag): returns assetKey, sensibleId, genesis, codehash, decimals, allowIncreaseMints, totalMintedDisplay, genesisTxId, and latestMintTxId.',
+      'Defaults to THIS session MetaBot when no filter is given; pass all_local_bots=true or metabot_id/name to inspect other local bots.',
+    ].join(' '),
+    {
+      metabot_id: z.number().int().positive().optional().describe('Filter by local MetaBot id.'),
+      name: z.string().optional().describe('Filter by local MetaBot name.'),
+      all_local_bots: z.boolean().optional().describe('If true, list tokens issued by all local MetaBots rather than only this session\'s bot.'),
+      symbol: z.string().optional().describe('Optional ticker filter (case-insensitive).'),
+      asset_key: z.string().optional().describe('Optional exact assetKey filter.'),
+      limit: z.number().int().min(1).max(200).optional().describe('Max records to return (default 50).'),
+    },
+    async (args: {
+      metabot_id?: number;
+      name?: string;
+      all_local_bots?: boolean;
+      symbol?: string;
+      asset_key?: string;
+      limit?: number;
+    }) => {
+      if (!control.listIssuedTokens) {
+        return textResult('wallet_token_issued_list backend is not configured on this host.', true);
+      }
+      let targetMetabotId: number | undefined = args.metabot_id;
+      if (targetMetabotId == null && asString(args.name)) {
+        const resolved = control.resolveMetabotIdByName(asString(args.name));
+        if (resolved == null) {
+          return textResult(`wallet_token_issued_list: local MetaBot not found by name: ${asString(args.name)}`, true);
+        }
+        targetMetabotId = resolved;
+      }
+      if (targetMetabotId == null && !args.all_local_bots) {
+        targetMetabotId = resolveMetabotId(sessionId);
+      }
+
+      const records = control.listIssuedTokens({
+        metabotId: targetMetabotId,
+        symbol: asString(args.symbol) || undefined,
+        assetKey: asString(args.asset_key) || undefined,
+        limit: args.limit,
+      });
+      if (records.length === 0) {
+        return textResult('No locally issued MVC MetaContract FT tokens found matching the filter.');
+      }
+      const lines = [`Found ${records.length} locally issued MVC FT token(s):`];
+      for (const rec of records) {
+        lines.push(
+          `- ${rec.tokenName} (${rec.tokenSymbol}) [metabot_id ${rec.metabotId}]`,
+          `  assetKey: ${rec.assetKey}`,
+          `  sensibleId: ${rec.sensibleId}`,
+          `  decimals: ${rec.decimals} | totalMinted: ${rec.totalMintedDisplay} ${rec.tokenSymbol} (${rec.totalMintedBase} base)`,
+          `  supplyPolicy: ${rec.allowIncreaseMints ? 'MINTABLE' : 'FIXED'} | genesisTx: ${rec.genesisTxId}${rec.latestMintTxId ? ` | latestMintTx: ${rec.latestMintTxId}` : ''}`,
+        );
+      }
+      return textResult(lines.join('\n'));
+    },
+  );
+
   return [
     walletBalance,
     walletMrc20Balance,
@@ -1773,6 +2090,9 @@ export function buildWalletAgentTools(deps: {
     walletNftCancelSell,
     walletNftBuy,
     walletTokenBalance,
+    walletTokenIssue,
+    walletTokenMint,
+    walletTokenIssuedList,
     walletTokenSend,
     walletTokenTransfer,
     walletTokenSellOrders,

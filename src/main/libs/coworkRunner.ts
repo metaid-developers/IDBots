@@ -405,6 +405,7 @@ import {
 } from './paymentCardAgentTools';
 import type { EscrowOrderStore } from '../services/escrowOrderStore';
 import type { ExternalTransferInfo } from '../services/walletTransferService';
+import type { MvcFtIssueConfirmationInfo } from '../services/mvcFtIssueService';
 import {
   buildPrivateChatAgentTools,
   buildPrivateChatApprovalAgentTools,
@@ -9490,6 +9491,72 @@ export class CoworkRunner extends EventEmitter {
     return outcome === 'approved';
   }
 
+  private async confirmMvcFtIssue(
+    sessionId: string,
+    info: MvcFtIssueConfirmationInfo,
+  ): Promise<boolean> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (!activeSession) {
+      return false;
+    }
+    const spaceStr = `${info.totalFeeSats} sats (${(info.totalFeeSats / 100_000_000).toFixed(8)} SPACE)`;
+    const policyZh = info.allowIncreaseMints
+      ? '保留增发权限（后续可继续铸造）'
+      : '固定总量（本次铸造后永久锁定，不可增发）';
+    const policyEn = info.allowIncreaseMints
+      ? 'Mintable (retains TokenGenesis authority for future mints)'
+      : 'Fixed Supply (permanently locked on-chain after this mint)';
+    const headerZh = info.action === 'issue'
+      ? 'Agent 准备在 MVC 链上发行新的 MetaContract 同质化代币（链上操作不可撤销）：'
+      : 'Agent 准备在 MVC 链上增发铸造 MetaContract 同质化代币（链上操作不可撤销）：';
+    const headerEn = info.action === 'issue'
+      ? 'The agent is about to issue a new MVC MetaContract FT on-chain (irreversible):'
+      : 'The agent is about to mint additional MVC MetaContract FT supply on-chain (irreversible):';
+    const question = tApp(
+      `${headerZh}\n` +
+      `- 代币名称 / 符号: ${info.tokenName} (${info.tokenSymbol}), 精度 ${info.decimals}\n` +
+      `- 铸造数量: ${info.amountDisplay} ${info.tokenSymbol} (${info.amountBase} base units)\n` +
+      `- 供应模式: ${policyZh}\n` +
+      `- 发行地址: ${info.issuerAddress}\n` +
+      `- 接收地址: ${info.receiverAddress}\n` +
+      `- 资产标识: ${info.assetKey}\n` +
+      `- 预估总消耗: ${spaceStr}\n` +
+      `确认签名并广播该笔发币/铸造交易吗？（需要你本人确认；60 秒内未回答视为拒绝）`,
+      `${headerEn}\n` +
+      `- Token: ${info.tokenName} (${info.tokenSymbol}), decimals ${info.decimals}\n` +
+      `- Amount: ${info.amountDisplay} ${info.tokenSymbol} (${info.amountBase} base units)\n` +
+      `- Supply Policy: ${policyEn}\n` +
+      `- Issuer: ${info.issuerAddress}\n` +
+      `- Receiver: ${info.receiverAddress}\n` +
+      `- Asset Key: ${info.assetKey}\n` +
+      `- Total Cost: ${spaceStr}\n` +
+      `Confirm signing and broadcasting this transaction? (owner confirmation required; unanswered after 60s = denied)`,
+    );
+    const outcome = await this.requestSafetyApproval(
+      sessionId,
+      activeSession.abortController.signal,
+      activeSession,
+      question,
+      info.action === 'issue' ? 'wallet_token_issue' : 'wallet_token_mint',
+      {
+        action: info.action,
+        metabot_id: info.metabotId,
+        token_name: info.tokenName,
+        token_symbol: info.tokenSymbol,
+        decimals: info.decimals,
+        amount_display: info.amountDisplay,
+        amount_base: info.amountBase,
+        allow_increase_mints: info.allowIncreaseMints,
+        receiver_address: info.receiverAddress,
+        asset_key: info.assetKey,
+        total_fee_sats: info.totalFeeSats,
+      } as Record<string, unknown>,
+      'deny',
+      { ownerOnly: true },
+    );
+    return outcome === 'approved';
+  }
+
   private async confirmGoodsQuoteAcceptance(
     sessionId: string,
     info: GoodsQuoteAcceptConfirmationInfo,
@@ -16564,6 +16631,7 @@ export class CoworkRunner extends EventEmitter {
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
           confirmExternalTransfer: (info) => this.confirmExternalTransfer(sessionId, info),
+          confirmTokenIssue: (info) => this.confirmMvcFtIssue(sessionId, info),
         })
       );
     }

@@ -30,6 +30,7 @@ import { ensureMeNftSellerFulfillmentsSchema } from './services/sellerAutoFulfil
 import { ensureFtOrderTables } from './services/ftOrderStore';
 import { ensureTokenForGoodsSchema } from './services/tokenForGoodsService';
 import { ensurePaybuzzTables } from './services/paybuzzStore';
+import { ensureMvcFtIssuanceTables } from './services/mvcFtIssueService';
 import { ensureProactiveFollowUpSchema } from './proactiveFollowUpStore';
 
 type ChangePayload<T = unknown> = {
@@ -3121,6 +3122,8 @@ export class SqliteStore {
     ensureTokenForGoodsSchema(this.db);
     // WS-5 PayBuzz encrypted reading protocol tables (paybuzz_authored_items, paybuzz_used_payments, paybuzz_unlocked_cache, paybuzz_royalty_ledger).
     ensurePaybuzzTables(this.db);
+    // MVC MetaContract FT (MCP02 v2) local issuance & continuation genesis ledger.
+    ensureMvcFtIssuanceTables(this.db);
     // Proactive Follow-Up Events (proactive_follow_ups + settle points):
     // lightweight world/A2A awareness, 1-turn owner rulings, and task proposals.
     ensureProactiveFollowUpSchema(this.db);
