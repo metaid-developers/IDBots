@@ -215,6 +215,33 @@ function pickText(record: Record<string, unknown>, ...keys: string[]): string {
   return '';
 }
 
+const GENERIC_ENVELOPE_MESSAGES = new Set([
+  'error',
+  'fail',
+  'failed',
+  'err',
+  'bad request',
+  'request failed',
+]);
+
+function isGenericEnvelopeMessage(msg: string): boolean {
+  return GENERIC_ENVELOPE_MESSAGES.has(msg.trim().toLowerCase());
+}
+
+function pickMeaningfulEscrowErrorMessage(
+  record: Record<string, unknown>,
+  errData: Record<string, unknown>,
+  fallback: string,
+): string {
+  const topMsg = pickText(record, 'message', 'msg', 'error');
+  if (topMsg && !isGenericEnvelopeMessage(topMsg)) return topMsg;
+  const detailMsg = pickText(errData, 'detail', 'message', 'msg', 'error');
+  if (detailMsg && !isGenericEnvelopeMessage(detailMsg)) return detailMsg;
+  const errCode = pickText(errData, 'errorCode', 'error_code') || pickText(record, 'errorCode', 'error_code');
+  if (errCode) return `ABS escrow error: ${errCode}`;
+  return topMsg || fallback;
+}
+
 function pickOptionalNumber(record: Record<string, unknown>, ...keys: string[]): number | undefined {
   for (const key of keys) {
     const val = record[key];
@@ -320,12 +347,17 @@ async function escrowRequestJson(input: {
       const errData = (record?.data && typeof record.data === 'object' && !Array.isArray(record.data))
         ? (record.data as Record<string, unknown>)
         : (record ?? {});
+      const errorCode = pickText(errData, 'errorCode', 'error_code')
+        || pickText(record ?? {}, 'errorCode', 'error_code');
       throw new MeNftEscrowApiError({
         stage: input.stage,
         status: response.status,
-        errorCode: pickText(errData, 'errorCode', 'error_code'),
-        message: pickText(record ?? {}, 'message', 'msg', 'error')
-          || `ABS escrow request failed with HTTP ${response.status}.`,
+        errorCode,
+        message: pickMeaningfulEscrowErrorMessage(
+          record ?? {},
+          errData,
+          `ABS escrow request failed with HTTP ${response.status}.`,
+        ),
         neededMilli: pickOptionalNumber(errData, 'neededMilli', 'needed_milli'),
         haveMilli: pickOptionalNumber(errData, 'haveMilli', 'have_milli'),
       });
@@ -349,13 +381,17 @@ async function escrowRequestJson(input: {
     const errData = (record.data && typeof record.data === 'object' && !Array.isArray(record.data))
       ? (record.data as Record<string, unknown>)
       : {};
+    const errorCode = pickText(errData, 'errorCode', 'error_code')
+      || pickText(record, 'errorCode', 'error_code');
     throw new MeNftEscrowApiError({
       stage: input.stage,
       status: response.status,
-      errorCode: pickText(errData, 'errorCode', 'error_code'),
-      message: pickText(record, 'message', 'msg', 'error')
-        || pickText(errData, 'detail')
-        || `ABS escrow returned code ${normalizeText(record.code) || 'unknown'}.`,
+      errorCode,
+      message: pickMeaningfulEscrowErrorMessage(
+        record,
+        errData,
+        `ABS escrow returned code ${normalizeText(record.code) || 'unknown'}.`,
+      ),
       neededMilli: pickOptionalNumber(errData, 'neededMilli', 'needed_milli'),
       haveMilli: pickOptionalNumber(errData, 'haveMilli', 'have_milli'),
     });
@@ -709,7 +745,9 @@ export async function rejectNftEscrowOrder(
 export function describeMeNftEscrowError(error: unknown): string {
   if (error instanceof MeNftEscrowApiError) {
     const parts = [error.message];
-    if (error.errorCode) parts.push(`[${error.errorCode}]`);
+    if (error.errorCode && !error.message.includes(error.errorCode)) {
+      parts.push(`[${error.errorCode}]`);
+    }
     if (error.neededMilli != null && error.haveMilli != null) {
       parts.push(`(needed ${(error.neededMilli / 1000).toFixed(3)} ME, have ${(error.haveMilli / 1000).toFixed(3)} ME)`);
     }

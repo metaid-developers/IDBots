@@ -815,9 +815,21 @@ export function buildGoodsTradeAgentTools(deps: {
         return textResult(`goods_buy_with_me: escrow creation failed: ${describeMeNftEscrowError(error)}`, true);
       }
 
-      // Notify seller bot via A2A DM (ME_ESCROW_LOCKED_V1) so fast-path auto-fulfill triggers immediately
+      const isTerminalStatus = (status: string) =>
+        status === 'SETTLED'
+        || status === 'CANCELED_REFUNDED'
+        || status === 'EXPIRED_REFUNDED'
+        || status === 'DISPUTED_HOLD'
+        || status === 'settled'
+        || status === 'rejected';
+
+      // Notify remote seller bot via A2A DM (ME_ESCROW_LOCKED_V1); skip when already settled locally in-process
       let dmNotice = 'seller GlobalMetaID unknown (relying on seller 60s escrow polling)';
-      if (sellerMetaId) {
+      if (isTerminalStatus(order.status)) {
+        dmNotice = (order.status === 'SETTLED' || order.status === 'settled')
+          ? 'settled locally in-process (no on-chain DM required)'
+          : 'order already reached terminal state';
+      } else if (sellerMetaId) {
         try {
           const wire = formatGoodsTradeWireMessage({
             type: 'ME_ESCROW_LOCKED_V1',
@@ -839,14 +851,6 @@ export function buildGoodsTradeAgentTools(deps: {
           dmNotice = `DM dispatch failed (${error instanceof Error ? error.message : String(error)}); seller 60s fallback polling will still detect the locked escrow`;
         }
       }
-
-      const isTerminalStatus = (status: string) =>
-        status === 'SETTLED'
-        || status === 'CANCELED_REFUNDED'
-        || status === 'EXPIRED_REFUNDED'
-        || status === 'DISPUTED_HOLD'
-        || status === 'settled'
-        || status === 'rejected';
 
       // Short-poll ABS order status to catch instant auto-fulfillment
       let latestOrder = order;

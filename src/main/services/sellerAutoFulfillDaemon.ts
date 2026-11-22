@@ -28,9 +28,14 @@ import {
 } from './mrc721SellIntentService';
 import {
   assertEscrowMvcAddress,
+  createNftEscrowOrder,
   deliverNftEscrowOrder,
+  getBotTradeSpendableBalance,
   getNftEscrowOrder,
   listNftEscrowOrders,
+  ME_NFT_ESCROW_MIN_AMOUNT_MILLI,
+  MeNftEscrowApiError,
+  normalizeEscrowOrderId,
   rejectNftEscrowOrder,
   type MeNftEscrowOrder,
   type MeNftEscrowSigner,
@@ -633,7 +638,7 @@ export class SellerAutoFulfillDaemon {
   async processEscrowOrder(
     sellerMetabotId: number,
     orderId: string,
-    opts?: { source?: 'a2a_message' | 'escrow_poll'; buyerMetaIdHint?: string },
+    opts?: { source?: 'a2a_message' | 'escrow_poll' | 'local_in_process'; buyerMetaIdHint?: string },
   ): Promise<{ outcome: 'settled' | 'rejected' | 'skipped' | 'failed'; reason?: string; deliveryTxId?: string }> {
     const normalizedOrderId = String(orderId ?? '').trim();
     if (!normalizedOrderId) return { outcome: 'skipped', reason: 'empty_order_id' };
@@ -659,6 +664,8 @@ export class SellerAutoFulfillDaemon {
 
       // Crash-recovery fast path: NFT transfer already broadcast in an earlier run;
       // NEVER re-transfer! Only finish /deliver + local state + receipt + DM.
+      const skipTradeMessage = opts?.source === 'local_in_process';
+
       if (existing?.status === 'transferred' && existing.deliveryTxId) {
         this.log(`[SellerAutoFulfill] Crash-recovery resuming /deliver for order ${normalizedOrderId} (tx=${existing.deliveryTxId})`);
         return await this.completeDeliveryAfterTransfer({
@@ -667,6 +674,7 @@ export class SellerAutoFulfillDaemon {
           order,
           deliveryTxId: existing.deliveryTxId,
           buyerMetaIdHint: opts?.buyerMetaIdHint,
+          skipTradeMessage,
         });
       }
 
@@ -731,6 +739,7 @@ export class SellerAutoFulfillDaemon {
           order,
           'no_active_sell_intent_for_item',
           opts?.buyerMetaIdHint,
+          skipTradeMessage,
         );
       }
       if (!authorizedQuote && sellIntent && (sellIntent.autoFulfillMe === false || sellIntent.intent.autoFulfillMe === false)) {
@@ -747,6 +756,7 @@ export class SellerAutoFulfillDaemon {
             order,
             `price_below_agreed_quote (got ${order.amountMilli}, required ${authorizedQuote.agreedAmountMilli})`,
             opts?.buyerMetaIdHint,
+            skipTradeMessage,
           );
         }
       } else if (sellIntent) {
@@ -758,6 +768,7 @@ export class SellerAutoFulfillDaemon {
             order,
             `price_below_listing (got ${order.amountMilli}, required ${declaredMeMilli ?? 'none'})`,
             opts?.buyerMetaIdHint,
+            skipTradeMessage,
           );
         }
       }
@@ -772,6 +783,7 @@ export class SellerAutoFulfillDaemon {
           order,
           'seller_no_longer_holds_item',
           opts?.buyerMetaIdHint,
+          skipTradeMessage,
         );
       }
 
@@ -786,6 +798,7 @@ export class SellerAutoFulfillDaemon {
           order,
           'invalid_buyer_address',
           opts?.buyerMetaIdHint,
+          skipTradeMessage,
         );
       }
       if (validBuyerAddress.toLowerCase() === identity.mvcAddress.toLowerCase()) {
@@ -795,6 +808,7 @@ export class SellerAutoFulfillDaemon {
           order,
           'self_trade_prohibited',
           opts?.buyerMetaIdHint,
+          skipTradeMessage,
         );
       }
 
@@ -808,6 +822,7 @@ export class SellerAutoFulfillDaemon {
           order,
           tokenLock.reason || 'item_reserved_by_token_order',
           opts?.buyerMetaIdHint,
+          skipTradeMessage,
         );
       }
 
@@ -845,6 +860,7 @@ export class SellerAutoFulfillDaemon {
         collectionPinId: sellIntent?.intent.collectionPinId ?? liveItem.collectionPinId,
         buyerMetaIdHint: opts?.buyerMetaIdHint,
         authorizedQuoteInquiryId: authorizedQuote?.inquiryId,
+        skipTradeMessage,
       });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -873,6 +889,7 @@ export class SellerAutoFulfillDaemon {
     order: MeNftEscrowOrder,
     reason: string,
     buyerMetaIdHint?: string,
+    skipTradeMessage?: boolean,
   ): Promise<{ outcome: 'rejected'; reason: string }> {
     const doReject = this.deps.rejectEscrowOrder ?? rejectNftEscrowOrder;
     await doReject(identity.signer, order.orderId, { reason });
@@ -886,7 +903,7 @@ export class SellerAutoFulfillDaemon {
       errorMessage: reason,
     });
     const buyerMetaId = order.buyerMetaId || buyerMetaIdHint;
-    if (buyerMetaId && this.deps.sendTradeMessage) {
+    if (!skipTradeMessage && buyerMetaId && this.deps.sendTradeMessage) {
       try {
         const wire = formatGoodsTradeWireMessage({
           type: 'ME_ESCROW_REJECTED_V1',
@@ -914,6 +931,7 @@ export class SellerAutoFulfillDaemon {
     collectionPinId?: string;
     buyerMetaIdHint?: string;
     authorizedQuoteInquiryId?: string;
+    skipTradeMessage?: boolean;
   }): Promise<{ outcome: 'settled'; deliveryTxId: string }> {
     const { sellerMetabotId, identity, order, deliveryTxId } = input;
     const rawBuyerAddress = order.buyerNftAddress || order.buyerAddress;
@@ -977,8 +995,8 @@ export class SellerAutoFulfillDaemon {
       tradePinId: tradePinId ?? null,
     });
 
-    // Best-effort ME_DELIVERY_DONE_V1 A2A DM to buyer
-    if (buyerMetaId && this.deps.sendTradeMessage) {
+    // Best-effort ME_DELIVERY_DONE_V1 A2A DM to buyer (skipped when fulfilled synchronously in-process)
+    if (!input.skipTradeMessage && buyerMetaId && this.deps.sendTradeMessage) {
       try {
         const wire = formatGoodsTradeWireMessage({
           type: 'ME_DELIVERY_DONE_V1',
@@ -1011,6 +1029,327 @@ export class SellerAutoFulfillDaemon {
     } satisfies SellerAutoSoldEvent);
 
     return { outcome: 'settled', deliveryTxId };
+  }
+
+  /**
+   * Look up a settled local fulfillment record and synthesize a canonical
+   * `MeNftEscrowOrder` view for local order queries.
+   */
+  getLocalFulfilledOrder(orderId: string): MeNftEscrowOrder | null {
+    const normalizedId = String(orderId ?? '').trim();
+    if (!normalizedId) return null;
+    const row = this.getFulfillment(normalizedId);
+    if (!row || row.status !== 'settled' || !row.deliveryTxId) return null;
+    const sellerBot = this.deps.getMetabotStore().getMetabotById(row.sellerMetabotId);
+    const sellerAddress = String(sellerBot?.mvc_address ?? '').trim();
+    const settledSec = Math.floor((row.updatedAt || this.nowMs()) / 1000);
+    const createdSec = Math.floor((row.createdAt || row.updatedAt || this.nowMs()) / 1000);
+    return {
+      orderId: row.orderId,
+      itemPinId: row.itemPinId,
+      buyerNftAddress: row.buyerAddress,
+      buyerBotAddress: row.buyerAddress,
+      buyerAddress: row.buyerAddress,
+      sellerBotAddress: sellerAddress,
+      sellerPayeeAddress: sellerAddress || undefined,
+      sellerAddress,
+      sellerMetaId: sellerBot?.globalmetaid || undefined,
+      amountMilli: row.amountMilli,
+      status: 'SETTLED',
+      statusCode: 3,
+      statusName: 'SETTLED',
+      deliveryTxId: row.deliveryTxId,
+      createdAt: createdSec,
+      updatedAt: settledSec,
+      deliveredAt: settledSec,
+      settledAt: settledSec,
+      raw: {
+        settlementMode: row.tradePinId ? 'abs_escrow' : 'local_same_owner',
+        deliveryTxId: row.deliveryTxId,
+      },
+    };
+  }
+
+  /**
+   * Deterministic same-owner local-bot direct ME fulfillment.
+   *
+   * Invoked ONLY when ABS rejects order creation with `SELF_TRADE_FORBIDDEN`
+   * because the buyer bot (e.g., TwinBot) and seller bot (e.g., Worker Bot)
+   * live on the same machine and are bound to the same master ME account:
+   *   1. Verifies buyer holds `buyerTradeSpendableMilli >= amountMilli`
+   *      (persistent `topup + earned` only; `weeklyGrant` and `bonus` excluded),
+   *      even though the net ledger delta within the shared master account is 0.
+   *   2. Enforces local seller listing/quote authorization, ME auto-fulfill opt-in,
+   *      price floor, live on-chain ownership, and 5-minute token lock exclusion.
+   *   3. Executes real on-chain MRC-721 transfer from seller bot to buyer bot with
+   *      SQLite crash-recovery idempotency, marks local listing sold, emits
+   *      `goodsTrade:autoSold`, and NEVER broadcasts a public `abs_escrow`
+   *      `/protocols/mrc721trade` receipt (preventing wash-trade volume inflation).
+   */
+  async fulfillLocalSameOwnerOrder(input: {
+    orderId: string;
+    sellerMetabotId: number;
+    buyerMetabotId: number;
+    buyerNftAddress: string;
+    buyerMetaId?: string;
+    itemPinId: string;
+    collectionPinId?: string;
+    listingPinId?: string;
+    amountMilli: number;
+    buyerTradeSpendableMilli: number;
+  }): Promise<{ outcome: 'settled'; order: MeNftEscrowOrder; deliveryTxId: string }> {
+    const normalizedOrderId = normalizeEscrowOrderId(input.orderId);
+    const normalizedItemPinId = String(input.itemPinId ?? '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}i\d+$/i.test(normalizedItemPinId)) {
+      throw new Error(`Invalid itemPinId: "${input.itemPinId}"`);
+    }
+    if (
+      !Number.isInteger(input.sellerMetabotId)
+      || !Number.isInteger(input.buyerMetabotId)
+      || input.sellerMetabotId <= 0
+      || input.buyerMetabotId <= 0
+    ) {
+      throw new Error('Invalid buyer or seller MetaBot ID');
+    }
+    if (input.sellerMetabotId === input.buyerMetabotId) {
+      throw new Error(`Buyer and seller cannot be the same MetaBot (#${input.buyerMetabotId})`);
+    }
+
+    const identity = this.getSigner(input.sellerMetabotId);
+    if (!identity) {
+      throw new Error(`Local seller MetaBot #${input.sellerMetabotId} is disabled or has no wallet`);
+    }
+
+    const validBuyerAddress = assertEscrowMvcAddress(input.buyerNftAddress, 'buyerNftAddress');
+    if (validBuyerAddress.toLowerCase() === identity.mvcAddress.toLowerCase()) {
+      throw new Error('Buyer and seller MVC addresses must differ');
+    }
+
+    const amountMilli = Math.round(Number(input.amountMilli));
+    if (!Number.isInteger(amountMilli) || amountMilli < ME_NFT_ESCROW_MIN_AMOUNT_MILLI) {
+      throw new Error(`amountMilli must be an integer >= ${ME_NFT_ESCROW_MIN_AMOUNT_MILLI} (1 ME)`);
+    }
+    const spendableMilli = Math.max(0, Math.floor(Number(input.buyerTradeSpendableMilli ?? 0)));
+    if (spendableMilli < amountMilli) {
+      throw new Error(
+        `Insufficient trade-eligible persistent ME balance: required ${(amountMilli / 1000).toFixed(3)} ME, available ${(spendableMilli / 1000).toFixed(3)} ME [INSUFFICIENT_ME]`,
+      );
+    }
+
+    const buildSettledOrder = (deliveryTxId: string, collectionPinId?: string): MeNftEscrowOrder => {
+      const nowSec = Math.floor(this.nowMs() / 1000);
+      return {
+        orderId: normalizedOrderId,
+        itemPinId: normalizedItemPinId,
+        ...(collectionPinId ? { collectionPinId } : {}),
+        ...(input.listingPinId ? { listingPinId: input.listingPinId, sellPinId: input.listingPinId } : {}),
+        buyerNftAddress: validBuyerAddress,
+        buyerBotAddress: validBuyerAddress,
+        buyerAddress: validBuyerAddress,
+        ...(input.buyerMetaId ? { buyerMetaId: input.buyerMetaId } : {}),
+        sellerBotAddress: identity.mvcAddress,
+        sellerPayeeAddress: identity.mvcAddress,
+        sellerAddress: identity.mvcAddress,
+        ...(identity.globalMetaId ? { sellerMetaId: identity.globalMetaId } : {}),
+        amountMilli,
+        feeMilli: 0,
+        sellerNetMilli: amountMilli,
+        status: 'SETTLED',
+        statusCode: 3,
+        statusName: 'SETTLED',
+        deliveryTxId,
+        createdAt: nowSec,
+        updatedAt: nowSec,
+        deliveredAt: nowSec,
+        settledAt: nowSec,
+        raw: {
+          settlementMode: 'local_same_owner',
+          netMeDeltaMilli: 0,
+          deliveryTxId,
+        },
+      };
+    };
+
+    if (this.processingOrders.has(normalizedOrderId)) {
+      throw new Error(`Order ${normalizedOrderId} is already in flight`);
+    }
+
+    const existing = this.getFulfillment(normalizedOrderId);
+    if (existing?.status === 'settled' && existing.deliveryTxId) {
+      return {
+        outcome: 'settled',
+        order: buildSettledOrder(existing.deliveryTxId, input.collectionPinId),
+        deliveryTxId: existing.deliveryTxId,
+      };
+    }
+
+    this.processingOrders.add(normalizedOrderId);
+    try {
+      const finalizeLocalSettlement = (
+        deliveryTxId: string,
+        collectionPinId?: string,
+        authorizedQuoteInquiryId?: string,
+      ): { outcome: 'settled'; order: MeNftEscrowOrder; deliveryTxId: string } => {
+        const markSold = this.deps.markSellIntentSold
+          ?? ((botId: number, pinId: string, meta?: { orderId?: string; txId?: string }) =>
+            markMrc721SellIntentSold(this.deps.getSellIntentKv(), botId, pinId, meta));
+        try {
+          markSold(input.sellerMetabotId, normalizedItemPinId, {
+            orderId: normalizedOrderId,
+            txId: deliveryTxId,
+          });
+        } catch (err) {
+          this.log(`[SellerAutoFulfill/Local] Failed to mark local sell intent sold: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
+        const markQuoteUsed = this.deps.markSellerAuthorizedQuoteUsed
+          ?? ((botId: number, pinId: string, meta?: { inquiryId?: string; orderId?: string }) =>
+            markSellerAuthorizedQuoteUsed(this.deps.getSellIntentKv(), botId, pinId, meta));
+        try {
+          markQuoteUsed(input.sellerMetabotId, normalizedItemPinId, {
+            inquiryId: authorizedQuoteInquiryId,
+            orderId: normalizedOrderId,
+          });
+        } catch (err) {
+          this.log(`[SellerAutoFulfill/Local] Failed to mark seller authorized quote used: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
+        this.upsertFulfillment({
+          orderId: normalizedOrderId,
+          sellerMetabotId: input.sellerMetabotId,
+          itemPinId: normalizedItemPinId,
+          buyerAddress: validBuyerAddress,
+          amountMilli,
+          status: 'settled',
+          deliveryTxId,
+          tradePinId: null,
+        });
+
+        this.deps.emitToRenderer?.('goodsTrade:autoSold', {
+          orderId: normalizedOrderId,
+          sellerMetabotId: input.sellerMetabotId,
+          itemPinId: normalizedItemPinId,
+          buyerAddress: validBuyerAddress,
+          amountMilli,
+          deliveryTxId,
+          settledAt: this.nowMs(),
+        } satisfies SellerAutoSoldEvent);
+
+        return {
+          outcome: 'settled',
+          order: buildSettledOrder(deliveryTxId, collectionPinId),
+          deliveryTxId,
+        };
+      };
+
+      // Crash-recovery fast path: transfer already broadcast earlier; finalize without re-sending NFT.
+      if (existing?.status === 'transferred' && existing.deliveryTxId) {
+        this.log(
+          `[SellerAutoFulfill/Local] Crash-recovery finalizing local same-owner order ${normalizedOrderId} (tx=${existing.deliveryTxId})`,
+        );
+        return finalizeLocalSettlement(existing.deliveryTxId, input.collectionPinId);
+      }
+
+      // Check 2: Local active sell-intent OR unexpired seller-authorized quote
+      const findIntent = this.deps.findLocalActiveSellIntent
+        ?? ((botId: number, pinId: string) => findLocalActiveSellIntentForItem(this.deps.getSellIntentKv(), botId, pinId));
+      const sellIntent = findIntent(input.sellerMetabotId, normalizedItemPinId);
+      const nowSec = Math.floor(this.nowMs() / 1000);
+      const findAuthorizedQuote = this.deps.findSellerAuthorizedQuote
+        ?? ((botId: number, pinId: string, buyerAddr?: string) =>
+          findSellerAuthorizedQuoteForOrder(this.deps.getSellIntentKv(), botId, pinId, buyerAddr, nowSec));
+      const authorizedQuote = findAuthorizedQuote(input.sellerMetabotId, normalizedItemPinId, validBuyerAddress);
+
+      if (!sellIntent && !authorizedQuote) {
+        throw new Error(
+          `Local seller MetaBot #${input.sellerMetabotId} has no active ME listing or authorized quote for item ${normalizedItemPinId}`,
+        );
+      }
+      if (!authorizedQuote && sellIntent && (sellIntent.autoFulfillMe === false || sellIntent.intent.autoFulfillMe === false)) {
+        throw new Error(
+          `Local seller MetaBot #${input.sellerMetabotId} has disabled automatic ME fulfillment for item ${normalizedItemPinId}`,
+        );
+      }
+
+      // Check 3: Price verification
+      if (authorizedQuote) {
+        if (amountMilli < authorizedQuote.agreedAmountMilli) {
+          throw new Error(
+            `Order price (${(amountMilli / 1000).toFixed(3)} ME) is below seller's agreed quote (${(authorizedQuote.agreedAmountMilli / 1000).toFixed(3)} ME)`,
+          );
+        }
+      } else if (sellIntent) {
+        const declaredMeMilli = sellIntent.intent.prices?.me?.amountMilli;
+        if (declaredMeMilli == null || declaredMeMilli <= 0 || amountMilli < declaredMeMilli) {
+          throw new Error(
+            `Order price (${(amountMilli / 1000).toFixed(3)} ME) is below seller's listed ME price (${declaredMeMilli != null ? `${(declaredMeMilli / 1000).toFixed(3)} ME` : 'not listed in ME'})`,
+          );
+        }
+      }
+
+      // Check 4: Live on-chain holder verification
+      const fetchItem = this.deps.fetchItemInfo ?? ((pinId: string) => fetchMrc721ItemInfo({ pinId }));
+      const liveItem = await fetchItem(normalizedItemPinId);
+      if (!liveItem || liveItem.burned || (liveItem.ownerAddress ?? '').toLowerCase() !== identity.mvcAddress.toLowerCase()) {
+        throw new Error(`Local seller MetaBot #${input.sellerMetabotId} no longer holds item ${normalizedItemPinId} on chain`);
+      }
+
+      // Check 5.5: Mutual exclusion against active 5-minute token-for-goods reservations
+      expireStaleTokenGoodsReservations(this.db, this.nowMs(), this.saveDb);
+      const tokenLock = hasActiveItemLock(this.db, normalizedItemPinId, this.nowMs());
+      if (tokenLock.locked) {
+        throw new Error(`Item ${normalizedItemPinId} is currently reserved by an active token-for-goods order (${tokenLock.reason || 'locked'})`);
+      }
+
+      // Check 6: Persist 'processing' BEFORE transfer, then 'transferred' BEFORE local bookkeeping
+      this.upsertFulfillment({
+        orderId: normalizedOrderId,
+        sellerMetabotId: input.sellerMetabotId,
+        itemPinId: normalizedItemPinId,
+        buyerAddress: validBuyerAddress,
+        amountMilli,
+        status: 'processing',
+      });
+
+      const transferResult = await this.deps.transferMrc721Item({
+        metabotId: input.sellerMetabotId,
+        pinId: normalizedItemPinId,
+        toAddress: validBuyerAddress,
+      });
+
+      this.upsertFulfillment({
+        orderId: normalizedOrderId,
+        sellerMetabotId: input.sellerMetabotId,
+        itemPinId: normalizedItemPinId,
+        buyerAddress: validBuyerAddress,
+        amountMilli,
+        status: 'transferred',
+        deliveryTxId: transferResult.txId,
+      });
+
+      return finalizeLocalSettlement(
+        transferResult.txId,
+        input.collectionPinId ?? sellIntent?.intent.collectionPinId ?? liveItem.collectionPinId,
+        authorizedQuote?.inquiryId,
+      );
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const current = this.getFulfillment(normalizedOrderId);
+      if (current && current.status !== 'transferred' && current.status !== 'settled' && current.status !== 'rejected') {
+        this.upsertFulfillment({
+          orderId: normalizedOrderId,
+          sellerMetabotId: input.sellerMetabotId,
+          itemPinId: current.itemPinId,
+          buyerAddress: current.buyerAddress,
+          amountMilli: current.amountMilli,
+          status: 'failed',
+          errorMessage: errMsg,
+        });
+      }
+      throw error;
+    } finally {
+      this.processingOrders.delete(normalizedOrderId);
+    }
   }
 
   getFtFulfillment(orderId: string): MeFtSellerFulfillmentRecord | null {
@@ -2099,6 +2438,105 @@ export class SellerAutoFulfillDaemon {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+  }
+}
+
+export interface CreateOrFulfillLocalEscrowParams {
+  buyerMetabotId: number;
+  buyerSigner: MeNftEscrowSigner;
+  orderInput: Parameters<typeof createNftEscrowOrder>[1];
+  metabotStore: Pick<MetabotStore, 'getMetabotById' | 'listMetabots'>;
+  daemon: SellerAutoFulfillDaemon;
+  // Injectable overrides for deterministic unit testing
+  createRemoteEscrowOrder?: typeof createNftEscrowOrder;
+  getRemoteEscrowOrder?: typeof getNftEscrowOrder;
+  getBuyerTradeBalance?: typeof getBotTradeSpendableBalance;
+}
+
+/**
+ * Shared ME NFT purchase orchestrator used by both `goodsTrade:buyWithMe` IPC
+ * and the `goods_buy_with_me` agent tool:
+ *   - Attempts standard ABS `/v1/me/nft-escrow/orders` first.
+ *   - If the seller is an enabled local MetaBot on a DIFFERENT ME identity,
+ *     immediately runs `daemon.processEscrowOrder(..., { source: 'local_in_process' })`
+ *     so local fulfillment settles in-process without waiting for DM/60s polling.
+ *   - If ABS returns `SELF_TRADE_FORBIDDEN` because buyer and seller are two
+ *     distinct local MetaBots bound to the SAME master ME account, verifies the
+ *     buyer's persistent `tradeSpendableMilli` and settles directly via
+ *     `daemon.fulfillLocalSameOwnerOrder(...)` with zero ABS modifications.
+ */
+export async function createOrFulfillLocalNftEscrowOrder(
+  params: CreateOrFulfillLocalEscrowParams,
+): Promise<MeNftEscrowOrder> {
+  const { buyerMetabotId, buyerSigner, orderInput, metabotStore, daemon } = params;
+  const buyerBot = metabotStore.getMetabotById(buyerMetabotId);
+  const buyerNftAddress = String(orderInput.buyerNftAddress || buyerBot?.mvc_address || '').trim();
+  const sellerBotAddress = String(orderInput.sellerBotAddress || orderInput.sellerAddress || '').trim();
+  const targetSellerLower = sellerBotAddress.toLowerCase();
+
+  const localSellerBot = targetSellerLower
+    ? (metabotStore.listMetabots?.() ?? []).find(
+        (b) =>
+          b.id !== buyerMetabotId
+          && b.enabled !== false
+          && typeof b.mvc_address === 'string'
+          && b.mvc_address.trim().toLowerCase() === targetSellerLower,
+      )
+    : undefined;
+
+  const doCreate = params.createRemoteEscrowOrder ?? createNftEscrowOrder;
+  try {
+    const order = await doCreate(buyerSigner, orderInput);
+    if (
+      localSellerBot
+      && (order.status === 'FROZEN_AWAITING_DELIVERY' || order.statusCode === 1)
+    ) {
+      const fastRes = await daemon.processEscrowOrder(localSellerBot.id, order.orderId, {
+        source: 'local_in_process',
+        buyerMetaIdHint: orderInput.buyerMetaId || buyerBot?.globalmetaid || undefined,
+      });
+      if (fastRes.outcome === 'settled' || fastRes.outcome === 'rejected') {
+        try {
+          const doGet = params.getRemoteEscrowOrder ?? getNftEscrowOrder;
+          return await doGet(buyerSigner, order.orderId);
+        } catch {
+          if (fastRes.outcome === 'settled' && fastRes.deliveryTxId) {
+            return {
+              ...order,
+              status: 'SETTLED',
+              statusCode: 3,
+              statusName: 'SETTLED',
+              deliveryTxId: fastRes.deliveryTxId,
+            };
+          }
+        }
+      }
+    }
+    return order;
+  } catch (error) {
+    if (
+      error instanceof MeNftEscrowApiError
+      && error.errorCode === 'SELF_TRADE_FORBIDDEN'
+      && localSellerBot
+    ) {
+      const doGetBalance = params.getBuyerTradeBalance ?? getBotTradeSpendableBalance;
+      const balance = await doGetBalance(buyerSigner);
+      const listingPinId = String(orderInput.listingPinId ?? orderInput.sellPinId ?? '').trim().toLowerCase() || undefined;
+      const fulfilled = await daemon.fulfillLocalSameOwnerOrder({
+        orderId: orderInput.orderId,
+        sellerMetabotId: localSellerBot.id,
+        buyerMetabotId,
+        buyerNftAddress,
+        buyerMetaId: orderInput.buyerMetaId || buyerBot?.globalmetaid || undefined,
+        itemPinId: orderInput.itemPinId,
+        collectionPinId: orderInput.collectionPinId,
+        listingPinId,
+        amountMilli: orderInput.amountMilli,
+        buyerTradeSpendableMilli: balance.tradeSpendableMilli,
+      });
+      return fulfilled.order;
+    }
+    throw error;
   }
 }
 

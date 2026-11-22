@@ -335,6 +335,33 @@ function pickErrorCode(payload: unknown): string {
   return '';
 }
 
+const GENERIC_ENVELOPE_MESSAGES = new Set([
+  'error',
+  'fail',
+  'failed',
+  'err',
+  'bad request',
+  'request failed',
+]);
+
+function isGenericEnvelopeMessage(msg: string): boolean {
+  return GENERIC_ENVELOPE_MESSAGES.has(msg.trim().toLowerCase());
+}
+
+function pickMeaningfulMeErrorMessage(
+  record: Record<string, unknown>,
+  errorData: Record<string, unknown>,
+  fallback: string,
+): string {
+  const topMsg = pickText(record, 'message', 'msg', 'error');
+  if (topMsg && !isGenericEnvelopeMessage(topMsg)) return topMsg;
+  const detailMsg = pickText(errorData, 'detail', 'message', 'msg', 'error');
+  if (detailMsg && !isGenericEnvelopeMessage(detailMsg)) return detailMsg;
+  const errCode = pickErrorCode(errorData) || pickErrorCode(record);
+  if (errCode) return `ME service error: ${errCode}`;
+  return topMsg || fallback;
+}
+
 function resolveApiBaseUrl(): string {
   return process.env.ME_API_BASE_URL?.trim() || DEFAULT_ME_API_BASE_URL;
 }
@@ -409,13 +436,19 @@ export async function meRequestJson(input: {
       const bodyRecord = (body && typeof body === 'object' && !Array.isArray(body))
         ? (body as Record<string, unknown>)
         : {};
+      const errorData = (bodyRecord.data && typeof bodyRecord.data === 'object' && !Array.isArray(bodyRecord.data))
+        ? (bodyRecord.data as Record<string, unknown>)
+        : {};
       throw new MePointsApiError({
         stage: input.stage,
-        message: pickText(bodyRecord, 'message', 'msg', 'error')
-          || `ME service request failed with HTTP ${response.status}.`,
+        message: pickMeaningfulMeErrorMessage(
+          bodyRecord,
+          errorData,
+          `ME service request failed with HTTP ${response.status}.`,
+        ),
         status: response.status,
         featureUnavailable: response.status === 404,
-        errorCode: pickErrorCode((bodyRecord.data ?? bodyRecord)),
+        errorCode: pickErrorCode(errorData) || pickErrorCode(bodyRecord),
       });
     }
     const record = (body && typeof body === 'object' && !Array.isArray(body))
@@ -441,10 +474,12 @@ export async function meRequestJson(input: {
     const haveMilli = pickNumber(errorData, 'haveMilli', 'have_milli');
     throw new MePointsApiError({
       stage: input.stage,
-      message: pickText(record, 'message', 'msg', 'error')
-        || pickText(errorData, 'detail')
-        || `ME service returned code ${normalizeText(record.code) || 'unknown'}.`,
-      errorCode: pickErrorCode(record.data),
+      message: pickMeaningfulMeErrorMessage(
+        record,
+        errorData,
+        `ME service returned code ${normalizeText(record.code) || 'unknown'}.`,
+      ),
+      errorCode: pickErrorCode(errorData) || pickErrorCode(record),
       ...(neededMilli > 0 ? { neededMilli } : {}),
       ...(haveMilli > 0 ? { haveMilli } : {}),
       ...(errorData.autoDeductDisabled === true ? { autoDeductDisabled: true } : {}),
