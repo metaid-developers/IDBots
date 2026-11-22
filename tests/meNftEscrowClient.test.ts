@@ -258,7 +258,7 @@ test('goods_buy_with_me, goods_send_inquiry, and goods_accept_inquiry align with
   const sellerAuthorizedQuotes: any[] = [];
   let tradeSpendableMilli = 1000;
   let confirmResponse = true;
-  let confirmQuoteResponse = true;
+  const confirmQuoteResponse = true;
   let pollCount = 0;
 
   const tools = buildGoodsTradeAgentTools({
@@ -525,4 +525,213 @@ test('goods_buy_with_me, goods_send_inquiry, and goods_accept_inquiry align with
   const fallbackMissing = await fallbackBuy.handler({ item_pin_id: ITEM_PIN_ID, amount_me: 2, order_id: 'ord_fb_2' });
   assert.equal(fallbackMissing.isError, true);
   assert.match(fallbackMissing.content[0].text, /collectionPinId/);
+});
+
+test('ABS generic message="error" envelopes surface data.detail + errorCode across NFT escrow, ME points, and FT escrow clients; goods_buy_with_me skips DM/polling when settled locally', async () => {
+  const {
+    describeMeNftEscrowError,
+  } = require('../dist-electron/main/services/meNftEscrowService.js');
+  const {
+    initMePointsService,
+    meRequestJson,
+    MePointsApiError,
+  } = require('../dist-electron/main/services/mePointsService.js');
+  const {
+    getFtEscrowOrder,
+    MeFtEscrowApiError,
+  } = require('../dist-electron/main/services/meFtEscrowService.js');
+
+  const signer = { mnemonic: BOT_MNEMONIC };
+
+  // 1. meNftEscrowService lifts data.detail when top-level message is generic "error"
+  const selfTradeFetch = (async () => new Response(JSON.stringify({
+    code: 1,
+    message: 'error',
+    data: {
+      errorCode: 'SELF_TRADE_FORBIDDEN',
+      detail: 'buyer and seller cannot be the same identity',
+    },
+  }), { status: 200 })) as typeof fetch;
+
+  let caughtNftErr: any;
+  await assert.rejects(
+    () => createNftEscrowOrder(
+      signer,
+      {
+        orderId: 'ord_self_1',
+        itemPinId: ITEM_PIN_ID,
+        collectionPinId: COLLECTION_PIN_ID,
+        buyerNftAddress: BOT_ADDRESS,
+        sellerBotAddress: SELLER_ADDRESS,
+        amountMilli: 2000,
+      },
+      { baseUrl: 'https://abs.example.test', fetchImpl: selfTradeFetch, signAction: mockSignAction as any },
+    ),
+    (err: any) => {
+      caughtNftErr = err;
+      return err instanceof MeNftEscrowApiError;
+    },
+  );
+  assert.equal(caughtNftErr.errorCode, 'SELF_TRADE_FORBIDDEN');
+  assert.equal(caughtNftErr.message, 'buyer and seller cannot be the same identity');
+  assert.equal(
+    describeMeNftEscrowError(caughtNftErr),
+    'buyer and seller cannot be the same identity [SELF_TRADE_FORBIDDEN]',
+  );
+
+  // Fallback when detail is omitted: uses errorCode without duplicating [CODE]
+  const codeOnlyFetch = (async () => new Response(JSON.stringify({
+    code: 1,
+    message: 'error',
+    data: { errorCode: 'ITEM_ALREADY_LOCKED' },
+  }), { status: 200 })) as typeof fetch;
+  await assert.rejects(
+    () => getNftEscrowOrder(signer, 'ord_locked_err', {
+      baseUrl: 'https://abs.example.test',
+      fetchImpl: codeOnlyFetch,
+      signAction: mockSignAction as any,
+    }),
+    (err: any) => {
+      assert.equal(err.errorCode, 'ITEM_ALREADY_LOCKED');
+      assert.equal(describeMeNftEscrowError(err), 'ABS escrow error: ITEM_ALREADY_LOCKED');
+      return true;
+    },
+  );
+
+  // 2. mePointsService.meRequestJson lifts data.detail + shortfall fields when message is "error"
+  initMePointsService({
+    fetchImpl: (async () => new Response(JSON.stringify({
+      code: 1,
+      message: 'error',
+      data: {
+        errorCode: 'INSUFFICIENT_ME',
+        detail: 'insufficient persistent ME balance',
+        neededMilli: 2000,
+        haveMilli: 500,
+      },
+    }), { status: 200 })) as typeof fetch,
+  });
+  try {
+    await assert.rejects(
+      () => meRequestJson({ stage: 'consume', method: 'POST', path: '/v1/me/consume', body: {} }),
+      (err: any) => {
+        assert.ok(err instanceof MePointsApiError);
+        assert.equal(err.errorCode, 'INSUFFICIENT_ME');
+        assert.equal(err.message, 'insufficient persistent ME balance');
+        assert.equal(err.neededMilli, 2000);
+        assert.equal(err.haveMilli, 500);
+        return true;
+      },
+    );
+  } finally {
+    initMePointsService({ fetchImpl: undefined });
+  }
+
+  // 3. meFtEscrowService lifts data.detail when message is "error"
+  await assert.rejects(
+    () => getFtEscrowOrder(signer, 'ft_ord_1', {
+      baseUrl: 'https://abs.example.test',
+      signAction: mockSignAction as any,
+      fetchImpl: (async () => new Response(JSON.stringify({
+        code: 1,
+        message: 'error',
+        data: {
+          errorCode: 'SELF_TRADE_FORBIDDEN',
+          detail: 'buyer and seller cannot be the same identity',
+        },
+      }), { status: 200 })) as typeof fetch,
+    }),
+    (err: any) => {
+      assert.ok(err instanceof MeFtEscrowApiError);
+      assert.equal(err.errorCode, 'SELF_TRADE_FORBIDDEN');
+      assert.equal(err.message, 'buyer and seller cannot be the same identity');
+      return true;
+    },
+  );
+
+  // 4. goods_buy_with_me skips ME_ESCROW_LOCKED_V1 DM & short-polling when order is already SETTLED locally
+  let dmCalls = 0;
+  let getOrderCalls = 0;
+  const settledEvents: any[] = [];
+  const makeSdkTool = (name: string, description: string, schema: unknown, handler: (args: any) => Promise<any>) => ({
+    name,
+    description,
+    schema,
+    handler,
+  });
+  const localTools = buildGoodsTradeAgentTools({
+    tool: makeSdkTool as any,
+    sessionId: 'sess-local-same-owner',
+    resolveMetabotId: () => 1,
+    confirmGoodsPurchase: async () => true,
+    control: {
+      getMetabotIdentity: () => ({ name: 'AI_Sunny', mvcAddress: BOT_ADDRESS, globalMetaId: BUYER_METAID }),
+      getTradeBalance: async () => ({
+        botAddress: BOT_ADDRESS,
+        tradeSpendableMilli: 6986,
+        frozenMilli: 5045,
+        totalAvailableMilli: 1649796,
+        weeklyRemainingMilli: 1642810,
+        earnedMilli: 300,
+        topupMilli: 6686,
+        bonusMilli: 0,
+        raw: {},
+      }),
+      createEscrowOrder: async (input: any) => ({
+        orderId: input.orderId,
+        itemPinId: input.itemPinId,
+        collectionPinId: input.collectionPinId,
+        buyerNftAddress: input.buyerNftAddress,
+        buyerAddress: input.buyerNftAddress,
+        sellerBotAddress: input.sellerBotAddress,
+        sellerAddress: input.sellerBotAddress,
+        amountMilli: input.amountMilli,
+        status: 'SETTLED',
+        statusCode: 3,
+        statusName: 'SETTLED',
+        deliveryTxId: DELIVERY_TXID,
+        raw: { settlementMode: 'local_same_owner' },
+      }),
+      getEscrowOrder: async () => {
+        getOrderCalls += 1;
+        throw new Error('must not poll when already SETTLED');
+      },
+      sendTradeMessage: async () => {
+        dmCalls += 1;
+        return { txids: ['tx_unexpected'], pinId: `${'ff'.repeat(32)}i0` };
+      },
+      onPurchaseSettled: (ev: any) => settledEvents.push(ev),
+      fetchItemInfo: async () => ({
+        itemPinId: ITEM_PIN_ID,
+        collectionPinId: COLLECTION_PIN_ID,
+        name: 'MetaBot Avatar #2671',
+        collectionName: 'metabot-avatar',
+        ownerAddress: SELLER_ADDRESS,
+        ownerMetaId: SELLER_METAID,
+        burned: false,
+      }),
+      fetchMarketListings: async () => ({
+        items: [{
+          intentPinId: LISTING_PIN_ID,
+          itemPinId: ITEM_PIN_ID,
+          collectionPinId: COLLECTION_PIN_ID,
+          itemName: 'MetaBot Avatar #2671',
+          collectionName: 'metabot-avatar',
+          prices: { me: { amountMilli: 2000 } },
+          seller: { address: SELLER_ADDRESS, globalMetaId: SELLER_METAID, name: 'AI_小新' },
+        }],
+      }),
+      pollDelaysMs: [100, 100],
+    },
+  }) as Array<{ name: string; handler: (args: any) => Promise<any> }>;
+
+  const localBuy = localTools.find((t) => t.name === 'goods_buy_with_me')!;
+  const localRes = await localBuy.handler({ item_pin_id: ITEM_PIN_ID, order_id: 'goods_local_2671' });
+  assert.equal(localRes.isError, undefined);
+  assert.equal(dmCalls, 0, 'MUST NOT send ME_ESCROW_LOCKED_V1 DM when order already settled locally');
+  assert.equal(getOrderCalls, 0, 'MUST NOT short-poll ABS when order already settled locally');
+  assert.equal(settledEvents.length, 1);
+  assert.equal(settledEvents[0].deliveryTxId, DELIVERY_TXID);
+  assert.match(localRes.content[0].text, /SETTLED: goods_local_2671/);
+  assert.match(localRes.content[0].text, /settled locally in-process/);
 });

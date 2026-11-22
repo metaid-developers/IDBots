@@ -484,3 +484,409 @@ test('SellerAutoFulfillDaemon fulfills quote-authorized negotiated and unlisted 
     assert.equal(ctx.rejects[0].reason, 'no_active_sell_intent_for_item');
   });
 });
+
+test('createOrFulfillLocalNftEscrowOrder settles same-owner TwinBot <-> Worker Bot ME trade locally without ABS mutation or wash-trade receipt', async () => {
+  const {
+    createOrFulfillLocalNftEscrowOrder,
+  } = require('../dist-electron/main/services/sellerAutoFulfillDaemon.js');
+  const {
+    MeNftEscrowApiError,
+  } = require('../dist-electron/main/services/meNftEscrowService.js');
+
+  await withDaemonDb(async ({ db, saveDb }) => {
+    const metabots = [
+      { id: 1, name: 'AI_小新', enabled: true, metabot_type: 'worker', mvc_address: SELLER_ADDRESS, globalmetaid: SELLER_METAID },
+      { id: 2, name: 'AI_Sunny', enabled: true, metabot_type: 'twin', mvc_address: BUYER_ADDRESS, globalmetaid: BUYER_METAID },
+    ];
+    const metabotStore = {
+      getMetabotById: (id: number) => metabots.find((b) => b.id === id) ?? null,
+      getMetabotWalletByMetabotId: (id: number) => (id === 1 || id === 2
+        ? { mnemonic: MNEMONIC, path: "m/44'/10001'/0'/0/0" }
+        : null),
+      listMetabots: () => metabots,
+    };
+
+    let currentOwner = SELLER_ADDRESS;
+    const ctx = makeBaseDeps({
+      getMetabotStore: () => metabotStore,
+      transferMrc721Item: async (input: any) => {
+        ctx.transfers.push(input);
+        currentOwner = input.toAddress;
+        return { txId: 'ab'.repeat(32), pinId: input.pinId, toAddress: input.toAddress };
+      },
+      fetchItemInfo: async () => ({
+        itemPinId: ITEM_PIN_ID,
+        collectionPinId: COLLECTION_PIN_ID,
+        ownerAddress: currentOwner,
+        burned: false,
+      }),
+      findLocalActiveSellIntent: () => ({
+        id: 'intent_2671',
+        metabotId: 1,
+        status: 'active',
+        autoFulfillMe: true,
+        updatedAt: 1,
+        intent: {
+          active: true,
+          itemPinId: ITEM_PIN_ID,
+          collectionPinId: COLLECTION_PIN_ID,
+          sellerAddress: SELLER_ADDRESS,
+          prices: { me: { amountMilli: 2000 } },
+          autoFulfillMe: true,
+          acceptedCurrencies: ['me'],
+          settlement: ['me-escrow'],
+          createdAt: 1700000000,
+        },
+      }),
+    });
+    const daemon = new SellerAutoFulfillDaemon(db, saveDb, ctx.deps);
+
+    const selfTradeThrower = async () => {
+      throw new MeNftEscrowApiError({
+        stage: 'nft_escrow_create',
+        status: 200,
+        errorCode: 'SELF_TRADE_FORBIDDEN',
+        message: 'buyer and seller cannot be the same identity',
+      });
+    };
+
+    const settledOrder = await createOrFulfillLocalNftEscrowOrder({
+      buyerMetabotId: 2,
+      buyerSigner: { mnemonic: MNEMONIC },
+      orderInput: {
+        orderId: 'goods_avatar_2671',
+        itemPinId: ITEM_PIN_ID,
+        collectionPinId: COLLECTION_PIN_ID,
+        buyerNftAddress: BUYER_ADDRESS,
+        sellerBotAddress: SELLER_ADDRESS,
+        amountMilli: 2000,
+        buyerMetaId: BUYER_METAID,
+        sellerMetaId: SELLER_METAID,
+      },
+      metabotStore: metabotStore as any,
+      daemon,
+      createRemoteEscrowOrder: selfTradeThrower as any,
+      getBuyerTradeBalance: (async () => ({
+        botAddress: BUYER_ADDRESS,
+        tradeSpendableMilli: 6986,
+        frozenMilli: 5045,
+        totalAvailableMilli: 1649796,
+        weeklyRemainingMilli: 1642810,
+        earnedMilli: 300,
+        topupMilli: 6686,
+        bonusMilli: 0,
+        raw: {},
+      })) as any,
+    });
+
+    assert.equal(settledOrder.status, 'SETTLED');
+    assert.equal(settledOrder.statusCode, 3);
+    assert.equal(settledOrder.deliveryTxId, 'ab'.repeat(32));
+    assert.equal((settledOrder.raw as any).settlementMode, 'local_same_owner');
+    assert.equal(ctx.transfers.length, 1);
+    assert.equal(ctx.transfers[0].metabotId, 1);
+    assert.equal(ctx.transfers[0].toAddress, BUYER_ADDRESS);
+    assert.equal(ctx.soldMarks.length, 1);
+    assert.equal(ctx.delivers.length, 0, 'MUST NOT call ABS /deliver on local same-owner trade');
+    assert.equal(ctx.receipts.length, 0, 'MUST NOT broadcast public abs_escrow mrc721trade receipt on same-owner trade');
+    assert.equal(ctx.dms.length, 0, 'MUST NOT send redundant on-chain DM on same-owner trade');
+    assert.equal(ctx.emitted.length, 1);
+    assert.equal(ctx.emitted[0].channel, 'goodsTrade:autoSold');
+
+    // Local lookup resolves canonical SETTLED order
+    const lookedUp = daemon.getLocalFulfilledOrder('goods_avatar_2671');
+    assert.ok(lookedUp);
+    assert.equal(lookedUp.status, 'SETTLED');
+    assert.equal(lookedUp.deliveryTxId, 'ab'.repeat(32));
+
+    // Idempotent replay with same orderId does NOT re-transfer
+    const replay = await daemon.fulfillLocalSameOwnerOrder({
+      orderId: 'goods_avatar_2671',
+      sellerMetabotId: 1,
+      buyerMetabotId: 2,
+      buyerNftAddress: BUYER_ADDRESS,
+      itemPinId: ITEM_PIN_ID,
+      amountMilli: 2000,
+      buyerTradeSpendableMilli: 6986,
+    });
+    assert.equal(replay.deliveryTxId, 'ab'.repeat(32));
+    assert.equal(ctx.transfers.length, 1, 'idempotent replay must not re-transfer');
+  });
+});
+
+test('fulfillLocalSameOwnerOrder enforces persistent ME balance, seller authorization, crash recovery, and cross-identity local fast-path', async () => {
+  const {
+    createOrFulfillLocalNftEscrowOrder,
+  } = require('../dist-electron/main/services/sellerAutoFulfillDaemon.js');
+  const {
+    MeNftEscrowApiError,
+  } = require('../dist-electron/main/services/meNftEscrowService.js');
+  const {
+    createTokenGoodsReservation,
+  } = require('../dist-electron/main/services/tokenForGoodsService.js');
+
+  await withDaemonDb(async ({ db, saveDb }) => {
+    const metabots = [
+      { id: 1, name: 'AI_小新', enabled: true, metabot_type: 'worker', mvc_address: SELLER_ADDRESS, globalmetaid: SELLER_METAID },
+      { id: 2, name: 'AI_Sunny', enabled: true, metabot_type: 'twin', mvc_address: BUYER_ADDRESS, globalmetaid: BUYER_METAID },
+    ];
+    const metabotStore = {
+      getMetabotById: (id: number) => metabots.find((b) => b.id === id) ?? null,
+      getMetabotWalletByMetabotId: () => ({ mnemonic: MNEMONIC, path: "m/44'/10001'/0'/0/0" }),
+      listMetabots: () => metabots,
+    };
+
+    // 1. Insufficient persistent tradeSpendableMilli (even with huge weekly allowance) -> rejected
+    {
+      const ctx = makeBaseDeps({ getMetabotStore: () => metabotStore });
+      const daemon = new SellerAutoFulfillDaemon(db, saveDb, ctx.deps);
+      await assert.rejects(
+        () => daemon.fulfillLocalSameOwnerOrder({
+          orderId: 'ord_low_persistent',
+          sellerMetabotId: 1,
+          buyerMetabotId: 2,
+          buyerNftAddress: BUYER_ADDRESS,
+          itemPinId: ITEM_PIN_ID,
+          amountMilli: 5000,
+          buyerTradeSpendableMilli: 1500,
+        }),
+        /INSUFFICIENT_ME/,
+      );
+      assert.equal(ctx.transfers.length, 0);
+    }
+
+    // 2. Seller disabled autoFulfillMe -> rejected
+    {
+      const ctx = makeBaseDeps({
+        getMetabotStore: () => metabotStore,
+        findLocalActiveSellIntent: () => ({
+          id: 'intent_no_auto',
+          metabotId: 1,
+          status: 'active',
+          autoFulfillMe: false,
+          updatedAt: 1,
+          intent: {
+            active: true,
+            itemPinId: ITEM_PIN_ID,
+            sellerAddress: SELLER_ADDRESS,
+            prices: { me: { amountMilli: 2000 } },
+            autoFulfillMe: false,
+            acceptedCurrencies: ['me'],
+            settlement: ['me-escrow'],
+            createdAt: 1700000000,
+          },
+        }),
+      });
+      const daemon = new SellerAutoFulfillDaemon(db, saveDb, ctx.deps);
+      await assert.rejects(
+        () => daemon.fulfillLocalSameOwnerOrder({
+          orderId: 'ord_auto_disabled',
+          sellerMetabotId: 1,
+          buyerMetabotId: 2,
+          buyerNftAddress: BUYER_ADDRESS,
+          itemPinId: ITEM_PIN_ID,
+          amountMilli: 2000,
+          buyerTradeSpendableMilli: 6000,
+        }),
+        /disabled automatic ME fulfillment/,
+      );
+      assert.equal(ctx.transfers.length, 0);
+    }
+
+    // 3. Underpriced below seller listing -> rejected
+    {
+      const ctx = makeBaseDeps({ getMetabotStore: () => metabotStore });
+      const daemon = new SellerAutoFulfillDaemon(db, saveDb, ctx.deps);
+      await assert.rejects(
+        () => daemon.fulfillLocalSameOwnerOrder({
+          orderId: 'ord_under_price',
+          sellerMetabotId: 1,
+          buyerMetabotId: 2,
+          buyerNftAddress: BUYER_ADDRESS,
+          itemPinId: ITEM_PIN_ID,
+          amountMilli: 2000, // base intent is 4000
+          buyerTradeSpendableMilli: 6000,
+        }),
+        /below seller's listed ME price/,
+      );
+      assert.equal(ctx.transfers.length, 0);
+    }
+
+    // 4. Active 5-minute token-for-goods reservation lock -> rejected
+    {
+      const lockedPinId = `${'f1'.repeat(32)}i0`;
+      createTokenGoodsReservation(db, saveDb, {
+        reservationId: 'res_lock_1',
+        sellerMetabotId: 1,
+        buyerGlobalMetaId: BUYER_METAID,
+        buyerNftAddress: BUYER_ADDRESS,
+        itemPinId: lockedPinId,
+        assetKey: 'mrc20:tick_id_1',
+        chain: 'btc',
+        sellerReceiveAddress: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
+        amountBase: '1000',
+        nowMs: Date.now(),
+      });
+      const ctx = makeBaseDeps({
+        getMetabotStore: () => metabotStore,
+        fetchItemInfo: async () => ({
+          itemPinId: lockedPinId,
+          ownerAddress: SELLER_ADDRESS,
+          burned: false,
+        }),
+        findLocalActiveSellIntent: () => ({
+          id: 'intent_locked',
+          metabotId: 1,
+          status: 'active',
+          autoFulfillMe: true,
+          updatedAt: 1,
+          intent: {
+            active: true,
+            itemPinId: lockedPinId,
+            sellerAddress: SELLER_ADDRESS,
+            prices: { me: { amountMilli: 2000 } },
+            autoFulfillMe: true,
+            acceptedCurrencies: ['me'],
+            settlement: ['me-escrow'],
+            createdAt: 1700000000,
+          },
+        }),
+      });
+      const daemon = new SellerAutoFulfillDaemon(db, saveDb, ctx.deps);
+      await assert.rejects(
+        () => daemon.fulfillLocalSameOwnerOrder({
+          orderId: 'ord_token_locked',
+          sellerMetabotId: 1,
+          buyerMetabotId: 2,
+          buyerNftAddress: BUYER_ADDRESS,
+          itemPinId: lockedPinId,
+          amountMilli: 2000,
+          buyerTradeSpendableMilli: 6000,
+        }),
+        /reserved by an active token-for-goods order/,
+      );
+      assert.equal(ctx.transfers.length, 0);
+    }
+
+    // 5. Crash recovery from status='transferred' finalizes without re-sending NFT
+    {
+      const now = Date.now();
+      db.run(
+        `INSERT INTO me_nft_seller_fulfillments (
+          order_id, seller_metabot_id, item_pin_id, buyer_address, amount_milli,
+          status, delivery_tx_id, trade_pin_id, error_message, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['ord_local_crash_1', 1, ITEM_PIN_ID, BUYER_ADDRESS, 4000, 'transferred', 'cd'.repeat(32), null, null, now, now],
+      );
+      const ctx = makeBaseDeps({
+        getMetabotStore: () => metabotStore,
+        // Even though owner on-chain has already changed to BUYER_ADDRESS after transfer:
+        fetchItemInfo: async () => ({
+          itemPinId: ITEM_PIN_ID,
+          ownerAddress: BUYER_ADDRESS,
+          burned: false,
+        }),
+      });
+      const daemon = new SellerAutoFulfillDaemon(db, saveDb, ctx.deps);
+      const recovered = await daemon.fulfillLocalSameOwnerOrder({
+        orderId: 'ord_local_crash_1',
+        sellerMetabotId: 1,
+        buyerMetabotId: 2,
+        buyerNftAddress: BUYER_ADDRESS,
+        itemPinId: ITEM_PIN_ID,
+        amountMilli: 4000,
+        buyerTradeSpendableMilli: 6000,
+      });
+      assert.equal(recovered.outcome, 'settled');
+      assert.equal(recovered.deliveryTxId, 'cd'.repeat(32));
+      assert.equal(ctx.transfers.length, 0, 'crash recovery must not re-transfer');
+      assert.equal(daemon.getFulfillment('ord_local_crash_1')?.status, 'settled');
+    }
+
+    // 6. Remote non-local seller with SELF_TRADE_FORBIDDEN re-throws MeNftEscrowApiError
+    {
+      const ctx = makeBaseDeps({ getMetabotStore: () => metabotStore });
+      const daemon = new SellerAutoFulfillDaemon(db, saveDb, ctx.deps);
+      await assert.rejects(
+        () => createOrFulfillLocalNftEscrowOrder({
+          buyerMetabotId: 2,
+          buyerSigner: { mnemonic: MNEMONIC },
+          orderInput: {
+            orderId: 'ord_remote_same_id',
+            itemPinId: ITEM_PIN_ID,
+            collectionPinId: COLLECTION_PIN_ID,
+            buyerNftAddress: BUYER_ADDRESS,
+            sellerBotAddress: '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
+            amountMilli: 4000,
+          },
+          metabotStore: metabotStore as any,
+          daemon,
+          createRemoteEscrowOrder: async () => {
+            throw new MeNftEscrowApiError({
+              stage: 'nft_escrow_create',
+              errorCode: 'SELF_TRADE_FORBIDDEN',
+              message: 'buyer and seller cannot be the same identity',
+            });
+          },
+        }),
+        (err: any) => err instanceof MeNftEscrowApiError && err.errorCode === 'SELF_TRADE_FORBIDDEN',
+      );
+    }
+
+    // 7. Cross-identity local seller fast-path settles in-process immediately (with ABS /deliver + receipt, zero DM)
+    {
+      const ctx = makeBaseDeps({ getMetabotStore: () => metabotStore });
+      const daemon = new SellerAutoFulfillDaemon(db, saveDb, ctx.deps);
+      const fastSettled = await createOrFulfillLocalNftEscrowOrder({
+        buyerMetabotId: 2,
+        buyerSigner: { mnemonic: MNEMONIC },
+        orderInput: {
+          orderId: 'ord_local_cross_id',
+          itemPinId: ITEM_PIN_ID,
+          collectionPinId: COLLECTION_PIN_ID,
+          buyerNftAddress: BUYER_ADDRESS,
+          sellerBotAddress: SELLER_ADDRESS,
+          amountMilli: 5000,
+          buyerMetaId: BUYER_METAID,
+        },
+        metabotStore: metabotStore as any,
+        daemon,
+        createRemoteEscrowOrder: async () => ({
+          orderId: 'ord_local_cross_id',
+          itemPinId: ITEM_PIN_ID,
+          collectionPinId: COLLECTION_PIN_ID,
+          buyerNftAddress: BUYER_ADDRESS,
+          buyerAddress: BUYER_ADDRESS,
+          sellerBotAddress: SELLER_ADDRESS,
+          sellerAddress: SELLER_ADDRESS,
+          amountMilli: 5000,
+          status: 'FROZEN_AWAITING_DELIVERY',
+          statusCode: 1,
+          statusName: 'FROZEN_AWAITING_DELIVERY',
+          raw: {},
+        }),
+        getRemoteEscrowOrder: async () => ({
+          orderId: 'ord_local_cross_id',
+          itemPinId: ITEM_PIN_ID,
+          collectionPinId: COLLECTION_PIN_ID,
+          buyerNftAddress: BUYER_ADDRESS,
+          buyerAddress: BUYER_ADDRESS,
+          sellerBotAddress: SELLER_ADDRESS,
+          sellerAddress: SELLER_ADDRESS,
+          amountMilli: 5000,
+          status: 'SETTLED',
+          statusCode: 3,
+          statusName: 'SETTLED',
+          deliveryTxId: 'tx_transfer_001',
+          raw: {},
+        }),
+      });
+      assert.equal(fastSettled.status, 'SETTLED');
+      assert.equal(fastSettled.deliveryTxId, 'tx_transfer_001');
+      assert.equal(ctx.transfers.length, 1);
+      assert.equal(ctx.delivers.length, 1);
+      assert.equal(ctx.receipts.length, 1, 'cross-identity ABS escrow DOES publish verified mrc721trade receipt');
+      assert.equal(ctx.dms.length, 0, 'in-process local settlement skips redundant on-chain DM');
+    }
+  });
+});

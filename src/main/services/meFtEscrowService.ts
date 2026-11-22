@@ -284,7 +284,26 @@ async function ftEscrowRequest<T>(input: {
       (typeof dataObj.errorCode === 'string' && dataObj.errorCode) ||
       (typeof dataObj.error_code === 'string' && dataObj.error_code) ||
       undefined;
-    const msg = json?.message || `FT escrow API error (HTTP ${res.status})`;
+    const genericPlaceholders = new Set([
+      'error',
+      'fail',
+      'failed',
+      'err',
+      'bad request',
+      'request failed',
+    ]);
+    const topMsg = typeof json?.message === 'string' ? json.message.trim() : '';
+    const detailMsg =
+      (typeof dataObj.detail === 'string' && dataObj.detail.trim()) ||
+      (typeof dataObj.message === 'string' && dataObj.message.trim()) ||
+      (typeof dataObj.msg === 'string' && dataObj.msg.trim()) ||
+      '';
+    const msg =
+      (topMsg && !genericPlaceholders.has(topMsg.toLowerCase()) ? topMsg : '') ||
+      (detailMsg && !genericPlaceholders.has(detailMsg.toLowerCase()) ? detailMsg : '') ||
+      (errorCode ? `FT escrow API error: ${errorCode} (HTTP ${res.status})` : '') ||
+      topMsg ||
+      `FT escrow API error (HTTP ${res.status})`;
     throw new MeFtEscrowApiError(msg, res.status, errorCode);
   }
 

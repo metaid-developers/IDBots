@@ -282,13 +282,16 @@ import {
   recordSellerAuthorizedQuote,
 } from './services/mrc721SellIntentService';
 import {
-  createNftEscrowOrder,
+  describeMeNftEscrowError,
   getBotTradeSpendableBalance,
   getNftEscrowOrder,
   ME_NFT_ESCROW_MIN_AMOUNT_MILLI,
 } from './services/meNftEscrowService';
 import { formatGoodsTradeWireMessage } from './services/goodsTradeWireProtocol';
-import { SellerAutoFulfillDaemon } from './services/sellerAutoFulfillDaemon';
+import {
+  createOrFulfillLocalNftEscrowOrder,
+  SellerAutoFulfillDaemon,
+} from './services/sellerAutoFulfillDaemon';
 import { PayReadFulfillDaemon } from './services/payReadFulfillDaemon';
 import {
   fetchPaybuzzItem,
@@ -9606,8 +9609,28 @@ const getCoworkRunner = () => {
           };
         },
         getTradeBalance: (metabotId) => getBotTradeSpendableBalance(meChargeSigner(metabotId)),
-        createEscrowOrder: ({ metabotId, ...rest }) => createNftEscrowOrder(meChargeSigner(metabotId), rest),
-        getEscrowOrder: ({ metabotId, orderId }) => getNftEscrowOrder(meChargeSigner(metabotId), orderId),
+        createEscrowOrder: ({ metabotId, ...rest }) => {
+          const buyerBot = getMetabotStore().getMetabotById(metabotId);
+          return createOrFulfillLocalNftEscrowOrder({
+            buyerMetabotId: metabotId,
+            buyerSigner: meChargeSigner(metabotId),
+            orderInput: {
+              ...rest,
+              buyerMetaId: rest.buyerMetaId || buyerBot?.globalmetaid || undefined,
+            },
+            metabotStore: getMetabotStore(),
+            daemon: getSellerAutoFulfillDaemon(),
+          });
+        },
+        getEscrowOrder: async ({ metabotId, orderId }) => {
+          try {
+            return await getNftEscrowOrder(meChargeSigner(metabotId), orderId);
+          } catch (err) {
+            const localOrder = getSellerAutoFulfillDaemon().getLocalFulfilledOrder(orderId);
+            if (localOrder) return localOrder;
+            throw err;
+          }
+        },
         checkSellerOnline: async (sellerGlobalMetaId) => {
           const status = await getIdchatPresenceService().fetchOnlineStatus([sellerGlobalMetaId]);
           return status.list.some(
@@ -21954,7 +21977,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       const balance = await getBotTradeSpendableBalance(meChargeSigner(botId));
       return { success: true, metabotId: botId, balance };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      return { success: false, error: describeMeNftEscrowError(error) };
     }
   });
 
@@ -22015,19 +22038,33 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         || undefined;
       const orderId = `goods_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
-      const order = await createNftEscrowOrder(meChargeSigner(botId), {
-        orderId,
-        itemPinId,
-        collectionPinId,
-        buyerNftAddress: bot.mvc_address,
-        sellerBotAddress,
-        amountMilli,
-        listingPinId,
-        deliveryTimeoutSec: 900,
-        idempotencyKey: orderId,
+      const order = await createOrFulfillLocalNftEscrowOrder({
+        buyerMetabotId: botId,
+        buyerSigner: meChargeSigner(botId),
+        orderInput: {
+          orderId,
+          itemPinId,
+          collectionPinId,
+          buyerNftAddress: bot.mvc_address,
+          sellerBotAddress,
+          amountMilli,
+          listingPinId,
+          deliveryTimeoutSec: 900,
+          idempotencyKey: orderId,
+          buyerMetaId: bot.globalmetaid || undefined,
+          sellerMetaId,
+        },
+        metabotStore: getMetabotStore(),
+        daemon: getSellerAutoFulfillDaemon(),
       });
 
-      if (sellerMetaId) {
+      const isTerminal = (status: string) =>
+        status === 'SETTLED'
+        || status === 'CANCELED_REFUNDED'
+        || status === 'EXPIRED_REFUNDED'
+        || status === 'DISPUTED_HOLD';
+
+      if (!isTerminal(order.status) && sellerMetaId) {
         try {
           const wallet = getMetabotStore().getMetabotWalletByMetabotId(botId);
           const peerChatPubkey = await resolveChatPubkeyForProvider(sellerMetaId);
@@ -22059,11 +22096,6 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
 
       // Short-poll ABS escrow order status after DM so fast-path auto-fulfill surfaces immediately
       let latestOrder = order;
-      const isTerminal = (status: string) =>
-        status === 'SETTLED'
-        || status === 'CANCELED_REFUNDED'
-        || status === 'EXPIRED_REFUNDED'
-        || status === 'DISPUTED_HOLD';
       for (const waitMs of [1500, 2000, 2500]) {
         if (isTerminal(latestOrder.status)) break;
         await new Promise((resolve) => setTimeout(resolve, waitMs));
@@ -22075,6 +22107,11 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       }
 
       if (latestOrder.status === 'SETTLED') {
+        try {
+          markAcceptedGoodsQuoteUsed(mrc721SellIntentsFromSqlite(getStore()), botId, itemPinId, latestOrder.orderId);
+        } catch {
+          // Best-effort quote consumption
+        }
         broadcastToRenderers('goodsTrade:purchaseSettled', {
           metabotId: botId,
           orderId: latestOrder.orderId,
@@ -22086,14 +22123,16 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
           buyerAddress: bot.mvc_address,
           itemName: item.name || item.activeListing?.itemName,
           collectionName: item.collectionName || item.activeListing?.collectionName,
-          shopMetaAppPinId: item.activeListing?.shopMetaAppPinId,
+          shopMetaAppPinId:
+            (typeof input.shopMetaAppPinId === 'string' && input.shopMetaAppPinId.trim())
+            || item.activeListing?.shopMetaAppPinId,
           source: 'ipc_buy_with_me',
         });
       }
 
       return { success: true, order: latestOrder };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      return { success: false, error: describeMeNftEscrowError(error) };
     }
   });
 
