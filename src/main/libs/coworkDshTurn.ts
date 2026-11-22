@@ -19,6 +19,7 @@
 // actions → turn end, with native steer/cancel and approval bridging.
 
 import { app } from 'electron'
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import { dirname, join } from 'path'
@@ -458,9 +459,60 @@ export const DSH_RUNTIME_CRITICAL_PRESSURE_IDLE_TTL_MS = 45_000
 export const DSH_RUNTIME_LOW_FREE_MEMORY_MB = 1024
 export const DSH_RUNTIME_CRITICAL_FREE_MEMORY_MB = 256
 
+const DARWIN_AVAILABLE_MEMORY_CACHE_MS = 10_000
+let cachedDarwinAvailableMemory: { sampledAt: number; availableMb: number } | null = null
+
+/**
+ * On macOS, `os.freemem()` reports only truly unallocated Mach free pages and
+ * excludes reclaimable inactive/speculative/purgeable file-cache pages — so a
+ * healthy 16 GB Mac routinely reports < 256 MB via `os.freemem()`. Sum
+ * free + inactive + speculative + purgeable pages from `vm_stat` to estimate
+ * actually available memory before applying pressure throttling.
+ */
+export function parseDarwinVmStatAvailableMb(output: string): number | null {
+  if (!output || typeof output !== 'string') return null
+  const pageSizeMatch = /page size of (\d+) bytes/i.exec(output)
+  const pageSizeBytes = pageSizeMatch ? Number(pageSizeMatch[1]) : 0
+  if (!Number.isFinite(pageSizeBytes) || pageSizeBytes <= 0) return null
+
+  const readPages = (label: string): number | null => {
+    const match = new RegExp(`^Pages\\s+${label}:\\s+(\\d+)\\.`, 'mi').exec(output)
+    return match ? Number(match[1]) : null
+  }
+  const freePages = readPages('free')
+  if (freePages === null || !Number.isFinite(freePages)) return null
+  const inactivePages = readPages('inactive') ?? 0
+  const speculativePages = readPages('speculative') ?? 0
+  const purgeablePages = readPages('purgeable') ?? 0
+  const totalAvailablePages = freePages + inactivePages + speculativePages + purgeablePages
+  return (totalAvailablePages * pageSizeBytes) / (1024 * 1024)
+}
+
+export function getAvailableSystemMemoryMb(nowMs = Date.now()): number {
+  if (process.platform === 'darwin') {
+    if (
+      cachedDarwinAvailableMemory
+      && nowMs - cachedDarwinAvailableMemory.sampledAt < DARWIN_AVAILABLE_MEMORY_CACHE_MS
+    ) {
+      return cachedDarwinAvailableMemory.availableMb
+    }
+    try {
+      const output = execFileSync('vm_stat', [], { encoding: 'utf8', timeout: 500 })
+      const parsedMb = parseDarwinVmStatAvailableMb(output)
+      if (parsedMb !== null && Number.isFinite(parsedMb)) {
+        cachedDarwinAvailableMemory = { sampledAt: nowMs, availableMb: parsedMb }
+        return parsedMb
+      }
+    } catch {
+      // Fall back to os.freemem() when vm_stat is unavailable or times out.
+    }
+  }
+  return os.freemem() / 1024 / 1024
+}
+
 export function resolveDshRuntimeIdleTtlMsForMemory(
   baseTtlMs: number,
-  freeMemoryMb = os.freemem() / 1024 / 1024,
+  freeMemoryMb = getAvailableSystemMemoryMb(),
   memoryPressureAware = true,
 ): number {
   if (baseTtlMs <= 0 || !memoryPressureAware) return baseTtlMs
@@ -481,7 +533,7 @@ export function shouldSkipSecondaryCleanWarmupForMemory(input: {
   if (!input.hasComboWarmupSupport || !input.topComboHasAutomation) {
     return false
   }
-  const freeMemoryMb = input.freeMemoryMb ?? (os.freemem() / 1024 / 1024)
+  const freeMemoryMb = input.freeMemoryMb ?? getAvailableSystemMemoryMb()
   const totalMemoryMb = input.totalMemoryMb ?? (os.totalmem() / 1024 / 1024)
   return freeMemoryMb < 512 || (totalMemoryMb <= 16_384 && freeMemoryMb < DSH_RUNTIME_LOW_FREE_MEMORY_MB)
 }
@@ -1604,7 +1656,7 @@ export class DshTurnHub {
   private async reapIdleSlots(): Promise<void> {
     const baseTtl = this.opts.runtimeIdleTtlMs ?? DSH_RUNTIME_IDLE_TTL_MS
     if (baseTtl <= 0) return
-    const freeMemoryMb = os.freemem() / 1024 / 1024
+    const freeMemoryMb = getAvailableSystemMemoryMb()
     const ttl = resolveDshRuntimeIdleTtlMsForMemory(
       baseTtl,
       freeMemoryMb,

@@ -815,3 +815,33 @@ test('a streamed final reply lands as speaking even after work families', async 
   await run.queue;
   assert.equal(service.getState('s').revision, beforeStale, 'older assistant ids never reach the stage');
 });
+
+test('the Director is capped at 1 call per turn and cancels cleanly on fast completion', async (t) => {
+  const calls = [];
+  const { service } = serviceFixture(t, {
+    directorEnabled: true,
+    directScene: async (state) => {
+      calls.push(state.family);
+      return {
+        scene: { caption: 'Styled caption.', composition: state.composition, motif: 'liquid', motion: state.motion },
+        usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheCreationTokens: 0, latencyMs: 1 },
+      };
+    },
+  });
+
+  // Fast turn that completes before DIRECTOR_COALESCE_MS triggers 0 Director calls.
+  service.observeMessage('s', message('u-fast', 'user', { origin: 'user', submissionId: 'sub-fast' }, 'GM'));
+  service.observeMessage('s', message('t-fast', 'tool_use', { toolName: 'read', toolUseId: 'rf-1' }));
+  service.observeMessage('s', message('a-fast', 'assistant', {}, 'Morning!'));
+  service.observeComplete('s');
+  await sleep(1100);
+  assert.equal(calls.length, 0, 'fast/completed turn cancels pending Director coalesce with zero LLM calls');
+
+  // Next multi-step turn still issues at most 1 Director call total across working transitions.
+  service.observeMessage('s', message('u-multi', 'user', { origin: 'user', submissionId: 'sub-multi' }, 'Build it'));
+  service.observeMessage('s', message('t-m1', 'tool_use', { toolName: 'read', toolUseId: 'rm-1' }));
+  await sleep(1100);
+  service.observeMessage('s', message('t-m2', 'tool_use', { toolName: 'write', toolUseId: 'wm-2' }));
+  await sleep(1100);
+  assert.equal(calls.length, 1, 'Director calls per turn are capped at 1');
+});

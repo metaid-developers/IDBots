@@ -623,6 +623,45 @@ const DSH_FALLBACK_TURN_MAX_RESUMES = 2;
 // circuit opens: turns short-circuit without any model call until the
 // cooldown elapses, then one probe runs; a failed probe re-opens with a
 // doubled cooldown (capped). Any live terminal outcome resets the counter.
+const BROWSER_GUIDE_INTENT_RE = /browser_tabs|bot_browser|metaapp|metaid|metaweb|pin:\/\/|metafile:\/\/|preview-metaapp|preview-file|https?:\/\/|ai\s*internet|agent\s*internet|search_metaapps|search_metaids|list_online|motion-video|hyperframes|网页|页面|标签页?|浏览器|网址|链接|打开.*(?:应用|网页|网站|页面|链接)|当前(?:页面|标签)|右侧(?:屏幕|页面|浏览器|面板)|在线.*(?:bot|服务|人|用户)|找(?:人|应用|bot|服务)|谁在线|视频|动画|短片|片头|动效|open\s+(?:the\s+)?(?:tab|page|url|app|site|link)|(?:current|this)\s+(?:tab|page)|online\s+(?:bot|service|people|user)|find\s+(?:an?\s+)?(?:app|bot|person|people)/i;
+const MOTION_VIDEO_GUIDE_INTENT_RE = /motion-video|motion\s*video|search_preference_comparisons|hyperframes|preference\s*comparison|动画|视频|短片|片头|动效|混剪|偏好学习|偏好对比/i;
+const MOTION_VIDEO_GUIDE_BLOCK_RE = /\n?Building Motion Videos \(motion-video tag\) with shared preference evidence:\n<motion_video_guide>[\s\S]*?<\/motion_video_guide>/;
+
+function isInteractiveExternalBrowserUri(uri: string | null | undefined): boolean {
+  const trimmed = typeof uri === 'string' ? uri.trim() : '';
+  if (!trimmed) return false;
+  if (
+    trimmed.includes('/live-stage/')
+    || trimmed.includes('welcome-genesis')
+    || trimmed.includes('/reports/')
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function shouldInjectBrowserGuideForTurn(
+  prompt: string,
+  activeBrowserUri?: string | null,
+): boolean {
+  if (isInteractiveExternalBrowserUri(activeBrowserUri)) return true;
+  if (!prompt || !prompt.trim()) return false;
+  return BROWSER_GUIDE_INTENT_RE.test(prompt);
+}
+
+export function shouldInjectMotionVideoGuideForTurn(prompt: string): boolean {
+  if (!prompt || !prompt.trim()) return false;
+  return MOTION_VIDEO_GUIDE_INTENT_RE.test(prompt);
+}
+
+export function filterBrowserGuideForTurn(guideText: string, prompt: string): string {
+  if (!guideText) return '';
+  if (shouldInjectMotionVideoGuideForTurn(prompt)) {
+    return guideText.replace(/<\/?motion_video_guide>\n?/g, '');
+  }
+  return guideText.replace(MOTION_VIDEO_GUIDE_BLOCK_RE, '');
+}
+
 const DSH_ROUTE_CIRCUIT_THRESHOLD = 3;
 const DSH_ROUTE_CIRCUIT_INITIAL_COOLDOWN_MS = 60_000;
 const DSH_ROUTE_CIRCUIT_MAX_COOLDOWN_MS = 30 * 60_000;
@@ -8302,11 +8341,19 @@ export class CoworkRunner extends EventEmitter {
       // in the incident session. The section is now the byte-stable browser
       // guide only (dedupable — it enters history once per generation), and
       // the live state lives behind the browser_tabs tool (see
-      // buildDshHostTools).
-      sections.push({
-        key: 'browser',
-        text: await this.getBrowserGuidePrompt(sessionId).catch(() => ''),
-      });
+      // buildDshHostTools). Gated on browser/MetaApp/people/video intent or an
+      // active non-stage browser URI so casual turns pay zero guide tokens.
+      const sessionBrowserUri = this.store.getSessionWithoutMessages(sessionId)?.browserUri ?? null;
+      if (shouldInjectBrowserGuideForTurn(prompt, sessionBrowserUri)) {
+        const rawGuide = await this.getBrowserGuidePrompt(sessionId).catch(() => '');
+        const filteredGuide = rawGuide ? filterBrowserGuideForTurn(rawGuide, prompt) : '';
+        if (filteredGuide) {
+          sections.push({
+            key: 'browser',
+            text: filteredGuide,
+          });
+        }
+      }
     }
     // Active session goal (/goal command): rides the per-turn tail like the
     // other volatile blocks; a stable goal text costs nothing after its first

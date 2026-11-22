@@ -377,3 +377,32 @@ test('P2-2: coworkRunner and main wire prepareMobileTurnDecisions with single-bu
   assert.match(mainSrc, /includeMobileToolExpansions:\s*input\.includeMobileToolExpansions === true/);
   assert.match(mainSrc, /mobileToolExpansions:\s*outcome\.mobileToolExpansions \?\? null/);
 });
+
+test('Option 3: <browser_guide> and motion-video guidance are gated by turn intent and active browser URI', () => {
+  const runnerMod = loadWithMockedElectron('../dist-electron/main/libs/coworkRunner.js');
+  assert.equal(runnerMod.shouldInjectBrowserGuideForTurn('GM', null), false);
+  assert.equal(runnerMod.shouldInjectBrowserGuideForTurn('你好，帮我查一下今天待办', 'preview-metaapp://localhost/tmp/live-stage/index.html'), false);
+  assert.equal(runnerMod.shouldInjectBrowserGuideForTurn('帮我看看上一轮结果', 'preview-metaapp://localhost/tmp/reports/digest.html'), false);
+  assert.equal(runnerMod.shouldInjectBrowserGuideForTurn('打开一个好玩的 MetaApp 看看', null), true);
+  assert.equal(runnerMod.shouldInjectBrowserGuideForTurn('当前页面显示了什么？', null), true);
+  assert.equal(runnerMod.shouldInjectBrowserGuideForTurn('继续', 'metaapp://abcd1234i0'), true);
+
+  const sampleGuide = [
+    '<browser_guide>',
+    'How to FIND apps for the user:',
+    '- search_metaapps',
+    'Building Motion Videos (motion-video tag) with shared preference evidence:',
+    '<motion_video_guide>',
+    '- search_preference_comparisons',
+    '</motion_video_guide>',
+    'How to FIND people and bots for the user:',
+    '</browser_guide>',
+  ].join('\n');
+  const filtered = runnerMod.filterBrowserGuideForTurn(sampleGuide, '帮我找一个好用的 MetaApp');
+  assert.ok(!filtered.includes('search_preference_comparisons'), 'non-video browser turn drops motion-video preference block');
+  assert.ok(filtered.includes('search_metaapps'));
+
+  const videoFiltered = runnerMod.filterBrowserGuideForTurn(sampleGuide, '帮我制作一个 motion-video 短片');
+  assert.ok(videoFiltered.includes('search_preference_comparisons'), 'video turn keeps motion-video preference block');
+  assert.ok(!videoFiltered.includes('<motion_video_guide>'), 'wrapper tags are stripped before prompt injection');
+});

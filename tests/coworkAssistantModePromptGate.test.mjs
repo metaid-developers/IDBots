@@ -269,8 +269,12 @@ test('the projector section exists, mounts after assistant-mode, and swaps the i
     'the projector section must be a per-call builder (tApp language anchor contract)',
   );
   assert.ok(
-    promptSource.includes('首轮（硬规则）') && promptSource.includes('First turn (hard rule)'),
-    'the first-turn-must-project ruling must be stated in both languages',
+    promptSource.includes('首轮与轻交互') && promptSource.includes('First turn and light exchanges'),
+    'first turn and light exchanges should not force a welcome projection when Live Stage is active',
+  );
+  assert.ok(
+    !promptSource.includes('首轮（硬规则）') && !promptSource.includes('First turn (hard rule)'),
+    'the legacy mandatory turn-1 welcome projection hard rule must be removed',
   );
   assert.ok(
     promptSource.includes('ASSISTANT_MODE_OPTIONAL_EMBED_CLAUSES') && promptSource.includes('...(projectorMode ? [] : ASSISTANT_MODE_OPTIONAL_EMBED_CLAUSES)'),

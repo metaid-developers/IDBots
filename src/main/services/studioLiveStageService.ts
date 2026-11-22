@@ -13,7 +13,7 @@ import { browserUriMatchesPrefix } from '../shared/browserUriMatch';
 import { resolveStudioLiveStageTemplate, STUDIO_LIVE_STAGE_OFFICIAL_TEMPLATE_ID, type StudioLiveStageTemplateResolution } from './studioLiveStageTemplateRegistry';
 import { directLiveStageScene } from './studioLiveStageDirector';
 
-const MAX_DIRECTOR_CALLS_PER_TURN = 4;
+const MAX_DIRECTOR_CALLS_PER_TURN = 1;
 const MAX_DIRECTOR_CONSECUTIVE_FAILURES = 2;
 const DIRECTOR_COALESCE_MS = 900;
 const INTERACTION_POLL_MS = 400;
@@ -100,6 +100,7 @@ type LiveStageRun = {
   delegationStartedAt: number | null;
   waitingSignature: string;
   directorCalls: number;
+  directorSuccesses: number;
   directorConsecutiveFailures: number;
   directorTimer: NodeJS.Timeout | null;
   directorInFlight: boolean;
@@ -1127,18 +1128,36 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     run.delegationTimer.unref?.();
   }
 
+  function cancelDirector(run: LiveStageRun): void {
+    run.directorDirty = false;
+    if (run.directorTimer) {
+      clearTimeout(run.directorTimer);
+      run.directorTimer = null;
+    }
+  }
+
   function scheduleDirector(run: LiveStageRun): void {
-    if (!DIRECTOR_FAMILIES.has(run.state.family)) return;
-    // The Director only restyles family-default captions; a caption carrying
-    // real message content is never overwritten.
-    if (run.state.captionSource !== 'default') return;
-    if (run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES || !currentSettings.directorEnabled || !run.state.enabled || run.directorCalls >= MAX_DIRECTOR_CALLS_PER_TURN) return;
+    if (run.finished || run.errored) {
+      cancelDirector(run);
+      return;
+    }
+    if (!DIRECTOR_FAMILIES.has(run.state.family) || run.state.captionSource !== 'default') {
+      // The Director only restyles family-default captions; a caption carrying
+      // real message content or a non-director family (e.g. speaking/complete)
+      // cancels any pending coalesce timer so fast/casual turns stay deterministic.
+      cancelDirector(run);
+      return;
+    }
+    if (run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES || !currentSettings.directorEnabled || !run.state.enabled || run.directorSuccesses >= MAX_DIRECTOR_CALLS_PER_TURN) return;
     run.directorDirty = true;
     if (run.directorInFlight || run.directorTimer) return;
     console.log(`[StudioLiveStage] Director scheduled for ${run.state.sessionId} family=${run.state.family}`);
     run.directorTimer = setTimeout(() => {
       run.directorTimer = null;
-      if (!run.directorDirty || run.directorInFlight || run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES || !currentSettings.directorEnabled || !run.state.enabled) return;
+      if (run.finished || run.errored || !run.directorDirty || run.directorInFlight || run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES || !currentSettings.directorEnabled || !run.state.enabled || run.directorSuccesses >= MAX_DIRECTOR_CALLS_PER_TURN) {
+        run.directorDirty = false;
+        return;
+      }
       if (!DIRECTOR_FAMILIES.has(run.state.family) || run.state.captionSource !== 'default') {
         run.directorDirty = false;
         return;
@@ -1157,13 +1176,14 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       console.log(`[StudioLiveStage] Director call ${run.directorCalls} started for ${run.state.sessionId}`);
       void directScene(snapshot, brainFor(session)).then(({ scene, usage }) => {
         run.directorConsecutiveFailures = 0;
+        run.directorSuccesses += 1;
         const metrics = run.state.metrics;
         metrics.inputTokens += usage.inputTokens;
         metrics.outputTokens += usage.outputTokens;
         metrics.cacheReadTokens += usage.cacheReadTokens;
         metrics.cacheCreationTokens += usage.cacheCreationTokens;
         metrics.directorLatencyMs += usage.latencyMs;
-        if (generation !== run.directorGeneration || run.state.family !== snapshot.family || !run.state.enabled) {
+        if (run.finished || run.errored || generation !== run.directorGeneration || run.state.family !== snapshot.family || !run.state.enabled) {
           metrics.rejectedPatches += 1;
         } else {
           // The Director restyles caption + composition/motif/motion only —
@@ -1188,7 +1208,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
         schedulePatch(run);
       }).finally(() => {
         run.directorInFlight = false;
-        if (run.directorDirty) scheduleDirector(run);
+        if (run.directorDirty && !run.finished && !run.errored) scheduleDirector(run);
       });
     }, DIRECTOR_COALESCE_MS);
   }
@@ -1254,6 +1274,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       delegationStartedAt: null,
       waitingSignature: '',
       directorCalls: 0,
+      directorSuccesses: 0,
       directorConsecutiveFailures: 0,
       directorTimer: null,
       directorInFlight: false,
@@ -1722,6 +1743,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     const run = runs.get(sessionId);
     if (!run || run.finished) return;
     run.finished = true;
+    cancelDirector(run);
     clearDelegationWait(run);
     // Freeze the resting screen: no periodic rail refresh, no HUD churn, no
     // re-delivery of this scene onto the shared per-Bot page after this.
@@ -1748,6 +1770,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     if (!run) return;
     run.finished = true;
     run.errored = true;
+    cancelDirector(run);
     clearDelegationWait(run);
     syncCompanionsTimer(run);
     const language = run.state.language;

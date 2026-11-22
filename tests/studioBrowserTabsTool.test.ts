@@ -80,3 +80,15 @@ test('the live tabs provider keeps the failure fallback as plain text', () => {
     'main.ts: the live provider degrades with a notice instead of throwing',
   );
 });
+
+test('browser_guide is gated by turn intent and wraps motion-video preference rules cleanly', () => {
+  assert.ok(
+    runnerSource.includes('shouldInjectBrowserGuideForTurn(prompt, sessionBrowserUri)')
+    && runnerSource.includes('filterBrowserGuideForTurn(rawGuide, prompt)'),
+    'coworkRunner: <browser_guide> must be gated by turn intent / active external URI and filtered for motion-video intent',
+  );
+  assert.ok(
+    mainSource.includes('<motion_video_guide>') && mainSource.includes('</motion_video_guide>'),
+    'main.ts: the motion-video preference block must be isolatable for non-video browser turns',
+  );
+});
