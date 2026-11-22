@@ -379,6 +379,14 @@ import {
   type Mrc721ToolsControl,
 } from './mrc721AgentTools';
 import {
+  appendNftCardFencesToReply,
+  extractEmittedNftCardFences,
+  isEligibleBackstopTargetMessage,
+  recordCapturedNftCardFences,
+  selectMissingNftCardFences,
+  type CapturedNftCardFence,
+} from './nftCardTurnBackstop';
+import {
   buildNftSwapAgentTools,
   type NftSwapBatchConfirmationInfo,
   type NftSwapToolsControl,
@@ -1716,6 +1724,8 @@ interface ActiveSession {
   finalizingTurn?: boolean;
   finalizationAttempted?: boolean;
   finalizationFallbackText?: string;
+  /** Host-emitted ```nft-card / ```nft-collection-card fences captured during this turn for deterministic chat backstop. */
+  emittedNftCardFences?: CapturedNftCardFence[];
   assistantOwnerUpdateCount: number;
   assistantOwnerHeartbeatTimer?: NodeJS.Timeout | null;
   assistantOwnerLastVisibleAt?: number;
@@ -13508,6 +13518,9 @@ export class CoworkRunner extends EventEmitter {
       // Set when this turn attempt logs a failed auto-compaction; consumed by
       // the overflow gate below (bodyless 400 + failed compaction ⇒ overflow).
       let compactionFailedThisTurn = false;
+      // Assistant message IDs created during this turn (used to verify/backstop
+      // host-emitted NFT product cards onto the final visible reply).
+      const turnAssistantMessageIds: string[] = [];
       const dshInFlightToolCallCount = () =>
         dshInFlightToolUses.size
         + dshHumanWaitToolUseIds.size
@@ -13822,6 +13835,9 @@ export class CoworkRunner extends EventEmitter {
               this.noteAssistantOwnerVisible(sessionId, activeSession)
             }
             const stored = this.store.addMessage(sessionId, message as Omit<CoworkMessage, 'id' | 'timestamp'>);
+            if (stored.type === 'assistant') {
+              turnAssistantMessageIds.push(stored.id);
+            }
             if (
               (message as { type?: string } | null)?.type === 'assistant'
               && messageMeta?.isThinking !== true
@@ -14876,6 +14892,7 @@ export class CoworkRunner extends EventEmitter {
             content: fallbackText,
             metadata: { finalizationFallback: true, isFinal: true },
           });
+          turnAssistantMessageIds.push(fallbackMessage.id);
           this.emit('message', sessionId, fallbackMessage);
           outcome = { ...outcome, finalizationRequired: false };
         } else {
@@ -14908,6 +14925,7 @@ export class CoworkRunner extends EventEmitter {
       } else {
         finish('completed');
         turnCompletedSuccessfully = true;
+        this.applyNftCardTurnBackstop(sessionId, activeSession, turnAssistantMessageIds);
         this.store.recordSessionTurnCompletion?.(sessionId, Date.now());
       }
       // Any terminal outcome here (completed / empty terminal / truncated)
@@ -15633,6 +15651,13 @@ export class CoworkRunner extends EventEmitter {
       if (Array.isArray(blocks)) {
         const text = blocks.filter((b) => b?.type === 'text').map((b) => b.text).join('\n')
         if ((result as any)?.isError) return { ok: false, error: text || 'tool error' }
+        const capturedCards = extractEmittedNftCardFences(name, text)
+        if (capturedCards.length > 0) {
+          const active = this.activeSessions.get(coworkSessionId)
+          if (active) {
+            active.emittedNftCardFences = recordCapturedNftCardFences(active.emittedNftCardFences ?? [], capturedCards)
+          }
+        }
         // Image blocks ride alongside the text (screenshot-style tools): the
         // runtime commits them through its attachment store and renders them
         // as image blocks — but only for routes that declare image input, so
@@ -20301,6 +20326,49 @@ export class CoworkRunner extends EventEmitter {
       }
     }
     return null;
+  }
+
+  /**
+   * Deterministic post-turn backstop for announcing NFT / collection tools:
+   * when a Studio Projector turn (or terse summary) omits a host-emitted
+   * ```nft-card / ```nft-collection-card fence from visible chat replies,
+   * flush DSH stream overlays first and append the missing fence(s) onto the
+   * turn's final visible assistant message so the product card always renders.
+   */
+  private applyNftCardTurnBackstop(
+    sessionId: string,
+    activeSession: ActiveSession,
+    turnAssistantMessageIds: readonly string[],
+  ): void {
+    const captured = activeSession.emittedNftCardFences;
+    if (!captured?.length || !turnAssistantMessageIds.length) return;
+    try {
+      this.dshStreamUi.finalizeSession(sessionId);
+      const eligibleMessages: CoworkMessage[] = [];
+      for (const id of turnAssistantMessageIds) {
+        const msg = this.getMessageById(sessionId, id);
+        if (msg && isEligibleBackstopTargetMessage(msg)) {
+          eligibleMessages.push(msg);
+        }
+      }
+      if (!eligibleMessages.length) return;
+      const missing = selectMissingNftCardFences(
+        captured,
+        eligibleMessages.map((m) => m.content),
+      );
+      if (!missing.length) return;
+      const target = eligibleMessages[eligibleMessages.length - 1];
+      const nextContent = appendNftCardFencesToReply(target.content, missing);
+      if (nextContent === target.content) return;
+      this.updateMessageMerged(sessionId, target.id, { content: nextContent });
+      const updated = this.getMessageById(sessionId, target.id);
+      this.emit('messageUpdate', sessionId, target.id, nextContent, updated?.metadata ?? target.metadata);
+    } catch (error) {
+      coworkLog('WARN', 'applyNftCardTurnBackstop', 'Failed to backstop NFT card fence onto assistant reply', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private updateMessageMerged(

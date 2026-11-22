@@ -7176,6 +7176,10 @@ export class CoworkStore implements MemoryBackend {
       WHERE id = ? AND session_id = ?
     `, values);
 
+    if (updates.content) {
+      this.bumpSessionTradeBadge(sessionId, updates.content);
+    }
+
     this.saveDb();
   }
 

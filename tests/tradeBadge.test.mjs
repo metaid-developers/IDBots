@@ -214,6 +214,29 @@ test('S4 store integration: SIGNED emit announcements upgrade the session badge 
   }
 });
 
+test('S4 store integration: updateMessage (DSH stream finalize / card backstop) upgrades session badge', async () => {
+  const { cleanup, db } = await createSqliteStore();
+  const store = createCoworkStore(db);
+  try {
+    const session = store.createSession('DSH 流式上架会话', '/tmp/dsh', '', 'local', [], 5);
+    // DSH creates an empty streaming placeholder first via addMessage, then persists final content via updateMessage.
+    const placeholder = store.addMessage(session.id, {
+      type: 'assistant',
+      content: '',
+      metadata: { isStreaming: true },
+    });
+    assert.equal(store.listSessions().find((s) => s.id === session.id).tradeBadge, null);
+
+    store.updateMessage(session.id, placeholder.id, {
+      content: `已完成上架广播：\n\n${stampCard(session.id, listedListed())}`,
+      metadata: { isStreaming: false, isFinal: true },
+    });
+    assert.equal(store.listSessions().find((s) => s.id === session.id).tradeBadge, 'p2p');
+  } finally {
+    cleanup();
+  }
+});
+
 test('S4 store integration: a trade in a second session does not leak across sessions', async () => {
   const { cleanup, db, store: sqlite } = await createSqliteStore();
   const store = createCoworkStore(db);

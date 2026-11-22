@@ -258,6 +258,7 @@ import {
   createMrc721Collection,
   createMrc721ItemDescBatch,
   createMrc721Mint,
+  fetchMrc721CaRegistry,
   fetchMrc721CollectionInfo,
   fetchMrc721ItemInfo,
   fetchMrc721ItemVerify,
@@ -9263,11 +9264,13 @@ const getCoworkRunner = () => {
         getMetabotMvcAddress: (metabotId) =>
           getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
         resolveMetabotIdByName: (name) => resolveMetabotIdByName(getMetabotStore(), name),
+        getMetabotName: (metabotId) => getMetabotStore().getMetabotById(metabotId)?.name ?? null,
         // Offer-market seller filter: local bot → 64-hex MetaID (the offer pin creator key).
         getMetabotMetaId: (metabotId) => getMetabotStore().getMetabotById(metabotId)?.metaid ?? null,
-        // S3 chat NFT card enrichment (best-effort index reads).
+        // S3 chat NFT card enrichment (best-effort index reads + Official CA Verified lookup).
         fetchItemInfo: (pinId) => fetchMrc721ItemInfo({ pinId }),
         fetchCollectionInfo: (input) => fetchMrc721CollectionInfo({ name: input.name, pinId: input.pinId }),
+        fetchCaRegistry: () => fetchMrc721CaRegistry(),
         // Issue-estimate balance line: total = confirmed + unconfirmed (MVC
         // zero-conf spendable).
         getMvcSpendableSats: async (metabotId) => {

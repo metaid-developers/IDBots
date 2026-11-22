@@ -6,6 +6,9 @@ import type { MetabotStore } from '../metabotStore';
 import { resolveElectronExecutablePath } from '../libs/runtimePaths';
 import { getMvcSpendSessionSnapshot } from './mvcSpendSessionState';
 import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPathResolver';
+import { parseWorkerProcessOutput, stripWorkerAnsiCodes } from '../libs/mvcNftWorkerApi';
+
+export { parseWorkerProcessOutput, stripWorkerAnsiCodes };
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 
@@ -553,27 +556,10 @@ async function runWorker<T extends WorkerTransferResult = WorkerTransferResult>(
     });
 
     child.once('close', () => {
-      const output = stdout.trim() || stderr.trim();
-      if (!output) {
-        reject(new Error('Worker returned empty output'));
-        return;
-      }
-
-      const lines = output.split('\n').map((line) => line.trim()).filter(Boolean);
-      const last = lines[lines.length - 1];
       try {
-        const parsed = JSON.parse(last) as { success?: boolean; error?: string } & WorkerTransferResult;
-        if (!parsed.success) {
-          reject(new Error(parsed.error || 'Worker failed'));
-          return;
-        }
-        if (options?.requireTxHex !== false && (!parsed.txHex || typeof parsed.txHex !== 'string')) {
-          reject(new Error('Worker did not return txHex'));
-          return;
-        }
-        resolve(parsed as T);
-      } catch {
-        reject(new Error(output));
+        resolve(parseWorkerProcessOutput<T>(stdout, stderr, options));
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(getErrorMessage(err)));
       }
     });
 

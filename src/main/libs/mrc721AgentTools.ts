@@ -17,6 +17,7 @@ import {
   fetchMrc721AddressByMetaId,
   fetchMrc721AddressCollections,
   fetchMrc721AddressItems,
+  fetchMrc721CaRegistry,
   fetchMrc721CollectionInfo,
   fetchMrc721CollectionItems,
   fetchMrc721CollectionPageList,
@@ -79,6 +80,8 @@ type SdkToolFactory = (
 export type Mrc721ToolsControl = {
   getMetabotMvcAddress(metabotId: number): string | null;
   resolveMetabotIdByName(name: string): number | null;
+  /** Local bot → display name for seller / owner labels on emitted NFT cards. */
+  getMetabotName?(metabotId: number): string | null;
   /** Local bot → its 64-hex MetaID (the offer pin creator key the R-E-2 index filters on). */
   getMetabotMetaId?(metabotId: number): string | null;
   /**
@@ -87,6 +90,7 @@ export type Mrc721ToolsControl = {
    */
   fetchItemInfo?(pinId: string): Promise<Mrc721ItemSummary | null>;
   fetchCollectionInfo?(input: { name?: string; pinId?: string }): Promise<Mrc721CollectionSummary | null>;
+  fetchCaRegistry?: typeof fetchMrc721CaRegistry;
   /**
    * Spendable MVC sats of a local MetaBot (confirmed + unconfirmed — MVC
    * zero-conf), for the issue estimate's balance line. Optional: harnesses
@@ -819,6 +823,44 @@ async function loadMrc721CollectionForCard(
     return { collection };
   } catch (error) {
     return { collection: null, error: errorMessage(error) };
+  }
+}
+
+/** Official CA Registry lookup for the card's Verified badge — best-effort when wired. */
+async function loadMrc721CaVerified(
+  control: Mrc721ToolsControl,
+  input: {
+    collectionName?: string;
+    collectionPinId?: string;
+    snapshot?: Mrc721ItemSummary | null;
+  },
+): Promise<boolean | undefined> {
+  if ((input.snapshot as { caVerified?: unknown } | null | undefined)?.caVerified === true) {
+    return true;
+  }
+  if (!control.fetchCaRegistry) return undefined;
+  const targetPinId = asString(input.collectionPinId || input.snapshot?.collectionPinId).toLowerCase();
+  const targetName = asString(input.collectionName || input.snapshot?.collectionName).toLowerCase();
+  if (!targetPinId && !targetName) return undefined;
+  try {
+    const ca = await control.fetchCaRegistry();
+    for (const entry of ca?.collections ?? []) {
+      const entryPinId = asString(
+        (entry.collectionPinId as string | undefined)
+        ?? (entry.pinId as string | undefined)
+        ?? (entry.collectionId as string | undefined),
+      ).toLowerCase();
+      const entryName = asString(
+        (entry.collectionName as string | undefined)
+        ?? (entry.slug as string | undefined),
+      ).toLowerCase();
+      if ((targetPinId && entryPinId === targetPinId) || (targetName && entryName === targetName)) {
+        return true;
+      }
+    }
+    return undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -1603,14 +1645,25 @@ export function buildMrc721AgentTools(deps: {
           buyerAddress: args.buyer_address,
           priceSats: args.price_sats,
         });
+        const botName = asString(control.getMetabotName?.(owner)) || undefined;
+        const [issuerAddress, caVerified] = await Promise.all([
+          loadMrc721IssuerAddress(control, snapshot?.collectionName, snapshot?.collectionPinId),
+          loadMrc721CaVerified(control, {
+            collectionName: snapshot?.collectionName,
+            collectionPinId: snapshot?.collectionPinId,
+            snapshot,
+          }),
+        ]);
         const cardFields = buildMrc721CardFields({
           pinId: result.itemPinId,
           facts: {
             item: snapshot,
-            issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName, snapshot?.collectionPinId),
+            issuerAddress,
           },
           owner: control.getMetabotMvcAddress(owner) || undefined,
+          ownerLabel: botName,
           priceSats: result.priceSats,
+          caVerified,
           action: 'listed',
         });
         return textResult(appendNftCardBlock([
@@ -1790,16 +1843,29 @@ export function buildMrc721AgentTools(deps: {
           expiresInHours: args.expires_in_hours,
           network: args.network,
         });
+        const botName = asString(control.getMetabotName?.(owner)) || undefined;
+        const [issuerAddress, caVerified] = await Promise.all([
+          loadMrc721IssuerAddress(control, result.intent.collectionName, snapshot?.collectionPinId),
+          loadMrc721CaVerified(control, {
+            collectionName: result.intent.collectionName,
+            collectionPinId: result.intent.collectionPinId ?? snapshot?.collectionPinId,
+            snapshot,
+          }),
+        ]);
         const cardFields = buildMrc721CardFields({
           pinId: result.intent.itemPinId,
-          facts: { item: snapshot, issuerAddress: await loadMrc721IssuerAddress(control, result.intent.collectionName, snapshot?.collectionPinId) },
+          facts: { item: snapshot, issuerAddress },
           owner: control.getMetabotMvcAddress(owner) || undefined,
+          ownerLabel: botName,
           priceSats: result.intent.priceHintSats,
           priceMeMilli: result.intent.prices?.me?.amountMilli,
           priceCnyCents: result.intent.prices?.fiat?.amountCents,
           priceTokens: result.intent.prices?.tokens,
           sellerGlobalMetaId: result.intent.sellerMetaId,
+          sellerName: botName,
+          sellerOnline: botName ? true : undefined,
           shopMetaAppPinId: result.intent.shopMetaAppPinId,
+          caVerified,
           action: 'selling',
         });
         const priceParts: string[] = [];
@@ -2381,11 +2447,22 @@ export function buildMrc721AgentTools(deps: {
           priceSats: args.price_sats,
           network: args.network,
         });
+        const botName = asString(control.getMetabotName?.(owner)) || undefined;
+        const [issuerAddress, caVerified] = await Promise.all([
+          loadMrc721IssuerAddress(control, snapshot?.collectionName, snapshot?.collectionPinId),
+          loadMrc721CaVerified(control, {
+            collectionName: snapshot?.collectionName,
+            collectionPinId: snapshot?.collectionPinId,
+            snapshot,
+          }),
+        ]);
         const cardFields = buildMrc721CardFields({
           pinId: result.offer.itemPinId,
-          facts: { item: snapshot, issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName, snapshot?.collectionPinId) },
+          facts: { item: snapshot, issuerAddress },
           owner: control.getMetabotMvcAddress(owner) || undefined,
+          ownerLabel: botName,
           priceSats: result.offer.priceSats,
+          caVerified,
           action: 'listed',
         });
         return textResult(appendNftCardBlock([

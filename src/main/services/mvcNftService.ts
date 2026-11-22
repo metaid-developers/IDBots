@@ -1,6 +1,7 @@
 import type { MetabotStore } from '../metabotStore';
 import { buildMvcNftTransferRawTx, buildMvcNftTradeRawTx, type MvcNftSellUtxoRef } from './walletRawTxService';
 import { isRetryableMvcBroadcastError, resolveBroadcastTxResult } from '../libs/mvcSpend';
+import { isRetryableMvcUpstreamError } from '../libs/mvcNftWorkerApi';
 import { freshGetUrlAndInit } from './freshFetch';
 
 const METALET_HOST = 'https://www.metalet.space';
@@ -120,6 +121,7 @@ interface MvcNftServiceDeps {
   buildRawTx: typeof buildMvcNftTransferRawTx;
   buildTradeRawTx: typeof buildMvcNftTradeRawTx;
   broadcastTx: (rawTx: string) => Promise<string>;
+  retryDelayMs?: number;
 }
 
 /**
@@ -377,18 +379,30 @@ export async function executeMvcNftTransfer(
   if (!Number.isFinite(input?.feeRate) || input.feeRate <= 0) throw new Error('feeRate must be positive');
 
   const excludedOutpoints = new Set<string>();
+  const retryDelayMs = deps.retryDelayMs ?? RETRYABLE_MVC_NFT_BROADCAST_DELAY_MS;
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= RETRYABLE_MVC_NFT_BUILD_ATTEMPTS; attempt += 1) {
-    const raw = await deps.buildRawTx(store, {
-      metabotId: input.metabotId,
-      genesis: input.genesis.trim(),
-      codehash: input.codehash.trim(),
-      tokenIndex,
-      toAddress: input.toAddress.trim(),
-      feeRate: input.feeRate,
-      excludeOutpoints: Array.from(excludedOutpoints),
-    });
+    let raw: Awaited<ReturnType<MvcNftServiceDeps['buildRawTx']>>;
+    try {
+      raw = await deps.buildRawTx(store, {
+        metabotId: input.metabotId,
+        genesis: input.genesis.trim(),
+        codehash: input.codehash.trim(),
+        tokenIndex,
+        toAddress: input.toAddress.trim(),
+        feeRate: input.feeRate,
+        excludeOutpoints: Array.from(excludedOutpoints),
+      });
+    } catch (error) {
+      lastError = error;
+      const message = getErrorMessage(error);
+      if (attempt < RETRYABLE_MVC_NFT_BUILD_ATTEMPTS && isRetryableMvcUpstreamError(message)) {
+        await sleep(retryDelayMs);
+        continue;
+      }
+      throw error;
+    }
 
     try {
       const txId = await deps.broadcastTx(raw.raw_tx);
@@ -400,7 +414,7 @@ export async function executeMvcNftTransfer(
         for (const outpoint of raw.spent_outpoints || []) {
           excludedOutpoints.add(String(outpoint).toLowerCase());
         }
-        await sleep(RETRYABLE_MVC_NFT_BROADCAST_DELAY_MS);
+        await sleep(retryDelayMs);
         continue;
       }
       throw error;
@@ -616,12 +630,24 @@ export async function executeMvcNftTrade(
     excludeOutpoints: [] as string[],
   };
 
+  const retryDelayMs = deps.retryDelayMs ?? RETRYABLE_MVC_NFT_BROADCAST_DELAY_MS;
+
   for (let attempt = 1; attempt <= RETRYABLE_MVC_NFT_BUILD_ATTEMPTS; attempt += 1) {
     buildParams = {
       ...buildParams,
       excludeOutpoints: Array.from(excludedOutpoints),
     };
-    const built = await deps.buildTradeRawTx(store, { action: input.action, ...buildParams });
+    let built: Awaited<ReturnType<MvcNftServiceDeps['buildTradeRawTx']>>;
+    try {
+      built = await deps.buildTradeRawTx(store, { action: input.action, ...buildParams });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      if (attempt < RETRYABLE_MVC_NFT_BUILD_ATTEMPTS && isRetryableMvcUpstreamError(message)) {
+        await sleep(retryDelayMs);
+        continue;
+      }
+      throw error;
+    }
 
     try {
       await deps.broadcastTx(built.funding_raw_tx);
@@ -631,7 +657,7 @@ export async function executeMvcNftTrade(
         for (const outpoint of built.funding_spent_outpoints || []) {
           excludedOutpoints.add(String(outpoint).toLowerCase());
         }
-        await sleep(RETRYABLE_MVC_NFT_BROADCAST_DELAY_MS);
+        await sleep(retryDelayMs);
         continue;
       }
       throw error;
@@ -650,7 +676,7 @@ export async function executeMvcNftTrade(
       } catch (error) {
         const message = getErrorMessage(error);
         if (stage2Attempt < RETRYABLE_MVC_NFT_BUILD_ATTEMPTS && isRetryableMvcBroadcastError(message)) {
-          await sleep(RETRYABLE_MVC_NFT_BROADCAST_DELAY_MS);
+          await sleep(retryDelayMs);
           continue;
         }
         throw new Error(
