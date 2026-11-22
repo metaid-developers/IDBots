@@ -20,10 +20,12 @@ import {
   attachMvcFundingSignatureContext,
   selectMvcFundingUtxos,
 } from '../services/tokenTransferAdapters';
+import {
+  attachResilientMvcNftApi,
+  fetchMvcFundingUtxos,
+} from './mvcNftWorkerApi';
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
-const METALET_HOST = 'https://www.metalet.space';
-const NET = 'livenet';
 // sell/cancelSell/buy all reject funding sets larger than 3 UTXOs.
 const MAX_TRADE_FUNDING_UTXOS = 3;
 
@@ -52,22 +54,6 @@ function normalizeExcludeOutpoints(input: unknown): Set<string> {
       .map((item) => String(item || '').trim().toLowerCase())
       .filter((value) => /^[0-9a-f]{64}:\d+$/.test(value)),
   );
-}
-
-async function fetchMvcFundingUtxos(address: string): Promise<Array<{ txid: string; outIndex: number; value: number; height: number }>> {
-  const all: Array<{ txid: string; outIndex: number; value: number; height: number }> = [];
-  let flag: string | undefined;
-  while (true) {
-    const params = new URLSearchParams({ address, net: NET, ...(flag ? { flag } : {}) });
-    const res = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`);
-    const json = (await res.json()) as { data?: { list?: Array<{ txid: string; outIndex: number; value: number; height: number; flag?: string }> } };
-    const list = json?.data?.list ?? [];
-    if (!list.length) break;
-    all.push(...list.filter((u) => u.value >= 600));
-    flag = list[list.length - 1]?.flag;
-    if (!flag) break;
-  }
-  return all;
 }
 
 function spentOutpointsOf(txHex: string): string[] {
@@ -145,7 +131,7 @@ async function main(): Promise<void> {
   const traderAddress = mvcWallet.getAddress();
 
   const excludeOutpoints = normalizeExcludeOutpoints(payload.excludeOutpoints);
-  const allUtxos = await fetchMvcFundingUtxos(traderAddress);
+  const allUtxos = await fetchMvcFundingUtxos(traderAddress, { logStep });
   let utxos = allUtxos
     .map((utxo) => ({
       txId: String(utxo.txid || '').trim(),
@@ -178,6 +164,12 @@ async function main(): Promise<void> {
     apiTarget: API_TARGET.APIMVC,
     purse: traderWif,
     feeb: feeRate,
+  });
+  attachResilientMvcNftApi(nftManager, {
+    holderAddress: action === 'sell' ? traderAddress : (sellUtxoInput?.sellerAddress || traderAddress),
+    sellUtxo: sellUtxoInput ? { txId: sellUtxoInput.txId, outputIndex: sellUtxoInput.outputIndex } : undefined,
+    network: API_NET.MAIN,
+    logStep,
   });
 
   const baseParams = {
@@ -271,7 +263,9 @@ async function main(): Promise<void> {
 
 if (require.main === module) {
   main().catch((err: unknown) => {
-    console.error(JSON.stringify({ success: false, error: getMessage(err) }));
+    const errorPayload = JSON.stringify({ success: false, error: getMessage(err) });
+    console.log(errorPayload);
+    console.error(errorPayload);
     process.exit(1);
   });
 }

@@ -1170,6 +1170,7 @@ blob-report/
 !tests/sellerAutoFulfillDaemon.test.ts
 !tests/nftCardCommerceRender.test.tsx
 !tests/nftCardTurnBackstop.test.tsx
+!tests/mvcNftWorkerResilience.test.mjs
 
 # P1 ConversationProfile, ToolCapabilityRegistry & idbots:owner-interaction governance
 !tests/p1ConversationProfileGovernance.test.mjs
