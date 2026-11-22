@@ -623,7 +623,8 @@ const CHAIN_WRITE_TOOLS = new Set([
   'comment_pin', 'like_pin', 'upload_file', 'post_metaprotocol', 'metatask_publish',
   'metatask_publish_spec', 'metatask_submit', 'metatask_claim', 'metatask_amend',
   'metatask_release', 'metatask_verify', 'twin_stamp_publish', 'omni_cast', 'mrc721_mint',
-  'mrc721_collection_create', 'mrc721_collection_update', 'bot_browser_publish_app',
+  'mrc721_collection_create', 'mrc721_collection_update', 'wallet_token_issue', 'wallet_token_mint',
+  'bot_browser_publish_app',
   'preference_vote_commit', 'preference_lesson_publish', 'preference_round_open',
 ]);
 
@@ -633,7 +634,7 @@ const CHAIN_READ_TOOLS = new Set([
   'search_qa', 'list_latest_questions', 'get_question_answers', 'search_social_posts',
   'social_post_detail', 'social_post_comments', 'metaid_profile', 'search_metaids',
   'list_online_bots', 'list_online_services', 'check_metafile_route', 'metaprotocol_registry',
-  'wallet_balance', 'wallet_nft_balance', 'wallet_token_balance', 'wallet_nft_sell_orders',
+  'wallet_balance', 'wallet_nft_balance', 'wallet_token_balance', 'wallet_token_issued_list', 'wallet_nft_sell_orders',
   'wallet_token_sell_orders', 'wallet_btc_utxos', 'wallet_btc_pubkey', 'wallet_btc_multisig_address',
   'escrow_order_info', 'escrow_order_list', 'check_peer_relationship', 'list_social_connections',
   'preference_lessons_search', 'preference_round_status', 'preference_rounds_list',

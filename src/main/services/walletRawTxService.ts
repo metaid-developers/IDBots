@@ -1364,3 +1364,182 @@ export async function completeMvc721OpenOfferTx(
     feeRateEffective: Number(result.feeRateEffective ?? 0),
   };
 }
+
+export interface BuildMvcFtIssueRawTxParams {
+  metabotId: number;
+  tokenName: string;
+  tokenSymbol: string;
+  decimals: number;
+  initialSupplyBase: string;
+  receiverAddress?: string;
+  allowIncreaseMints?: boolean;
+  feeRate: number;
+  excludeOutpoints?: string[];
+  preferredFundingRawTxs?: Record<string, string>;
+}
+
+export interface BuildMvcFtIssueRawTxResult {
+  codehash: string;
+  genesis: string;
+  sensibleId: string;
+  assetKey: string;
+  issuerAddress: string;
+  receiverAddress: string;
+  tokenName: string;
+  tokenSymbol: string;
+  decimals: number;
+  initialSupplyBase: string;
+  allowIncreaseMints: boolean;
+  genesisTxHex: string;
+  genesisTxId: string;
+  genesisFeeSats: number;
+  mintTxHex: string | null;
+  mintTxId: string | null;
+  mintFeeSats: number;
+  minerFeeSats: number;
+  lockedDustSats: number;
+  totalFeeSats: number;
+  tokenOutputIndex: number | null;
+  continuationGenesisOutpoint: string | null;
+  continuationGenesisTxHex: string | null;
+  spentOutpoints: string[];
+  changeOutpoint: string | null;
+  changeUtxo: {
+    txId: string;
+    outputIndex: number;
+    satoshis: number;
+    address: string;
+    height: number;
+  } | null;
+}
+
+export interface BuildMvcFtMintRawTxParams {
+  metabotId: number;
+  sensibleId: string;
+  amountBase: string;
+  receiverAddress?: string;
+  allowIncreaseMints?: boolean;
+  feeRate: number;
+  excludeOutpoints?: string[];
+  preferredFundingRawTxs?: Record<string, string>;
+  knownGenesisUtxo?: { txId: string; outputIndex: number; txHex?: string };
+  genesisTxHexHint?: string;
+}
+
+export interface BuildMvcFtMintRawTxResult {
+  codehash: string;
+  genesis: string;
+  sensibleId: string;
+  assetKey: string;
+  issuerAddress: string;
+  receiverAddress: string;
+  tokenName: string;
+  tokenSymbol: string;
+  decimals: number;
+  amountBase: string;
+  allowIncreaseMints: boolean;
+  mintTxHex: string;
+  mintTxId: string;
+  mintFeeSats: number;
+  minerFeeSats: number;
+  lockedDustSats: number;
+  totalFeeSats: number;
+  tokenOutputIndex: number;
+  continuationGenesisOutpoint: string | null;
+  continuationGenesisTxHex: string | null;
+  spentOutpoints: string[];
+  changeOutpoint: string | null;
+  changeUtxo: {
+    txId: string;
+    outputIndex: number;
+    satoshis: number;
+    address: string;
+    height: number;
+  } | null;
+}
+
+export async function buildMvcFtIssueRawTx(
+  store: MetabotStore,
+  params: BuildMvcFtIssueRawTxParams,
+): Promise<BuildMvcFtIssueRawTxResult> {
+  if (!Number.isInteger(params.metabotId) || params.metabotId <= 0) {
+    throw new Error('metabotId must be a positive integer');
+  }
+  const wallet = store.getMetabotWalletByMetabotId(params.metabotId);
+  if (!wallet?.mnemonic?.trim()) {
+    throw new Error('MetaBot wallet not found');
+  }
+  const sessionSnapshot = getMvcSpendSessionSnapshot(params.metabotId);
+  const mergedExclude = mergeOutpointLists(
+    validateExcludeOutpoints(params.excludeOutpoints),
+    sessionSnapshot.excludeOutpoints,
+  );
+  const result = await runWorker<WorkerTransferResult & BuildMvcFtIssueRawTxResult>(
+    'buildMvcFtIssueRawTxWorker.js',
+    {
+      action: 'issue',
+      tokenName: params.tokenName,
+      tokenSymbol: params.tokenSymbol,
+      decimals: params.decimals,
+      initialSupplyBase: params.initialSupplyBase,
+      receiverAddress: params.receiverAddress,
+      allowIncreaseMints: params.allowIncreaseMints === true,
+      feeRate: params.feeRate,
+      excludeOutpoints: mergedExclude,
+      preferredFundingUtxos: sessionSnapshot.preferredFundingUtxos,
+      preferredFundingRawTxs: params.preferredFundingRawTxs,
+    },
+    {
+      IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
+      IDBOTS_METABOT_PATH: wallet.path || DEFAULT_PATH,
+    },
+    { requireTxHex: false },
+  );
+  if (!result.genesisTxHex || !result.genesisTxId || !result.sensibleId) {
+    throw new Error('FT issue worker did not return genesis transaction details');
+  }
+  return result;
+}
+
+export async function buildMvcFtMintRawTx(
+  store: MetabotStore,
+  params: BuildMvcFtMintRawTxParams,
+): Promise<BuildMvcFtMintRawTxResult> {
+  if (!Number.isInteger(params.metabotId) || params.metabotId <= 0) {
+    throw new Error('metabotId must be a positive integer');
+  }
+  const wallet = store.getMetabotWalletByMetabotId(params.metabotId);
+  if (!wallet?.mnemonic?.trim()) {
+    throw new Error('MetaBot wallet not found');
+  }
+  const sessionSnapshot = getMvcSpendSessionSnapshot(params.metabotId);
+  const mergedExclude = mergeOutpointLists(
+    validateExcludeOutpoints(params.excludeOutpoints),
+    sessionSnapshot.excludeOutpoints,
+  );
+  const result = await runWorker<WorkerTransferResult & BuildMvcFtMintRawTxResult>(
+    'buildMvcFtIssueRawTxWorker.js',
+    {
+      action: 'mint',
+      sensibleId: params.sensibleId,
+      amountBase: params.amountBase,
+      receiverAddress: params.receiverAddress,
+      allowIncreaseMints: params.allowIncreaseMints !== false,
+      feeRate: params.feeRate,
+      excludeOutpoints: mergedExclude,
+      preferredFundingUtxos: sessionSnapshot.preferredFundingUtxos,
+      preferredFundingRawTxs: params.preferredFundingRawTxs,
+      knownGenesisUtxo: params.knownGenesisUtxo,
+      genesisTxHexHint: params.genesisTxHexHint,
+    },
+    {
+      IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
+      IDBOTS_METABOT_PATH: wallet.path || DEFAULT_PATH,
+    },
+    { requireTxHex: false },
+  );
+  if (!result.mintTxHex || !result.mintTxId || !result.sensibleId) {
+    throw new Error('FT mint worker did not return mint transaction details');
+  }
+  return result;
+}
