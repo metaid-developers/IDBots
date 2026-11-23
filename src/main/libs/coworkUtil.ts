@@ -1141,6 +1141,11 @@ export function getSkillHostEnv(): Record<string, string> {
   }
   env.IDBOTS_APP_DATA_PATH = app.getPath('appData');
   env.IDBOTS_USER_DATA_PATH = app.getPath('userData');
+  const appPath = app.getAppPath();
+  if (appPath) {
+    env.IDBOTS_APP_PATH = appPath;
+    env.IDBOTS_DIST_MAIN_PATH = join(appPath, 'dist-electron', 'main');
+  }
   // Global RPC base (no token). Per-session IDBOTS_RPC_TOKEN still rides
   // the BASH_ENV session file / AUTHFILE; scripts default to 127.0.0.1:31200
   // when this is missing.

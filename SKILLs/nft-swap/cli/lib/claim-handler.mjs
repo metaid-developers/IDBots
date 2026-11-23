@@ -313,6 +313,7 @@ export async function handleClaimMessage({
       results.push({
         tokenIndex: String(item.tokenIndex),
         status: 'failed',
+        ...(error instanceof SwapEngineError && error.code ? { code: error.code } : {}),
         error: error instanceof Error ? error.message : String(error),
       });
     }
