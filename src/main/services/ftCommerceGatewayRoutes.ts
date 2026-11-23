@@ -57,11 +57,38 @@ import {
 } from './walletRawTxService';
 
 type BuildMvcFtSplitRawTxResult = Awaited<ReturnType<typeof buildMvcFtTransferRawTx>>;
-import { broadcastMvcFtTransferBundle } from './mvcFtService';
+import { broadcastMvcFtTransferBundle, recordMvcFtBundleSpendSession } from './mvcFtService';
 import { resolveBroadcastTxResult } from '../libs/mvcSpend';
 import { getRate as getGlobalFeeRate } from './feeRateStore';
 import { createPin, type MetaidDataPayload } from './metaidCore';
 import { formatGoodsTradeWireMessage } from './goodsTradeWireProtocol';
+import { listMvcFtIssuances } from './mvcFtIssueService';
+
+function resolveChainGenesisFromIssuances(
+  db: Database,
+  metabotId: number,
+  codehash: string,
+  genesis: string,
+): string {
+  const clean = genesis.trim().toLowerCase();
+  if (clean.length === 40) return clean;
+  if (clean.length === 64 || clean.length === 72) {
+    try {
+      const issued = listMvcFtIssuances(db, { metabotId, limit: 100 });
+      const hit = issued.find(
+        (r) =>
+          r.codehash.toLowerCase() === codehash.toLowerCase() &&
+          (r.genesisTxId.toLowerCase() === clean ||
+            r.sensibleId.toLowerCase() === clean ||
+            r.sensibleId.toLowerCase().startsWith(clean)),
+      );
+      if (hit?.genesis) return hit.genesis.toLowerCase();
+    } catch {
+      // Fall back to caller genesis if issuance table lookup fails
+    }
+  }
+  return clean;
+}
 
 export const FT_MANDATE_CONFIRM_PATH = '/api/idbots/commerce/ft-mandate-confirm';
 export const FT_MVC_SPLIT_PATH = '/api/idbots/wallet/mvc/ft-split';
@@ -314,10 +341,12 @@ export async function handleMvcFtSplitRoute(
     const lotOutpoints: Array<{ outpoint: string; amountBase: string }> = [];
     const protectedLotOutpoints: string[] = [];
 
+    const chainGenesis = resolveChainGenesisFromIssuances(deps.getDb(), metabotId, codehash, genesis);
+
     for (const amountBase of lotAmountsBase) {
       const built = await buildFn(store, {
         metabotId,
-        token: { codeHash: codehash, genesisHash: genesis },
+        token: { codeHash: codehash, genesisHash: chainGenesis },
         toAddress: bot.mvc_address,
         amount: amountBase,
         feeRate,
@@ -330,6 +359,13 @@ export async function handleMvcFtSplitRoute(
         },
         broadcastFn,
       );
+      recordMvcFtBundleSpendSession({
+        metabotId,
+        walletAddress: bot.mvc_address,
+        amountCheckRawTx: built.amount_check_raw_tx,
+        rawTx: built.raw_tx,
+        txId: broadcasted.txId,
+      });
       const outpoint = `${broadcasted.txId.toLowerCase()}:${built.output_index}`;
       txids.push(broadcasted.txId);
       lotOutpoints.push({ outpoint, amountBase });
@@ -471,12 +507,13 @@ export async function handleMvcTokenSellListRoute(
       fundingTxIds: string[];
       listing?: MvcTokenSellListing;
     };
+    const chainGenesis = resolveChainGenesisFromIssuances(deps.getDb(), metabotId, codehash, genesis);
     try {
       tradeResult = await execTrade(store, {
         metabotId,
         action: 'sell',
         codehash,
-        genesis,
+        genesis: chainGenesis,
         tokenTxid: outpointParsed?.txid,
         tokenVout: outpointParsed?.vout,
         tokenAmount: amountBase,
