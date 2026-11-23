@@ -55,7 +55,12 @@
     <div class="core-participants" data-core-participants></div>
     <div class="core-footnote" data-director-metrics></div>
     <button class="core-report-ready" type="button" data-report-open disabled><span data-report-ready-text>Report ready</span><span data-report-open-label>Opening the final page</span></button>
-    <section class="interaction-card" data-interaction-card hidden></section>
+    <!-- 批 B: the owner-action stack the packaged runtime reads (decision card
+         first, ask beneath) — the demo player mirrors the packaged skeleton. -->
+    <div class="owner-stack" data-owner-stack hidden>
+      <section class="decision-card" data-decision-card hidden></section>
+      <section class="interaction-card" data-interaction-card hidden></section>
+    </div>
   </main>
   <div class="demo-controls">
     <button type="button" data-demo-next disabled>Next scene</button>

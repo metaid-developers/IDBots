@@ -337,6 +337,240 @@
 
   const ORB_START_TIMEOUT_MS = 20000;
 
+  // ── Owner decision card (批 B · P0-3) ─────────────────────────────────
+  // Owner ruling 2026-11-23 22:23: 「决策要回到 Live Stage，这才是真正做
+  // 决策的地方」. The card renders ONE open studio_decision_queue row — the
+  // same row the Process Hub lists, read from the same listOpen() source —
+  // and it NEVER resolves anything itself: a click emits one entry over the
+  // stage relay and the host submits it through the SAME
+  // longtermTask:decisionResolve channel the hub uses. Two seats, one truth.
+  let decisionCardKey = '';
+  let decisionSubmitting = false;
+
+  function syncOwnerStack() {
+    const stack = $('[data-owner-stack]');
+    if (!stack) return;
+    const decision = $('[data-decision-card]');
+    const interaction = $('[data-interaction-card]');
+    const anyVisible = Boolean((decision && !decision.hidden) || (interaction && !interaction.hidden));
+    stack.hidden = !anyVisible;
+  }
+
+  function emitDecision(entry) {
+    try {
+      window.parent.postMessage({ source: 'idbots-live-stage', type: 'stage-decision', entry }, '*');
+    } catch (error) {
+      // The host relay is unavailable (offline demo): the card stays put.
+    }
+  }
+
+  function lockDecisionCard(card, doneText) {
+    decisionSubmitting = true;
+    card.querySelectorAll('button, input').forEach((element) => { element.disabled = true; });
+    const done = card.querySelector('[data-decision-done]');
+    if (done) {
+      done.hidden = false;
+      done.textContent = doneText;
+    }
+  }
+
+  function submitDecision(card, note) {
+    const model = state.taskHud && state.taskHud.decision;
+    if (!model || decisionSubmitting) return;
+    const queueItemId = typeof model.id === 'string' ? model.id : '';
+    const resolutionNote = String(note || '').trim();
+    if (!queueItemId || !resolutionNote) return;
+    lockDecisionCard(card, tr('已提交，等待舞台更新…', 'Sent — waiting for the stage…'));
+    emitDecision({ queueItemId, resolutionNote });
+  }
+
+  function buildDecisionEvidence(model) {
+    const wrap = document.createElement('div');
+    wrap.className = 'decision-evidence';
+    const entries = Array.isArray(model.evidence) ? model.evidence.slice(0, 3) : [];
+    if (entries.length === 0) {
+      wrap.hidden = true;
+      return wrap;
+    }
+    const label = document.createElement('span');
+    label.className = 'decision-evidence-label';
+    label.textContent = tr('证据', 'Evidence');
+    wrap.append(label);
+    entries.forEach((entry) => {
+      const chip = document.createElement('span');
+      chip.className = 'decision-evidence-chip';
+      const kind = String(entry?.kind || 'other');
+      const uri = String(entry?.uri || '');
+      chip.textContent = `${kind}: ${uri}`;
+      chip.title = `${kind}: ${uri}${entry?.note ? ` · ${entry.note}` : ''}`;
+      wrap.append(chip);
+    });
+    return wrap;
+  }
+
+  function renderDecision() {
+    const card = $('[data-decision-card]');
+    if (!card) return;
+    const hud = state.taskHud && typeof state.taskHud === 'object' ? state.taskHud : null;
+    const model = hud && hud.decision && typeof hud.decision === 'object' ? hud.decision : null;
+    const key = model && typeof model.id === 'string' ? model.id : '';
+    if (!model || !key) {
+      card.hidden = true;
+      body.dataset.decisionCardOpen = 'false';
+      if (decisionCardKey) {
+        card.replaceChildren();
+        decisionCardKey = '';
+        decisionSubmitting = false;
+      }
+      syncOwnerStack();
+      return;
+    }
+    if (key !== decisionCardKey) {
+      decisionCardKey = key;
+      decisionSubmitting = false;
+      card.replaceChildren();
+    } else {
+      // Same queue row: a streaming patch must not wipe an in-flight reject
+      // draft, so the mounted card is kept as-is.
+      card.hidden = false;
+      syncOwnerStack();
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    const kicker = document.createElement('div');
+    kicker.className = 'decision-kicker';
+    const kickerText = document.createElement('span');
+    kickerText.textContent = tr('待你拍板', 'Your call');
+    kicker.append(kickerText);
+    const kindTag = document.createElement('span');
+    kindTag.className = 'decision-foreign';
+    kindTag.textContent = String(model.kind || 'decision');
+    kicker.append(kindTag);
+    if (model.foreign === true) {
+      const foreignTag = document.createElement('span');
+      foreignTag.className = 'decision-foreign';
+      foreignTag.textContent = tr('来自其他会话', 'From another session');
+      kicker.append(foreignTag);
+    }
+    fragment.append(kicker);
+
+    const title = document.createElement('h2');
+    title.className = 'decision-title';
+    title.textContent = String(model.title || '');
+    fragment.append(title);
+
+    const question = document.createElement('p');
+    question.className = 'decision-question';
+    question.textContent = String(model.question || '');
+    fragment.append(question);
+
+    if (model.recommendation) {
+      const recommend = document.createElement('div');
+      recommend.className = 'decision-recommend';
+      recommend.textContent = `${tr('推荐', 'Recommended')} · ${String(model.recommendation)}`;
+      fragment.append(recommend);
+    }
+
+    fragment.append(buildDecisionEvidence(model));
+
+    const options = Array.isArray(model.options) ? model.options.slice(0, 3) : [];
+    if (options.length > 0) {
+      const list = document.createElement('div');
+      list.className = 'decision-options';
+      options.forEach((option) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'decision-option';
+        button.dataset.decisionOption = String(option.label || '');
+        const label = document.createElement('span');
+        label.textContent = String(option.label || '');
+        if (option.recommended === true) {
+          const tag = document.createElement('span');
+          tag.className = 'decision-option-tag';
+          tag.textContent = tr('推荐', 'Recommended');
+          label.append(tag);
+        }
+        button.append(label);
+        if (option.description) {
+          const detail = document.createElement('small');
+          detail.textContent = String(option.description);
+          button.append(detail);
+        }
+        button.addEventListener('click', () => {
+          submitDecision(card, tr(
+            `拍板：${String(option.label || '')}（Live Stage 决策卡）`,
+            `Ruling: ${String(option.label || '')} (Live Stage decision card)`,
+          ));
+        });
+        list.append(button);
+      });
+      fragment.append(list);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'decision-actions';
+    const approve = document.createElement('button');
+    approve.type = 'button';
+    approve.className = 'decision-button is-primary';
+    approve.dataset.decisionApprove = '';
+    approve.textContent = tr('通过', 'Approve');
+    approve.addEventListener('click', () => {
+      submitDecision(card, tr('验收通过（Live Stage 决策卡）', 'Accepted (Live Stage decision card)'));
+    });
+    const reject = document.createElement('button');
+    reject.type = 'button';
+    reject.className = 'decision-button is-danger';
+    reject.dataset.decisionReject = '';
+    reject.textContent = tr('驳回', 'Reject');
+    const rejectRow = document.createElement('div');
+    rejectRow.className = 'decision-reject-row';
+    rejectRow.hidden = true;
+    const rejectInput = document.createElement('input');
+    rejectInput.type = 'text';
+    rejectInput.className = 'decision-reject-input';
+    rejectInput.dataset.decisionRejectInput = '';
+    rejectInput.placeholder = tr('驳回必须带理由…', 'A rejection needs a reason…');
+    const rejectConfirm = document.createElement('button');
+    rejectConfirm.type = 'button';
+    rejectConfirm.className = 'decision-button is-ghost';
+    rejectConfirm.dataset.decisionRejectConfirm = '';
+    rejectConfirm.textContent = tr('确认驳回', 'Confirm reject');
+    reject.addEventListener('click', () => {
+      rejectRow.hidden = false;
+      rejectInput.focus();
+    });
+    const confirmReject = () => {
+      const reason = rejectInput.value.trim();
+      if (!reason) {
+        rejectInput.focus();
+        return;
+      }
+      submitDecision(card, tr(
+        `驳回：${reason}（Live Stage 决策卡）`,
+        `Rejected: ${reason} (Live Stage decision card)`,
+      ));
+    };
+    rejectConfirm.addEventListener('click', confirmReject);
+    rejectInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') confirmReject();
+    });
+    rejectRow.append(rejectInput, rejectConfirm);
+    actions.append(approve, reject);
+    const done = document.createElement('div');
+    done.className = 'decision-done';
+    done.dataset.decisionDone = '';
+    done.hidden = true;
+    fragment.append(actions, rejectRow, done);
+
+    card.replaceChildren(fragment);
+    card.hidden = false;
+    // While a ruling is on the stage it IS the stage: the narrative copy dims
+    // instead of competing with the card for the same corner.
+    body.dataset.decisionCardOpen = 'true';
+    syncOwnerStack();
+  }
+
   function disposeOrbLayer(layer, destroyDevice = false) {
     if (!layer) return;
     clearTimeout(layer.fadeTimer);
@@ -768,6 +1002,7 @@
         interactionKey = '';
         interactionSelections.clear();
       }
+      syncOwnerStack();
       return;
     }
     const key = `${interaction.requestId}:${interaction.token}`;
@@ -783,6 +1018,7 @@
     card.hidden = false;
     syncInteractionCountdown(interaction, card);
     if (interaction.kind === 'ask') syncInteractionValidity(interaction, card);
+    syncOwnerStack();
   }
 
   // Families whose orb is actively working/thinking/waiting show an elapsed
@@ -912,7 +1148,9 @@
     updateParticipants();
     updateTaskHud();
     syncOrb(state.family);
+    renderDecision();
     renderInteraction();
+    syncOwnerStack();
     scenesApi?.update(state);
   }
 

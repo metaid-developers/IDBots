@@ -1,0 +1,364 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BellIcon } from '@heroicons/react/24/outline';
+import Tooltip from '../ui/Tooltip';
+import { i18nService } from '../../services/i18n';
+import { sessionTabBinding } from '../../services/sessionTabBinding';
+import type { AgentNotification } from '../../types/notification';
+import {
+  groupNotifications,
+  resolveNotificationJump,
+  sortNotificationsForPanel,
+} from '../../utils/notificationCenter';
+
+/**
+ * 通知中心 (批 B · P0-4, Friday 稿 Fork 5 A).
+ *
+ * The host has been WRITING notifications for a while — cowork terminal
+ * (completed / failed), scheduled-run terminal, permission-required — into
+ * `notification_events` behind `notification:list` + `notification:changed`,
+ * and no renderer read them: the one component with a pipe and no faucet.
+ * This is the faucet: a rail-bottom bell with an unread badge, a panel that
+ * groups the existing pipeline into 完成 / 失败 / 待拍板, and a click that
+ * marks the row read and jumps by its `target`.
+ *
+ * 待拍板 is the third group and it has TWO honest sources, because this tree
+ * has no decision-type notification write (that is P2-2, upstream PR #179):
+ *   1. `permission.required` rows already in the notification pipeline;
+ *   2. the LIVE open Studio decision queue (`longtermTask:studioStatus`), the
+ *      same rows the Live Stage card and the Process Hub card render.
+ * Nothing is invented: both are existing read channels, and a decision row
+ * jumps to the seat that actually decides (Live Stage first, Process Hub when
+ * the row has no session).
+ */
+
+interface OpenDecisionRow {
+  id: string;
+  kind: string;
+  title: string;
+  question: string;
+  originStudioSessionId?: string | null;
+  longtermTaskId?: string | null;
+}
+
+interface NotificationCenterProps {
+  /** Switch the shell to the Process Hub (the summary seat for decisions). */
+  onOpenProcesses: () => void;
+}
+
+const MAX_ITEMS = 60;
+
+function formatStamp(createdAt: number): string {
+  if (!Number.isFinite(createdAt) || createdAt <= 0) return '';
+  const date = new Date(createdAt);
+  const now = new Date();
+  const sameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  if (sameDay) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return date.toLocaleDateString([], { month: '2-digit', day: '2-digit' });
+}
+
+const NotificationRow: React.FC<{
+  item: AgentNotification;
+  onJump: (item: AgentNotification) => void;
+}> = ({ item, onJump }) => {
+  const unread = item.readAt == null;
+  return (
+    <button
+      type="button"
+      data-testid="notification-row"
+      data-event-id={item.eventId}
+      data-notification-type={item.type}
+      data-notification-unread={unread ? 'true' : 'false'}
+      onClick={() => onJump(item)}
+      title={`${item.title} · ${item.body}`}
+      className="flex w-full items-start gap-2 rounded-[8px] px-2 py-1.5 text-left transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+    >
+      <span
+        aria-hidden
+        className={`mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full ${unread ? 'bg-amber-500' : 'bg-transparent'}`}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline gap-1.5">
+          <span className={`min-w-0 flex-1 truncate text-[12px] ${unread ? 'font-semibold' : 'font-medium'} dark:text-claude-darkText text-claude-text`}>
+            {item.title}
+          </span>
+          <span className="flex-shrink-0 text-[10px] tabular-nums dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {formatStamp(item.createdAt)}
+          </span>
+        </span>
+        {item.body ? (
+          <span className="mt-0.5 block truncate text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {item.body}
+          </span>
+        ) : null}
+      </span>
+    </button>
+  );
+};
+
+const NotificationCenter: React.FC<NotificationCenterProps> = ({ onOpenProcesses }) => {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<AgentNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [decisions, setDecisions] = useState<OpenDecisionRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const load = useCallback(async () => {
+    const api = window.electron?.notification;
+    const lt = window.electron?.longtermTask;
+    if (!api?.list) return;
+    setLoading(true);
+    try {
+      const [list, count, status] = await Promise.all([
+        api.list({ limit: MAX_ITEMS }),
+        api.getUnreadCount?.(),
+        lt?.studioStatus ? lt.studioStatus({}) : Promise.resolve(null),
+      ]);
+      if (list?.success && Array.isArray(list.items)) setItems(list.items);
+      if (count?.success && typeof count.count === 'number') setUnreadCount(count.count);
+      const openRows = status?.success && Array.isArray(status.openDecisions)
+        ? (status.openDecisions as OpenDecisionRow[])
+        : [];
+      setDecisions(openRows);
+    } catch {
+      // Best-effort: a failed read keeps the last good snapshot.
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const unsubNotification = window.electron?.notification?.onChanged?.(() => {
+      void load();
+    });
+    // Decisions ride the long-term board broadcast (the same signal the rail
+    // badge and the Live Stage HUD refresh on).
+    const unsubTask = window.electron?.longtermTask?.onUpdate?.(() => {
+      void load();
+    });
+    return () => {
+      unsubNotification?.();
+      unsubTask?.();
+    };
+  }, [load]);
+
+  // Close on outside click / Escape — the panel is a transient popover.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (panelRef.current && target && !panelRef.current.contains(target)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  const groups = useMemo(() => groupNotifications(sortNotificationsForPanel(items), 8), [items]);
+  const completed = groups.completed;
+  const failed = groups.failed;
+  const permissions = groups.decisions;
+  const decisionCount = decisions.length + permissions.length;
+
+  const markRead = useCallback((eventIds: string[]) => {
+    const clean = eventIds.filter((id) => typeof id === 'string' && id);
+    if (clean.length === 0) return;
+    void window.electron?.notification?.markRead?.(clean).then(() => {
+      void load();
+    }).catch(() => {
+      // A failed mark-read must not block the jump.
+    });
+  }, [load]);
+
+  const jumpNotification = useCallback((item: AgentNotification) => {
+    markRead([item.eventId]);
+    const jump = resolveNotificationJump(item.target);
+    if (!jump) return;
+    if (jump.kind === 'session') {
+      window.dispatchEvent(new CustomEvent('cowork:viewSession', { detail: { sessionId: jump.sessionId } }));
+    } else if (jump.kind === 'scheduled') {
+      window.dispatchEvent(new CustomEvent('scheduledTask:viewSession', { detail: { sessionId: jump.sessionId } }));
+    } else {
+      window.dispatchEvent(new CustomEvent('longtermTask:viewTask', { detail: { taskId: jump.taskId } }));
+    }
+    setOpen(false);
+  }, [markRead]);
+
+  const jumpDecision = useCallback((row: OpenDecisionRow) => {
+    const sessionId = typeof row.originStudioSessionId === 'string' ? row.originStudioSessionId.trim() : '';
+    if (sessionId) {
+      // Live Stage is the decision's FIRST landing (owner ruling 22:23):
+      // open that session and bring its stage tab forward.
+      window.dispatchEvent(new CustomEvent('cowork:viewSession', { detail: { sessionId } }));
+      void sessionTabBinding.revealSessionTab(sessionId);
+      setOpen(false);
+      return;
+    }
+    // No session to land on → the Process Hub keeps the summary seat.
+    onOpenProcesses();
+    setOpen(false);
+  }, [onOpenProcesses]);
+
+  const markAllRead = useCallback(() => {
+    void window.electron?.notification?.markAllRead?.().then(() => {
+      void load();
+    }).catch(() => {
+      // Best-effort.
+    });
+  }, [load]);
+
+  return (
+    <div ref={panelRef} className="relative w-full">
+      <Tooltip content={i18nService.t('notificationsBellLabel')} position="right">
+        <button
+          type="button"
+          data-testid="notification-bell"
+          data-unread-count={unreadCount}
+          data-decision-count={decisionCount}
+          aria-expanded={open}
+          aria-label={i18nService.t('notificationsBellLabel')}
+          onClick={() => {
+            setOpen((value) => !value);
+            if (!open) void load();
+          }}
+          className={`non-draggable relative mx-auto flex h-10 w-10 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+            open
+              ? 'bg-claude-accent/20 dark:text-claude-darkText text-claude-text'
+              : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text'
+          }`}
+        >
+          <BellIcon className="h-5 w-5" />
+          {unreadCount > 0 ? (
+            <span
+              data-testid="notification-bell-badge"
+              className="absolute -right-[3px] -top-[3px] flex h-[14px] min-w-[14px] items-center justify-center rounded-full bg-red-500 px-[3px] text-[9.5px] font-bold leading-none text-white"
+            >
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          ) : null}
+        </button>
+      </Tooltip>
+
+      {open ? (
+        <div
+          data-testid="notification-panel"
+          className="absolute bottom-0 left-full z-50 ml-2 flex max-h-[70vh] w-[326px] flex-col overflow-hidden rounded-[12px] border border-claude-border bg-claude-bg shadow-xl dark:border-claude-darkBorder dark:bg-claude-darkBg"
+        >
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-claude-border px-3 dark:border-claude-darkBorder">
+            <span className="text-[13px] font-semibold dark:text-claude-darkText text-claude-text">
+              {i18nService.t('notificationsTitle')}
+            </span>
+            <span className="text-[10.5px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {unreadCount > 0 ? i18nService.t('notificationsUnreadBadge').replace('{count}', String(unreadCount)) : ''}
+            </span>
+            <button
+              type="button"
+              data-testid="notification-mark-all-read"
+              onClick={markAllRead}
+              disabled={unreadCount === 0}
+              className="ml-auto rounded-[6px] px-1.5 py-0.5 text-[10.5px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover disabled:opacity-40 dark:hover:bg-claude-darkSurfaceHover"
+            >
+              {i18nService.t('notificationsMarkAllRead')}
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+            {/* 待拍板 — decisions first: they are the owner's next act. */}
+            <section data-testid="notification-group" data-group="decision">
+              <div className="flex items-center gap-1.5 px-2 pb-1 pt-1.5">
+                <span className="text-[10.5px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                  {i18nService.t('notificationsGroupDecision')}
+                </span>
+                <span className="text-[10px] tabular-nums dark:text-claude-darkTextSecondary text-claude-textSecondary">{decisionCount}</span>
+              </div>
+              {decisions.map((row) => (
+                <button
+                  key={row.id}
+                  type="button"
+                  data-testid="notification-decision-row"
+                  data-decision-id={row.id}
+                  data-decision-kind={row.kind}
+                  onClick={() => jumpDecision(row)}
+                  title={`${row.title} · ${row.question}`}
+                  className="flex w-full items-start gap-2 rounded-[8px] px-2 py-1.5 text-left transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+                >
+                  <span aria-hidden className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-500" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[12px] font-semibold dark:text-claude-darkText text-claude-text">{row.title}</span>
+                    <span className="mt-0.5 block truncate text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">{row.question}</span>
+                  </span>
+                  <span className="flex-shrink-0 self-center rounded-[6px] bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                    {i18nService.t('notificationsOpenDecision')}
+                  </span>
+                </button>
+              ))}
+              {permissions.map((item) => (
+                <NotificationRow key={item.eventId} item={item} onJump={jumpNotification} />
+              ))}
+              {decisionCount === 0 ? (
+                <p className="px-2 pb-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('notificationsGroupDecisionEmpty')}
+                </p>
+              ) : null}
+            </section>
+
+            {/* 完成 / 失败 — the persisted pipeline rows. */}
+            <section data-testid="notification-group" data-group="completed">
+              <div className="flex items-center gap-1.5 px-2 pb-1 pt-2">
+                <span className="text-[10.5px] font-bold uppercase tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('notificationsGroupCompleted')}
+                </span>
+                <span className="text-[10px] tabular-nums dark:text-claude-darkTextSecondary text-claude-textSecondary">{completed.length}</span>
+              </div>
+              {completed.map((item) => (
+                <NotificationRow key={item.eventId} item={item} onJump={jumpNotification} />
+              ))}
+              {completed.length === 0 ? (
+                <p className="px-2 pb-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('notificationsGroupEmpty')}
+                </p>
+              ) : null}
+            </section>
+
+            <section data-testid="notification-group" data-group="failed">
+              <div className="flex items-center gap-1.5 px-2 pb-1 pt-2">
+                <span className="text-[10.5px] font-bold uppercase tracking-wide text-red-600 dark:text-red-400">
+                  {i18nService.t('notificationsGroupFailed')}
+                </span>
+                <span className="text-[10px] tabular-nums dark:text-claude-darkTextSecondary text-claude-textSecondary">{failed.length}</span>
+              </div>
+              {failed.map((item) => (
+                <NotificationRow key={item.eventId} item={item} onJump={jumpNotification} />
+              ))}
+              {failed.length === 0 ? (
+                <p className="px-2 pb-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('notificationsGroupEmpty')}
+                </p>
+              ) : null}
+            </section>
+
+            {!loading && items.length === 0 && decisionCount === 0 ? (
+              <p data-testid="notification-empty" className="px-2 py-6 text-center text-[11.5px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('notificationsEmpty')}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+export default NotificationCenter;

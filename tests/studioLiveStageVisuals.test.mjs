@@ -129,8 +129,11 @@ test('Avatar stays above glass and the scene engine replaces the handoff/hybrid/
 test('interaction card renders through textContent only and drains clicks exactly once', () => {
   const stage = read('stage.js');
   assert.match(stage, /function renderInteraction\(\)/);
-  assert.match(stage, /renderInteraction\(\);\n    scenesApi\?\.update\(state\);/);
-  assert.match(stage, /drainInteractions\(\) \{\n      const items = interactionQueue\.splice\(0, interactionQueue\.length\);\n      return items;\n    \}/);
+  // 批 B: applyState now renders the owner decision card and syncs the
+  // owner-action stack between the interaction card and the scene update —
+  // the interaction card still renders BEFORE the scene update.
+  assert.match(stage, /renderDecision\(\);\n {4}renderInteraction\(\);\n {4}syncOwnerStack\(\);\n {4}scenesApi\?\.update\(state\);/);
+  assert.match(stage, /drainInteractions\(\) \{\n {6}const items = interactionQueue\.splice\(0, interactionQueue\.length\);\n {6}return items;\n {4}\}/);
   assert.match(stage, /data-interaction-question/);
   assert.match(stage, /interaction-custom/);
   assert.match(stage, /emitInteraction\(/);
@@ -139,7 +142,11 @@ test('interaction card renders through textContent only and drains clicks exactl
   assert.doesNotMatch(stage, /innerHTML|insertAdjacentHTML|document\.write/);
   assert.match(read('stage.html'), /<section class="interaction-card" data-interaction-card hidden><\/section>/);
   const css = read('stage.css');
-  assert.match(css, /\.interaction-card\{position:absolute;z-index:6/);
+  // 批 B: the interaction card moved into the anchored owner-action stack
+  // (decision card first, ask beneath) — the absolute anchor now lives on
+  // `.owner-stack`, and the card itself is a static column child.
+  assert.match(css, /\.owner-stack\{position:absolute;z-index:6/);
+  assert.match(css, /\.interaction-card\{display:flex;flex-direction:column/);
   assert.match(css, /\.interaction-card\[hidden\]\{display:none\}/);
   assert.match(css, /\.interaction-button\.is-primary\{background:var\(--brand\)/);
   // Owner note 2026-11-12: a default scrollbar on the card is unacceptable —
