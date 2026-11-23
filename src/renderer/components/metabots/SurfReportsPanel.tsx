@@ -1,40 +1,30 @@
 /**
- * MetaWeb surf run-history panel ("AI 冲浪" reports), indexed by day.
- *
- * The header keeps a diary-style date chip (the MemorySettings dream-diary
- * pattern): the chip labels the selected day, and clicking it pops a fixed
- * mini month calendar beside the chip — days that hold surf runs carry a
- * marker dot, and picking a day lists that day's runs (newest first) with
- * the same expandable report cards, then closes the popup. The calendar is
- * never resident: the panel opens straight onto the most recent day that
- * has records, so the newest report is visible immediately.
- *
- * Freshness is push-based: the parent bumps refreshToken on every
- * surfStatusChanged event for this bot, which reloads the day markers and
- * re-reads the selected day's runs — there is no manual refresh.
+ * MetaWeb surf run-history panel ("冲浪报告") in Studio Linear Style B.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { CalendarDaysIcon, ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import MarkdownContent from '../MarkdownContent';
 import MiniMonthCalendar from '../ui/MiniMonthCalendar';
 import type { MetawebSurfRunInfo, MetawebSurfRunStats, MetawebSurfRunStatus, MetawebSurfTrigger } from '../../types/metawebSurf';
+import {
+  METABOT_BTN_FLAT_CLASS,
+  METABOT_GROUP_BOX_CLASS,
+  METABOT_GROUP_LABEL_CLASS,
+  METABOT_GROUP_LABEL_ROW_CLASS,
+  METABOT_MICRO_BADGE_CLASS,
+} from './metaBotCardPresentation.js';
 
 interface SurfReportsPanelProps {
   metabotId: number;
-  /** Bumped by the parent when a surfStatusChanged event arrives for this bot. */
   refreshToken: number;
 }
 
-// Replicated from MetawebStudyJobsPanel (kept in sync with the edit-tab chrome).
-const hintClass = 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1';
-const cardClass = 'rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-4 space-y-3';
-
 const STATUS_BADGE_CLASS: Record<MetawebSurfRunStatus, string> = {
-  running: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30',
-  done: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
-  failed: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30',
+  running: 'bg-sky-500/12 text-sky-600 dark:text-sky-400 border-sky-500/25',
+  done: 'bg-emerald-500/12 text-[#0f9d68] dark:text-[#34d399] border-emerald-500/25',
+  failed: 'bg-red-500/12 text-red-600 dark:text-rose-400 border-red-500/25',
 };
 
 const STATUS_LABEL_KEY: Record<MetawebSurfRunStatus, string> = {
@@ -55,7 +45,6 @@ const formatStartedAt = (iso: string): string => {
   return new Date(ms).toLocaleString();
 };
 
-/** One-line stats summary: only the non-zero parts, i18n fragments joined by '·'. */
 const formatRunStats = (stats: MetawebSurfRunStats): string => {
   const acted = stats.liked + stats.commented + stats.answered + stats.posted + stats.challenged;
   const parts: string[] = [];
@@ -68,13 +57,6 @@ const formatRunStats = (stats: MetawebSurfRunStats): string => {
   return parts.join(' · ');
 };
 
-/**
- * Half-open UTC-day boundaries (`>=` start, `<` end) of a `YYYY-MM-DD` day
- * key, as ISO strings for the store's range query. Day attribution follows
- * `created_at`'s own UTC prefix — the same coordinate system as the
- * `listRunDays` markers — so a marker dot, the day it selects, and the runs
- * that day view loads always agree.
- */
 const dayKeyToUtcRangeIso = (dayKey: string): { dayStartIso: string; dayEndIso: string } | null => {
   const startMs = Date.parse(`${dayKey}T00:00:00.000Z`);
   if (!Number.isFinite(startMs)) return null;
@@ -93,17 +75,9 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [expandedDigestRunId, setExpandedDigestRunId] = useState<string | null>(null);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  // Current selection, readable inside the load effect without becoming a
-  // dependency (a pick re-loads its day itself; the effect must not re-fire).
   const selectedDayRef = useRef<string | null>(null);
-  // Which bot's day index has seeded the default selection in this mounted
-  // panel. A bot switch re-seeds; a push (refreshToken) must never yank the
-  // user away from the day they are reading.
   const seededBotRef = useRef<number | null>(null);
 
-  // Diary-style calendar popup (the MemorySettings dream-diary pattern):
-  // hidden until the date chip is clicked, positioned once from the chip's
-  // rect, closed by an outside click, a day pick, or a bot switch.
   const [calOpen, setCalOpen] = useState(false);
   const [calPos, setCalPos] = useState<{ top: number; left: number } | null>(null);
   const calAnchorRef = useRef<HTMLDivElement>(null);
@@ -151,12 +125,6 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
     void loadRunsForDay(dayKey);
   }, [loadRunsForDay]);
 
-  // (Re)load the day index when a different bot is loaded into the same
-  // mounted editor and whenever a surf run for this bot starts or finishes
-  // (refreshToken bump — the push channel that replaced the manual refresh
-  // button). On the first load for a bot the newest day with records becomes
-  // the selection, so the panel opens on the freshest report; afterwards the
-  // user's picked day is kept and only re-read.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -198,17 +166,12 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
     };
   }, [metabotId, refreshToken, loadRunsForDay]);
 
-  // Collapse any expanded report and the calendar popup when switching bots.
   useEffect(() => {
     setExpandedRunId(null);
     setExpandedDigestRunId(null);
     setCalOpen(false);
   }, [metabotId]);
 
-  // The list lives in a height-capped scroll box, so a freshly expanded run
-  // must be brought back into view (block: 'nearest' scrolls the minimum
-  // amount, and is a no-op when already visible). Guarded because jsdom-style
-  // test environments have no scrollIntoView.
   useEffect(() => {
     if (!expandedRunId) return;
     const card = cardRefs.current[expandedRunId];
@@ -219,7 +182,7 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
 
   const markedDayKeys = useMemo(() => new Set(runDays), [runDays]);
 
-  const renderRunCard = (run: MetawebSurfRunInfo) => {
+  const renderRunRow = (run: MetawebSurfRunInfo) => {
     const expanded = expandedRunId === run.id;
     const digestExpanded = expandedDigestRunId === run.id;
     const statsSummary = formatRunStats(run.stats);
@@ -229,7 +192,7 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
         ref={(el) => {
           cardRefs.current[run.id] = el;
         }}
-        className={cardClass}
+        className="px-4 py-3 space-y-2"
         data-slot={`surf-report-run-${run.id}`}
       >
         <div
@@ -246,48 +209,50 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
         >
           <div className="flex items-center gap-2 min-w-0">
             {expanded ? (
-              <ChevronDownIcon className="h-3.5 w-3.5 shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary" aria-hidden />
+              <ChevronDownIcon className="h-3.5 w-3.5 shrink-0 text-[#5a6577] dark:text-[#94a3b8]" aria-hidden />
             ) : (
-              <ChevronRightIcon className="h-3.5 w-3.5 shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary" aria-hidden />
+              <ChevronRightIcon className="h-3.5 w-3.5 shrink-0 text-[#5a6577] dark:text-[#94a3b8]" aria-hidden />
             )}
-            <span className="text-sm font-medium dark:text-claude-darkText text-claude-text break-all">
+            <span className="text-[13px] font-semibold text-[#181d25] dark:text-[#f3f5f8]">
               {i18nService.t(TRIGGER_LABEL_KEY[run.trigger] ?? 'surfTriggerManualUi')}
             </span>
-            <span className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary shrink-0">
+            <span className="text-[11.5px] tabular-nums text-[#8c96a6] dark:text-[#64748b] shrink-0">
               {formatStartedAt(run.startedAt)}
             </span>
           </div>
           <span
-            className={`shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 text-xs rounded-full border ${STATUS_BADGE_CLASS[run.status] ?? ''}`}
+            className={`shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold rounded-[5px] border ${STATUS_BADGE_CLASS[run.status] ?? ''}`}
           >
             {run.status === 'running' ? (
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" aria-hidden />
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-500 animate-pulse" aria-hidden />
             ) : null}
             {i18nService.t(STATUS_LABEL_KEY[run.status] ?? 'surfStatusRunning')}
           </span>
         </div>
-        <p className={hintClass}>
+
+        <p className="pl-[22px] text-[12px] tabular-nums text-[#5a6577] dark:text-[#94a3b8]">
           {statsSummary || '—'}
         </p>
+
         {expanded ? (
-          <div className="space-y-2 pt-1">
+          <div className="pl-[22px] space-y-2 pt-1">
             {run.error ? (
-              <p className="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-words">{run.error}</p>
+              <p className="text-xs text-red-600 dark:text-rose-400 whitespace-pre-wrap break-words">{run.error}</p>
             ) : null}
             {run.reportMarkdown ? (
-              <div className="rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg p-3">
+              <div className="rounded-[8px] border border-slate-900/[0.08] dark:border-white/[0.08] bg-[#f8fafc] dark:bg-[#131d2c] p-3">
                 <MarkdownContent content={run.reportMarkdown} compact />
               </div>
             ) : !run.error ? (
-              <p className={hintClass}>—</p>
+              <p className="text-xs text-[#8c96a6] dark:text-[#64748b]">—</p>
             ) : null}
             {run.briefingMarkdown ? (
-              <div className="rounded-lg border dark:border-claude-darkBorder border-claude-border">
+              <div className="rounded-[8px] border border-slate-900/[0.08] dark:border-white/[0.08] overflow-hidden">
                 <button
                   type="button"
                   data-slot={`surf-report-digest-toggle-${run.id}`}
                   onClick={() => setExpandedDigestRunId(digestExpanded ? null : run.id)}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-lg transition-colors"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-[#5a6577] dark:text-[#94a3b8] hover:bg-[#eef1f5] dark:hover:bg-white/[0.05] transition-colors"
                 >
                   {digestExpanded ? (
                     <ChevronDownIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -297,7 +262,7 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
                   {i18nService.t('surfReportDigestToggle')}
                 </button>
                 {digestExpanded ? (
-                  <div className="border-t dark:border-claude-darkBorder border-claude-border p-3">
+                  <div className="border-t border-slate-900/[0.08] dark:border-white/[0.08] bg-[#f8fafc] dark:bg-[#131d2c] p-3">
                     <MarkdownContent content={run.briefingMarkdown} compact />
                   </div>
                 ) : null}
@@ -310,29 +275,31 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
   };
 
   return (
-    <div className="space-y-3" data-slot="surf-reports-panel">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          <span>{i18nService.t('surfReportsTitle')}</span>
+    <div className="space-y-1.5" data-slot="surf-reports-panel">
+      <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+        <div className="flex items-center gap-1.5">
+          <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('surfReportsTitle')}</span>
           <span
             data-slot="surf-reports-count"
-            className="inline-flex items-center rounded-full border dark:border-claude-darkBorder border-claude-border px-1.5 py-0.5 text-[10px] font-medium tabular-nums dark:text-claude-darkTextSecondary text-claude-textSecondary"
+            className={`${METABOT_MICRO_BADGE_CLASS} tabular-nums`}
           >
             {runs.length}
           </span>
         </div>
+
         {loaded && runDays.length > 0 ? (
           <div className="relative shrink-0" ref={calAnchorRef}>
             <button
               type="button"
               onClick={openCal}
-              className="inline-flex h-[26px] items-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-2 text-xs tabular-nums dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60"
+              className={`${METABOT_BTN_FLAT_CLASS} !h-7 !px-2 !text-[11.5px] tabular-nums`}
             >
-              {selectedDay ?? ''}
+              <CalendarDaysIcon className="h-3.5 w-3.5" aria-hidden />
+              <span>{selectedDay ?? ''}</span>
             </button>
             {calOpen && calPos && (
               <div
-                className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-2xl p-2"
+                className="fixed z-40 rounded-[10px] border border-slate-900/[0.12] dark:border-white/[0.12] dark:bg-[#182538] bg-white shadow-2xl p-2"
                 style={{ top: calPos.top, left: calPos.left }}
               >
                 <MiniMonthCalendar
@@ -348,18 +315,27 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
           </div>
         ) : null}
       </div>
+
       {panelError ? (
-        <p className="text-xs text-red-600 dark:text-red-400">{panelError}</p>
-      ) : loaded && runDays.length === 0 ? (
-        <p className={hintClass}>{i18nService.t('surfReportsEmpty')}</p>
-      ) : loaded && runs.length === 0 ? (
-        <p className={hintClass}>{i18nService.t('surfReportsDayEmpty')}</p>
+        <p className="text-xs text-red-600 dark:text-rose-400">{panelError}</p>
       ) : (
-        <div
-          data-slot="surf-reports-list"
-          className="max-h-[min(420px,50vh)] overflow-y-auto overscroll-contain pr-1 space-y-3"
-        >
-          {runs.map(renderRunCard)}
+        <div className={METABOT_GROUP_BOX_CLASS}>
+          {loaded && runDays.length === 0 ? (
+            <div className="px-4 py-6 text-center text-[12px] text-[#8c96a6] dark:text-[#64748b]">
+              {i18nService.t('surfReportsEmpty')}
+            </div>
+          ) : loaded && runs.length === 0 ? (
+            <div className="px-4 py-6 text-center text-[12px] text-[#8c96a6] dark:text-[#64748b]">
+              {i18nService.t('surfReportsDayEmpty')}
+            </div>
+          ) : (
+            <div
+              data-slot="surf-reports-list"
+              className="max-h-[min(420px,50vh)] overflow-y-auto overscroll-contain divide-y divide-slate-900/[0.065] dark:divide-white/[0.065]"
+            >
+              {runs.map(renderRunRow)}
+            </div>
+          )}
         </div>
       )}
     </div>
