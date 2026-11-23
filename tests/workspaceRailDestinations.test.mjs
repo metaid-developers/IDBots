@@ -169,8 +169,8 @@ test('the right column never ends on null — both destination chains close on a
   assert.ok(catalogStart > -1 && catalogEnd > catalogStart);
   assert.doesNotMatch(catalogBlock, /\)\s*:\s*null\s*;/, 'the Bot Internet chain can still resolve to null');
   // ... and each chain names its non-blank fallback explicitly.
-  assert.match(homeBlock, /\) : \(\n    coworkPane/);
-  assert.match(catalogBlock, /\) : \(\n    coworkLandingCard\n  \);/);
+  assert.match(homeBlock, /\) : \(\n {4}coworkPane/);
+  assert.match(catalogBlock, /\) : \(\n {4}coworkLandingCard\n {2}\);/);
 });
 
 test('the right column stays pinned to grid track 4, so a collapsed middle column cannot blank the shell', () => {
