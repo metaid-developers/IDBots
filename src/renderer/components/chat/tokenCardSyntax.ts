@@ -7,6 +7,31 @@
  * `CoworkSessionDetail`, `BotBrowserCoworkPanel`), and Cloud Mobile (`ChatScreen`).
  */
 
+import {
+  isAnyFtSuiteFenceLanguage,
+  isFtActionCardFenceLanguage,
+  isFtBridgeCardFenceLanguage,
+  isFtFillCardFenceLanguage,
+  isFtMyOrdersCardFenceLanguage,
+  isFtOrderCardFenceLanguage,
+  isFtPortfolioCardFenceLanguage,
+  isFtQuoteCardFenceLanguage,
+  parseFtActionCardFence,
+  parseFtBridgeCardFence,
+  parseFtFillCardFence,
+  parseFtMyOrdersCardFence,
+  parseFtOrderCardFence,
+  parseFtPortfolioCardFence,
+  parseFtQuoteCardFence,
+  type FtActionCardData,
+  type FtBridgeCardData,
+  type FtFillCardData,
+  type FtMyOrdersCardData,
+  type FtOrderCardData,
+  type FtPortfolioCardData,
+  type FtQuoteCardData,
+} from './ftCardSyntax';
+
 export const TOKEN_CARD_FENCE_TAG = 'token-card';
 
 const TOKEN_CARD_FENCE_TAGS = new Set(['token-card', 'tokencard']);
@@ -103,6 +128,13 @@ export interface TokenCardData {
 export type TokenCardMessageSegment =
   | { kind: 'markdown'; content: string }
   | { kind: 'token-card'; data: TokenCardData; rawFence: string }
+  | { kind: 'ft-order-card'; data: FtOrderCardData; rawFence: string }
+  | { kind: 'ft-quote-card'; data: FtQuoteCardData; rawFence: string }
+  | { kind: 'ft-fill-card'; data: FtFillCardData; rawFence: string }
+  | { kind: 'ft-my-orders-card'; data: FtMyOrdersCardData; rawFence: string }
+  | { kind: 'ft-portfolio-card'; data: FtPortfolioCardData; rawFence: string }
+  | { kind: 'ft-bridge-card'; data: FtBridgeCardData; rawFence: string }
+  | { kind: 'ft-action-card'; data: FtActionCardData; rawFence: string }
   | { kind: 'token-card-streaming' };
 
 function cleanStr(val: unknown, maxLen = 160): string {
@@ -310,16 +342,58 @@ export function serializeTokenCardFence(data: TokenCardData): string {
   return `\`\`\`${TOKEN_CARD_FENCE_TAG}\n${JSON.stringify(data)}\n\`\`\``;
 }
 
-const FAST_HINT_RE = /```[ \t]*(?:token-card|tokencard)\b/i;
+const FAST_HINT_RE =
+  /```[ \t]*(?:token-card|tokencard|ft-(?:quote|order|fill|my-orders|portfolio|bridge|action|receipt)(?:-card)?|ft(?:quote|order|fill|myorders|portfolio|bridge|action)card|token-(?:my-orders|portfolio|bridge|action)-card)\b/i;
+
+function parseStandaloneTokenSuiteFence(
+  fenceLang: string,
+  rawBody: string,
+  rawFence: string,
+): TokenCardMessageSegment | null {
+  if (isTokenCardFenceLanguage(fenceLang)) {
+    const data = parseTokenCardFence(rawBody);
+    return data ? { kind: 'token-card', data, rawFence } : null;
+  }
+  if (isFtOrderCardFenceLanguage(fenceLang)) {
+    const data = parseFtOrderCardFence(rawBody);
+    return data ? { kind: 'ft-order-card', data, rawFence } : null;
+  }
+  if (isFtQuoteCardFenceLanguage(fenceLang)) {
+    const data = parseFtQuoteCardFence(rawBody);
+    return data ? { kind: 'ft-quote-card', data, rawFence } : null;
+  }
+  if (isFtFillCardFenceLanguage(fenceLang)) {
+    const data = parseFtFillCardFence(rawBody);
+    return data ? { kind: 'ft-fill-card', data, rawFence } : null;
+  }
+  if (isFtMyOrdersCardFenceLanguage(fenceLang)) {
+    const data = parseFtMyOrdersCardFence(rawBody);
+    return data ? { kind: 'ft-my-orders-card', data, rawFence } : null;
+  }
+  if (isFtPortfolioCardFenceLanguage(fenceLang)) {
+    const data = parseFtPortfolioCardFence(rawBody);
+    return data ? { kind: 'ft-portfolio-card', data, rawFence } : null;
+  }
+  if (isFtBridgeCardFenceLanguage(fenceLang)) {
+    const data = parseFtBridgeCardFence(rawBody);
+    return data ? { kind: 'ft-bridge-card', data, rawFence } : null;
+  }
+  if (isFtActionCardFenceLanguage(fenceLang)) {
+    const data = parseFtActionCardFence(rawBody);
+    return data ? { kind: 'ft-action-card', data, rawFence } : null;
+  }
+  return null;
+}
 
 /**
  * Splits an assistant message's markdown into ordered segments so `token-card`
- * blocks render as standalone card bubbles rather than inside a gray prose bubble.
+ * and all `ft-*-card` blocks render as standalone card bubbles rather than
+ * nested inside a gray prose bubble.
  *
  * - Respects outer 4+ backtick / tilde fences so nested examples stay intact.
- * - Malformed JSON inside a closed `token-card` fence stays in markdown so
+ * - Malformed JSON inside a closed card fence stays in markdown so
  *   `MarkdownContent` degrades cleanly to a code block instead of dropping text.
- * - When `options.isStreaming` is true, an unclosed trailing `token-card` fence
+ * - When `options.isStreaming` is true, an unclosed trailing card fence
  *   becomes `{ kind: 'token-card-streaming' }` so partial JSON never flashes
  *   inside a text bubble mid-stream.
  */
@@ -374,8 +448,11 @@ export function splitTokenCardMessageSegments(
     const fenceLen = fenceMarks.length;
     const fenceLang = fenceOpenMatch[2] ?? '';
 
-    // Only top-level backtick fences with `token-card` / `tokencard` are card candidates.
-    if (fenceChar === '`' && isTokenCardFenceLanguage(fenceLang)) {
+    const isSuiteCandidate =
+      fenceChar === '`' &&
+      (isTokenCardFenceLanguage(fenceLang) || isAnyFtSuiteFenceLanguage(fenceLang));
+
+    if (isSuiteCandidate) {
       const closeRe = new RegExp(`^[ \\t]{0,3}\`{${fenceLen},}[ \\t]*$`);
       let closeIdx = -1;
       for (let j = i + 1; j < lines.length; j += 1) {
@@ -387,13 +464,11 @@ export function splitTokenCardMessageSegments(
       }
 
       if (closeIdx === -1) {
-        // Unclosed trailing `token-card` fence
         if (options?.isStreaming) {
           flushMarkdown();
           segments.push({ kind: 'token-card-streaming' });
           return segments;
         }
-        // Not streaming: leave unclosed fence in markdown buffer
         for (let j = i; j < lines.length; j += 1) {
           mdBuffer.push(lines[j]);
         }
@@ -402,17 +477,12 @@ export function splitTokenCardMessageSegments(
 
       const bodyLines = lines.slice(i + 1, closeIdx);
       const rawBody = bodyLines.join('\n').trim();
-      const parsed = parseTokenCardFence(rawBody);
-      if (parsed) {
+      const rawFence = lines.slice(i, closeIdx + 1).join('\n');
+      const parsedSeg = parseStandaloneTokenSuiteFence(fenceLang, rawBody, rawFence);
+      if (parsedSeg) {
         flushMarkdown();
-        const rawFence = lines.slice(i, closeIdx + 1).join('\n');
-        segments.push({
-          kind: 'token-card',
-          data: parsed,
-          rawFence,
-        });
+        segments.push(parsedSeg);
       } else {
-        // Invalid JSON: preserve original lines in markdown so nothing is lost
         for (let j = i; j <= closeIdx; j += 1) {
           mdBuffer.push(lines[j]);
         }
@@ -421,7 +491,6 @@ export function splitTokenCardMessageSegments(
       continue;
     }
 
-    // Ordinary code fence (or 4+ backtick outer wrapper)
     outerFence = { char: fenceChar, len: fenceLen };
     mdBuffer.push(rawLine);
     i += 1;
@@ -435,5 +504,5 @@ export function splitTokenCardMessageSegments(
 }
 
 export function hasStandaloneTokenCardSegment(segments: readonly TokenCardMessageSegment[]): boolean {
-  return segments.some((seg) => seg.kind === 'token-card' || seg.kind === 'token-card-streaming');
+  return segments.some((seg) => seg.kind !== 'markdown');
 }

@@ -2,15 +2,14 @@
  * Deterministic turn-end backstop for host-emitted chat NFT & Token protocol cards.
  *
  * Why this exists:
- * Mutating NFT / collection host tools (`mrc721_sell_intent`, `mrc721_mint`,
- * `mrc721_sell`, `mrc721_buy`, `mrc721_transfer`, `mrc721_offer`,
- * `mrc721_take_offer`, `mrc721_collection_create`, `mrc721_collection_update`,
- * `wallet_nft_*`) and `wallet_token_card` append a ```nft-card /
- * ```nft-collection-card / ```token-card fence to their tool result and ask
- * the agent to include it verbatim in its reply.
- * In Studio / Projector Mode (or when a model summarizes prose + projects an
- * HTML report), the model sometimes omits the fenced block from the chat
- * bubble, leaving the user with no visual card in the chat stream.
+ * Mutating NFT / collection host tools (`mrc721_*`, `wallet_nft_*`) and
+ * Token / FT host tools (`wallet_token_*`, `wallet_mrc20_*`) append fenced
+ * protocol cards (`nft-card`, `nft-collection-card`, `token-card`,
+ * `ft-order-card`, `ft-quote-card`, `ft-fill-card`, `ft-my-orders-card`,
+ * `ft-portfolio-card`, `ft-bridge-card`, `ft-action-card`) to their tool
+ * results and ask the agent to include them verbatim in its reply.
+ * In Studio / Projector Mode (or when a model summarizes prose), the model
+ * sometimes omits the fenced block from the chat bubble.
  *
  * The runner captures fences emitted by announcing tools during a turn and, if
  * any card identity was omitted from all visible assistant messages of that
@@ -18,13 +17,23 @@
  * reply after flushing stream overlays.
  */
 
-export type NftCardBackstopTag = 'nft-card' | 'nft-collection-card' | 'token-card';
+export type NftCardBackstopTag =
+  | 'nft-card'
+  | 'nft-collection-card'
+  | 'token-card'
+  | 'ft-order-card'
+  | 'ft-quote-card'
+  | 'ft-fill-card'
+  | 'ft-my-orders-card'
+  | 'ft-portfolio-card'
+  | 'ft-bridge-card'
+  | 'ft-action-card';
 
 export interface CapturedNftCardFence {
-  /** Canonical deduplication key (`nft:pin:...`, `nft:mc:...`, `col:...`, or `token:...`). */
+  /** Canonical deduplication key (`nft:pin:...`, `col:...`, `token:...`, `ft-...`). */
   key: string;
   tag: NftCardBackstopTag;
-  /** Full fenced markdown block (` ```nft-card\n{...}\n``` ` or ` ```token-card\n{...}\n``` `). */
+  /** Full fenced markdown block (` ```<tag>\n{...}\n``` `). */
   fence: string;
 }
 
@@ -44,9 +53,23 @@ const ANNOUNCING_NFT_CARD_TOOLS = new Set<string>([
   'wallet_nft_cancel_sell',
   'wallet_nft_buy',
   'wallet_token_card',
+  'wallet_token_issue',
+  'wallet_token_mint',
+  'wallet_token_send',
+  'wallet_token_transfer',
+  'wallet_token_sell',
+  'wallet_token_buy',
+  'wallet_token_take',
+  'wallet_token_portfolio',
+  'wallet_token_my_orders',
+  'wallet_token_bridge_card',
 ]);
 
-const NFT_CARD_FENCE_RE = /```(nft-card|nft-collection-card|token-card|tokencard)[ \t]*\r?\n([\s\S]*?)\r?\n```/gi;
+const NFT_CARD_FENCE_RE =
+  /```(nft-card|nft-collection-card|token-card|tokencard|ft-order-card|ft-quote-card|ft-fill-card|ft-my-orders-card|ft-portfolio-card|ft-bridge-card|ft-action-card)[ \t]*\r?\n([\s\S]*?)\r?\n```/gi;
+
+const FAST_BACKSTOP_HINT_RE =
+  /```(?:nft-card|nft-collection-card|token-card|tokencard|ft-(?:order|quote|fill|my-orders|portfolio|bridge|action)-card)/i;
 
 export function normalizeHostToolBaseName(toolName: string): string {
   const trimmed = String(toolName ?? '').trim();
@@ -59,28 +82,90 @@ export function isNftCardBackstopTool(toolName: string): boolean {
   return ANNOUNCING_NFT_CARD_TOOLS.has(normalizeHostToolBaseName(toolName));
 }
 
-function deriveCardIdentityKey(tag: NftCardBackstopTag, parsed: Record<string, unknown>): string | null {
+function cleanKeyField(val: unknown): string {
+  return typeof val === 'string' ? val.trim().toLowerCase() : '';
+}
+
+function deriveCardIdentityKey(
+  tag: NftCardBackstopTag,
+  parsed: Record<string, unknown>,
+): string | null {
   if (tag === 'token-card') {
-    const assetKey = typeof parsed.assetKey === 'string' ? parsed.assetKey.trim().toLowerCase() : '';
+    const assetKey = cleanKeyField(parsed.assetKey);
     if (assetKey) return `token:key:${assetKey}`;
-    const symbol = typeof parsed.symbol === 'string' ? parsed.symbol.trim().toLowerCase() : '';
+    const symbol = cleanKeyField(parsed.symbol);
     if (symbol) return `token:sym:${symbol}`;
     return null;
   }
 
+  if (tag === 'ft-order-card') {
+    const batch = cleanKeyField(parsed.batchGroupId);
+    if (batch) return `ft-order:batch:${batch}`;
+    const assetKey = cleanKeyField(parsed.assetKey);
+    return assetKey ? `ft-order:key:${assetKey}` : null;
+  }
+
+  if (tag === 'ft-quote-card') {
+    const assetKey = cleanKeyField(parsed.assetKey);
+    if (assetKey) return `ft-quote:key:${assetKey}`;
+    const symbol = cleanKeyField(parsed.symbol);
+    return symbol ? `ft-quote:sym:${symbol}` : null;
+  }
+
+  if (tag === 'ft-fill-card') {
+    const txids = Array.isArray(parsed.txids)
+      ? parsed.txids.map((x) => cleanKeyField(x)).filter(Boolean)
+      : [];
+    if (txids[0]) return `ft-fill:tx:${txids[0]}`;
+    const symbol = cleanKeyField(parsed.symbol);
+    const side = cleanKeyField(parsed.side);
+    return symbol ? `ft-fill:${side}:${symbol}` : null;
+  }
+
+  if (tag === 'ft-my-orders-card') {
+    const botId =
+      typeof parsed.metabotId === 'number' && Number.isFinite(parsed.metabotId)
+        ? String(parsed.metabotId)
+        : cleanKeyField(parsed.botName) || 'active';
+    return `ft-my-orders:${botId}`;
+  }
+
+  if (tag === 'ft-portfolio-card') {
+    const botId =
+      typeof parsed.metabotId === 'number' && Number.isFinite(parsed.metabotId)
+        ? String(parsed.metabotId)
+        : cleanKeyField(parsed.botName) || 'active';
+    return `ft-portfolio:${botId}`;
+  }
+
+  if (tag === 'ft-bridge-card') {
+    const txid = cleanKeyField(parsed.txid);
+    if (txid) return `ft-bridge:tx:${txid}`;
+    const symbol = cleanKeyField(parsed.symbol);
+    const dir = cleanKeyField(parsed.direction);
+    return symbol ? `ft-bridge:${dir}:${symbol}` : null;
+  }
+
+  if (tag === 'ft-action-card') {
+    const txid = cleanKeyField(parsed.txid);
+    const action = cleanKeyField(parsed.action);
+    if (txid) return `ft-action:${action}:${txid}`;
+    return null;
+  }
+
   if (tag === 'nft-collection-card') {
-    const colId = typeof parsed.collectionId === 'string' ? parsed.collectionId.trim().toLowerCase() : '';
+    const colId = cleanKeyField(parsed.collectionId);
     if (colId) return `col:id:${colId}`;
-    const colName = typeof parsed.collectionName === 'string' ? parsed.collectionName.trim().toLowerCase() : '';
+    const colName = cleanKeyField(parsed.collectionName);
     if (colName) return `col:name:${colName}`;
     return null;
   }
 
-  const pinId = typeof parsed.pinId === 'string' ? parsed.pinId.trim().toLowerCase() : '';
+  const pinId = cleanKeyField(parsed.pinId);
   if (pinId) return `nft:pin:${pinId}`;
 
-  const genesis = typeof parsed.genesis === 'string' ? parsed.genesis.trim().toLowerCase() : '';
-  const codehash = typeof parsed.codehash === 'string' ? parsed.codehash.trim().toLowerCase() : '';
+  const genesis = cleanKeyField(parsed.genesis);
+  const codehash = cleanKeyField(parsed.codehash);
   const tokenIndex =
     typeof parsed.tokenIndex === 'string'
       ? parsed.tokenIndex.trim()
@@ -94,15 +179,7 @@ function deriveCardIdentityKey(tag: NftCardBackstopTag, parsed: Record<string, u
 }
 
 export function parseNftCardFencesFromMarkdown(markdown: string): CapturedNftCardFence[] {
-  if (
-    !markdown
-    || (
-      !markdown.includes('```nft-card')
-      && !markdown.includes('```nft-collection-card')
-      && !markdown.includes('```token-card')
-      && !markdown.includes('```tokencard')
-    )
-  ) {
+  if (!markdown || !FAST_BACKSTOP_HINT_RE.test(markdown)) {
     return [];
   }
   const results: CapturedNftCardFence[] = [];
@@ -131,16 +208,18 @@ export function parseNftCardFencesFromMarkdown(markdown: string): CapturedNftCar
   return results;
 }
 
-export function extractEmittedNftCardFences(toolName: string, toolResultText: string): CapturedNftCardFence[] {
+export function extractEmittedNftCardFences(
+  toolName: string,
+  toolResultText: string,
+): CapturedNftCardFence[] {
   if (!isNftCardBackstopTool(toolName) || !toolResultText) return [];
   return parseNftCardFencesFromMarkdown(toolResultText);
 }
 
 /**
  * Merge newly captured fences into the turn ledger. When the same item/album
- * is acted on multiple times in one turn (e.g. `mrc721_mint` followed by
- * `mrc721_sell_intent`), the newer fence supersedes the earlier one at the
- * latest chronological position so the final state (`selling` / `LISTED`) wins.
+ * is acted on multiple times in one turn, the newer fence supersedes the
+ * earlier one at the latest chronological position.
  */
 export function recordCapturedNftCardFences(
   existing: readonly CapturedNftCardFence[],

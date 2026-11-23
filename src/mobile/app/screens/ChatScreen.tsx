@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Bars3Icon, PlusIcon, PaperClipIcon, FaceSmileIcon, StopIcon, EllipsisHorizontalIcon, MagnifyingGlassIcon, PencilSquareIcon, TrashIcon, XMarkIcon, ArrowDownIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '@/components/MarkdownContent';
-import TokenCard, { TokenCardStreamingPlaceholder } from '@/components/chat/TokenCard';
+import TokenSuiteSegmentCard from '@/components/chat/TokenSuiteSegmentCard';
 import {
   hasStandaloneTokenCardSegment,
   splitTokenCardMessageSegments,
@@ -579,25 +579,15 @@ function MessageRow({ message, sessionId, onOpenFile, onOpenUri, onDismissError 
       <div className="flex flex-col items-start gap-2">
         {tokenSegments.map((seg, segIdx) => {
           const isLastSeg = segIdx === tokenSegments.length - 1;
-          if (seg.kind === 'token-card') {
+          if (seg.kind !== 'markdown') {
             return (
               <div
-                key={`tc-${segIdx}`}
+                key={`ts-${seg.kind}-${segIdx}`}
                 data-standalone-token-bubble="true"
+                data-standalone-card-kind={seg.kind}
                 className="twin-message flex w-full max-w-[364px] justify-start"
               >
-                <TokenCard data={seg.data} />
-              </div>
-            );
-          }
-          if (seg.kind === 'token-card-streaming') {
-            return (
-              <div
-                key={`tcs-${segIdx}`}
-                data-standalone-token-bubble="streaming"
-                className="twin-message flex w-full max-w-[364px] justify-start"
-              >
-                <TokenCardStreamingPlaceholder />
+                <TokenSuiteSegmentCard segment={seg} />
               </div>
             );
           }

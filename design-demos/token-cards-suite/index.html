@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IDBots Token 全场景卡片体系 — 设计稿对比预览（7大场景 × 每场景2套方案）</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="topbar-row">
+        <div class="brand-title">
+          <div class="brand-mark">ID</div>
+          <div>
+            <h1>IDBots Token 全场景原生卡片体系 · 方案对比台</h1>
+            <span>延续已定稿 S1 / D1 视觉语言 · 每张卡独立气泡渲染 · 7 大场景 × 每场景 A/B 两套排版</span>
+          </div>
+        </div>
+
+        <div class="controls-row">
+          <div class="seg-group" id="widthGroup">
+            <span class="seg-label">气泡宽度</span>
+            <button class="seg-btn active" data-width="392px">Studio 栏 392px</button>
+            <button class="seg-btn" data-width="375px">手机 375px</button>
+            <button class="seg-btn" data-width="320px">小屏极限 320px</button>
+          </div>
+          <div class="seg-group" id="themeGroup">
+            <span class="seg-label">主题</span>
+            <button class="seg-btn active" data-theme="dark">暗色 Dark</button>
+            <button class="seg-btn" data-theme="light">亮色 Light</button>
+          </div>
+        </div>
+      </div>
+
+      <nav class="scenario-nav" id="scenarioNav"></nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Domain Disambiguation Legend -->
+    <section class="taxonomy-banner">
+      <div class="legend-group">
+        <h4>① 链与底层格式徽章规范（跨链资产桥同币不同链，卡片必须一眼标清）</h4>
+        <div class="legend-pills">
+          <span class="bdg bdg-btc">BTC · ID-Coin (MRC-20)</span>
+          <span class="bdg bdg-mvc">MVC · MetaContract (MCP02)</span>
+          <span class="bdg bdg-neutral">⇄ 资产桥 1:1 互通代币</span>
+          <span class="bdg bdg-up">✓ 官方认证</span>
+          <span class="bdg bdg-warn mono">ID c9cc…f417 (未认证防伪)</span>
+        </div>
+      </div>
+      <div class="legend-group">
+        <h4>② 四大交易渠道与结算方式标签规范（告别英文 ME Instant Escrow，清晰区分积分交易）</h4>
+        <div class="legend-pills">
+          <span class="bdg bdg-btc">BTC · metaid.market (PSBT)</span>
+          <span class="bdg bdg-mvc">MVC · 链上合约挂单</span>
+          <span class="bdg bdg-me">✦ ME 积分交易 (AI自动发币)</span>
+          <span class="bdg bdg-warn">MVC · MVCSwap 闪兑 (即将开放)</span>
+        </div>
+      </div>
+    </section>
+
+    <div id="scenariosRoot"></div>
+  </main>
+
+  <div class="selection-dock">
+    <span>当前点选偏好：</span>
+    <span class="selection-codes" id="selectionSummary">可在每张卡片右上角点「选这套」记录组合</span>
+  </div>
+
+  <script src="./scenarios-part1.js"></script>
+  <script src="./scenarios-part2.js"></script>
+  <script>
+    const SCENARIOS = [...window.TOKEN_SUITE_PART1, ...window.TOKEN_SUITE_PART2];
+    const state = {
+      filter: 'all',
+      modes: { listing: 'me', fill: 'buy', bridge: 'bridging', 'mint-transfer': 'issue' },
+      showUgly: false,
+      picks: {
+        listing: 'L1',
+        quote: 'Q1',
+        fill: 'F1',
+        'my-orders': 'O1',
+        portfolio: 'P1',
+        bridge: 'B1',
+        'mint-transfer': 'M1'
+      }
+    };
+
+    function renderNav() {
+      const nav = document.getElementById('scenarioNav');
+      const items = [
+        { id: 'all', label: '全部 7 大场景 (14张)' },
+        ...SCENARIOS.map((s, idx) => ({ id: s.id, label: `${idx + 1}. ${s.title.split('（')[0]}` }))
+      ];
+      nav.innerHTML = items.map(it =>
+        `<button class="nav-pill ${state.filter === it.id ? 'active' : ''}" data-filter="${it.id}">${it.label}</button>`
+      ).join('');
+      nav.querySelectorAll('[data-filter]').forEach(btn => {
+        btn.onclick = () => {
+          state.filter = btn.dataset.filter;
+          renderNav();
+          renderScenarios();
+        };
+      });
+    }
+
+    function updateSummary() {
+      const codes = SCENARIOS.map(s => state.picks[s.id]).filter(Boolean);
+      document.getElementById('selectionSummary').textContent = codes.join(' + ');
+    }
+
+    function renderScenarios() {
+      const root = document.getElementById('scenariosRoot');
+      root.innerHTML = SCENARIOS.map((sc) => {
+        const hidden = state.filter !== 'all' && state.filter !== sc.id ? 'hidden' : '';
+        const activeMode = state.modes[sc.id];
+        const modeSwitcher = sc.modes ? `
+          <div class="seg-group">
+            <span class="seg-label">${sc.modeLabel}</span>
+            ${sc.modes.map(m => `
+              <button class="seg-btn ${activeMode === m.key ? 'active' : ''}" data-sc="${sc.id}" data-mode="${m.key}">${m.label}</button>
+            `).join('')}
+          </div>
+        ` : '';
+
+        const uglyBtn = sc.hasUglyToggle ? `
+          <button class="seg-btn" id="toggleUglyBtn" style="border:1px solid var(--down-border);background:var(--down-bg);color:var(--down);border-radius:8px;padding:5px 10px;">
+            ${state.showUgly ? '收起旧版问题复盘' : '查看旧版截图 4 大问题修复点'}
+          </button>
+        ` : '';
+
+        const uglyNote = sc.hasUglyToggle ? `
+          <div class="ugly-compare ${state.showUgly ? 'show' : ''}">
+            <strong>旧版 FtOrderCard 截图问题对照：</strong>
+            ① <code>1.04842259 METAID × 1</code> 与右侧 <code>9.538139 ME / 枚 (每包 10...</code> 在同一行硬挤导致文字重叠截断 → <strong>新卡改为垂直分格/分行 + tabular-nums，320px 窄屏也零碰撞</strong>；
+            ② 只写 <code>ID: c9cc...:28a481...f417</code> 未说明链 → <strong>新卡明确标注 <code>MVC · MetaContract</code> / <code>BTC · ID-Coin</code></strong>；
+            ③ 英文 <code>ME Instant Escrow</code> → <strong>新卡统一为 <code>✦ ME 积分交易</code>（清晰表明积分结算，不强调中心化）</strong>；
+            ④ 黄底白字按钮及气泡嵌套 → <strong>新卡统一金底深棕字 <code>#24210c</code> 且独立成气泡</strong>。
+          </div>
+        ` : '';
+
+        return `
+          <section class="scenario-section ${hidden}" id="sec-${sc.id}">
+            <div class="scenario-head">
+              <div class="scenario-title-wrap">
+                <span class="scenario-kicker">${sc.kicker}</span>
+                <h2>${sc.title}</h2>
+                <p>${sc.desc}</p>
+              </div>
+              <div class="controls-row">
+                ${uglyBtn}
+                ${modeSwitcher}
+              </div>
+            </div>
+            ${uglyNote}
+            <div class="ab-grid">
+              ${sc.variants.map(v => {
+                const isPicked = state.picks[sc.id] === v.code;
+                return `
+                  <article class="variant-panel ${isPicked ? 'picked' : ''}">
+                    <div class="variant-header">
+                      <div>
+                        <span class="variant-code">${v.code}</span>
+                        <h3>${v.name}</h3>
+                        <p>${v.summary}</p>
+                      </div>
+                      <button class="pick-btn" data-pick-sc="${sc.id}" data-pick-code="${v.code}">
+                        ${isPicked ? '✓ 当前预选' : '选这套'}
+                      </button>
+                    </div>
+                    <div class="chat-stage-wrap">
+                      <div class="chat-column">
+                        <div class="chat-user">${v.userMsg}</div>
+                        <div class="chat-bot-prose">${v.botLead}</div>
+                        <div class="standalone-hint"><span class="standalone-dot"></span>独立卡片气泡（不包裹在文本气泡内）</div>
+                        ${v.render(activeMode)}
+                      </div>
+                    </div>
+                  </article>
+                `;
+              }).join('')}
+            </div>
+          </section>
+        `;
+      }).join('');
+
+      root.querySelectorAll('[data-mode]').forEach(btn => {
+        btn.onclick = () => {
+          state.modes[btn.dataset.sc] = btn.dataset.mode;
+          renderScenarios();
+        };
+      });
+
+      root.querySelectorAll('[data-pick-code]').forEach(btn => {
+        btn.onclick = () => {
+          state.picks[btn.dataset.pickSc] = btn.dataset.pickCode;
+          updateSummary();
+          renderScenarios();
+        };
+      });
+
+      const uglyToggle = document.getElementById('toggleUglyBtn');
+      if (uglyToggle) {
+        uglyToggle.onclick = () => {
+          state.showUgly = !state.showUgly;
+          renderScenarios();
+        };
+      }
+    }
+
+    document.querySelectorAll('#widthGroup .seg-btn').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('#widthGroup .seg-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.documentElement.style.setProperty('--card-stage-width', btn.dataset.width);
+      };
+    });
+
+    document.querySelectorAll('#themeGroup .seg-btn').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('#themeGroup .seg-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.documentElement.classList.toggle('dark', btn.dataset.theme === 'dark');
+      };
+    });
+
+    renderNav();
+    renderScenarios();
+    updateSummary();
+  </script>
+</body>
+</html>

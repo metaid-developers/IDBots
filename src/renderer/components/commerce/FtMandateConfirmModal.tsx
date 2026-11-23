@@ -265,7 +265,7 @@ const FtMandateConfirmModal: React.FC<FtMandateConfirmModalProps> = ({
                   {ct('Settlement Rail', '结算通道')}
                 </span>
                 <span className="font-medium text-claude-text dark:text-claude-darkText">
-                  {formatFtRailLabel(draft.rail)}
+                  {ct(formatFtRailLabel(draft.rail, 'en'), formatFtRailLabel(draft.rail, 'zh'))}
                 </span>
               </div>
               <div className="flex justify-between">
@@ -357,7 +357,7 @@ const FtMandateConfirmModal: React.FC<FtMandateConfirmModalProps> = ({
                         type="button"
                         disabled={!selectedPkg}
                         onClick={() => void startTopupOrder()}
-                        className="w-full rounded-lg bg-claude-accent py-1.5 text-xs font-semibold text-white"
+                        className="w-full rounded-lg bg-claude-accent py-1.5 text-xs font-semibold text-claude-accentInk"
                       >
                         {ct('Generate Payment QR', '生成支付二维码')}
                       </button>
@@ -399,7 +399,7 @@ const FtMandateConfirmModal: React.FC<FtMandateConfirmModalProps> = ({
               type="button"
               disabled={submitting || !canConfirm}
               onClick={() => void respond(true)}
-              className="rounded-xl bg-claude-accent px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+              className="rounded-xl bg-claude-accent px-4 py-1.5 text-xs font-semibold text-claude-accentInk shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {submitting
                 ? ct('Approving…', '授权中…')

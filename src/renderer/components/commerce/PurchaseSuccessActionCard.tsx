@@ -117,7 +117,7 @@ const PurchaseSuccessActionCard: React.FC<PurchaseSuccessActionCardProps> = ({
               type="button"
               data-action="view-assets"
               onClick={handleViewAssets}
-              className="inline-flex items-center gap-1 rounded-lg bg-claude-accent px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90"
+              className="inline-flex items-center gap-1 rounded-lg bg-claude-accent px-2.5 py-1 text-[11px] font-medium text-claude-accentInk hover:opacity-90"
             >
               <WalletIcon className="h-3.5 w-3.5" />
               {ct('View My Assets', '查看我的资产')}

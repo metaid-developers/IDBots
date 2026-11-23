@@ -471,7 +471,7 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
                       type="button"
                       disabled={!selectedPkg}
                       onClick={startTopupOrder}
-                      className="flex-1 rounded-lg bg-claude-accent px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                      className="flex-1 rounded-lg bg-claude-accent px-3 py-1.5 text-xs font-medium text-claude-accentInk disabled:opacity-50"
                     >
                       {ct('Generate Payment QR', '生成充值二维码')}
                     </button>
@@ -530,7 +530,7 @@ const GoodsPurchaseConfirmModal: React.FC<GoodsPurchaseConfirmModalProps> = ({
               data-action={isTokenMode ? 'confirm-token-buy' : 'confirm-me-buy'}
               disabled={!isTokenMode && (!hasSufficientBalance || submitting || loadingBalance)}
               onClick={handleConfirmBuy}
-              className="rounded-lg bg-claude-accent px-3.5 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+              className="rounded-lg bg-claude-accent px-3.5 py-1.5 text-xs font-semibold text-claude-accentInk transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {isTokenMode
                 ? ct('Start Token Purchase', '开始代币购买')
