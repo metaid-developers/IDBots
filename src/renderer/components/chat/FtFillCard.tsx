@@ -4,15 +4,12 @@ import {
   formatFtRailLabel,
   inferFtChainAndStandard,
   type FtFillCardData,
-  type FtFillNextAction,
 } from './ftCardSyntax';
 import {
   ChainStandardBadge,
   CopyShortHashButton,
-  dispatchSuiteComposerDraft,
   RailVenueBadge,
   TK_CARD_SHELL,
-  TK_CHIP_BTN,
   TK_INSET_BOX,
   VerifyOrIdBadge,
 } from './tokenSuiteUi';
@@ -23,15 +20,15 @@ export interface FtFillCardProps {
 }
 
 /**
- * FtFillCard (Approved F2 — Dual-Flow Asset Receipt):
+ * FtFillCard (Approved F2 / S-1 — Dual-Flow Asset Receipt, clean buttonless footer):
  * Left outflow box ──▶ Right inflow box clearly shows what asset left and what
- * asset arrived (plus chain/standard provenance), followed by collapsible TxIDs.
+ * asset arrived (for both active buys and passive seller fills), followed by
+ * collapsible on-chain TxIDs.
  */
 const FtFillCard: React.FC<FtFillCardProps> = ({ data }) => {
   const [showTxids, setShowTxids] = useState(false);
   const isBuy = data.side === 'buy';
   const txids = data.txids ?? [];
-  const nextActions = data.nextActions ?? [];
   const { chain, standard } = inferFtChainAndStandard(
     data.assetKey,
     data.chain,
@@ -39,31 +36,21 @@ const FtFillCard: React.FC<FtFillCardProps> = ({ data }) => {
     data.rail,
   );
 
-  const handleNextAction = (action: FtFillNextAction) => {
-    const text =
-      action === 'browse_token_goods'
-        ? ct(
-            `Show digital goods and MRC-721 items that accept $${data.symbol}${data.assetKey ? ` (${data.assetKey})` : ''}.`,
-            `帮我看看有哪些支持用 $${data.symbol}${data.assetKey ? `（${data.assetKey}）` : ''} 直接购买的数字商品。`,
-          )
-        : ct(
-            `Find PayBuzz encrypted articles that can be unlocked with $${data.symbol}${data.assetKey ? ` (${data.assetKey})` : ''}.`,
-            `帮我检索可用 $${data.symbol}${data.assetKey ? `（${data.assetKey}）` : ''} 解锁阅读的付费专栏文章。`,
-          );
-    dispatchSuiteComposerDraft(text);
-  };
+  const paidMatch = data.totalPaidLabel.match(/^([^(（]+?)\s*[(（]([^)）]+)[)）]\s*$/);
+  const cleanPaidPrimary = paidMatch ? paidMatch[1].trim() : data.totalPaidLabel.trim();
+  const extractedPaidSub = paidMatch ? paidMatch[2].trim() : '';
 
   const outflowAmount = isBuy
-    ? data.totalPaidLabel.startsWith('-')
-      ? data.totalPaidLabel
-      : `-${data.totalPaidLabel}`
+    ? cleanPaidPrimary.startsWith('-')
+      ? cleanPaidPrimary
+      : `-${cleanPaidPrimary}`
     : `-${data.totalTokenDisplay} ${data.symbol}`;
 
   const inflowAmount = isBuy
     ? `+${data.totalTokenDisplay} ${data.symbol}`
-    : data.totalPaidLabel.startsWith('+')
-      ? data.totalPaidLabel
-      : `+${data.totalPaidLabel}`;
+    : cleanPaidPrimary.startsWith('+')
+      ? cleanPaidPrimary
+      : `+${cleanPaidPrimary}`;
 
   return (
     <div
@@ -116,6 +103,7 @@ const FtFillCard: React.FC<FtFillCardProps> = ({ data }) => {
           <div className="mt-[3px] truncate text-[10.5px] text-[#5b6472] dark:text-[#9aa3b2]">
             {isBuy
               ? data.feeLabel ||
+                extractedPaidSub ||
                 (data.rail
                   ? ct(formatFtRailLabel(data.rail, 'en'), formatFtRailLabel(data.rail, 'zh'))
                   : ct('Settled', '已结算'))
@@ -138,7 +126,7 @@ const FtFillCard: React.FC<FtFillCardProps> = ({ data }) => {
             {isBuy ? (
               <ChainStandardBadge chain={chain} standard={standard} compact />
             ) : (
-              data.avgUnitPriceLabel || ct('Wallet credited', '已入账钱包')
+              data.feeLabel || extractedPaidSub || data.avgUnitPriceLabel || ct('Wallet credited', '已入账钱包')
             )}
           </div>
         </div>
@@ -197,30 +185,6 @@ const FtFillCard: React.FC<FtFillCardProps> = ({ data }) => {
                 </ul>
               )}
             </div>
-          )}
-        </div>
-      )}
-
-      {/* Next Actions */}
-      {nextActions.length > 0 && (
-        <div className="mt-[9px] flex flex-wrap items-center gap-[6px]">
-          {nextActions.includes('browse_token_goods') && (
-            <button
-              type="button"
-              onClick={() => handleNextAction('browse_token_goods')}
-              className={TK_CHIP_BTN}
-            >
-              {ct(`Shop with $${data.symbol}`, `用 $${data.symbol} 逛数字好物`)}
-            </button>
-          )}
-          {nextActions.includes('browse_paybuzz') && (
-            <button
-              type="button"
-              onClick={() => handleNextAction('browse_paybuzz')}
-              className={TK_CHIP_BTN}
-            >
-              {ct('Unlock PayBuzz Articles', '解锁链上付费文章')}
-            </button>
           )}
         </div>
       )}

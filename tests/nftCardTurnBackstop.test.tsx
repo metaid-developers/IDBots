@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   appendNftCardFencesToReply,
   extractEmittedNftCardFences,
+  extractEmittedSkillBashCardFences,
   isEligibleBackstopTargetMessage,
   isNftCardBackstopTool,
   recordCapturedNftCardFences,
@@ -245,4 +246,56 @@ test('mrc721_sell_intent enriches emitted nft-card with caVerified, sellerName, 
   assert.match(html, /¥19\.90/);
   assert.match(html, /AI_Sunny/);
   assert.ok(z);
+});
+
+test('nftCardTurnBackstop captures wallet_token_orders and structured bash skill JSON card envelopes while ignoring plain docs', () => {
+  assert.equal(isNftCardBackstopTool('wallet_token_orders'), true);
+  const sampleObFence = [
+    '```ft-orderbook-card',
+    JSON.stringify({
+      assetKey: `mrc20:${'44'.repeat(32)}i0`,
+      symbol: 'METAID',
+      chain: 'btc',
+      standard: 'idcoin',
+      rail: 'btc-psbt',
+      totalOrdersCount: 12,
+      pageSize: 6,
+      orders: [
+        {
+          rank: 1,
+          orderId: 'ord_1',
+          rail: 'btc-psbt',
+          amountDisplay: '500',
+          unitPricePrimary: '1,440 sat',
+          totalPriceLabel: '0.0072 BTC',
+        },
+      ],
+    }),
+    '```',
+  ].join('\n');
+
+  const hostCaptured = extractEmittedNftCardFences(
+    'wallet_token_orders',
+    `$METAID order book:\n\n${sampleObFence}`,
+  );
+  assert.equal(hostCaptured.length, 1);
+  assert.equal(hostCaptured[0].tag, 'ft-orderbook-card');
+
+  // Structured skill JSON stdout via bash (`trade.js` / `broker.js`)
+  const skillStdout = JSON.stringify(
+    {
+      success: true,
+      cardType: 'ft-orderbook-card',
+      message: `Found 12 active orders.\n\n${sampleObFence}`,
+    },
+    null,
+    2,
+  );
+  const bashCaptured = extractEmittedSkillBashCardFences(skillStdout);
+  assert.equal(bashCaptured.length, 1);
+  assert.equal(bashCaptured[0].tag, 'ft-orderbook-card');
+
+  // Reading SKILL.md or grepping source files (non-JSON envelope) must NEVER trigger false captures
+  const docReadOutput = `# SKILL.md\nInclude verbatim:\n\n${sampleObFence}\n"cardType": "ft-orderbook-card" "message": "example"`;
+  assert.equal(extractEmittedSkillBashCardFences(docReadOutput).length, 0);
 });

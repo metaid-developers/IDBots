@@ -21,6 +21,7 @@ export type NftCardBackstopTag =
   | 'nft-card'
   | 'nft-collection-card'
   | 'token-card'
+  | 'ft-orderbook-card'
   | 'ft-order-card'
   | 'ft-quote-card'
   | 'ft-fill-card'
@@ -53,6 +54,7 @@ const ANNOUNCING_NFT_CARD_TOOLS = new Set<string>([
   'wallet_nft_cancel_sell',
   'wallet_nft_buy',
   'wallet_token_card',
+  'wallet_token_orders',
   'wallet_token_quote',
   'wallet_token_issue',
   'wallet_token_mint',
@@ -67,10 +69,10 @@ const ANNOUNCING_NFT_CARD_TOOLS = new Set<string>([
 ]);
 
 const NFT_CARD_FENCE_RE =
-  /```(nft-card|nft-collection-card|token-card|tokencard|ft-order-card|ft-quote-card|ft-fill-card|ft-my-orders-card|ft-portfolio-card|ft-bridge-card|ft-action-card)[ \t]*\r?\n([\s\S]*?)\r?\n```/gi;
+  /```(nft-card|nft-collection-card|token-card|tokencard|ft-orderbook-card|ft-orders-card|token-orderbook-card|ft-order-card|ft-quote-card|ft-fill-card|ft-my-orders-card|ft-portfolio-card|ft-bridge-card|ft-action-card)[ \t]*\r?\n([\s\S]*?)\r?\n```/gi;
 
 const FAST_BACKSTOP_HINT_RE =
-  /```(?:nft-card|nft-collection-card|token-card|tokencard|ft-(?:order|quote|fill|my-orders|portfolio|bridge|action)-card)/i;
+  /```(?:nft-card|nft-collection-card|token-card|tokencard|token-orderbook-card|ft-(?:orderbook|orders|order|quote|fill|my-orders|portfolio|bridge|action)-card)/i;
 
 export function normalizeHostToolBaseName(toolName: string): string {
   const trimmed = String(toolName ?? '').trim();
@@ -104,6 +106,14 @@ function deriveCardIdentityKey(
     if (batch) return `ft-order:batch:${batch}`;
     const assetKey = cleanKeyField(parsed.assetKey);
     return assetKey ? `ft-order:key:${assetKey}` : null;
+  }
+
+  if (tag === 'ft-orderbook-card') {
+    const assetKey = cleanKeyField(parsed.assetKey);
+    const rail = cleanKeyField(parsed.rail);
+    if (assetKey) return rail ? `ft-orderbook:${rail}:${assetKey}` : `ft-orderbook:key:${assetKey}`;
+    const symbol = cleanKeyField(parsed.symbol);
+    return symbol ? `ft-orderbook:sym:${symbol}` : null;
   }
 
   if (tag === 'ft-quote-card') {
@@ -189,7 +199,11 @@ export function parseNftCardFencesFromMarkdown(markdown: string): CapturedNftCar
   while ((match = NFT_CARD_FENCE_RE.exec(markdown)) !== null) {
     const rawTag = (match[1] ?? '').toLowerCase();
     const tag: NftCardBackstopTag =
-      rawTag === 'tokencard' ? 'token-card' : (rawTag as NftCardBackstopTag);
+      rawTag === 'tokencard'
+        ? 'token-card'
+        : rawTag === 'ft-orders-card' || rawTag === 'token-orderbook-card'
+          ? 'ft-orderbook-card'
+          : (rawTag as NftCardBackstopTag);
     const rawBody = (match[2] ?? '').trim();
     if (!rawBody) continue;
     try {
@@ -215,6 +229,48 @@ export function extractEmittedNftCardFences(
 ): CapturedNftCardFence[] {
   if (!isNftCardBackstopTool(toolName) || !toolResultText) return [];
   return parseNftCardFencesFromMarkdown(toolResultText);
+}
+
+/**
+ * Extract protocol card fences emitted by structured CLI skills (such as
+ * `metabot-token-broker` or `metabot-trade-metaidmarket-v2`) executed via DSH
+ * `bash`. Only matches genuine JSON skill envelopes (`{ success: true, cardType, message }`)
+ * so reading documentation or grepping source files never triggers false captures.
+ */
+export function extractEmittedSkillBashCardFences(toolResultText: string): CapturedNftCardFence[] {
+  if (
+    !toolResultText ||
+    !toolResultText.includes('"cardType"') ||
+    !toolResultText.includes('"message"')
+  ) {
+    return [];
+  }
+  const trimmed = toolResultText.trim();
+  const candidates: string[] = [trimmed];
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace && (firstBrace > 0 || lastBrace < trimmed.length - 1)) {
+    candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
+  }
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as Record<string, unknown> | null;
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        parsed.success === true &&
+        typeof parsed.cardType === 'string' &&
+        typeof parsed.message === 'string'
+      ) {
+        const fences = parseNftCardFencesFromMarkdown(parsed.message);
+        if (fences.length > 0) return fences;
+      }
+    } catch {
+      // Try next candidate slice
+    }
+  }
+  return [];
 }
 
 /**

@@ -381,6 +381,7 @@ import {
 import {
   appendNftCardFencesToReply,
   extractEmittedNftCardFences,
+  extractEmittedSkillBashCardFences,
   isEligibleBackstopTargetMessage,
   recordCapturedNftCardFences,
   selectMissingNftCardFences,
@@ -13884,6 +13885,18 @@ export class CoworkRunner extends EventEmitter {
             const stored = this.store.addMessage(sessionId, message as Omit<CoworkMessage, 'id' | 'timestamp'>);
             if (stored.type === 'assistant') {
               turnAssistantMessageIds.push(stored.id);
+            } else if (
+              stored.type === 'tool_result' &&
+              messageMeta?.isError !== true &&
+              typeof stored.content === 'string'
+            ) {
+              const skillCards = extractEmittedSkillBashCardFences(stored.content);
+              if (skillCards.length > 0) {
+                activeSession.emittedNftCardFences = recordCapturedNftCardFences(
+                  activeSession.emittedNftCardFences ?? [],
+                  skillCards,
+                );
+              }
             }
             if (
               (message as { type?: string } | null)?.type === 'assistant'

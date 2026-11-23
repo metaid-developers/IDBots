@@ -9,7 +9,11 @@ const require = Module.createRequire(import.meta.url);
 const { SqliteStore } = require('../dist-electron/main/sqliteStore.js');
 const {
   TokenOrderWatcher,
+  buildPassiveSellFillCardMessage,
 } = require('../dist-electron/main/services/tokenOrderWatcher.js');
+const {
+  handleFtWatchRegisterRoute,
+} = require('../dist-electron/main/services/ftCommerceGatewayRoutes.js');
 const {
   registerFtActiveOrder,
   getFtBatchOrderProgress,
@@ -204,5 +208,111 @@ test('TokenOrderWatcher: detects external MVC TokenSell and BTC PSBT fills, trac
     assert.equal(summary2.checked, 1);
     assert.equal(summary2.filled, 0);
     assert.equal(listFtActiveOrders(db, { status: 'active' }).length, 1);
+  });
+});
+
+test('TokenOrderWatcher passive sell card: polls /api/v1/market/mrc20/order/detail, builds S-1 ft-fill-card(side=sell), and pushes to Cowork session', async () => {
+  await withWatcherDb(async ({ db, saveDb }) => {
+    // Register via gateway route with snake_case session_id + per-lot marketOrderId
+    const gwRes = await handleFtWatchRegisterRoute(
+      {
+        getDb: () => db,
+        saveDb,
+        getMetabotStore: () => ({
+          getMetabotById: () => ({
+            id: 7,
+            name: 'SellerBot',
+            mvc_address: SELLER_MVC_ADDR,
+            btc_address: SELLER_BTC_ADDR,
+          }),
+        }),
+      },
+      JSON.stringify({
+        metabotId: 7,
+        session_id: '', // empty to test fallback session resolution!
+        lots: [
+          {
+            listingKey: 'btc-mkt-ord-99',
+            batchGroupId: 'batch-mkt-99',
+            chain: 'btc',
+            rail: 'btc-psbt',
+            assetKey: `mrc20:${'e'.repeat(64)}i0`,
+            symbol: 'METAID',
+            decimals: 8,
+            amountBase: '50000000000',
+            amountDisplay: '500',
+            utxoOutpoint: `${'7'.repeat(64)}:0`,
+            priceSats: 720000,
+            marketOrderId: 'mkt_order_live_99',
+          },
+        ],
+      }),
+    );
+    assert.equal(gwRes.status, 200);
+    assert.equal(gwRes.body.count, 1);
+
+    const requestedUrls: string[] = [];
+    const passivePushes: Array<{ content: string; buyerAddress?: string }> = [];
+    const notifications: any[] = [];
+    const dealTxId = '8'.repeat(64);
+
+    const watcher = new TokenOrderWatcher(db, saveDb, {
+      fetchImpl: (async (urlInput: string | URL) => {
+        const u = String(urlInput);
+        requestedUrls.push(u);
+        if (u.includes('/api-market/api/v1/market/mrc20/order/detail?orderId=mkt_order_live_99')) {
+          return new Response(
+            JSON.stringify({
+              code: 0,
+              data: {
+                orderId: 'mkt_order_live_99',
+                orderState: 3,
+                txId: dealTxId,
+                buyerAddress: BUYER_BTC_ADDR,
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response('{}', { status: 404 });
+      }) as any,
+      onOrderFilledPassive: (event: any, order: any, meta: { buyerAddress?: string }) => {
+        const content = buildPassiveSellFillCardMessage({
+          assetKey: order.assetKey,
+          symbol: order.symbol,
+          rail: order.rail,
+          chain: order.chain,
+          amountDisplay: order.amountDisplay,
+          priceSats: order.priceSats,
+          filledTxId: event.filledTxId,
+          buyerAddress: meta.buyerAddress,
+          filledLots: event.filledLots,
+          totalLots: event.totalLots,
+        });
+        passivePushes.push({ content, buyerAddress: meta.buyerAddress });
+        return { sessionId: 'sess-owner-fallback-7' };
+      },
+      recordNotification: (notif: any) => notifications.push(notif),
+      emitLog: () => {},
+    });
+
+    const res = await watcher.pollOnce();
+    assert.equal(res.checked, 1);
+    assert.equal(res.filled, 1);
+    assert.ok(
+      requestedUrls.some((u) => u.includes('/api/v1/market/mrc20/order/detail?orderId=mkt_order_live_99')),
+    );
+    assert.equal(passivePushes.length, 1);
+    assert.equal(passivePushes[0].buyerAddress, BUYER_BTC_ADDR);
+    assert.match(passivePushes[0].content, /```ft-fill-card/);
+    assert.match(passivePushes[0].content, /"side":\s*"sell"/);
+    assert.match(passivePushes[0].content, /0\.0072 BTC \(720,000 sats\)/);
+    assert.match(passivePushes[0].content, /买家 bc1qar\.\.\.5mdq/);
+    // Fallback session ID returned by onOrderFilledPassive upgrades notification target to session!
+    assert.equal(notifications.length, 1);
+    assert.deepEqual(notifications[0].target, {
+      kind: 'session',
+      sessionId: 'sess-owner-fallback-7',
+    });
   });
 });

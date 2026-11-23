@@ -269,6 +269,7 @@ const TOOLS_BY_DOMAIN: Record<Exclude<ToolDomain, 'browser_automation'>, readonl
     'wallet_token_bridge_card',
     'wallet_token_buy',
     'wallet_token_card',
+    'wallet_token_orders',
     'wallet_token_quote',
     'wallet_token_cancel_sell',
     'wallet_token_my_orders',

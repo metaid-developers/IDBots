@@ -5,15 +5,19 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import {
   formatFtAssetBadge,
   formatFtFillCardFence,
+  formatFtOrderBookCardFence,
   formatFtOrderCardFence,
   formatFtQuoteCardFence,
   isFtFillCardFenceLanguage,
+  isFtOrderBookCardFenceLanguage,
   isFtOrderCardFenceLanguage,
   isFtQuoteCardFenceLanguage,
   parseFtFillCardFence,
+  parseFtOrderBookCardFence,
   parseFtOrderCardFence,
   parseFtQuoteCardFence,
 } from '../src/renderer/components/chat/ftCardSyntax';
+import FtOrderBookCard from '../src/renderer/components/chat/FtOrderBookCard';
 import FtQuoteCard from '../src/renderer/components/chat/FtQuoteCard';
 import FtOrderCard from '../src/renderer/components/chat/FtOrderCard';
 import FtFillCard from '../src/renderer/components/chat/FtFillCard';
@@ -147,7 +151,7 @@ test('FtQuoteCard SSR: distinguishes CA-verified token from unverified homograph
   assert.match(unverifiedHtml, /ID: a242…:005d22…2222/);
 });
 
-test('FtOrderCard & FtFillCard SSR: renders multi-lot progress, promo poster button, batch cancel, and utility handoffs', () => {
+test('FtOrderCard & FtFillCard SSR: renders multi-lot progress & dual-flow receipt with all bottom promo/cancel/utility buttons stripped', () => {
   const orderHtml = renderToStaticMarkup(
     React.createElement(FtOrderCard, {
       data: {
@@ -169,8 +173,8 @@ test('FtOrderCard & FtFillCard SSR: renders multi-lot progress, promo poster but
   assert.match(orderHtml, /500 MC × 5/);
   assert.match(orderHtml, /2\/5/);
   assert.match(orderHtml, /width:40%/);
-  assert.match(orderHtml, /(Generate Promo Poster|生成社群推销海报)/);
-  assert.match(orderHtml, /(Cancel All Remaining|一键全部撤单)/);
+  assert.doesNotMatch(orderHtml, /(Generate Promo Poster|生成社群推销海报)/);
+  assert.doesNotMatch(orderHtml, /(Cancel All Remaining|一键全部撤单)/);
 
   const fillHtml = renderToStaticMarkup(
     React.createElement(FtFillCard, {
@@ -191,8 +195,102 @@ test('FtOrderCard & FtFillCard SSR: renders multi-lot progress, promo poster but
   assert.match(fillHtml, /data-ft-card="fill"/);
   assert.match(fillHtml, /\+1,000 METAID/);
   assert.match(fillHtml, /145 ME/);
-  assert.match(fillHtml, /(Shop with \$METAID|用 \$METAID 逛数字好物)/);
-  assert.match(fillHtml, /(Unlock PayBuzz Articles|解锁链上付费文章)/);
+  assert.doesNotMatch(fillHtml, /(Shop with \$METAID|用 \$METAID 逛数字好物)/);
+  assert.doesNotMatch(fillHtml, /(Unlock PayBuzz Articles|解锁链上付费文章)/);
+});
+
+test('FtOrderBookCard (OB-1) & FtFillCard (S-1 passive sell) SSR: renders 6-per-page paginated order book, #1 floor highlight, and passive sell receipt', () => {
+  assert.equal(isFtOrderBookCardFenceLanguage('ft-orderbook-card'), true);
+  assert.equal(isFtOrderBookCardFenceLanguage('ft-orders-card'), true);
+
+  const orders = Array.from({ length: 18 }, (_, i) => ({
+    rank: i + 1,
+    orderId: `ord_metaid_${i + 1}`,
+    rail: 'btc-psbt' as const,
+    amountDisplay: String((i + 1) * 100),
+    unitPricePrimary: `${1440 + i * 10} sat`,
+    unitPriceSecondary: '0.0000144 BTC',
+    totalPriceLabel: `${((1440 + i * 10) * (i + 1) * 100 / 1e8).toFixed(5)} BTC`,
+    sellerAddress: 'bc1qseller0000000000000000000000000000',
+  }));
+
+  const obFence = formatFtOrderBookCardFence({
+    assetKey: MRC20_ASSET_KEY,
+    symbol: 'METAID',
+    chain: 'btc',
+    standard: 'idcoin',
+    rail: 'btc-psbt',
+    caVerified: true,
+    floorPriceLabel: '1,440 sat',
+    floorUsdText: '$0.98',
+    holdersCount: 4128,
+    totalOrdersCount: 42,
+    pageSize: 6,
+    totalCurrencyUnit: 'BTC',
+    orders,
+  });
+
+  const parsedOb = parseFtOrderBookCardFence(
+    obFence.replace(/^```ft-orderbook-card\n|\n```$/g, ''),
+  );
+  assert.ok(parsedOb);
+  assert.equal(parsedOb.orders.length, 18);
+  assert.equal(parsedOb.pageSize, 6);
+  assert.equal(parsedOb.totalOrdersCount, 42);
+
+  const obHtml = renderToStaticMarkup(React.createElement(FtOrderBookCard, { data: parsedOb }));
+  assert.match(obHtml, /data-ft-card="orderbook"/);
+  assert.match(obHtml, /data-ft-floor-row="true"/);
+  assert.match(obHtml, /1,440 sat/);
+  assert.match(obHtml, /\$0\.98/);
+  assert.match(obHtml, /4,128/);
+  assert.match(obHtml, /42/);
+  // Page 1 of 3 shows 1/3 (1–6) and row #6, NOT row #7
+  assert.match(obHtml, /1\/3/);
+  assert.match(obHtml, /1–6/);
+  assert.match(obHtml, /1490 sat/);
+  assert.doesNotMatch(obHtml, /1500 sat/);
+  assert.match(obHtml, /(Buy Lowest Lot|一键买最低 1 单)/);
+
+  // Segment splitter & MarkdownContent fallback both render ft-orderbook-card
+  const segs = splitTokenCardMessageSegments(`Current order book:\n\n${obFence}`);
+  assert.equal(segs.length, 2);
+  assert.equal(segs[1].kind, 'ft-orderbook-card');
+  if (segs[1].kind !== 'markdown') {
+    const segHtml = renderToStaticMarkup(
+      React.createElement(TokenSuiteSegmentCard, { segment: segs[1] }),
+    );
+    assert.match(segHtml, /data-ft-card="orderbook"/);
+  }
+  const mdHtml = renderToStaticMarkup(React.createElement(MarkdownContent, { content: obFence }));
+  assert.match(mdHtml, /data-ft-card="orderbook"/);
+
+  // Passive sell S-1 receipt via FtFillCard(side="sell")
+  const passiveSellHtml = renderToStaticMarkup(
+    React.createElement(FtFillCard, {
+      data: {
+        side: 'sell',
+        assetKey: MRC20_ASSET_KEY,
+        symbol: 'METAID',
+        caVerified: true,
+        rail: 'btc-psbt',
+        chain: 'btc',
+        totalTokenDisplay: '500',
+        filledOrderCount: 1,
+        totalPaidLabel: '0.0072 BTC (720,000 sats)',
+        avgUnitPriceLabel: '1,440 sats',
+        counterpartyName: '买家 bc1qar...5mdq',
+        txids: ['dd'.repeat(32)],
+        nextActions: [],
+      },
+    }),
+  );
+  assert.match(passiveSellHtml, /data-ft-card="fill"/);
+  assert.match(passiveSellHtml, /-500 METAID/);
+  assert.match(passiveSellHtml, /\+0\.0072 BTC/);
+  assert.match(passiveSellHtml, /720,000 sats/);
+  assert.match(passiveSellHtml, /bc1qar\.\.\.5mdq/);
+  assert.doesNotMatch(passiveSellHtml, /(Shop with|逛数字好物|Unlock PayBuzz|解锁链上付费文章)/);
 });
 
 test('FtMandateConfirmModal SSR: gates ME escrow confirmation on spendable ME balance and surfaces inline QR top-up', () => {

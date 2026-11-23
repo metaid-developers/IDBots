@@ -1058,18 +1058,24 @@ export async function handleFtWatchRegisterRoute(
   }
   const gate = deps.mandateGate ?? defaultFtMandateGate;
   try {
-    const metabotId = Number(body.metabotId ?? body.metabot_id);
-    const mandateToken = String(body.mandateToken ?? body.mandate_token ?? '').trim();
-    const assetKey = normalizeFtAssetKey(body.assetKey ?? body.asset_key);
-    const chain: 'mvc' | 'btc' = String(body.chain ?? (assetKey.startsWith('mrc20:') ? 'btc' : 'mvc')).toLowerCase() === 'btc' ? 'btc' : 'mvc';
-    const rail = String(body.rail ?? '') as FtMandateRail;
-    const symbol = String(body.symbol ?? 'TOKEN').trim();
-    const decimals = Number(body.decimals ?? 0) || 0;
-
     // Support both single-lot and batch `lots` array registration
     const rawLots: Array<Record<string, unknown>> = Array.isArray(body.lots)
       ? (body.lots as Array<Record<string, unknown>>)
       : [body];
+    const firstLot = rawLots[0] ?? {};
+
+    const metabotId = Number(body.metabotId ?? body.metabot_id ?? firstLot.metabotId ?? firstLot.metabot_id);
+    const mandateToken = String(body.mandateToken ?? body.mandate_token ?? '').trim();
+    const assetKey = normalizeFtAssetKey(
+      body.assetKey ?? body.asset_key ?? firstLot.assetKey ?? firstLot.asset_key,
+    );
+    const chain: 'mvc' | 'btc' =
+      String(body.chain ?? firstLot.chain ?? (assetKey.startsWith('mrc20:') ? 'btc' : 'mvc')).toLowerCase() === 'btc'
+        ? 'btc'
+        : 'mvc';
+    const rail = String(body.rail ?? firstLot.rail ?? '') as FtMandateRail;
+    const symbol = String(body.symbol ?? firstLot.symbol ?? 'TOKEN').trim();
+    const decimals = Number(body.decimals ?? firstLot.decimals ?? 0) || 0;
 
     if (mandateToken) {
       gate.consumeMandate({
@@ -1216,7 +1222,12 @@ export async function handleFtWatchRegisterRoute(
           ...(lot.marketOrderId ? { marketOrderId: String(lot.marketOrderId) } : {}),
           ...(lot.tokenSellJson ? { tokenSellJson: String(lot.tokenSellJson) } : {}),
           sellerAddress: chain === 'btc' ? bot?.btc_address : bot?.mvc_address,
-          ...(typeof body.sessionId === 'string' ? { sessionId: body.sessionId } : {}),
+          ...(() => {
+            const rawSessionId = String(
+              lot.sessionId ?? lot.session_id ?? body.sessionId ?? body.session_id ?? '',
+            ).trim();
+            return rawSessionId ? { sessionId: rawSessionId } : {};
+          })(),
         },
         deps.saveDb,
       );

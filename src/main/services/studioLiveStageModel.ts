@@ -634,7 +634,7 @@ const CHAIN_READ_TOOLS = new Set([
   'search_qa', 'list_latest_questions', 'get_question_answers', 'search_social_posts',
   'social_post_detail', 'social_post_comments', 'metaid_profile', 'search_metaids',
   'list_online_bots', 'list_online_services', 'check_metafile_route', 'metaprotocol_registry',
-  'wallet_resolve_global_metaid', 'wallet_balance', 'wallet_mrc20_balance', 'wallet_token_card', 'wallet_token_quote', 'wallet_token_portfolio', 'wallet_token_my_orders', 'wallet_token_bridge_card', 'wallet_nft_balance', 'wallet_token_balance', 'wallet_token_issued_list', 'wallet_nft_sell_orders',
+  'wallet_resolve_global_metaid', 'wallet_balance', 'wallet_mrc20_balance', 'wallet_token_card', 'wallet_token_orders', 'wallet_token_quote', 'wallet_token_portfolio', 'wallet_token_my_orders', 'wallet_token_bridge_card', 'wallet_nft_balance', 'wallet_token_balance', 'wallet_token_issued_list', 'wallet_nft_sell_orders',
   'wallet_token_sell_orders', 'wallet_btc_utxos', 'wallet_btc_pubkey', 'wallet_btc_multisig_address',
   'escrow_order_info', 'escrow_order_list', 'check_peer_relationship', 'list_social_connections',
   'preference_lessons_search', 'preference_round_status', 'preference_rounds_list',

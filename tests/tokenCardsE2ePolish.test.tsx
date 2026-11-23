@@ -14,6 +14,7 @@ import {
   extractGlobalMetaIdCandidate,
 } from '../src/main/services/globalMetaid';
 import {
+  buildFtOrderBookCardSnapshot,
   buildFtQuoteCardSnapshot,
   buildTokenCardSnapshot,
   fetchLiveFtSellerOrders,
@@ -44,9 +45,11 @@ import { buildOwnerInteractionPrompt } from '../src/main/libs/ownerInteractionPr
 import {
   parseFtActionCardFence,
   parseFtMyOrdersCardFence,
+  parseFtOrderBookCardFence,
   parseFtOrderCardFence,
   parseFtQuoteCardFence,
 } from '../src/renderer/components/chat/ftCardSyntax';
+import FtOrderBookCard from '../src/renderer/components/chat/FtOrderBookCard';
 import FtQuoteCard from '../src/renderer/components/chat/FtQuoteCard';
 import FtMyOrdersCard from '../src/renderer/components/chat/FtMyOrdersCard';
 import FtOrderCard from '../src/renderer/components/chat/FtOrderCard';
@@ -1079,4 +1082,105 @@ test('Issue #4b: compiled buildMvcTokenSellRawTxWorker.js builds real TokenSell 
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test('MRC-20 OrderBook Card: wallet_token_orders + buildFtOrderBookCardSnapshot builds OB-1 paginated ft-orderbook-card sorted ascending', async () => {
+  const metaidMrc20Id = 'a393fd821be679ce7f8ad176b7dc02fb3f8c2a50d2a5c3ab08fb6bd9e11a68c5i0';
+  const mockFetch: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.includes('coin-price')) {
+      return Response.json({ code: 0, data: { btc: 68000, space: 0.45 } });
+    }
+    if (url.includes('mrc20/price')) {
+      return Response.json({
+        code: 0,
+        data: { priceInfo: { [`${metaidMrc20Id}/METAID`]: 0.0098 } },
+      });
+    }
+    if (url.includes('contract/ft/price')) {
+      return Response.json({ code: 0, data: {} });
+    }
+    if (
+      url.includes('/api/v1/common/mrc20/tick/info') ||
+      url.includes('/wallet-api/v3/mrc20/tick/info')
+    ) {
+      return Response.json({
+        code: 0,
+        data: {
+          mrc20Id: metaidMrc20Id,
+          tick: 'METAID',
+          tokenName: 'MetaID Coin',
+          decimals: '8',
+          holders: 4128,
+        },
+      });
+    }
+    if (url.includes('/api/v1/market/mrc20/orders')) {
+      // Intentionally unsorted to verify ascending sort by unit price
+      const list = Array.from({ length: 15 }, (_, idx) => {
+        const rate = idx === 0 ? 18 : 14 + idx * 0.5;
+        const qty = 500;
+        return {
+          orderId: `mrc20_ord_${idx + 1}`,
+          mrc20Id: metaidMrc20Id,
+          tick: 'METAID',
+          amountStr: String(qty),
+          askType: 0,
+          priceAmount: Math.round(rate * qty),
+          tokenPriceRate: rate,
+          sellerAddress: 'bc1qselleraddress0000000000000000000000',
+        };
+      });
+      return Response.json({ code: 0, data: { list, total: 37 } });
+    }
+    if (url.includes('/api/ft/market/listings')) {
+      return Response.json({ code: 0, data: { list: [] } });
+    }
+    if (url.includes('/api/ft/tokens/summary')) {
+      return Response.json({ code: 0, data: { caVerified: true } });
+    }
+    return Response.json({ code: 0, data: {} });
+  };
+
+  const snap = await buildFtOrderBookCardSnapshot(
+    { query: '$METAID' },
+    { fetchImpl: mockFetch },
+  );
+  assert.equal(snap.card.symbol, 'METAID');
+  assert.equal(snap.card.rail, 'btc-psbt');
+  assert.equal(snap.card.pageSize, 6);
+  assert.equal(snap.card.totalOrdersCount, 37);
+  assert.equal(snap.card.holdersCount, 4128);
+  assert.equal(snap.card.orders.length, 15);
+  // Lowest rate is idx=1 -> 14.5 sat
+  assert.equal(snap.card.orders[0].orderId, 'mrc20_ord_2');
+  assert.equal(snap.card.orders[0].rank, 1);
+  assert.match(snap.card.orders[0].unitPricePrimary, /14\.5 sat/);
+
+  const builtTools = buildWalletAgentTools({
+    tool: mockToolFactory,
+    sessionId: 'sess-ob',
+    resolveMetabotId: () => 1,
+    control: {
+      getTokenOrders: (inp) => buildFtOrderBookCardSnapshot(inp, { fetchImpl: mockFetch }),
+    } as unknown as WalletToolsControl,
+  });
+  const ordersTool = builtTools.find((t: any) => t.name === 'wallet_token_orders')!;
+  assert.ok(ordersTool, 'wallet_token_orders must be registered');
+  const toolRes = await ordersTool.handler({ token: '$METAID' });
+  const parsedOb = parseFtOrderBookCardFence(
+    extractFencePayload(toolRes.content[0].text as string, 'ft-orderbook-card'),
+  );
+  assert.ok(parsedOb);
+  assert.equal(parsedOb.totalOrdersCount, 37);
+  const html = renderToStaticMarkup(<FtOrderBookCard data={parsedOb} />);
+  assert.match(html, /data-ft-card="orderbook"/);
+  assert.match(html, /1\/3/);
+
+  assert.equal(isNftCardBackstopTool('wallet_token_orders'), true);
+  assert.equal(getToolCapabilitySpec('wallet_token_orders')?.domain, 'financial');
+  const finExpand = resolveMobileToolExpansions(undefined, '查看 $METAID 挂单情况');
+  assert.equal(isMobileToolVisible('wallet_token_orders', finExpand), true);
+  const studioPrompt = buildOwnerInteractionPrompt({ surface: 'desktop_studio', hasDesktopBrowser: true } as any);
+  assert.match(studioPrompt, /wallet_token_orders/);
 });
