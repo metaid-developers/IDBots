@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { ChevronDownIcon, FolderIcon } from '@heroicons/react/24/outline';
@@ -65,6 +65,11 @@ import type { PanelOpenDelegation } from './panelDelegationStatus';
 import { createMessageQuotedSelection, parseSentQuoteBlock, parseSentSelectionQuoteBlock } from '../../components/cowork/coworkQuotedSelections';
 import { buildSentQuoteDisplaySources, buildSentSelectionQuoteLabelSets, transientHighlight, QUOTE_JUMP_HIGHLIGHT_MS } from '../../components/cowork/CoworkSessionDetail';
 import { resolveBubbleSelectedText } from './panelBubbleSelection';
+import {
+  buildPanelAutoScrollFollowSignal,
+  resolvePanelScrollInteraction,
+  shouldPinPanelToBottomOnUpdate,
+} from './panelAutoScroll';
 
 type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?: string | null; llm_effort?: string | null };
 
@@ -594,6 +599,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     setIdentityAnchorEl(document.querySelector<HTMLElement>('[data-slot="cowork-header-identity-anchor"]'));
   }, []);
   const listRef = useRef<HTMLDivElement>(null);
+  const listContentRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   const folderButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -948,21 +954,71 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
 
   const shouldAutoScrollRef = useRef(true);
   const pinningScrollRef = useRef(false);
+  const lastScrollTopRef = useRef(0);
+  const lastAutoScrollSessionIdRef = useRef<string | null>(null);
+  const wasStreamingRef = useRef(isStreaming);
+  const isStreamingRef = useRef(isStreaming);
+  isStreamingRef.current = isStreaming;
+  const isLoadingEarlierRef = useRef(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
-  useEffect(() => {
-    shouldAutoScrollRef.current = true;
-    setShowScrollToBottom(false);
-  }, [currentSession?.id]);
-
-  useEffect(() => {
+  const pinListToBottom = useCallback(() => {
     const list = listRef.current;
-    if (list && shouldAutoScrollRef.current) {
-      pinningScrollRef.current = true;
-      list.scrollTop = list.scrollHeight;
-      pinningScrollRef.current = false;
+    if (!list) return;
+    pinningScrollRef.current = true;
+    list.scrollTop = list.scrollHeight;
+    lastScrollTopRef.current = list.scrollTop;
+    pinningScrollRef.current = false;
+    shouldAutoScrollRef.current = true;
+    setShowScrollToBottom((prev) => (prev ? false : prev));
+  }, []);
+
+  const autoScrollFollowSignal = useMemo(
+    () => buildPanelAutoScrollFollowSignal(visibleMessages, isStreaming),
+    [visibleMessages, isStreaming],
+  );
+
+  useLayoutEffect(() => {
+    const nextSessionId = currentSession?.id ?? null;
+    const sessionChanged = lastAutoScrollSessionIdRef.current !== nextSessionId;
+    const wasStreaming = wasStreamingRef.current;
+    lastAutoScrollSessionIdRef.current = nextSessionId;
+    wasStreamingRef.current = isStreaming;
+    if (sessionChanged) {
+      lastScrollTopRef.current = 0;
+      shouldAutoScrollRef.current = true;
+      setShowScrollToBottom(false);
     }
-  }, [visibleMessages.length, isStreaming]);
+    const shouldPin = shouldPinPanelToBottomOnUpdate({
+      isStreaming,
+      wasStreaming,
+      shouldAutoScroll: shouldAutoScrollRef.current,
+      isLoadingEarlier: isLoadingEarlierRef.current,
+      sessionChanged,
+    });
+    if (shouldPin) {
+      pinListToBottom();
+    }
+  }, [currentSession?.id, autoScrollFollowSignal, isStreaming, pinListToBottom]);
+
+  // Keep the bottom pinned whenever async content (images, markdown tables,
+  // token cards) grows the transcript or the fixed bottom status row changes
+  // the scroller's viewport height while streaming or tail-pinned.
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const list = listRef.current;
+    const content = listContentRef.current;
+    if (!list && !content) return undefined;
+    const observer = new ResizeObserver(() => {
+      if (isLoadingEarlierRef.current) return;
+      if (isStreamingRef.current || shouldAutoScrollRef.current) {
+        pinListToBottom();
+      }
+    });
+    if (list) observer.observe(list);
+    if (content) observer.observe(content);
+    return () => observer.disconnect();
+  }, [pinListToBottom]);
 
   // Locator rail rows (purity pass #2 ③): identity + preview text per
   // visible message; the rail itself decides visibility from overflow, and
@@ -987,6 +1043,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     const scroller = listRef.current;
     const prevScrollHeight = scroller?.scrollHeight ?? 0;
     const prevScrollTop = scroller?.scrollTop ?? 0;
+    isLoadingEarlierRef.current = true;
     shouldAutoScrollRef.current = false;
     setIsLoadingEarlier(true);
     try {
@@ -996,10 +1053,12 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           const addedHeight = scroller.scrollHeight - prevScrollHeight;
           pinningScrollRef.current = true;
           scroller.scrollTop = Math.max(0, prevScrollTop + addedHeight);
+          lastScrollTopRef.current = scroller.scrollTop;
           pinningScrollRef.current = false;
         });
       }
     } finally {
+      isLoadingEarlierRef.current = false;
       setIsLoadingEarlier(false);
     }
   }, [currentSession?.messageHistory?.hasMoreBefore, isLoadingEarlier]);
@@ -1008,11 +1067,18 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     if (pinningScrollRef.current) return;
     const scroller = listRef.current;
     if (!scroller) return;
-    const distanceToBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    shouldAutoScrollRef.current = distanceToBottom <= 96;
+    const interaction = resolvePanelScrollInteraction({
+      scrollTop: scroller.scrollTop,
+      scrollHeight: scroller.scrollHeight,
+      clientHeight: scroller.clientHeight,
+      prevScrollTop: lastScrollTopRef.current,
+      prevShouldAutoScroll: shouldAutoScrollRef.current,
+    });
+    lastScrollTopRef.current = interaction.nextScrollTop;
+    shouldAutoScrollRef.current = interaction.nextShouldAutoScroll;
     // Generous threshold (280px) so the floating "back to bottom" button only
     // appears once the owner has genuinely scrolled up away from the live tail.
-    const nextShow = distanceToBottom > 280;
+    const nextShow = interaction.distanceToBottom > 280;
     setShowScrollToBottom((prev) => (prev === nextShow ? prev : nextShow));
     if (scroller.scrollTop <= 96 && currentSession?.messageHistory?.hasMoreBefore && !isLoadingEarlier) {
       void handleLoadEarlierMessages();
@@ -1020,14 +1086,8 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   }, [currentSession?.messageHistory?.hasMoreBefore, handleLoadEarlierMessages, isLoadingEarlier]);
 
   const handleScrollToBottomClick = useCallback(() => {
-    const scroller = listRef.current;
-    if (!scroller) return;
-    pinningScrollRef.current = true;
-    scroller.scrollTop = scroller.scrollHeight;
-    pinningScrollRef.current = false;
-    shouldAutoScrollRef.current = true;
-    setShowScrollToBottom(false);
-  }, []);
+    pinListToBottom();
+  }, [pinListToBottom]);
   const delegationSessionId = currentSession?.id ?? null;
   const delegationPollingActive = Boolean(currentSession && isAssistantMode && !isStreaming);
   useEffect(() => {
@@ -1099,8 +1159,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   const handleSubmit = async (prompt: string, skillPrompt?: string) => {
     if (!currentSession && selectedMetabotId == null) return; // botless machines never start sessions here
     setShowHistory(false);
-    shouldAutoScrollRef.current = true;
-    setShowScrollToBottom(false);
+    pinListToBottom();
     const captureOutgoingPrompt = async () => {
       // Element-picker capture (ABC v0.10.0): live marks first, then the
       // pre-navigation cache. First sends pass this preparation into start so
@@ -1270,6 +1329,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           onScroll={handleListScroll}
           className="h-full space-y-2.5 overflow-y-auto overflow-x-hidden pl-1 pr-5 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
+        <div ref={listContentRef} className={visibleMessages.length === 0 ? 'h-full' : 'space-y-2.5'}>
         {visibleMessages.length === 0 ? (
           needsBootstrap ? (
             // No bot at all on this machine: block the chat with bootstrap
@@ -1349,36 +1409,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
             {visibleMessages.map(renderMessage)}
           </>
         )}
-        {isStreaming ? (
-          // Assistant mode uses the same bot-avatar activity indicator as the
-          // main cowork chat (avatar + breathing ring + status line); the
-          // panel is a side surface, so the indicator's compact inline form
-          // fits without the transcript's gutter wrapper. Professional mode
-          // keeps the original pulse dots.
-          isAssistantMode ? (
-            <AssistantActivityIndicator
-              inline
-              messages={messages}
-              avatar={currentSession?.metabotAvatar ?? selectedMetabot?.avatar ?? null}
-              sessionId={currentSession?.id ?? null}
-              waitingForOwner={waitingForOwner}
-            />
-          ) : (
-            <div className="flex items-center gap-1 px-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:150ms]" />
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:300ms]" />
-            </div>
-          )
-        ) : openDelegations.length > 0 ? (
-          // Idle turn, working teammate: the reply position carries the
-          // worker status row instead of going blank (C2).
-          <PanelDelegationStatusRow
-            delegations={openDelegations}
-            twinName={chipMetabot?.name ?? null}
-            onOpenWorkerSession={handleOpenWorkerSession}
-          />
-        ) : null}
+        </div>
         </div>
         {showScrollToBottom && visibleMessages.length > 0 ? (
           <button
@@ -1399,6 +1430,37 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           onTickJump={handleLocatorTickJump}
         />
       </div>
+
+      {/* Pinned bottom activity / delegation status row: mounted outside the
+          transcript scroller so status text stays visible at the bottom even
+          during long streaming turns or while reviewing earlier history. */}
+      {isStreaming ? (
+        <div data-slot="panel-bottom-status" className="shrink-0 pl-1 pr-2">
+          {isAssistantMode ? (
+            <AssistantActivityIndicator
+              inline
+              messages={messages}
+              avatar={currentSession?.metabotAvatar ?? selectedMetabot?.avatar ?? null}
+              sessionId={currentSession?.id ?? null}
+              waitingForOwner={waitingForOwner}
+            />
+          ) : (
+            <div className="flex items-center gap-1 px-1 py-1.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:150ms]" />
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:300ms]" />
+            </div>
+          )}
+        </div>
+      ) : openDelegations.length > 0 ? (
+        <div data-slot="panel-bottom-status" className="shrink-0 pl-1 pr-2">
+          <PanelDelegationStatusRow
+            delegations={openDelegations}
+            twinName={chipMetabot?.name ?? null}
+            onOpenWorkerSession={handleOpenWorkerSession}
+          />
+        </div>
+      ) : null}
 
       {/* Live sessions keep their read-only identity in the header. The draft
           picker lives directly in the welcome page above. */}
