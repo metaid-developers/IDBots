@@ -1,16 +1,8 @@
 /**
- * Knowledge Base panel ("知识库" tab) for the MetaBot edit view.
+ * Knowledge Base panel ("知识库" tab) in Studio Linear Style B.
  *
- * Manages this Bot's document corpora entirely through the `knowledgeBase:*`
- * IPC surface (immediate effect, no tab dirty-tracking / on-chain sync): list,
- * create, inline rename, auto-learn toggle, manual/incremental learn,
- * from-scratch relearn, file import, open-directory, and delete. Learn
- * progress arrives over the `knowledgeBase:learnStatus` event channel (also
- * fired by the nightly auto-learn schedule), so card spinners track the
- * service rather than just the click.
- *
- * Class constants replicate the edit-tab chrome (rowClass/labelClass/… in
- * MetaBotEditTabs) so the panel reads like the other tabs.
+ * Manages this Bot's document corpora through the `knowledgeBase:*` IPC surface
+ * (immediate effect, no tab dirty-tracking / on-chain sync).
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -27,23 +19,28 @@ import {
 import { i18nService } from '../../services/i18n';
 import { formatKnowledgeBaseLearnSummary } from '../../services/knowledgeBasePresentation.js';
 import type { KnowledgeBaseInfo, KnowledgeBaseLearnSummary } from '../../types/knowledgeBase';
-import { buildMetaBotToggleViewModel } from './metaBotCardPresentation.js';
+import {
+  buildMetaBotToggleViewModel,
+  METABOT_BTN_DANGER_CLASS,
+  METABOT_BTN_FLAT_CLASS,
+  METABOT_BTN_PRIMARY_CLASS,
+  METABOT_CLEAN_INPUT_CLASS,
+  METABOT_GROUP_BOX_CLASS,
+  METABOT_GROUP_LABEL_CLASS,
+  METABOT_GROUP_LABEL_ROW_CLASS,
+  METABOT_GROUP_NOTE_CLASS,
+  METABOT_GROUP_ROW_CLASS,
+  METABOT_GROUP_ROW_TOP_CLASS,
+  METABOT_MICRO_BADGE_CLASS,
+  METABOT_ROW_HINT_CLASS,
+  METABOT_ROW_ICON_CLASS,
+  METABOT_ROW_TITLE_CLASS,
+} from './metaBotCardPresentation.js';
 import MetawebStudyJobsPanel from './MetawebStudyJobsPanel';
 
 interface KnowledgeBasePanelProps {
   metabotId: number;
 }
-
-// Replicated from MetaBotEditTabs (kept in sync with the other edit tabs).
-const rowClass = 'grid grid-cols-1 md:grid-cols-[152px_minmax(0,1fr)] gap-2 md:gap-4 items-start';
-const labelClass = 'pt-2 text-sm font-medium dark:text-claude-darkText text-claude-text';
-const hintClass = 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1';
-const inputChromeClass = 'px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent';
-const inputClass = `w-full ${inputChromeClass}`;
-
-const cardClass = 'rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-4 space-y-3';
-const actionBtnClass = 'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
-const dangerBtnClass = 'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-red-500/50 dark:border-red-500/50 text-red-600 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 /** Keep in sync with SUPPORTED_KB_EXTENSIONS in src/main/libs/knowledgeBaseText.ts. */
 const KB_IMPORT_FILE_EXTENSIONS = [
@@ -114,7 +111,6 @@ const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({ metabotId }) =>
     }
   }, [metabotId]);
 
-  // (Re)load when a different bot is loaded into the same mounted editor.
   useEffect(() => {
     setKnowledgeBases([]);
     setLoaded(false);
@@ -142,7 +138,6 @@ const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({ metabotId }) =>
     }, NOTICE_AUTO_CLEAR_MS));
   }, []);
 
-  // Clear pending notice timers on unmount.
   useEffect(() => {
     const timers = noticeTimersRef.current;
     return () => {
@@ -151,8 +146,6 @@ const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({ metabotId }) =>
     };
   }, []);
 
-  // Track learn runs service-side (manual clicks AND nightly auto-learn) so
-  // card spinners/notices stay correct even when this panel did not start them.
   useEffect(() => {
     const unsubscribe = window.electron.knowledgeBase.onLearnStatus((payload) => {
       if (payload.metabotId !== metabotId) return;
@@ -251,8 +244,6 @@ const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({ metabotId }) =>
     setLearningKbIds((prev) => new Set(prev).add(kb.id));
     try {
       const result = await window.electron.knowledgeBase.learn(metabotId, kb.id, { full });
-      // The 'done'/'error' learn-status event normally lands first and already
-      // posted the notice; the awaited result is the fallback path.
       if (!result.success) {
         showNotice(kb.id, { kind: 'error', text: result.error || i18nService.t('knowledgeBaseLearnFailed') });
       }
@@ -373,86 +364,88 @@ const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({ metabotId }) =>
   };
 
   const renderError = (message: string) => (
-    <div className="text-sm text-red-500 dark:text-red-400 bg-red-500/10 dark:bg-red-500/10 rounded-lg px-3 py-2">
+    <div className="text-xs text-red-500 dark:text-red-400 bg-red-500/10 dark:bg-red-500/10 rounded-[7px] px-3 py-2">
       {message}
     </div>
   );
 
   const renderCreateForm = () => (
-    <div className={cardClass} data-slot="knowledge-base-create-form">
-      <div className={rowClass}>
-        <label htmlFor="kb-create-name" className={labelClass}>
+    <div className={METABOT_GROUP_BOX_CLASS} data-slot="knowledge-base-create-form">
+      <div className={METABOT_GROUP_ROW_CLASS}>
+        <label htmlFor="kb-create-name" className={`${METABOT_ROW_TITLE_CLASS} min-w-[140px]`}>
           {i18nService.t('knowledgeBaseNameLabel')}
         </label>
-        <div className="min-w-0">
+        <div className="w-full sm:max-w-[440px]">
           <input
             id="kb-create-name"
             type="text"
             value={createName}
             onChange={(e) => setCreateName(e.target.value)}
             placeholder={i18nService.t('knowledgeBaseNamePlaceholder')}
-            className={inputClass}
+            className={METABOT_CLEAN_INPUT_CLASS}
           />
         </div>
       </div>
-      <div className={rowClass}>
-        <label htmlFor="kb-create-description" className={labelClass}>
+
+      <div className={METABOT_GROUP_ROW_TOP_CLASS}>
+        <label htmlFor="kb-create-description" className={`${METABOT_ROW_TITLE_CLASS} min-w-[140px]`}>
           {i18nService.t('knowledgeBaseDescriptionLabel')}
         </label>
-        <div className="min-w-0">
+        <div className="w-full sm:max-w-[440px]">
           <textarea
             id="kb-create-description"
             value={createDescription}
             onChange={(e) => setCreateDescription(e.target.value)}
             placeholder={i18nService.t('knowledgeBaseDescriptionPlaceholder')}
             rows={2}
-            className={`${inputClass} resize-y`}
+            className={`${METABOT_CLEAN_INPUT_CLASS} resize-y`}
           />
         </div>
       </div>
-      <div className={rowClass}>
-        <label htmlFor="kb-create-raw-dir" className={labelClass}>
-          {i18nService.t('knowledgeBaseRawDirLabel')}
-        </label>
-        <div className="min-w-0">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-            <input
-              id="kb-create-raw-dir"
-              type="text"
-              readOnly
-              value={createRawDir}
-              placeholder={i18nService.t('knowledgeBaseRawDirPlaceholder')}
-              className={`${inputClass} font-mono text-xs`}
-            />
+
+      <div className={METABOT_GROUP_ROW_TOP_CLASS}>
+        <div className="min-w-[140px]">
+          <label htmlFor="kb-create-raw-dir" className={METABOT_ROW_TITLE_CLASS}>
+            {i18nService.t('knowledgeBaseRawDirLabel')}
+          </label>
+          <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('knowledgeBaseRawDirHint')}</p>
+        </div>
+        <div className="w-full sm:max-w-[440px] flex items-center gap-2">
+          <input
+            id="kb-create-raw-dir"
+            type="text"
+            readOnly
+            value={createRawDir}
+            placeholder={i18nService.t('knowledgeBaseRawDirPlaceholder')}
+            className={`${METABOT_CLEAN_INPUT_CLASS} font-mono !text-[12px] flex-1 min-w-0`}
+          />
+          <button
+            type="button"
+            onClick={() => void handleBrowseCreateRawDir()}
+            className={METABOT_BTN_FLAT_CLASS}
+          >
+            {i18nService.t('knowledgeBaseBrowse')}
+          </button>
+          {createRawDir && (
             <button
               type="button"
-              onClick={() => void handleBrowseCreateRawDir()}
-              className="shrink-0 px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors whitespace-nowrap"
+              onClick={() => setCreateRawDir('')}
+              className="text-xs font-semibold text-red-600 dark:text-rose-400 hover:underline px-1 shrink-0"
             >
-              {i18nService.t('knowledgeBaseBrowse')}
+              {i18nService.t('knowledgeBaseClear')}
             </button>
-            {createRawDir && (
-              <button
-                type="button"
-                onClick={() => setCreateRawDir('')}
-                className="shrink-0 px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border text-red-500 dark:text-red-400 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors whitespace-nowrap"
-              >
-                {i18nService.t('knowledgeBaseClear')}
-              </button>
-            )}
-          </div>
-          <p className={hintClass}>{i18nService.t('knowledgeBaseRawDirHint')}</p>
+          )}
         </div>
       </div>
-      {createError ? renderError(createError) : null}
-      <div className={rowClass}>
-        <div className="hidden md:block" />
-        <div className="flex items-center justify-end gap-2 pt-2">
+
+      <div className="px-4 py-3 flex items-center justify-between gap-3">
+        <div>{createError ? renderError(createError) : null}</div>
+        <div className="flex items-center gap-2 ml-auto">
           <button
             type="button"
             onClick={() => { setCreateOpen(false); resetCreateForm(); }}
             disabled={createSaving}
-            className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
+            className={METABOT_BTN_FLAT_CLASS}
           >
             {i18nService.t('cancel')}
           </button>
@@ -461,7 +454,7 @@ const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({ metabotId }) =>
             data-slot="knowledge-base-create-submit"
             onClick={() => void handleCreate()}
             disabled={createSaving}
-            className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] inline-flex items-center justify-center rounded-[var(--shape-radius-md)] px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`${METABOT_BTN_PRIMARY_CLASS} !h-8 !px-3 !rounded-[7px] !text-[12px]`}
           >
             {createSaving ? i18nService.t('saving') : i18nService.t('create')}
           </button>
@@ -479,28 +472,39 @@ const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({ metabotId }) =>
       enabled: kb.autoLearn,
       disabled: autoLearnSavingKbIds.has(kb.id),
     });
+
     return (
-      <div key={kb.id} className={cardClass} data-slot={`knowledge-base-card-${kb.id}`}>
+      <div key={kb.id} className="px-4 py-3.5 space-y-2.5" data-slot={`knowledge-base-card-${kb.id}`}>
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate" title={kb.name}>
-                {kb.name}
-              </span>
-              {kb.isDefault && (
-                <span className="shrink-0 rounded-full border dark:border-claude-darkBorder border-claude-border px-2 py-0.5 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                  {i18nService.t('knowledgeBaseDefaultBadge')}
-                </span>
+          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+            <BookOpenIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+            <div className="min-w-0 flex-1">
+              <div className={METABOT_ROW_TITLE_CLASS}>
+                <span className="truncate" title={kb.name}>{kb.name}</span>
+                {kb.isDefault && (
+                  <span className={METABOT_MICRO_BADGE_CLASS}>
+                    {i18nService.t('knowledgeBaseDefaultBadge')}
+                  </span>
+                )}
+              </div>
+              {!editing && kb.description && (
+                <p className={METABOT_ROW_HINT_CLASS}>{kb.description}</p>
               )}
-            </div>
-            {!editing && kb.description && (
-              <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary break-words">
-                {kb.description}
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-[#8c96a6] dark:text-[#64748b] tabular-nums">
+                <span>{i18nService.t('knowledgeBaseStatsDocs').replace('{count}', String(kb.docCount))}</span>
+                <span aria-hidden>·</span>
+                <span>{i18nService.t('knowledgeBaseStatsChunks').replace('{count}', String(kb.chunkCount))}</span>
+                <span aria-hidden>·</span>
+                <span>{formatLastLearnedAt(kb.lastLearnedAt)}</span>
+              </div>
+              <p className="mt-0.5 font-mono text-[11px] text-[#8c96a6] dark:text-[#64748b] truncate" title={kb.rawDir}>
+                {kb.rawDir}
               </p>
-            )}
+            </div>
           </div>
+
           <div className="shrink-0 flex items-center gap-2 pt-0.5">
-            <span className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary whitespace-nowrap">
+            <span className="text-[11.5px] font-medium text-[#5a6577] dark:text-[#94a3b8] whitespace-nowrap">
               {i18nService.t('knowledgeBaseAutoLearn')}
             </span>
             <div
@@ -516,23 +520,12 @@ const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({ metabotId }) =>
           </div>
         </div>
 
-        <p className="font-mono text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary truncate" title={kb.rawDir}>
-          {kb.rawDir}
-        </p>
-        <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          {i18nService.t('knowledgeBaseStatsDocs').replace('{count}', String(kb.docCount))}
-          {' · '}
-          {i18nService.t('knowledgeBaseStatsChunks').replace('{count}', String(kb.chunkCount))}
-          {' · '}
-          {formatLastLearnedAt(kb.lastLearnedAt)}
-        </p>
-
         {notice && (
           <div
-            className={`text-xs rounded-lg px-3 py-2 ${
+            className={`sm:ml-[28px] text-xs rounded-[7px] px-3 py-1.5 ${
               notice.kind === 'success'
-                ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 dark:bg-emerald-500/10'
-                : 'text-red-500 dark:text-red-400 bg-red-500/10 dark:bg-red-500/10'
+                ? 'text-[#0f9d68] dark:text-[#34d399] bg-emerald-500/10'
+                : 'text-red-500 dark:text-red-400 bg-red-500/10'
             }`}
           >
             {notice.text}
@@ -540,20 +533,20 @@ const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({ metabotId }) =>
         )}
 
         {editing ? (
-          <div className="space-y-3" data-slot="knowledge-base-edit-form">
+          <div className="sm:pl-[28px] space-y-2.5" data-slot="knowledge-base-edit-form">
             <input
               type="text"
               value={editName}
               onChange={(e) => setEditName(e.target.value)}
               placeholder={i18nService.t('knowledgeBaseNamePlaceholder')}
-              className={inputClass}
+              className={METABOT_CLEAN_INPUT_CLASS}
             />
             <textarea
               value={editDescription}
               onChange={(e) => setEditDescription(e.target.value)}
               placeholder={i18nService.t('knowledgeBaseDescriptionPlaceholder')}
               rows={2}
-              className={`${inputClass} resize-y`}
+              className={`${METABOT_CLEAN_INPUT_CLASS} resize-y`}
             />
             {editError ? renderError(editError) : null}
             <div className="flex items-center justify-end gap-2">
@@ -561,7 +554,7 @@ const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({ metabotId }) =>
                 type="button"
                 onClick={() => setEditingKbId(null)}
                 disabled={editSaving}
-                className="px-3 py-1.5 text-sm rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
+                className={METABOT_BTN_FLAT_CLASS}
               >
                 {i18nService.t('cancel')}
               </button>
@@ -570,127 +563,133 @@ const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({ metabotId }) =>
                 data-slot={`knowledge-base-edit-save-${kb.id}`}
                 onClick={() => void handleSaveEdit(kb)}
                 disabled={editSaving}
-                className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg px-3 py-1.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                className={`${METABOT_BTN_PRIMARY_CLASS} !h-8 !px-3 !rounded-[7px] !text-[12px]`}
               >
                 {editSaving ? i18nService.t('saving') : i18nService.t('save')}
               </button>
             </div>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              data-slot={`knowledge-base-learn-${kb.id}`}
-              onClick={() => void handleLearn(kb, false)}
-              disabled={learning}
-              className={actionBtnClass}
-            >
-              <ArrowPathIcon className={`h-4 w-4 ${learning ? 'animate-spin' : ''}`} aria-hidden />
-              {learning ? i18nService.t('knowledgeBaseLearning') : i18nService.t('knowledgeBaseLearnNow')}
-            </button>
-            <button
-              type="button"
-              data-slot={`knowledge-base-open-dir-${kb.id}`}
-              onClick={() => void handleOpenDir(kb)}
-              className={actionBtnClass}
-            >
-              <FolderOpenIcon className="h-4 w-4" aria-hidden />
-              {i18nService.t('knowledgeBaseOpenDir')}
-            </button>
-            <button
-              type="button"
-              data-slot={`knowledge-base-import-${kb.id}`}
-              onClick={() => void handleImportFiles(kb)}
-              disabled={importing || learning}
-              className={actionBtnClass}
-            >
-              <DocumentArrowUpIcon className="h-4 w-4" aria-hidden />
-              {i18nService.t('knowledgeBaseImportFiles')}
-            </button>
-            <button
-              type="button"
-              data-slot={`knowledge-base-edit-${kb.id}`}
-              onClick={() => handleStartEdit(kb)}
-              disabled={learning}
-              className={actionBtnClass}
-            >
-              <PencilSquareIcon className="h-4 w-4" aria-hidden />
-              {i18nService.t('edit')}
-            </button>
-            {!kb.isDefault && (
+          <div className="sm:pl-[28px] flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
-                data-slot={`knowledge-base-delete-${kb.id}`}
-                onClick={() => void handleRemove(kb)}
+                data-slot={`knowledge-base-learn-${kb.id}`}
+                onClick={() => void handleLearn(kb, false)}
                 disabled={learning}
-                className={dangerBtnClass}
+                className={METABOT_BTN_FLAT_CLASS}
               >
-                <TrashIcon className="h-4 w-4" aria-hidden />
-                {i18nService.t('delete')}
+                <ArrowPathIcon className={`h-3.5 w-3.5 ${learning ? 'animate-spin' : ''}`} aria-hidden />
+                <span>{learning ? i18nService.t('knowledgeBaseLearning') : i18nService.t('knowledgeBaseLearnNow')}</span>
               </button>
-            )}
+              <button
+                type="button"
+                data-slot={`knowledge-base-import-${kb.id}`}
+                onClick={() => void handleImportFiles(kb)}
+                disabled={importing || learning}
+                className={METABOT_BTN_FLAT_CLASS}
+              >
+                <DocumentArrowUpIcon className="h-3.5 w-3.5" aria-hidden />
+                <span>{i18nService.t('knowledgeBaseImportFiles')}</span>
+              </button>
+              <button
+                type="button"
+                data-slot={`knowledge-base-open-dir-${kb.id}`}
+                onClick={() => void handleOpenDir(kb)}
+                className={METABOT_BTN_FLAT_CLASS}
+              >
+                <FolderOpenIcon className="h-3.5 w-3.5" aria-hidden />
+                <span>{i18nService.t('knowledgeBaseOpenDir')}</span>
+              </button>
+              <button
+                type="button"
+                data-slot={`knowledge-base-edit-${kb.id}`}
+                onClick={() => handleStartEdit(kb)}
+                disabled={learning}
+                className={METABOT_BTN_FLAT_CLASS}
+              >
+                <PencilSquareIcon className="h-3.5 w-3.5" aria-hidden />
+                <span>{i18nService.t('edit')}</span>
+              </button>
+              {!kb.isDefault && (
+                <button
+                  type="button"
+                  data-slot={`knowledge-base-delete-${kb.id}`}
+                  onClick={() => void handleRemove(kb)}
+                  disabled={learning}
+                  className={METABOT_BTN_DANGER_CLASS}
+                >
+                  <TrashIcon className="h-3.5 w-3.5" aria-hidden />
+                  <span>{i18nService.t('delete')}</span>
+                </button>
+              )}
+            </div>
+
+            <details className="group" data-slot={`knowledge-base-advanced-${kb.id}`}>
+              <summary className="cursor-pointer list-none select-none text-[11.5px] font-medium text-[#8c96a6] dark:text-[#64748b] hover:text-[#181d25] dark:hover:text-[#f3f5f8] transition-colors">
+                {i18nService.t('knowledgeBaseAdvancedToggle')} ▾
+              </summary>
+              <div className="mt-2 rounded-[7px] border border-rose-500/25 bg-rose-500/[0.06] px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11.5px] text-[#5a6577] dark:text-[#94a3b8]">
+                  {i18nService.t('knowledgeBaseFullRelearnHint')}
+                </span>
+                <button
+                  type="button"
+                  data-slot={`knowledge-base-full-relearn-${kb.id}`}
+                  onClick={() => void handleLearn(kb, true)}
+                  disabled={learning}
+                  className={METABOT_BTN_DANGER_CLASS}
+                >
+                  <ArrowPathIcon className={`h-3.5 w-3.5 ${learning ? 'animate-spin' : ''}`} aria-hidden />
+                  <span>{i18nService.t('knowledgeBaseFullRelearn')}</span>
+                </button>
+              </div>
+            </details>
           </div>
         )}
-
-        {/* Advanced: destructive from-scratch rebuild, de-emphasized. */}
-        <details className="group" data-slot={`knowledge-base-advanced-${kb.id}`}>
-          <summary className="cursor-pointer select-none text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText transition-colors">
-            {i18nService.t('knowledgeBaseAdvancedToggle')}
-          </summary>
-          <div className="mt-2 rounded-lg border border-red-500/30 dark:border-red-500/30 bg-red-500/5 dark:bg-red-500/5 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary flex-1 min-w-[200px]">
-              {i18nService.t('knowledgeBaseFullRelearnHint')}
-            </p>
-            <button
-              type="button"
-              data-slot={`knowledge-base-full-relearn-${kb.id}`}
-              onClick={() => void handleLearn(kb, true)}
-              disabled={learning}
-              className={dangerBtnClass}
-            >
-              <ArrowPathIcon className={`h-4 w-4 ${learning ? 'animate-spin' : ''}`} aria-hidden />
-              {i18nService.t('knowledgeBaseFullRelearn')}
-            </button>
-          </div>
-        </details>
       </div>
     );
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          <BookOpenIcon className="h-3.5 w-3.5" aria-hidden />
-          <span>{i18nService.t('knowledgeBasePanelTitle')}</span>
+    <div className="space-y-5">
+      <div className="space-y-2.5">
+        <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+          <div className="min-w-0">
+            <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('knowledgeBasePanelTitle')}</span>
+            <span className={`ml-2 ${METABOT_GROUP_NOTE_CLASS}`}>{i18nService.t('knowledgeBasePanelHint')}</span>
+          </div>
+          <button
+            type="button"
+            data-slot="knowledge-base-create-toggle"
+            onClick={() => { setCreateOpen((prev) => !prev); setCreateError(''); }}
+            className={METABOT_BTN_FLAT_CLASS}
+          >
+            {createOpen ? <XMarkIcon className="h-3.5 w-3.5" aria-hidden /> : <PlusIcon className="h-3.5 w-3.5" aria-hidden />}
+            <span>{i18nService.t('knowledgeBaseCreateButton')}</span>
+          </button>
         </div>
-        <button
-          type="button"
-          data-slot="knowledge-base-create-toggle"
-          onClick={() => { setCreateOpen((prev) => !prev); setCreateError(''); }}
-          className={actionBtnClass}
-        >
-          {createOpen ? <XMarkIcon className="h-4 w-4" aria-hidden /> : <PlusIcon className="h-4 w-4" aria-hidden />}
-          {i18nService.t('knowledgeBaseCreateButton')}
-        </button>
+
+        {panelError ? renderError(panelError) : null}
+        {createOpen ? renderCreateForm() : null}
+
+        <div className={METABOT_GROUP_BOX_CLASS}>
+          {loaded && !panelError && knowledgeBases.length === 0 ? (
+            <div className="px-4 py-6 text-center text-[12.5px] text-[#8c96a6] dark:text-[#64748b]">
+              {i18nService.t('knowledgeBaseEmpty')}
+            </div>
+          ) : (
+            knowledgeBases.map(renderCard)
+          )}
+        </div>
+
+        <p className="px-0.5 text-[11px] text-[#8c96a6] dark:text-[#64748b]">
+          {i18nService
+            .t('knowledgeBaseSupportedFormats')
+            .replace('{formats}', KB_IMPORT_FILE_EXTENSIONS.map((ext) => `.${ext}`).join(' '))}
+        </p>
       </div>
-      <p className={hintClass}>{i18nService.t('knowledgeBasePanelHint')}</p>
-      <p className={hintClass}>
-        {i18nService
-          .t('knowledgeBaseSupportedFormats')
-          .replace('{formats}', KB_IMPORT_FILE_EXTENSIONS.map((ext) => `.${ext}`).join(' '))}
-      </p>
 
-      {panelError ? renderError(panelError) : null}
-      {createOpen ? renderCreateForm() : null}
-
-      {loaded && !panelError && knowledgeBases.length === 0 ? (
-        <p className={hintClass}>{i18nService.t('knowledgeBaseEmpty')}</p>
-      ) : (
-        knowledgeBases.map(renderCard)
-      )}
-
-      {/* M4 autonomous study jobs ("自主学习"): read-only status view. */}
       <MetawebStudyJobsPanel metabotId={metabotId} />
     </div>
   );

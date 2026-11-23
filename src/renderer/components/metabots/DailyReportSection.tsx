@@ -1,50 +1,34 @@
 /**
- * Daily Report ("每日汇报") section for the MetaBot editor's Advanced tab,
- * rendered only for the Twin Bot.
- *
- * Once enabled, the Twin Bot proactively opens a new local conversation at the
- * configured local hour each day with a briefing (pending follow-ups, progress
- * on human-sourced work, fleet activity). Both settings are immediate-effect
- * metabot_settings kv entries (like the Surf switches): an enable toggle
- * ('dailyReport.enabled', default OFF) and the report hour ('dailyReport.hour',
- * whole hours 0–23, default 8).
- *
- * The feature also requires the global experimental-automation master switch
- * (Settings → General); while that switch is off this section renders greyed
- * out with an explanatory hint.
+ * Daily Report ("每日主动简报") row for the MetaBot editor's Advanced tab (Twin-only).
+ * Unified into a single Studio Linear row: [Icon + Title + Hint] on left,
+ * [Hour Select + Run Now Button + Enable Switch] on right.
  */
 
 import React, { useEffect, useState } from 'react';
 import { NewspaperIcon, PlayIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
-import { buildMetaBotToggleViewModel } from './metaBotCardPresentation.js';
+import {
+  buildMetaBotToggleViewModel,
+  METABOT_BTN_FLAT_CLASS,
+  METABOT_COMPACT_SELECT_CLASS,
+  METABOT_GROUP_ROW_CLASS,
+  METABOT_MICRO_BADGE_CLASS,
+  METABOT_ROW_HINT_CLASS,
+  METABOT_ROW_ICON_CLASS,
+  METABOT_ROW_TITLE_CLASS,
+} from './metaBotCardPresentation.js';
+import TwinBadge from './TwinBadge';
 import Tooltip from '../ui/Tooltip';
 
-// Keep in sync with src/main/services/dailyReportSettings.ts (keys whitelisted
-// main-side in RENDERER_SETTING_DEFS with a normalizeValue each).
 const DAILY_REPORT_ENABLED_KEY = 'dailyReport.enabled';
 const DAILY_REPORT_HOUR_KEY = 'dailyReport.hour';
 const DEFAULT_DAILY_REPORT_HOUR = 8;
 const MIN_DAILY_REPORT_HOUR = 0;
 const MAX_DAILY_REPORT_HOUR = 23;
 
-// Same row/label/input chrome the edit form uses, so the section blends in
-// (replicated from SurfSection / MetaBotEditTabs).
-const rowClass = 'grid grid-cols-1 md:grid-cols-[152px_minmax(0,1fr)] gap-2 md:gap-4 items-start';
-const labelClass = 'pt-2 text-sm font-medium dark:text-claude-darkText text-claude-text';
-const hintClass = 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1';
-const inputChromeClass = 'px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:opacity-50 disabled:cursor-not-allowed';
-const actionBtnClass = 'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
-
-// Read through the typed preload bridge (electron.d.ts); the runtime guard keeps
-// a stale preload (older app shell) from crashing the button — it renders a
-// clean 'unavailable' note instead.
 const getDailyReportApi = (): typeof window.electron.dailyReport | null =>
   (typeof window.electron?.dailyReport?.runNow === 'function' ? window.electron.dailyReport : null);
 
-// Known 'unavailable' reason tokens mapped to friendly i18n copy (kept in sync
-// with the service's DailyReportRunNowResult); anything unrecognized falls back
-// to the raw reason text.
 const DAILY_REPORT_UNAVAILABLE_REASON_KEYS: Record<string, string> = {
   no_twin: 'dailyReportRunNowUnavailableNoTwin',
   experimental_disabled: 'dailyReportRunNowUnavailableExperimentalOff',
@@ -66,23 +50,14 @@ interface DailyReportSectionProps {
 }
 
 const DailyReportSection: React.FC<DailyReportSectionProps> = ({ metabotId }) => {
-  // Enable toggle; the kv default (no record) means OFF (explicit '1' opts in).
   const [enabled, setEnabled] = useState(false);
   const [enabledLoaded, setEnabledLoaded] = useState(false);
-  // Report hour, kept as the raw select value ('0'..'23').
   const [hour, setHour] = useState(String(DEFAULT_DAILY_REPORT_HOUR));
-  // Global experimental-automation master switch (Settings → General). The
-  // main-side default when the key is missing is ALLOWED, so default true and
-  // let the IPC read correct it.
   const [experimentalAllowed, setExperimentalAllowed] = useState(true);
-  // Inline error for the kv-setting writes (toggle / hour).
   const [settingsError, setSettingsError] = useState('');
-  // "Run now" trigger: busy flag + the last result note (success / info / error).
   const [runNowBusy, setRunNowBusy] = useState(false);
   const [runNowNote, setRunNowNote] = useState<{ kind: 'success' | 'info' | 'error'; text: string } | null>(null);
 
-  // Load both daily-report settings on mount / metabotId change. A missing or
-  // failed read falls back to the product defaults (OFF, 08:00).
   useEffect(() => {
     let cancelled = false;
     setEnabled(false);
@@ -114,8 +89,6 @@ const DailyReportSection: React.FC<DailyReportSectionProps> = ({ metabotId }) =>
     return () => { cancelled = true; };
   }, [metabotId]);
 
-  // Global experimental-automation switch; while it is off the section stays
-  // greyed out and non-interactive.
   useEffect(() => {
     let cancelled = false;
     window.electron.experimentalAutomation.get()
@@ -124,7 +97,6 @@ const DailyReportSection: React.FC<DailyReportSectionProps> = ({ metabotId }) =>
         setExperimentalAllowed(allowed);
       })
       .catch(() => {
-        // Missing key means allowed main-side; keep the permissive default.
         if (cancelled) return;
         setExperimentalAllowed(true);
       });
@@ -136,8 +108,6 @@ const DailyReportSection: React.FC<DailyReportSectionProps> = ({ metabotId }) =>
     disabled: !enabledLoaded || !experimentalAllowed,
   });
 
-  // Immediate-effect toggle: optimistic flip, persisted via metabot:setSetting;
-  // a failed write reverts the switch and surfaces an inline error.
   const handleEnabledToggle = () => {
     if (!enabledLoaded || !experimentalAllowed) return;
     const next = !enabled;
@@ -154,7 +124,6 @@ const DailyReportSection: React.FC<DailyReportSectionProps> = ({ metabotId }) =>
       .catch(() => revert(i18nService.t('dailyReportSettingSaveFailed')));
   };
 
-  // Hour select: immediate-effect select, optimistic set + revert on failure.
   const handleHourChange = (next: string) => {
     if (!experimentalAllowed) return;
     const prev = hour;
@@ -173,9 +142,6 @@ const DailyReportSection: React.FC<DailyReportSectionProps> = ({ metabotId }) =>
       });
   };
 
-  // Manual trigger ("立即汇报"): asks the main process to generate today's
-  // report immediately. Completed runs jump straight to the new report
-  // session via the app-wide 'cowork:viewSession' event (handler in App.tsx).
   const handleRunNow = () => {
     if (runNowBusy || !enabled || !enabledLoaded || !experimentalAllowed) return;
     const api = getDailyReportApi();
@@ -225,111 +191,61 @@ const DailyReportSection: React.FC<DailyReportSectionProps> = ({ metabotId }) =>
 
   return (
     <div
-      className={`space-y-3 ${experimentalAllowed ? '' : 'opacity-60'}`}
+      className={experimentalAllowed ? '' : 'opacity-65'}
       data-slot="metabot-daily-report-section"
     >
-      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider dark:text-claude-darkTextSecondary text-claude-textSecondary">
-        <NewspaperIcon className="h-3.5 w-3.5" aria-hidden />
-        <span>{i18nService.t('dailyReportSectionTitle')}</span>
-        <span className="rounded-full border px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          {i18nService.t('dailyReportExperimentalBadge')}
-        </span>
-      </div>
-      <div className="flex items-center gap-2">
-        <p className={hintClass}>{i18nService.t('dailyReportSectionHint')}</p>
-        <Tooltip content={i18nService.t('dailyReportSectionTooltip')}>
-          <QuestionMarkCircleIcon
-            className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary shrink-0 cursor-help"
-            aria-label="More info"
-          />
-        </Tooltip>
-      </div>
-      {!experimentalAllowed ? (
-        <p className="text-xs text-amber-600 dark:text-amber-400 whitespace-pre-wrap break-words">
-          {i18nService.t('dailyReportGlobalSwitchRequired')}
-        </p>
-      ) : null}
-      {settingsError ? (
-        <p className="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-words">{settingsError}</p>
-      ) : null}
-
-      {/* Enable toggle: immediate-effect kv switch, outside the tab's dirty/save flow. */}
-      <div className={rowClass} data-slot="metabot-daily-report-enabled-row">
-        <label id="metabot-daily-report-enabled-label" className={labelClass}>
-          {i18nService.t('dailyReportEnableToggle')}
-        </label>
-        <div className="min-w-0">
-          <div className="flex items-center gap-3 pt-1">
-            <div
-              role="switch"
-              aria-checked={enabled}
-              aria-labelledby="metabot-daily-report-enabled-label"
-              data-slot="metabot-daily-report-enabled-switch"
-              title={i18nService.t('dailyReportEnableToggle')}
-              className={enabledToggleView.trackClass}
-              onClick={handleEnabledToggle}
-            >
-              <div className={enabledToggleView.knobClass} />
-            </div>
-          </div>
-          <p className={hintClass}>
-            {i18nService.t('dailyReportEnableHint')}
-          </p>
-        </div>
-      </div>
-
-      {/* Run now: manual trigger for today's report (experimental UI — only
-          rendered while the global experimental-automation switch is ON).
-          Disabled until the per-bot daily report is enabled. */}
-      {experimentalAllowed ? (
-        <div className={rowClass} data-slot="metabot-daily-report-run-now-row">
-          <div className="hidden md:block" />
-          <div className="min-w-0 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              data-slot="metabot-daily-report-run-now"
-              onClick={handleRunNow}
-              disabled={runNowBusy || !enabledLoaded || !enabled}
-              className={actionBtnClass}
-              title={i18nService.t('dailyReportRunNowButton')}
-            >
-              <PlayIcon className="h-4 w-4" aria-hidden />
-              {runNowBusy ? i18nService.t('dailyReportRunNowRunning') : i18nService.t('dailyReportRunNowButton')}
-            </button>
-            {enabledLoaded && !enabled ? (
-              <span className={hintClass}>
-                {i18nService.t('dailyReportRunNowDisabledHint')}
+      <div className={METABOT_GROUP_ROW_CLASS} data-slot="metabot-daily-report-enabled-row">
+        <div className="flex items-start gap-2.5 min-w-0 flex-1">
+          <NewspaperIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+          <div className="min-w-0 flex-1">
+            <div id="metabot-daily-report-enabled-label" className={METABOT_ROW_TITLE_CLASS}>
+              <span>{i18nService.t('dailyReportSectionTitle')}</span>
+              <TwinBadge />
+              <span className={METABOT_MICRO_BADGE_CLASS}>
+                {i18nService.t('dailyReportExperimentalBadge')}
               </span>
-            ) : null}
-            {runNowNote ? (
-              <span
-                className={
+              <Tooltip content={i18nService.t('dailyReportSectionTooltip')}>
+                <QuestionMarkCircleIcon
+                  className="h-3.5 w-3.5 text-[#8c96a6] dark:text-[#64748b] hover:text-[#181d25] dark:hover:text-[#f3f5f8] shrink-0 cursor-help transition-colors"
+                  aria-label="More info"
+                />
+              </Tooltip>
+            </div>
+            <p className={METABOT_ROW_HINT_CLASS}>
+              {i18nService.t('dailyReportSectionHint')}
+            </p>
+            {!experimentalAllowed && (
+              <p className="mt-1 text-[11.5px] text-amber-600 dark:text-amber-400">
+                {i18nService.t('dailyReportGlobalSwitchRequired')}
+              </p>
+            )}
+            {settingsError && (
+              <p className="mt-1 text-[11.5px] text-red-600 dark:text-red-400">{settingsError}</p>
+            )}
+            {runNowNote && (
+              <p
+                className={`mt-1 text-[11.5px] ${
                   runNowNote.kind === 'success'
-                    ? 'text-xs text-green-600 dark:text-green-400 whitespace-pre-wrap break-words'
+                    ? 'text-[#0f9d68] dark:text-[#34d399]'
                     : runNowNote.kind === 'info'
-                      ? 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary whitespace-pre-wrap break-words'
-                      : 'text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-words'
-                }
+                      ? 'text-[#5a6577] dark:text-[#94a3b8]'
+                      : 'text-red-600 dark:text-red-400'
+                }`}
               >
                 {runNowNote.text}
-              </span>
-            ) : null}
+              </p>
+            )}
           </div>
         </div>
-      ) : null}
 
-      {/* Report hour: immediate-effect select with the 24 whole-hour options. */}
-      <div className={rowClass} data-slot="metabot-daily-report-hour-row">
-        <label htmlFor="metabot-daily-report-hour" className={labelClass}>
-          {i18nService.t('dailyReportHourLabel')}
-        </label>
-        <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0" data-slot="metabot-daily-report-hour-row">
           <select
             id="metabot-daily-report-hour"
+            aria-label={i18nService.t('dailyReportHourLabel')}
             value={hour}
             onChange={(e) => handleHourChange(e.target.value)}
-            disabled={!experimentalAllowed}
-            className={`w-56 ${inputChromeClass}`}
+            disabled={!experimentalAllowed || !enabled}
+            className={`${METABOT_COMPACT_SELECT_CLASS} tabular-nums`}
             data-slot="metabot-daily-report-hour-select"
           >
             {Array.from({ length: MAX_DAILY_REPORT_HOUR - MIN_DAILY_REPORT_HOUR + 1 }, (_, i) => {
@@ -341,9 +257,34 @@ const DailyReportSection: React.FC<DailyReportSectionProps> = ({ metabotId }) =>
               );
             })}
           </select>
-          <p className={hintClass}>
-            {i18nService.t('dailyReportHourHint')}
-          </p>
+
+          {experimentalAllowed && (
+            <span data-slot="metabot-daily-report-run-now-row" className="inline-flex">
+              <button
+                type="button"
+                data-slot="metabot-daily-report-run-now"
+                onClick={handleRunNow}
+                disabled={runNowBusy || !enabledLoaded || !enabled}
+                className={METABOT_BTN_FLAT_CLASS}
+                title={!enabled ? i18nService.t('dailyReportRunNowDisabledHint') : i18nService.t('dailyReportRunNowButton')}
+              >
+                <PlayIcon className="h-3.5 w-3.5" aria-hidden />
+                <span>{runNowBusy ? i18nService.t('dailyReportRunNowRunning') : i18nService.t('dailyReportRunNowButton')}</span>
+              </button>
+            </span>
+          )}
+
+          <div
+            role="switch"
+            aria-checked={enabled}
+            aria-labelledby="metabot-daily-report-enabled-label"
+            data-slot="metabot-daily-report-enabled-switch"
+            title={i18nService.t('dailyReportEnableToggle')}
+            className={enabledToggleView.trackClass}
+            onClick={handleEnabledToggle}
+          >
+            <div className={enabledToggleView.knobClass} />
+          </div>
         </div>
       </div>
     </div>

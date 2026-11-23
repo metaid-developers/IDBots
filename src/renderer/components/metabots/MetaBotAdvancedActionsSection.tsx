@@ -1,18 +1,14 @@
 /**
- * MetaBot Advanced Actions Section
+ * MetaBot Advanced Actions Section (Studio Linear Style B)
  *
- * Wallet / Backup / Delete actions for the Advanced tab of the MetaBot edit
- * view. Layout mirrors the OAC (/ui/bot) "Advanced" tab: a "Chain & Wallet"
- * card hosting Wallet + Backup buttons, and a red "Danger Zone" card hosting
- * the Delete Bot action. These are immediate-action controls (they open
- * panels / trigger the delete flow) and sit outside the tab's homepage save.
+ * Unified grouped list for On-Chain Wallet, NFT Vault, Mnemonic Backup, and
+ * safe local Bot removal. Preserves all data-slot markers and modal flows.
  */
 
 import React, { useState } from 'react';
 import {
-  ArrowDownTrayIcon,
-  ExclamationTriangleIcon,
   PhotoIcon,
+  ShieldCheckIcon,
   TrashIcon,
   WalletIcon,
 } from '@heroicons/react/24/outline';
@@ -21,6 +17,17 @@ import type { Metabot } from '../../types/metabot';
 import MetaBotBackupMnemonicModal from './MetaBotBackupMnemonicModal';
 import MetaBotNftWalletModal from './MetaBotNftWalletModal';
 import MetaBotWalletBalanceModal from './MetaBotWalletBalanceModal';
+import {
+  METABOT_BTN_DANGER_CLASS,
+  METABOT_BTN_FLAT_CLASS,
+  METABOT_GROUP_BOX_CLASS,
+  METABOT_GROUP_LABEL_CLASS,
+  METABOT_GROUP_LABEL_ROW_CLASS,
+  METABOT_GROUP_ROW_CLASS,
+  METABOT_ROW_HINT_CLASS,
+  METABOT_ROW_ICON_CLASS,
+  METABOT_ROW_TITLE_CLASS,
+} from './metaBotCardPresentation.js';
 
 interface MetaBotAdvancedActionsSectionProps {
   metabot: Metabot;
@@ -36,75 +43,103 @@ const MetaBotAdvancedActionsSection: React.FC<MetaBotAdvancedActionsSectionProps
   const [showNftWalletModal, setShowNftWalletModal] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
 
-  const cardBase =
-    'rounded-xl border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-4 space-y-3';
-  const cardHead =
-    'flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider dark:text-claude-darkTextSecondary text-claude-textSecondary';
-  const cardDivider = 'h-px dark:bg-claude-darkBorder bg-claude-border';
-  const actionBtn =
-    'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors';
-
   return (
-    <div className="space-y-3 pt-2">
-      {/* Chain & Wallet */}
-      <div className={cardBase} data-slot="metabot-advanced-chain-wallet-card">
-        <div className={cardHead}>
-          <WalletIcon className="h-3.5 w-3.5" aria-hidden />
-          <span>{i18nService.t('metabotSectionChainWallet')}</span>
-        </div>
-        <div className={cardDivider} />
-        <div className="flex flex-wrap items-center gap-2">
+    <div>
+      <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+        <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('metabotSectionChainWallet')}</span>
+      </div>
+
+      <div className={METABOT_GROUP_BOX_CLASS} data-slot="metabot-advanced-chain-wallet-card">
+        <div
+          onClick={() => setShowWalletModal(true)}
+          className={`${METABOT_GROUP_ROW_CLASS} cursor-pointer hover:bg-[#f9fafb] dark:hover:bg-[#1c2b40] transition-colors`}
+        >
+          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+            <WalletIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+            <div className="min-w-0">
+              <div className={METABOT_ROW_TITLE_CLASS}>{i18nService.t('metabotWallet')}</div>
+              <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotWalletHint')}</p>
+            </div>
+          </div>
           <button
             type="button"
             data-slot="metabot-advanced-open-wallet"
-            onClick={() => setShowWalletModal(true)}
-            className={actionBtn}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowWalletModal(true);
+            }}
+            className={METABOT_BTN_FLAT_CLASS}
           >
-            <WalletIcon className="h-4 w-4" aria-hidden />
-            {i18nService.t('metabotWallet')}
+            {i18nService.t('metabotWalletOpenAction')}
           </button>
+        </div>
+
+        <div
+          onClick={() => setShowNftWalletModal(true)}
+          className={`${METABOT_GROUP_ROW_CLASS} cursor-pointer hover:bg-[#f9fafb] dark:hover:bg-[#1c2b40] transition-colors`}
+        >
+          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+            <PhotoIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+            <div className="min-w-0">
+              <div className={METABOT_ROW_TITLE_CLASS}>{i18nService.t('metabotNftWallet')}</div>
+              <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotNftWalletHint')}</p>
+            </div>
+          </div>
           <button
             type="button"
             data-slot="metabot-advanced-open-nft-wallet"
-            onClick={() => setShowNftWalletModal(true)}
-            className={actionBtn}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowNftWalletModal(true);
+            }}
+            className={METABOT_BTN_FLAT_CLASS}
           >
-            <PhotoIcon className="h-4 w-4" aria-hidden />
-            {i18nService.t('metabotNftWallet')}
+            {i18nService.t('metabotNftWalletOpenAction')}
           </button>
+        </div>
+
+        <div
+          onClick={() => setShowBackupModal(true)}
+          className={`${METABOT_GROUP_ROW_CLASS} cursor-pointer hover:bg-[#f9fafb] dark:hover:bg-[#1c2b40] transition-colors`}
+        >
+          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+            <ShieldCheckIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+            <div className="min-w-0">
+              <div className={METABOT_ROW_TITLE_CLASS}>{i18nService.t('metabotBackup')}</div>
+              <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotBackupHint')}</p>
+            </div>
+          </div>
           <button
             type="button"
             data-slot="metabot-advanced-open-backup"
-            onClick={() => setShowBackupModal(true)}
-            className={actionBtn}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowBackupModal(true);
+            }}
+            className={METABOT_BTN_FLAT_CLASS}
           >
-            <ArrowDownTrayIcon className="h-4 w-4" aria-hidden />
-            {i18nService.t('metabotBackup')}
+            {i18nService.t('metabotBackupOpenAction')}
           </button>
         </div>
-      </div>
 
-      {/* Danger Zone */}
-      <div
-        className={`${cardBase} border-red-500/40 dark:border-red-500/40 bg-red-500/5 dark:bg-red-500/5`}
-        data-slot="metabot-advanced-danger-card"
-      >
-        <div className={`${cardHead} text-red-600 dark:text-red-400`}>
-          <ExclamationTriangleIcon className="h-3.5 w-3.5" aria-hidden />
-          <span>{i18nService.t('metabotSectionDangerZone')}</span>
-        </div>
-        <div className={`${cardDivider} dark:bg-red-500/30 bg-red-500/30`} />
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary flex-1 min-w-[200px]">
-            {i18nService.t('metabotDeleteBotWarning')}
-          </p>
+        <div className={METABOT_GROUP_ROW_CLASS} data-slot="metabot-advanced-danger-card">
+          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+            <TrashIcon className="h-[18px] w-[18px] text-red-600 dark:text-rose-400 mt-0.5 shrink-0" aria-hidden />
+            <div className="min-w-0">
+              <div className="text-[13.5px] font-semibold text-red-600 dark:text-rose-400">
+                {i18nService.t('metabotDeleteBotTitle')}
+              </div>
+              <p className={METABOT_ROW_HINT_CLASS}>
+                {i18nService.t('metabotDeleteBotWarning')}
+              </p>
+            </div>
+          </div>
           <button
             type="button"
             data-slot="metabot-advanced-open-delete"
             onClick={onDelete}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-[8px] border border-red-500/50 dark:border-red-500/50 text-red-600 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-500/10 transition-colors"
+            className={METABOT_BTN_DANGER_CLASS}
           >
-            <TrashIcon className="h-4 w-4" aria-hidden />
             {i18nService.t('metabotDeleteBot')}
           </button>
         </div>

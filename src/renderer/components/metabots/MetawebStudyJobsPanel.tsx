@@ -1,35 +1,32 @@
 /**
- * MetaWeb study jobs panel ("自主学习") — the read-only M4 status view living
- * at the bottom of the knowledge-base tab.
- *
- * The owner assigns study topics in chat ("有空学学 X" → the bot queues a job
- * via metaweb_study_enqueue); nightly background sessions search MetaWeb,
- * read pins, and save the worthwhile bodies into this bot's knowledge bases.
- * This panel is the deliberate substitute for a proactive morning report
- * (locked owner decision 2026-08-23): job status is visible here on demand,
- * and the bot answers from metaweb_study_status when asked. Read-only by
- * design — jobs are created/cancelled through conversation, not here.
+ * MetaWeb study jobs panel ("夜间自主学习") in Studio Linear Style B.
+ * Read-only status view at the bottom of the Knowledge Base tab.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { AcademicCapIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { MetawebStudyJobInfo, MetawebStudyJobStatus } from '../../types/metawebStudy';
+import {
+  METABOT_BTN_FLAT_CLASS,
+  METABOT_GROUP_BOX_CLASS,
+  METABOT_GROUP_LABEL_CLASS,
+  METABOT_GROUP_LABEL_ROW_CLASS,
+  METABOT_GROUP_NOTE_CLASS,
+  METABOT_ROW_HINT_CLASS,
+  METABOT_ROW_ICON_CLASS,
+  METABOT_ROW_TITLE_CLASS,
+} from './metaBotCardPresentation.js';
 
 interface MetawebStudyJobsPanelProps {
   metabotId: number;
 }
 
-// Replicated from KnowledgeBasePanel (kept in sync with the edit-tab chrome).
-const hintClass = 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1';
-const cardClass = 'rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-4 space-y-3';
-const actionBtnClass = 'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
-
 const STATUS_BADGE_CLASS: Record<MetawebStudyJobStatus, string> = {
-  pending: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30',
-  running: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30',
-  done: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
-  failed: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30',
+  pending: 'bg-amber-500/12 text-amber-700 dark:text-amber-400 border-amber-500/25',
+  running: 'bg-sky-500/12 text-sky-600 dark:text-sky-400 border-sky-500/25',
+  done: 'bg-emerald-500/12 text-[#0f9d68] dark:text-[#34d399] border-emerald-500/25',
+  failed: 'bg-red-500/12 text-red-600 dark:text-rose-400 border-red-500/25',
 };
 
 const STATUS_LABEL_KEY: Record<MetawebStudyJobStatus, string> = {
@@ -67,7 +64,6 @@ const MetawebStudyJobsPanel: React.FC<MetawebStudyJobsPanelProps> = ({ metabotId
     }
   }, [metabotId]);
 
-  // (Re)load when a different bot is loaded into the same mounted editor.
   useEffect(() => {
     setJobs([]);
     setLoaded(false);
@@ -75,63 +71,73 @@ const MetawebStudyJobsPanel: React.FC<MetawebStudyJobsPanelProps> = ({ metabotId
     void loadJobs();
   }, [loadJobs]);
 
-  const renderCard = (job: MetawebStudyJobInfo) => (
-    <div key={job.id} className={cardClass} data-slot={`metaweb-study-job-${job.id}`}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-sm font-medium dark:text-claude-darkText text-claude-text break-all">
-          {job.topic}
+  const renderJobRow = (job: MetawebStudyJobInfo) => (
+    <div key={job.id} className="px-4 py-3.5 space-y-1.5" data-slot={`metaweb-study-job-${job.id}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5 min-w-0 flex-1">
+          <AcademicCapIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+          <div className="min-w-0 flex-1">
+            <div className={`${METABOT_ROW_TITLE_CLASS} break-all`}>{job.topic}</div>
+            <p className={`${METABOT_ROW_HINT_CLASS} tabular-nums`}>
+              {i18nService.t('metawebStudyJobStats')
+                .replace('{runs}', String(job.runCount))
+                .replace('{pins}', String(job.processedPinIds.length))
+                .replace('{budget}', String(job.budgetPins))}
+              {' · '}
+              {i18nService.t('metawebStudyLastRun').replace('{time}', formatRunAt(job.lastRunAt))}
+            </p>
+          </div>
         </div>
         <span
-          className={`shrink-0 inline-flex items-center px-2 py-0.5 text-xs rounded-full border ${STATUS_BADGE_CLASS[job.status] ?? ''}`}
+          className={`shrink-0 inline-flex items-center px-2 py-0.5 text-[11px] font-semibold rounded-[5px] border ${STATUS_BADGE_CLASS[job.status] ?? ''}`}
         >
           {i18nService.t(STATUS_LABEL_KEY[job.status] ?? 'metawebStudyStatusPending')}
         </span>
       </div>
-      <p className={hintClass}>
-        {i18nService.t('metawebStudyJobStats')
-          .replace('{runs}', String(job.runCount))
-          .replace('{pins}', String(job.processedPinIds.length))
-          .replace('{budget}', String(job.budgetPins))}
-        {' · '}
-        {i18nService.t('metawebStudyLastRun').replace('{time}', formatRunAt(job.lastRunAt))}
-      </p>
       {job.lastRunSummary ? (
-        <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary whitespace-pre-wrap break-words">
+        <p className="sm:pl-[28px] text-[12px] text-[#5a6577] dark:text-[#94a3b8] whitespace-pre-wrap break-words">
           {job.lastRunSummary}
         </p>
       ) : null}
       {job.lastError ? (
-        <p className="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-words">{job.lastError}</p>
+        <p className="sm:pl-[28px] text-xs text-red-600 dark:text-rose-400 whitespace-pre-wrap break-words">
+          {job.lastError}
+        </p>
       ) : null}
     </div>
   );
 
   return (
-    <div className="space-y-3 pt-4 mt-4 border-t dark:border-claude-darkBorder border-claude-border">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          <AcademicCapIcon className="h-3.5 w-3.5" aria-hidden />
-          <span>{i18nService.t('metawebStudyPanelTitle')}</span>
+    <div className="space-y-1.5">
+      <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+        <div className="min-w-0">
+          <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('metawebStudyPanelTitle')}</span>
+          <span className={`ml-2 ${METABOT_GROUP_NOTE_CLASS}`}>{i18nService.t('metawebStudyPanelHint')}</span>
         </div>
         <button
           type="button"
           data-slot="metaweb-study-refresh"
           onClick={() => void loadJobs()}
-          className={actionBtnClass}
+          className={METABOT_BTN_FLAT_CLASS}
         >
-          <ArrowPathIcon className="h-4 w-4" aria-hidden />
-          {i18nService.t('metawebStudyRefresh')}
+          <ArrowPathIcon className="h-3.5 w-3.5" aria-hidden />
+          <span>{i18nService.t('metawebStudyRefresh')}</span>
         </button>
       </div>
-      <p className={hintClass}>{i18nService.t('metawebStudyPanelHint')}</p>
+
       {panelError ? (
-        <p className="text-xs text-red-600 dark:text-red-400">{panelError}</p>
+        <p className="text-xs text-red-600 dark:text-rose-400">{panelError}</p>
       ) : null}
-      {loaded && !panelError && jobs.length === 0 ? (
-        <p className={hintClass}>{i18nService.t('metawebStudyEmpty')}</p>
-      ) : (
-        jobs.map(renderCard)
-      )}
+
+      <div className={METABOT_GROUP_BOX_CLASS}>
+        {loaded && !panelError && jobs.length === 0 ? (
+          <div className="px-4 py-5 text-center text-[12px] text-[#8c96a6] dark:text-[#64748b]">
+            {i18nService.t('metawebStudyEmpty')}
+          </div>
+        ) : (
+          jobs.map(renderJobRow)
+        )}
+      </div>
     </div>
   );
 };

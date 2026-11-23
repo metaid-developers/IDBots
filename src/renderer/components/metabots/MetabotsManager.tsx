@@ -1,6 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDispatch } from 'react-redux';
-import { ArrowLeftIcon, MagnifyingGlassIcon, PlusCircleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowLeftIcon,
+  ArrowPathIcon,
+  CheckIcon,
+  CpuChipIcon,
+  DocumentDuplicateIcon,
+  MagnifyingGlassIcon,
+  PlusIcon,
+} from '@heroicons/react/24/outline';
 import { setPreferredMetabotId } from '../../store/slices/coworkSlice';
 import { i18nService } from '../../services/i18n';
 import { dispatchMetabotsChanged, subscribeMetabotsChanged } from '../../services/metabotEvents';
@@ -22,10 +30,24 @@ import MetaBotCreateSuccessModal, { type SyncStepKey } from './MetaBotCreateSucc
 import MetaBotDeleteConfirmModal from './MetaBotDeleteConfirmModal';
 import MetaBotRestoreMnemonicModal from './MetaBotRestoreMnemonicModal';
 import MetaBotListCard from './MetaBotListCard';
+import NftAvatarFrame from './NftAvatarFrame';
+import TwinBadge from './TwinBadge';
+import {
+  copyGlobalMetaIdToClipboard,
+  formatGlobalMetaIdShort,
+  METABOT_BTN_FLAT_CLASS,
+  METABOT_BTN_PRIMARY_CLASS,
+} from './metaBotCardPresentation.js';
 import { normalizeAllowChatSkills } from './allowChatSkills.ts';
 import { DEFAULT_METABOT_LIMIT, METABOT_LIMIT_REACHED_ERROR } from '../../../main/shared/metabotLimit';
 
 type ViewMode = 'list' | 'add' | 'edit';
+type RosterFilterMode = 'all' | 'active' | 'sync';
+
+const isMetabotPartialSync = (metabot: Metabot): boolean =>
+  metabot.chain_sync_state != null
+    ? metabot.chain_sync_state === 'partial'
+    : !(metabot.metabot_info_pinid && metabot.metabot_info_pinid.trim());
 
 /**
  * The on-chain edit-sync plan is now computed in the MAIN process
@@ -179,6 +201,7 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
   const [list, setList] = useState<Metabot[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<RosterFilterMode>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [editId, setEditId] = useState<number | null>(null);
   const [actionError, setActionError] = useState('');
@@ -270,16 +293,33 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
     };
   }, []);
 
+  const activeCount = useMemo(() => list.filter((m) => m.enabled).length, [list]);
+  const partialSyncCount = useMemo(() => list.filter(isMetabotPartialSync).length, [list]);
+
   const filteredList = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return list;
-    return list.filter(
-      (m) =>
+    return list.filter((m) => {
+      if (statusFilter === 'active' && !m.enabled) return false;
+      if (statusFilter === 'sync' && !isMetabotPartialSync(m)) return false;
+      if (!q) return true;
+      return (
         m.name.toLowerCase().includes(q) ||
         m.role.toLowerCase().includes(q) ||
+        (m.goal || '').toLowerCase().includes(q) ||
+        (m.llm_id || '').toLowerCase().includes(q) ||
         m.metabot_type.toLowerCase().includes(q)
-    );
-  }, [list, searchQuery]);
+      );
+    });
+  }, [list, searchQuery, statusFilter]);
+
+  const twinRosterItem = useMemo(
+    () => filteredList.find((m) => m.metabot_type === 'twin') ?? null,
+    [filteredList],
+  );
+  const workerRosterItems = useMemo(
+    () => filteredList.filter((m) => m.metabot_type !== 'twin'),
+    [filteredList],
+  );
 
   const handleToggleEnabled = async (id: number, enabled: boolean) => {
     setActionError('');
@@ -566,14 +606,25 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
 
   if (viewMode === 'add') {
     return (
-      <div className="space-y-4 relative">
-        <h2 className="text-base font-semibold dark:text-claude-darkText text-claude-text">
-          {i18nService.t('metabotAddTitle')}
-        </h2>
+      <div className="max-w-[760px] mx-auto space-y-5 relative">
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={handleCancelForm}
+            aria-label={i18nService.t('back')}
+            title={i18nService.t('back')}
+            className="h-[30px] w-[30px] inline-flex items-center justify-center rounded-[7px] border border-slate-900/[0.095] dark:border-white/[0.085] bg-white dark:bg-[#182538] text-[#5a6577] dark:text-[#94a3b8] hover:text-[#181d25] dark:hover:text-[#f3f5f8] hover:bg-[#eef1f5] dark:hover:bg-white/[0.05] transition-colors"
+          >
+            <ArrowLeftIcon className="h-4 w-4" />
+          </button>
+          <h2 className="text-[15.5px] font-bold tracking-[-0.015em] text-[#181d25] dark:text-[#f3f5f8]">
+            {i18nService.t('metabotAddTitle')}
+          </h2>
+        </div>
         <MetaBotCreateForm
           onCancel={handleCancelForm}
           onSave={handleSaveNew}
-          saveLabel={i18nService.t('save')}
+          saveLabel={i18nService.t('metabotCreate')}
           llmOptions={llmOptions}
           onRequestModelSettings={onRequestModelSettings}
           onCheckNameExists={handleCheckNameExists}
@@ -629,23 +680,79 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
   }
 
   if (viewMode === 'edit' && editMetabot) {
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
+    const editGlobalMetaId = editMetabot.globalmetaid?.trim() ?? '';
+    const editShortMetaId = formatGlobalMetaIdShort(editGlobalMetaId);
+    const editIsPartial = isMetabotPartialSync(editMetabot);
+    const editHeaderIdentity = (
+      <div className="flex items-center justify-between gap-3 mb-3.5">
+        <div className="flex items-center gap-2.5 min-w-0">
           <button
             type="button"
             onClick={handleCancelForm}
             aria-label={i18nService.t('back')}
             title={i18nService.t('back')}
             data-slot="metabot-edit-back"
-            className="p-1.5 rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+            className="h-[30px] w-[30px] shrink-0 inline-flex items-center justify-center rounded-[7px] border border-slate-900/[0.095] dark:border-white/[0.085] text-[#5a6577] dark:text-[#94a3b8] hover:text-[#181d25] dark:hover:text-[#f3f5f8] hover:bg-[#eef1f5] dark:hover:bg-white/[0.05] transition-colors"
           >
             <ArrowLeftIcon className="h-4 w-4" />
           </button>
-          <h2 className="text-base font-semibold dark:text-claude-darkText text-claude-text">
-            {i18nService.t('metabotEditTitle')}
-          </h2>
+          <NftAvatarFrame
+            avatar={editMetabot.avatar}
+            fallbackSource={editMetabot.avatar_fallback}
+            frameClassName="w-9 h-9 rounded-[8px] shrink-0 ring-1 ring-black/[0.08] dark:ring-white/[0.1]"
+            alt=""
+            fallback={(
+              <div className="w-9 h-9 rounded-[8px] shrink-0 bg-[#eef1f5] dark:bg-white/[0.05] ring-1 ring-black/[0.08] dark:ring-white/[0.1] flex items-center justify-center">
+                <CpuChipIcon className="h-4 w-4 text-[#5a6577] dark:text-[#94a3b8]" />
+              </div>
+            )}
+          />
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <h2 className="text-[15px] font-bold text-[#181d25] dark:text-[#f3f5f8] truncate">
+                {editMetabot.name}
+              </h2>
+              {editMetabot.metabot_type === 'twin' && <TwinBadge />}
+            </div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-[#8c96a6] dark:text-[#64748b]">
+              {editShortMetaId && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void copyGlobalMetaIdToClipboard(editGlobalMetaId, navigator.clipboard).then((copied) => {
+                        if (copied) {
+                          window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('metabotGlobalMetaIdCopied') }));
+                        }
+                      });
+                    }}
+                    className="inline-flex items-center gap-1 font-mono tabular-nums text-[#5a6577] dark:text-[#94a3b8] hover:text-[#181d25] dark:hover:text-[#f3f5f8] transition-colors"
+                    title={i18nService.t('metabotCopyGlobalMetaId')}
+                  >
+                    <span>metaid:{editShortMetaId}</span>
+                    <DocumentDuplicateIcon className="h-3 w-3 shrink-0" />
+                  </button>
+                  <span aria-hidden>·</span>
+                </>
+              )}
+              {!editIsPartial ? (
+                <span className="inline-flex items-center gap-1 font-medium text-[#0f9d68] dark:text-[#34d399]">
+                  <CheckIcon className="h-3 w-3 stroke-[2.2]" aria-hidden />
+                  <span>{i18nService.t('metabotChainSyncedFullBadge')}</span>
+                </span>
+              ) : (
+                <span className="text-amber-600 dark:text-amber-400 font-medium">
+                  {i18nService.t('metabotChainSyncPartialShort')}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
+      </div>
+    );
+
+    return (
+      <div className="max-w-[760px] mx-auto space-y-5">
         {/* Create-fallback banner: the bot was kept locally because the subsidy
             (or the funded broadcast) never landed — nothing is on-chain yet.
             Offer retry-subsidy / self-funded broadcast with the funding address,
@@ -655,7 +762,7 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
           && (editMetabot.chain_sync_state ?? (editMetabot.metabot_info_pinid?.trim() ? 'synced' : 'partial')) === 'partial' && (
           <div
             data-slot="metabot-setup-pending-banner"
-            className="space-y-2 rounded-xl border border-amber-500/40 dark:border-amber-400/40 bg-amber-500/10 dark:bg-amber-400/10 px-4 py-3"
+            className="space-y-2 rounded-[10px] border border-amber-500/40 dark:border-amber-400/40 bg-amber-500/10 dark:bg-amber-400/10 px-4 py-3"
           >
             <div className="text-xs font-medium text-amber-600 dark:text-amber-400">
               {i18nService.t('metabotSetupPendingTitle')}
@@ -708,7 +815,7 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
         )}
         {editMetabot.subsidy_state !== 'failed'
           && (editMetabot.chain_sync_state ?? (editMetabot.metabot_info_pinid?.trim() ? 'synced' : 'partial')) === 'partial' && (
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/40 dark:border-amber-400/40 bg-amber-500/10 dark:bg-amber-400/10 px-4 py-3">
+          <div className="flex items-center justify-between gap-3 rounded-[10px] border border-amber-500/40 dark:border-amber-400/40 bg-amber-500/10 dark:bg-amber-400/10 px-4 py-3">
             <span className="inline-flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 min-w-0">
               <span className="inline-block h-2 w-2 rounded-full bg-amber-500 shrink-0" aria-hidden />
               <span className="min-w-0">
@@ -733,6 +840,7 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
           </div>
         )}
         <MetaBotEditTabs
+          headerSlot={editHeaderIdentity}
           initialValues={buildEditFormValues(editMetabot)}
           metabotId={editMetabot.id}
           ownerBindingPinId={editMetabot.owner_binding_pinid ?? null}
@@ -1067,123 +1175,181 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
     dispatch(setPreferredMetabotId(metabot.id));
   };
 
-  return (
-    <div className="space-y-4">
-      <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-        {i18nService.t('metabotsDescription')}
-      </p>
+  const renderRosterCard = (m: Metabot, variant: 'twinStrip' | 'tile') => (
+    <MetaBotListCard
+      key={m.id}
+      variant={variant}
+      metabot={m}
+      onEdit={() => handleEdit(m.id)}
+      onToggleEnabled={(enabled) => handleToggleEnabled(m.id, enabled)}
+      isChainSynced={!!(m.metabot_info_pinid && m.metabot_info_pinid.trim())}
+      chainSyncState={m.chain_sync_state}
+      onSyncToChain={() => void handleResyncPartial(m)}
+      onOpenMetabotInBrowser={onOpenMetabotInBrowser}
+    />
+  );
 
+  return (
+    <div className="space-y-5">
       {actionError && (
         <div
-          className="text-sm text-red-500 dark:text-red-400 bg-red-500/10 dark:bg-red-500/10 rounded-lg px-3 py-2"
+          className="text-sm text-red-500 dark:text-red-400 bg-red-500/10 dark:bg-red-500/10 rounded-[8px] px-3.5 py-2.5 flex items-center justify-between gap-3"
           role="alert"
         >
-          {actionError}
+          <span>{actionError}</span>
           <button
             type="button"
             onClick={() => setActionError('')}
-            className="ml-2 underline"
+            className="text-xs font-semibold underline shrink-0"
           >
             {i18nService.t('close')}
           </button>
         </div>
       )}
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1">
-          <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-          <input
-            type="text"
-            placeholder={i18nService.t('metabotSearchPlaceholder')}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-sm rounded-xl dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-          />
+      {/* Studio Linear Segmented Filter + Search + Actions Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="inline-flex items-center p-[3px] rounded-[9px] bg-[#eef1f5] dark:bg-white/[0.05] border border-slate-900/[0.095] dark:border-white/[0.085] gap-0.5">
+            {([
+              { id: 'all' as const, label: i18nService.t('metabotFilterAll').replace('{count}', String(list.length)) },
+              { id: 'active' as const, label: i18nService.t('metabotFilterActive').replace('{count}', String(activeCount)) },
+              ...(partialSyncCount > 0 || statusFilter === 'sync'
+                ? [{ id: 'sync' as const, label: i18nService.t('metabotFilterPendingSync').replace('{count}', String(partialSyncCount)) }]
+                : []),
+            ]).map((tab) => {
+              const active = statusFilter === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setStatusFilter(tab.id)}
+                  className={`px-2.5 py-1 rounded-[6px] text-[12px] font-semibold tabular-nums transition-colors ${
+                    active
+                      ? 'bg-white dark:bg-[#182538] text-[#181d25] dark:text-[#f3f5f8] shadow-[0_1px_2px_rgba(0,0,0,0.08)]'
+                      : 'text-[#5a6577] dark:text-[#94a3b8] hover:text-[#181d25] dark:hover:text-[#f3f5f8]'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="relative w-60 max-w-full">
+            <MagnifyingGlassIcon className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#8c96a6] dark:text-[#64748b]" />
+            <input
+              type="text"
+              placeholder={i18nService.t('metabotSearchPlaceholder')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full h-[34px] pl-8 pr-3 text-[12.5px] rounded-[8px] bg-white dark:bg-[#182538] text-[#181d25] dark:text-[#f3f5f8] placeholder-[#8c96a6] dark:placeholder-[#64748b] border border-slate-900/[0.095] dark:border-white/[0.085] focus:outline-none focus:border-claude-accent focus:ring-1 focus:ring-claude-accent"
+            />
+          </div>
+
+          <span className="hidden sm:inline text-[12px] font-semibold tabular-nums text-[#8c96a6] dark:text-[#64748b]">
+            {i18nService
+              .t('metabotQuotaCreated')
+              .replace('{count}', String(list.length))
+              .replace('{limit}', String(DEFAULT_METABOT_LIMIT))}
+          </span>
         </div>
-        <button
-          type="button"
-          onClick={handleAdd}
-          className="px-3 py-2 text-sm rounded-[8px] border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
-        >
-          <PlusCircleIcon className="h-4 w-4" />
-          <span>{i18nService.t('metabotAdd')}</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            if (list.length >= DEFAULT_METABOT_LIMIT) {
-              setShowLimitModal(true);
-              return;
-            }
-            setActionError('');
-            setShowRestoreModal(true);
-          }}
-          className="px-3 py-2 text-sm rounded-xl border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
-        >
-          <ArrowPathIcon className="h-4 w-4" />
-          <span>{i18nService.t('metabotRestore')}</span>
-        </button>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (list.length >= DEFAULT_METABOT_LIMIT) {
+                setShowLimitModal(true);
+                return;
+              }
+              setActionError('');
+              setShowRestoreModal(true);
+            }}
+            className={`${METABOT_BTN_FLAT_CLASS} !h-[34px] !px-3 !rounded-[8px] !bg-white dark:!bg-[#182538] hover:!bg-[#fafbfc] dark:hover:!bg-[#1d2c42] !text-[12.5px]`}
+          >
+            <ArrowPathIcon className="h-3.5 w-3.5" />
+            <span>{i18nService.t('metabotRestoreShort')}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleAdd}
+            className={METABOT_BTN_PRIMARY_CLASS}
+          >
+            <PlusIcon className="h-3.5 w-3.5 stroke-[2.2]" />
+            <span>{i18nService.t('metabotCreateNew')}</span>
+          </button>
+        </div>
       </div>
 
       {loading ? (
-        <div className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary py-8 text-center">
+        <div className="text-sm text-[#8c96a6] dark:text-[#64748b] py-10 text-center">
           {i18nService.t('loading')}
         </div>
       ) : filteredList.length === 0 ? (
-        <div className="col-span-2 text-center py-8 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          {i18nService.t('metabotNoItems')}
+        <div className="rounded-[10px] border border-slate-900/[0.095] dark:border-white/[0.085] bg-white dark:bg-[#182538] py-10 px-4 text-center text-[13px] text-[#5a6577] dark:text-[#94a3b8]">
+          {list.length === 0 ? i18nService.t('metabotNoItems') : i18nService.t('metabotNoFilteredItems')}
         </div>
       ) : (
-        <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {filteredList.map((m) => (
-              <MetaBotListCard
-                key={m.id}
-                metabot={m}
-                onEdit={() => handleEdit(m.id)}
-                onToggleEnabled={(enabled) => handleToggleEnabled(m.id, enabled)}
-                isChainSynced={!!(m.metabot_info_pinid && m.metabot_info_pinid.trim())}
-                chainSyncState={m.chain_sync_state}
-                onSyncToChain={() => void handleResyncPartial(m)}
-                onOpenMetabotInBrowser={onOpenMetabotInBrowser}
-              />
-            ))}
-          </div>
-          {renderSuccessModal()}
-          {renderDeleteModal()}
-          {showRestoreModal && (
-            <MetaBotRestoreMnemonicModal
-              onClose={() => setShowRestoreModal(false)}
-              onRestored={handleRestoreCompleted}
-            />
-          )}
-          {showLimitModal && (
-            <div
-              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-              onClick={() => setShowLimitModal(false)}
-              role="dialog"
-              aria-modal="true"
-            >
-              <div
-                className="w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <p className="text-sm dark:text-claude-darkText text-claude-text">
-                  {formatMetabotLimitReached()}
-                </p>
-                <div className="mt-4 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setShowLimitModal(false)}
-                    className="btn-idchat-primary-filled px-3 py-1.5 text-sm font-medium"
-                  >
-                    {i18nService.t('close')}
-                  </button>
-                </div>
+        <div className="space-y-5">
+          {twinRosterItem && (
+            <section>
+              <div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.05em] text-[#8c96a6] dark:text-[#64748b] after:h-px after:flex-1 after:bg-slate-900/[0.06] dark:after:bg-white/[0.06]">
+                <span>{i18nService.t('metabotSectionTwinSeat')}</span>
               </div>
-            </div>
+              {renderRosterCard(twinRosterItem, 'twinStrip')}
+            </section>
           )}
-        </>
+
+          {workerRosterItems.length > 0 && (
+            <section>
+              {twinRosterItem && (
+                <div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.05em] text-[#8c96a6] dark:text-[#64748b] after:h-px after:flex-1 after:bg-slate-900/[0.06] dark:after:bg-white/[0.06]">
+                  <span>{i18nService.t('metabotSectionWorkerRoster')}</span>
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {workerRosterItems.map((m) => renderRosterCard(m, 'tile'))}
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+
+      {renderSuccessModal()}
+      {renderDeleteModal()}
+      {showRestoreModal && (
+        <MetaBotRestoreMnemonicModal
+          onClose={() => setShowRestoreModal(false)}
+          onRestored={handleRestoreCompleted}
+        />
+      )}
+      {showLimitModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={() => setShowLimitModal(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm dark:text-claude-darkText text-claude-text">
+              {formatMetabotLimitReached()}
+            </p>
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowLimitModal(false)}
+                className="btn-idchat-primary-filled px-3 py-1.5 text-sm font-medium"
+              >
+                {i18nService.t('close')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
