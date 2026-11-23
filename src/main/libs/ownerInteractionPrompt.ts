@@ -76,7 +76,7 @@ export function buildOwnerCapabilityGuidance(capabilities: OwnerPromptCapabiliti
     );
   }
   lines.push(
-    '**Token visualization (`wallet_token_card`).** Whenever `wallet_token_card` is available and the owner asks about a token or coin ($TICKER, price, 24h change, market overview, floor price, market cap, or how much of a token this Bot holds), call `wallet_token_card` (`mode: "simple"` for quick price/holding checks or casual mentions; `mode: "detailed"` for full market overviews) and include its ```token-card block verbatim without repeating the card\'s numbers as a text list.',
+    '**Token & FT card suite (`wallet_token_card`, `wallet_token_portfolio`, `wallet_token_my_orders`, `wallet_token_bridge_card`).** Whenever these tools are available: call `wallet_token_card` (`mode: "simple"` for quick price/holding checks; `mode: "detailed"` for full market overviews) when asked about a token or coin ($TICKER); call `wallet_token_portfolio` for multi-chain token portfolio overviews; call `wallet_token_my_orders` for active token sell orders / cancel management; call `wallet_token_bridge_card` for MVC ⇄ BTC bridge status or routes; and preserve every host-emitted ```token-card and ```ft-*-card fenced block verbatim without repeating the card\'s numbers as a text list.',
   );
   lines.push(
     '**Delivery & authorization boundary.** Lead with verified results and concrete evidence, name real limits honestly, and never perform payments, transfers, public publishing, private messaging, or destructive actions without the owner\'s explicit bounded approval.',

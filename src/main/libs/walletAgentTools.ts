@@ -35,10 +35,28 @@ import { appendNftCardBlock, findNftCardDetail, type NftCardEmitFields } from '.
 import { withNftCardHostStamp } from './tradeActivityStamp';
 import {
   buildTokenCardSnapshot,
+  formatTokenAmountDisplay,
   type BuildTokenCardInput,
   type BuildTokenCardResult,
   type TokenCardMetabotSummary,
 } from '../services/tokenCardService';
+import type { FtActiveOrderRecord } from '../services/ftOrderStore';
+import {
+  FT_ACTION_CARD_FENCE_TAG,
+  FT_BRIDGE_CARD_FENCE_TAG,
+  FT_FILL_CARD_FENCE_TAG,
+  FT_MY_ORDERS_CARD_FENCE_TAG,
+  FT_ORDER_CARD_FENCE_TAG,
+  FT_PORTFOLIO_CARD_FENCE_TAG,
+  formatFtActionCardFence,
+  formatFtBridgeCardFence,
+  formatFtFillCardFence,
+  formatFtMyOrdersCardFence,
+  formatFtOrderCardFence,
+  formatFtPortfolioCardFence,
+  type FtMyOrderItem,
+  type FtPortfolioHolding,
+} from '../../renderer/components/chat/ftCardSyntax';
 
 /**
  * Host control surface for the wallet tools, wired in main.ts: UTXO-sum
@@ -173,6 +191,7 @@ export type WalletToolsControl = {
   }): MvcFtIssuanceRecord[];
   getMetabotSummary?(metabotId: number): TokenCardMetabotSummary | null;
   getTokenCard?(input: BuildTokenCardInput): Promise<BuildTokenCardResult>;
+  listActiveFtOrders?(filter?: { metabotId?: number }): FtActiveOrderRecord[];
 };
 
 /** Minimal shape of the claude-agent-sdk tool() helper we depend on. */
@@ -195,6 +214,67 @@ function asString(value: unknown): string {
 }
 
 const SATOSHI_PER_UNIT = 100_000_000;
+
+function appendFtSuiteFence(summaryText: string, fence: string, fenceTag: string): string {
+  return `${summaryText}\n\nInclude the following \`\`\`${fenceTag} block verbatim in your reply:\n\n${fence}`;
+}
+
+function formatBaseUnitToDisplay(baseUnits: string | undefined, decimals = 0): string {
+  const raw = String(baseUnits ?? '').trim();
+  if (!/^\d+$/.test(raw)) return raw || '0';
+  if (!decimals || decimals <= 0) return formatTokenAmountDisplay(raw, 4);
+  const padded = raw.padStart(decimals + 1, '0');
+  const intPart = padded.slice(0, padded.length - decimals);
+  const fracPart = padded.slice(padded.length - decimals).replace(/0+$/, '');
+  const decimalStr = fracPart ? `${intPart}.${fracPart}` : intPart;
+  return formatTokenAmountDisplay(decimalStr, Math.min(8, decimals));
+}
+
+async function resolveMvcFtMetaFromWallet(
+  control: WalletToolsControl,
+  metabotId: number,
+  genesis: string,
+  codehash?: string,
+): Promise<{ symbol: string; decimals: number; balanceDisplay?: string }> {
+  const targetGen = genesis.toLowerCase();
+  const targetCode = codehash?.toLowerCase();
+  try {
+    if (control.listIssuedTokens) {
+      const issued = control.listIssuedTokens({ limit: 100 });
+      const foundIssued = issued.find(
+        (r) =>
+          r.genesis.toLowerCase() === targetGen &&
+          (!targetCode || r.codehash.toLowerCase() === targetCode),
+      );
+      if (foundIssued) {
+        return {
+          symbol: foundIssued.tokenSymbol || 'FT',
+          decimals: foundIssued.decimals ?? 8,
+        };
+      }
+    }
+    if (typeof control.listMvcFtTokens === 'function') {
+      const entries = await control.listMvcFtTokens({ metabotIds: [metabotId] });
+      const tokens = entries[0]?.balance?.tokens ?? [];
+      const match = tokens.find(
+        (t) =>
+          String(t.genesis || '').toLowerCase() === targetGen &&
+          (!targetCode || !t.codeHash || String(t.codeHash).toLowerCase() === targetCode),
+      );
+      if (match) {
+        const decimals = match.decimal ?? 0;
+        return {
+          symbol: match.symbol || 'FT',
+          decimals,
+          balanceDisplay: formatBaseUnitToDisplay(match.balance, decimals),
+        };
+      }
+    }
+  } catch {
+    // Non-fatal enrichment
+  }
+  return { symbol: 'FT', decimals: 0 };
+}
 
 function formatSnapshot(snapshot: WalletBalanceSnapshot): string {
   const total = (snapshot.total_sats / SATOSHI_PER_UNIT).toFixed(8);
@@ -718,9 +798,25 @@ export function buildWalletAgentTools(deps: {
         // `=== true` (not bare truthiness): the project runs without
         // strictNullChecks, where boolean truthiness does not narrow the
         // discriminated union.
-        return result.success === true
-          ? textResult(formatTokenSendSuccess(result))
-          : textResult(formatTokenSendFailure(result), true);
+        if (result.success === true) {
+          const summary = formatTokenSendSuccess(result);
+          const assetKey = `mvc-ft:${asString(args.codehash).toLowerCase() || 'mvc'}:${result.token_genesis.toLowerCase()}`;
+          const fence = formatFtActionCardFence({
+            action: 'transfer',
+            symbol: result.token_symbol || 'FT',
+            chain: 'mvc',
+            standard: 'mvc-ft',
+            assetKey,
+            amountDisplay: formatTokenAmountDisplay(result.amount, 8),
+            receiverAddress: toAddress,
+            ...(result.to_metabot_id != null
+              ? { receiverLabel: `MetaBot #${result.to_metabot_id}` }
+              : {}),
+            txid: result.txid,
+          });
+          return textResult(appendFtSuiteFence(summary, fence, FT_ACTION_CARD_FENCE_TAG));
+        }
+        return textResult(formatTokenSendFailure(result), true);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_token_send failed: ${msg}`, true);
@@ -1499,6 +1595,7 @@ export function buildWalletAgentTools(deps: {
         return textResult('wallet_token_transfer: token_txid must be 64 hex.', true);
       }
       try {
+        const preMeta = await resolveMvcFtMetaFromWallet(control, metabotId, genesis, codehash);
         const result = await control.transferToken({
           metabotId,
           genesis,
@@ -1514,7 +1611,17 @@ export function buildWalletAgentTools(deps: {
           `- to: ${receiverAddress}`,
           '- Full-utxo semantics — the entire token utxo amount moved. Verify with wallet_token_balance after the txs confirm.',
         ];
-        return textResult(lines.join('\n'));
+        const fence = formatFtActionCardFence({
+          action: 'transfer',
+          symbol: preMeta.symbol,
+          chain: 'mvc',
+          standard: 'mvc-ft',
+          assetKey: `mvc-ft:${codehash}:${genesis}`,
+          amountDisplay: preMeta.balanceDisplay || '1 UTXO',
+          receiverAddress,
+          txid: result.txId,
+        });
+        return textResult(appendFtSuiteFence(lines.join('\n'), fence, FT_ACTION_CARD_FENCE_TAG));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_token_transfer failed: ${msg}`, true);
@@ -1666,6 +1773,12 @@ export function buildWalletAgentTools(deps: {
         return textResult('wallet_token_sell: token_txid must be 64 hex.', true);
       }
       try {
+        const preMeta = await resolveMvcFtMetaFromWallet(
+          control,
+          metabotId,
+          genesis.toLowerCase(),
+          codehash.toLowerCase(),
+        );
         const result = await control.sellToken({
           metabotId,
           genesis: genesis.toLowerCase(),
@@ -1685,7 +1798,27 @@ export function buildWalletAgentTools(deps: {
           l ? `- listing tuple for takers: sell_txid=${l.sell_txid} sell_output_index=${l.sell_output_index} sell_price_sats=${l.sell_price_sats} seller_address=${l.seller_address}` : '',
           '- Verify with wallet_token_sell_orders (pass the tuple); take it down with wallet_token_cancel_sell (self-take).',
         ].filter(Boolean);
-        return textResult(lines.join('\n'));
+        const spaceDisplay = (priceSats / SATOSHI_PER_UNIT).toFixed(8).replace(/\.?0+$/, '');
+        const lotDisplay = args.token_amount
+          ? formatBaseUnitToDisplay(asString(args.token_amount), preMeta.decimals)
+          : preMeta.balanceDisplay || '1';
+        const orderFence = formatFtOrderCardFence({
+          batchGroupId: `tokensell_${result.txId.slice(0, 12)}`,
+          assetKey: `mvc-ft:${codehash.toLowerCase()}:${genesis.toLowerCase()}`,
+          symbol: preMeta.symbol,
+          caVerified: false,
+          rail: 'mvc-tokensell',
+          chain: 'mvc',
+          standard: 'mvc-ft',
+          lotAmountDisplay: lotDisplay,
+          totalLots: 1,
+          filledLots: 0,
+          unitPriceLabel: `${spaceDisplay} SPACE (${priceSats.toLocaleString('en-US')} sats)`,
+          totalValueLabel: `${spaceDisplay} SPACE`,
+          autoFulfill: false,
+          orderRefs: [result.txId],
+        });
+        return textResult(appendFtSuiteFence(lines.join('\n'), orderFence, FT_ORDER_CARD_FENCE_TAG));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_token_sell failed: ${msg}`, true);
@@ -1742,7 +1875,22 @@ export function buildWalletAgentTools(deps: {
           `- funding txids: ${result.fundingTxIds.join(', ')}`,
           '- Verify the tokens arrived with wallet_token_balance after the txs confirm.',
         ];
-        return textResult(lines.join('\n'));
+        const spacePaid = (listing.sell_price_sats / SATOSHI_PER_UNIT)
+          .toFixed(8)
+          .replace(/\.?0+$/, '');
+        const fillFence = formatFtFillCardFence({
+          side: 'buy',
+          symbol: 'FT',
+          rail: 'mvc-tokensell',
+          chain: 'mvc',
+          standard: 'mvc-ft',
+          totalTokenDisplay: '1 Lot',
+          filledOrderCount: 1,
+          totalPaidLabel: `${spacePaid} SPACE`,
+          txids: [result.txId],
+          nextActions: ['browse_token_goods', 'browse_paybuzz'],
+        });
+        return textResult(appendFtSuiteFence(lines.join('\n'), fillFence, FT_FILL_CARD_FENCE_TAG));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_token_buy failed: ${msg}`, true);
@@ -1900,23 +2048,37 @@ export function buildWalletAgentTools(deps: {
           );
         }
 
-        return textResult(
-          [
-            'MVC MetaContract FT issued and broadcast on-chain.',
-            `- token: ${outcome.tokenName} (${outcome.tokenSymbol}), decimals ${outcome.decimals}`,
-            `- minted supply: ${outcome.supplyDisplay} ${outcome.tokenSymbol} (${outcome.supplyBase} base units)`,
-            `- supply policy: ${outcome.allowIncreaseMints ? 'MINTABLE (can mint more via wallet_token_mint)' : 'FIXED SUPPLY (permanently locked on-chain)'}`,
-            `- assetKey: ${outcome.assetKey}`,
-            `- codehash: ${outcome.codehash}`,
-            `- genesis: ${outcome.genesis}`,
-            `- sensibleId: ${outcome.sensibleId}`,
-            `- genesis txid: ${outcome.genesisTxId}`,
-            outcome.mintTxId ? `- initial mint txid: ${outcome.mintTxId}` : '- initial mint txid: (none; supply=0 genesis only)',
-            `- receiver: ${outcome.receiverAddress}`,
-            `- total SPACE cost: ${formatSpaceSats(outcome.totalFeeSats)} (miner fee ${outcome.minerFeeSats} sats + contract dust ${outcome.lockedDustSats} sats)`,
-            '- Verify holdings with wallet_token_balance or inspect local issuance records with wallet_token_issued_list.',
-          ].join('\n'),
-        );
+        const issueSummary = [
+          'MVC MetaContract FT issued and broadcast on-chain.',
+          `- token: ${outcome.tokenName} (${outcome.tokenSymbol}), decimals ${outcome.decimals}`,
+          `- minted supply: ${outcome.supplyDisplay} ${outcome.tokenSymbol} (${outcome.supplyBase} base units)`,
+          `- supply policy: ${outcome.allowIncreaseMints ? 'MINTABLE (can mint more via wallet_token_mint)' : 'FIXED SUPPLY (permanently locked on-chain)'}`,
+          `- assetKey: ${outcome.assetKey}`,
+          `- codehash: ${outcome.codehash}`,
+          `- genesis: ${outcome.genesis}`,
+          `- sensibleId: ${outcome.sensibleId}`,
+          `- genesis txid: ${outcome.genesisTxId}`,
+          outcome.mintTxId ? `- initial mint txid: ${outcome.mintTxId}` : '- initial mint txid: (none; supply=0 genesis only)',
+          `- receiver: ${outcome.receiverAddress}`,
+          `- total SPACE cost: ${formatSpaceSats(outcome.totalFeeSats)} (miner fee ${outcome.minerFeeSats} sats + contract dust ${outcome.lockedDustSats} sats)`,
+          '- Verify holdings with wallet_token_balance or inspect local issuance records with wallet_token_issued_list.',
+        ].join('\n');
+        const issueFence = formatFtActionCardFence({
+          action: 'issue',
+          symbol: outcome.tokenSymbol,
+          name: outcome.tokenName,
+          chain: 'mvc',
+          standard: 'mvc-ft',
+          assetKey: outcome.assetKey,
+          amountDisplay: formatTokenAmountDisplay(outcome.supplyDisplay, 8),
+          decimals: outcome.decimals,
+          mintable: outcome.allowIncreaseMints,
+          receiverAddress: outcome.receiverAddress,
+          genesisId: outcome.genesis,
+          txid: outcome.mintTxId || outcome.genesisTxId,
+          feeLabel: formatSpaceSats(outcome.totalFeeSats),
+        });
+        return textResult(appendFtSuiteFence(issueSummary, issueFence, FT_ACTION_CARD_FENCE_TAG));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_token_issue failed: ${msg}`, true);
@@ -2013,21 +2175,36 @@ export function buildWalletAgentTools(deps: {
           );
         }
 
-        return textResult(
-          [
-            'MVC MetaContract FT follow-up mint broadcast on-chain.',
-            `- token: ${outcome.tokenName} (${outcome.tokenSymbol}), decimals ${outcome.decimals}`,
-            `- minted amount: +${outcome.supplyDisplay} ${outcome.tokenSymbol} (${outcome.supplyBase} base units)`,
-            outcome.record ? `- cumulative minted: ${outcome.record.totalMintedDisplay} ${outcome.tokenSymbol}` : '',
-            `- authority after mint: ${outcome.allowIncreaseMints ? 'MINTABLE' : 'FIXED / LOCKED FOREVER'}`,
-            `- assetKey: ${outcome.assetKey}`,
-            `- mint txid: ${outcome.mintTxId}`,
-            `- receiver: ${outcome.receiverAddress}`,
-            `- total SPACE cost: ${formatSpaceSats(outcome.totalFeeSats)}`,
-          ]
-            .filter(Boolean)
-            .join('\n'),
-        );
+        const mintSummary = [
+          'MVC MetaContract FT follow-up mint broadcast on-chain.',
+          `- token: ${outcome.tokenName} (${outcome.tokenSymbol}), decimals ${outcome.decimals}`,
+          `- minted amount: +${outcome.supplyDisplay} ${outcome.tokenSymbol} (${outcome.supplyBase} base units)`,
+          outcome.record ? `- cumulative minted: ${outcome.record.totalMintedDisplay} ${outcome.tokenSymbol}` : '',
+          `- authority after mint: ${outcome.allowIncreaseMints ? 'MINTABLE' : 'FIXED / LOCKED FOREVER'}`,
+          `- assetKey: ${outcome.assetKey}`,
+          `- mint txid: ${outcome.mintTxId}`,
+          `- receiver: ${outcome.receiverAddress}`,
+          `- total SPACE cost: ${formatSpaceSats(outcome.totalFeeSats)}`,
+        ]
+          .filter(Boolean)
+          .join('\n');
+        const mintFence = formatFtActionCardFence({
+          action: 'mint',
+          symbol: outcome.tokenSymbol,
+          name: outcome.tokenName,
+          chain: 'mvc',
+          standard: 'mvc-ft',
+          assetKey: outcome.assetKey,
+          amountDisplay: formatTokenAmountDisplay(outcome.supplyDisplay, 8),
+          mintable: outcome.allowIncreaseMints,
+          receiverAddress: outcome.receiverAddress,
+          txid: outcome.mintTxId,
+          feeLabel: formatSpaceSats(outcome.totalFeeSats),
+          ...(outcome.record
+            ? { supplyProgressText: `${outcome.record.totalMintedDisplay} ${outcome.tokenSymbol}` }
+            : {}),
+        });
+        return textResult(appendFtSuiteFence(mintSummary, mintFence, FT_ACTION_CARD_FENCE_TAG));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_token_mint failed: ${msg}`, true);
@@ -2171,10 +2348,361 @@ export function buildWalletAgentTools(deps: {
     },
   );
 
+  const walletTokenPortfolio = tool(
+    'wallet_token_portfolio',
+    [
+      'Query THIS session MetaBot\'s (or a specified local MetaBot\'s) multi-chain fungible token portfolio and emit a visual ```ft-portfolio-card (`P2` per-chain partitioned Bento card).',
+      'Physically separates Bitcoin MRC-20 / ID-Coin holdings from MVC MetaContract (MCP02) holdings, includes native BTC / SPACE / DOGE gas balances, marks cross-chain bridged peers (`⇄`), and annotates quantities locked in active sell orders.',
+      'Use whenever the user asks "我有哪些代币 / 查看我的代币持仓 / 多链代币资产一览 / what tokens do I hold?". Include the returned ```ft-portfolio-card block VERBATIM in your reply without repeating every row as plain text.',
+    ].join(' '),
+    {
+      metabot_id: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Optional local MetaBot id; defaults to THIS session MetaBot.'),
+      name: z
+        .string()
+        .optional()
+        .describe('Optional local MetaBot name; defaults to THIS session MetaBot.'),
+    },
+    async (args: { metabot_id?: number; name?: string }) => {
+      let targetId = args.metabot_id;
+      if (targetId == null && asString(args.name)) {
+        const resolved = control.resolveMetabotIdByName(asString(args.name));
+        if (resolved == null) {
+          return textResult(`wallet_token_portfolio: local MetaBot not found by name: ${asString(args.name)}`, true);
+        }
+        targetId = resolved;
+      }
+      if (targetId == null) {
+        targetId = resolveMetabotId(sessionId);
+      }
+      if (targetId == null) {
+        return textResult('wallet_token_portfolio requires a session MetaBot or explicit metabot_id.', true);
+      }
+
+      try {
+        const summary = control.getMetabotSummary?.(targetId) ?? null;
+        const [nativeRes, mrc20Res, mvcFtRes] = await Promise.all([
+          typeof control.getBalances === 'function'
+            ? control.getBalances({ metabotIds: [targetId] }).catch(() => null)
+            : Promise.resolve(null),
+          typeof control.listMrc20s === 'function'
+            ? control.listMrc20s({ metabotIds: [targetId] }).catch(() => [])
+            : Promise.resolve([]),
+          typeof control.listMvcFtTokens === 'function'
+            ? control.listMvcFtTokens({ metabotIds: [targetId] }).catch(() => [])
+            : Promise.resolve([]),
+        ]);
+
+        const activeOrders = control.listActiveFtOrders?.({ metabotId: targetId }) ?? [];
+        const lockedByAssetKey = new Map<string, number>();
+        for (const ord of activeOrders) {
+          if (ord.status !== 'active') continue;
+          const prev = lockedByAssetKey.get(ord.assetKey.toLowerCase()) ?? 0;
+          lockedByAssetKey.set(ord.assetKey.toLowerCase(), prev + (Number(ord.amountDisplay) || 0));
+        }
+
+        const rawMrc20s = mrc20Res[0]?.assets ?? [];
+        const rawMvcFts = mvcFtRes[0]?.balance?.tokens ?? [];
+
+        const btcSymbols = new Set(rawMrc20s.map((a) => String(a.symbol || '').toUpperCase()).filter(Boolean));
+        const mvcSymbols = new Set(rawMvcFts.map((t) => String(t.symbol || '').toUpperCase()).filter(Boolean));
+
+        const btcHoldings: FtPortfolioHolding[] = rawMrc20s.map((asset) => {
+          const sym = String(asset.symbol || 'MRC20').trim();
+          const assetKey = `mrc20:${asset.mrc20Id}`;
+          const locked = lockedByAssetKey.get(assetKey.toLowerCase()) ?? 0;
+          return {
+            assetKey,
+            symbol: sym,
+            ...(asset.tokenName ? { name: asset.tokenName } : {}),
+            chain: 'btc',
+            standard: 'mrc20',
+            caVerified: true,
+            totalDisplay: formatTokenAmountDisplay(asset.balance.display, 6),
+            ...(locked > 0
+              ? {
+                  availableDisplay: formatTokenAmountDisplay(asset.balance.confirmed || asset.balance.display, 6),
+                  lockedDisplay: formatTokenAmountDisplay(locked, 6),
+                }
+              : {}),
+            ...(mvcSymbols.has(sym.toUpperCase()) ? { bridgedPeer: true } : {}),
+          };
+        });
+
+        const mvcHoldings: FtPortfolioHolding[] = rawMvcFts.map((tok) => {
+          const sym = String(tok.symbol || 'FT').trim();
+          const codehash = String(tok.codeHash || 'mvc').toLowerCase();
+          const genesis = String(tok.genesis || '').toLowerCase();
+          const assetKey = `mvc-ft:${codehash}:${genesis}`;
+          const totalDisp = formatBaseUnitToDisplay(tok.balance, tok.decimal ?? 0);
+          const locked = lockedByAssetKey.get(assetKey) ?? 0;
+          return {
+            assetKey,
+            symbol: sym,
+            chain: 'mvc',
+            standard: 'mvc-ft',
+            caVerified: sym.toUpperCase() === 'METAID' || sym.toUpperCase() === 'MSP',
+            totalDisplay: totalDisp,
+            ...(locked > 0
+              ? {
+                  availableDisplay: totalDisp,
+                  lockedDisplay: formatTokenAmountDisplay(locked, 6),
+                }
+              : {}),
+            ...(btcSymbols.has(sym.toUpperCase()) ? { bridgedPeer: true } : {}),
+          };
+        });
+
+        const entry = nativeRes?.entries?.[0];
+        const btcSats = entry?.balances?.btc?.total_sats;
+        const mvcSats = entry?.balances?.mvc?.total_sats;
+        const dogeSats = entry?.balances?.doge?.total_sats;
+
+        const btcGasText =
+          btcSats != null ? `${btcSats.toLocaleString('en-US')} sats` : undefined;
+        const mvcGasText =
+          mvcSats != null
+            ? `${(mvcSats / SATOSHI_PER_UNIT).toFixed(4).replace(/\.?0+$/, '')} SPACE`
+            : undefined;
+        const dogeGasText =
+          dogeSats != null && dogeSats > 0
+            ? `${(dogeSats / SATOSHI_PER_UNIT).toFixed(2)} DOGE`
+            : undefined;
+
+        const botName = summary?.name || entry?.name;
+        const fence = formatFtPortfolioCardFence({
+          ...(botName ? { botName } : {}),
+          metabotId: targetId,
+          ...(btcGasText ? { btcGasText } : {}),
+          ...(mvcGasText ? { mvcGasText } : {}),
+          ...(dogeGasText ? { dogeGasText } : {}),
+          btcHoldings,
+          mvcHoldings,
+        });
+
+        const textLines = [
+          `Portfolio snapshot for ${botName || `metabot_id ${targetId}`}: ${btcHoldings.length} BTC MRC-20 token(s), ${mvcHoldings.length} MVC MetaContract token(s).`,
+        ];
+        return textResult(appendFtSuiteFence(textLines.join('\n'), fence, FT_PORTFOLIO_CARD_FENCE_TAG));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_token_portfolio failed: ${msg}`, true);
+      }
+    },
+  );
+
+  const walletTokenMyOrders = tool(
+    'wallet_token_my_orders',
+    [
+      'List THIS session MetaBot\'s active token sell orders across ME Points Trade (`me-escrow`), BTC `metaid.market` (`btc-psbt`), and MVC TokenSell Contract (`mvc-tokensell`), and emit a visual ```ft-my-orders-card (`O1` ticket stack card with cancel actions).',
+      'Use whenever the user asks "我挂了哪些单 / 查看我的在售挂单 / 撤单管理 / my active token orders". Include the returned ```ft-my-orders-card block VERBATIM in your reply.',
+    ].join(' '),
+    {
+      metabot_id: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Optional local MetaBot id; defaults to THIS session MetaBot.'),
+    },
+    async (args: { metabot_id?: number }) => {
+      const targetId = args.metabot_id ?? resolveMetabotId(sessionId);
+      if (targetId == null) {
+        return textResult('wallet_token_my_orders requires a session MetaBot or explicit metabot_id.', true);
+      }
+      try {
+        const summary = control.getMetabotSummary?.(targetId) ?? null;
+        const rawOrders = control.listActiveFtOrders?.({ metabotId: targetId }) ?? [];
+
+        const grouped = new Map<string, FtActiveOrderRecord[]>();
+        for (const row of rawOrders) {
+          if (row.status !== 'active') continue;
+          const key = row.batchGroupId || row.listingKey;
+          const list = grouped.get(key) ?? [];
+          list.push(row);
+          grouped.set(key, list);
+        }
+
+        const items: FtMyOrderItem[] = [];
+        for (const [batchId, lots] of grouped.entries()) {
+          const first = lots[0];
+          const unitPriceLabel =
+            first.rail === 'me-escrow' && first.priceMeMilli != null
+              ? `${(first.priceMeMilli / 1000).toFixed(3).replace(/\.?0+$/, '')} ME / lot`
+              : first.priceSats != null
+                ? first.chain === 'mvc'
+                  ? `${(first.priceSats / SATOSHI_PER_UNIT).toFixed(6).replace(/\.?0+$/, '')} SPACE`
+                  : `${first.priceSats.toLocaleString('en-US')} sats`
+                : 'Listed';
+
+          let sellTxid: string | undefined;
+          let sellOutputIndex: number | undefined;
+          if (first.tokenSellJson) {
+            try {
+              const parsedJson = JSON.parse(first.tokenSellJson) as Record<string, unknown>;
+              if (typeof parsedJson.sell_txid === 'string') sellTxid = parsedJson.sell_txid;
+              if (typeof parsedJson.sell_output_index === 'number') {
+                sellOutputIndex = parsedJson.sell_output_index;
+              }
+            } catch {
+              // ignore malformed json
+            }
+          }
+
+          items.push({
+            id: batchId,
+            batchGroupId: batchId,
+            assetKey: first.assetKey,
+            symbol: first.symbol,
+            caVerified:
+              first.symbol.toUpperCase() === 'METAID' || first.symbol.toUpperCase() === 'MSP',
+            rail: first.rail,
+            unitPriceLabel,
+            lotSummaryText: `${first.amountDisplay} ${first.symbol} × ${lots.length} active`,
+            filledLots: 0,
+            totalLots: lots.length,
+            ...(sellTxid ? { sellTxid } : {}),
+            ...(sellOutputIndex !== undefined ? { sellOutputIndex } : {}),
+            ...(first.priceSats != null ? { sellPriceSats: first.priceSats } : {}),
+            ...(first.sellerAddress ? { sellerAddress: first.sellerAddress } : {}),
+          });
+        }
+
+        const fence = formatFtMyOrdersCardFence({
+          ...(summary?.name ? { botName: summary.name } : {}),
+          metabotId: targetId,
+          totalOrdersCount: items.length,
+          orders: items,
+        });
+
+        return textResult(
+          appendFtSuiteFence(
+            `Found ${items.length} active token sell order group(s) for ${summary?.name || `metabot_id ${targetId}`}.`,
+            fence,
+            FT_MY_ORDERS_CARD_FENCE_TAG,
+          ),
+        );
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_token_my_orders failed: ${msg}`, true);
+      }
+    },
+  );
+
+  const walletTokenBridgeCard = tool(
+    'wallet_token_bridge_card',
+    [
+      'Build and emit a visual ```ft-bridge-card (`B1` Octopus Cross-Chain Asset Bridge flow & confirmation tracker) for bridging tokens between MVC (`MetaContract`) and BTC (`MRC-20`).',
+      'Use whenever the user asks to bridge tokens across MVC and BTC ("把 METAID 跨链到 BTC / BTC 转 MVC 跨链桥状态"), checks a bridge transaction confirmation progress, or encounters a paused direction (`btc-to-mvc` maintenance advisory with zero-bridge PSBT / ME Points listing options).',
+      'Read-only preview/status emitter. Include the returned ```ft-bridge-card block VERBATIM in your reply.',
+    ].join(' '),
+    {
+      symbol: z.string().min(1).describe('Token ticker symbol, e.g. "METAID" or "MSP".'),
+      direction: z
+        .enum(['mvc-to-btc', 'btc-to-mvc'])
+        .describe('Bridge direction: "mvc-to-btc" (MVC MetaContract -> BTC MRC-20) or "btc-to-mvc" (BTC MRC-20 -> MVC MetaContract).'),
+      amount: z
+        .string()
+        .optional()
+        .describe('Amount of tokens being bridged or previewed in display units, e.g. "1000".'),
+      status: z
+        .enum(['quote', 'bridging', 'completed', 'paused'])
+        .optional()
+        .describe('Bridge status ("quote" for route preview, "bridging" for in-flight confirmations, "completed" when credited, "paused" when direction is under maintenance).'),
+      txid: z
+        .string()
+        .optional()
+        .describe('Optional 64-hex source-chain bridge txid to inspect on-chain confirmation status.'),
+      asset_key: z
+        .string()
+        .optional()
+        .describe('Optional canonical assetKey.'),
+    },
+    async (args: {
+      symbol: string;
+      direction: 'mvc-to-btc' | 'btc-to-mvc';
+      amount?: string;
+      status?: 'quote' | 'bridging' | 'completed' | 'paused';
+      txid?: string;
+      asset_key?: string;
+    }) => {
+      const symbol = asString(args.symbol).replace(/^\$+/, '').toUpperCase() || 'TOKEN';
+      const txid = asString(args.txid);
+      const sendAmountDisplay = formatTokenAmountDisplay(asString(args.amount) || '0', 6);
+      let status: 'quote' | 'bridging' | 'completed' | 'paused' =
+        args.status ?? (txid ? 'bridging' : args.direction === 'btc-to-mvc' ? 'paused' : 'quote');
+      let confirmationsText: string | undefined;
+      let stepCurrent: 1 | 2 | 3 | undefined = txid ? 2 : 1;
+
+      if (txid && /^[0-9a-fA-F]{64}$/.test(txid) && typeof control.getTxStatus === 'function') {
+        try {
+          const sourceChain = args.direction === 'mvc-to-btc' ? 'mvc' : 'btc';
+          const txStat = await control.getTxStatus({ chain: sourceChain, txid });
+          if (txStat.confirmed) {
+            confirmationsText =
+              txStat.confirmations != null
+                ? `${txStat.confirmations} block confirmation(s)`
+                : 'Confirmed on source chain';
+            if ((txStat.confirmations ?? 1) >= 2 && args.status !== 'bridging') {
+              status = 'completed';
+              stepCurrent = 3;
+            } else {
+              stepCurrent = 2;
+            }
+          } else {
+            confirmationsText = '0 confirmations (mempool)';
+            stepCurrent = 1;
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      const fence = formatFtBridgeCardFence({
+        symbol,
+        ...(asString(args.asset_key) ? { assetKey: asString(args.asset_key) } : {}),
+        direction: args.direction,
+        status,
+        sendAmountDisplay: sendAmountDisplay === '0' ? '—' : sendAmountDisplay,
+        ...(status !== 'paused' && sendAmountDisplay !== '0'
+          ? { receiveAmountDisplay: sendAmountDisplay }
+          : {}),
+        feeLabel:
+          args.direction === 'mvc-to-btc'
+            ? '1:1 Peg · Octopus Relayer'
+            : '1:1 Peg',
+        ...(stepCurrent ? { stepCurrent } : {}),
+        ...(confirmationsText ? { confirmationsText } : {}),
+        etaText:
+          status === 'paused'
+            ? undefined
+            : args.direction === 'mvc-to-btc'
+              ? '~10–20 min (BTC block)'
+              : '~2–5 min',
+        ...(txid ? { txid } : {}),
+      });
+
+      return textResult(
+        appendFtSuiteFence(
+          `Octopus Bridge ${args.direction} card prepared for $${symbol} (status: ${status}).`,
+          fence,
+          FT_BRIDGE_CARD_FENCE_TAG,
+        ),
+      );
+    },
+  );
+
   return [
     walletBalance,
     walletMrc20Balance,
     walletTokenCard,
+    walletTokenPortfolio,
+    walletTokenMyOrders,
+    walletTokenBridgeCard,
     walletTransfer,
     walletNftBalance,
     walletNftTransfer,

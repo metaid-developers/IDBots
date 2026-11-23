@@ -4,7 +4,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { ChevronDownIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { BookOpenIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '../../components/MarkdownContent';
-import TokenCard, { TokenCardStreamingPlaceholder } from '../../components/chat/TokenCard';
+import TokenSuiteSegmentCard from '../../components/chat/TokenSuiteSegmentCard';
 import {
   hasStandaloneTokenCardSegment,
   splitTokenCardMessageSegments,
@@ -379,27 +379,18 @@ export const PanelMessage: React.FC<{
       >
         {tokenSegments.map((seg, segIdx) => {
           const isLastSeg = segIdx === tokenSegments.length - 1;
-          if (seg.kind === 'token-card') {
+          if (seg.kind !== 'markdown') {
             return (
               <div
-                key={`tc-${segIdx}`}
+                key={`ts-${seg.kind}-${segIdx}`}
                 data-standalone-token-bubble="true"
-                onContextMenu={handleBubbleContextMenu}
+                data-standalone-card-kind={seg.kind}
+                onContextMenu={
+                  seg.kind === 'token-card-streaming' ? undefined : handleBubbleContextMenu
+                }
                 className="w-full max-w-[364px]"
               >
-                <TokenCard data={seg.data} />
-                {renderSegmentFooter(isLastSeg)}
-              </div>
-            );
-          }
-          if (seg.kind === 'token-card-streaming') {
-            return (
-              <div
-                key={`tcs-${segIdx}`}
-                data-standalone-token-bubble="streaming"
-                className="w-full max-w-[364px]"
-              >
-                <TokenCardStreamingPlaceholder />
+                <TokenSuiteSegmentCard segment={seg} />
                 {renderSegmentFooter(isLastSeg)}
               </div>
             );

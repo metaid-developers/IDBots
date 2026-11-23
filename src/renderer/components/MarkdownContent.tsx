@@ -74,12 +74,24 @@ import { isEscrowCardFenceLanguage, parseEscrowCardFence } from './chat/escrowCa
 import FtQuoteCard from './chat/FtQuoteCard';
 import FtOrderCard from './chat/FtOrderCard';
 import FtFillCard from './chat/FtFillCard';
+import FtMyOrdersCard from './chat/FtMyOrdersCard';
+import FtPortfolioCard from './chat/FtPortfolioCard';
+import FtBridgeCard from './chat/FtBridgeCard';
+import FtActionCard from './chat/FtActionCard';
 import {
+  isFtActionCardFenceLanguage,
+  isFtBridgeCardFenceLanguage,
   isFtFillCardFenceLanguage,
+  isFtMyOrdersCardFenceLanguage,
   isFtOrderCardFenceLanguage,
+  isFtPortfolioCardFenceLanguage,
   isFtQuoteCardFenceLanguage,
+  parseFtActionCardFence,
+  parseFtBridgeCardFence,
   parseFtFillCardFence,
+  parseFtMyOrdersCardFence,
   parseFtOrderCardFence,
+  parseFtPortfolioCardFence,
   parseFtQuoteCardFence,
 } from './chat/ftCardSyntax';
 import MobilePageCard from './chat/MobilePageCard';
@@ -583,6 +595,30 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
       const fillData = parseFtFillCardFence(trimmedCodeText);
       if (fillData) {
         return <FtFillCard data={fillData} />;
+      }
+    }
+    if (isFtMyOrdersCardFenceLanguage(fenceLanguage)) {
+      const myOrdersData = parseFtMyOrdersCardFence(trimmedCodeText);
+      if (myOrdersData) {
+        return <FtMyOrdersCard data={myOrdersData} />;
+      }
+    }
+    if (isFtPortfolioCardFenceLanguage(fenceLanguage)) {
+      const portfolioData = parseFtPortfolioCardFence(trimmedCodeText);
+      if (portfolioData) {
+        return <FtPortfolioCard data={portfolioData} />;
+      }
+    }
+    if (isFtBridgeCardFenceLanguage(fenceLanguage)) {
+      const bridgeData = parseFtBridgeCardFence(trimmedCodeText);
+      if (bridgeData) {
+        return <FtBridgeCard data={bridgeData} />;
+      }
+    }
+    if (isFtActionCardFenceLanguage(fenceLanguage)) {
+      const actionData = parseFtActionCardFence(trimmedCodeText);
+      if (actionData) {
+        return <FtActionCard data={actionData} />;
       }
     }
 

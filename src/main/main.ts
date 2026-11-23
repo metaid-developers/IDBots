@@ -9256,6 +9256,11 @@ const getCoworkRunner = () => {
         return params.dryRun ? run() : withChainWriteBudget('wallet_token_mint', run);
       },
       listIssuedTokens: (filter) => listMvcFtIssuances(getStore().getDatabase(), filter),
+      listActiveFtOrders: (filter) =>
+        listFtActiveOrders(getStore().getDatabase(), {
+          metabotId: filter?.metabotId,
+          status: 'active',
+        }),
       getMetabotSummary: (metabotId) => {
         const bot = getMetabotStore().getMetabotById(metabotId);
         if (!bot) return null;

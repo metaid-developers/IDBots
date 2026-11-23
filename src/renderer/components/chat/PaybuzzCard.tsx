@@ -414,7 +414,7 @@ const PaybuzzCard: React.FC<PaybuzzCardProps> = ({ data }) => {
                   type="button"
                   disabled={loadingState !== 'idle'}
                   onClick={handleConfirmTokenPay}
-                  className="rounded-lg bg-claude-accent px-3 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-60"
+                  className="rounded-lg bg-claude-accent px-3 py-1 text-[11px] font-semibold text-claude-accentInk shadow-sm transition hover:opacity-90 disabled:opacity-60"
                 >
                   {loadingState === 'unlocking'
                     ? ct('Paying…', '支付中…')
@@ -443,7 +443,7 @@ const PaybuzzCard: React.FC<PaybuzzCardProps> = ({ data }) => {
             data-paybuzz-action="unlock"
             disabled={loadingState === 'unlocking'}
             onClick={handlePrimaryUnlockClick}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-claude-accent px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-claude-accent px-3.5 py-1.5 text-xs font-semibold text-claude-accentInk shadow-sm transition hover:opacity-90 disabled:opacity-60"
           >
             <BookOpenIcon className="h-3.5 w-3.5" />
             {unlockedArticle

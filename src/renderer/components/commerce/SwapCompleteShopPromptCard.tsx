@@ -114,7 +114,7 @@ const SwapCompleteShopPromptCard: React.FC<SwapCompleteShopPromptProps> = ({
               type="button"
               data-action="list-for-sale"
               onClick={handleList}
-              className="inline-flex items-center gap-1 rounded-lg bg-claude-accent px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
+              className="inline-flex items-center gap-1 rounded-lg bg-claude-accent px-2.5 py-1.5 text-xs font-medium text-claude-accentInk transition-opacity hover:opacity-90"
             >
               <TagIcon className="h-3.5 w-3.5" />
               {ct('List for Sale (ME / CNY)', '一键挂单出售')}
