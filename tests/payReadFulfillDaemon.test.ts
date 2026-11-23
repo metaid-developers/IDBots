@@ -7,7 +7,10 @@ import Module from 'node:module';
 
 const require = Module.createRequire(import.meta.url);
 const { SqliteStore } = require('../dist-electron/main/sqliteStore.js');
-const { PayReadFulfillDaemon } = require('../dist-electron/main/services/payReadFulfillDaemon.js');
+const {
+  PayReadFulfillDaemon,
+  verifyPaybuzzTokenPaymentOnChain,
+} = require('../dist-electron/main/services/payReadFulfillDaemon.js');
 const {
   formatPayReadWireMessage,
   parsePayReadWireMessage,
@@ -494,3 +497,59 @@ test('Fresh machine recovery: PayReadFulfillDaemon derives key from mnemonic + c
     assert.equal(getPaybuzzUnlockedCache(db, pinId)?.decryptedMarkdown, body);
   });
 });
+
+test('MVC FT verification fails closed on missing txId/codehash/genesis and accepts Metalet v4 valueString rows', async () => {
+  const mvcRule = {
+    assetKey: REAL_MVC_ASSET_KEY,
+    chain: 'mvc' as const,
+    standard: 'metacontract-ft' as const,
+    codehash: MVC_CODEHASH,
+    genesis: MVC_GENESIS,
+    symbol: 'SHOW',
+    decimals: 8,
+    amountBase: '5000000000',
+    amountDisplay: '50',
+    receiveAddress: AUTHOR_MVC_ADDR,
+  };
+  const targetTxId = 'aa'.repeat(32);
+
+  // Missing txId, codehash, or genesis must NEVER pass even if amount is large
+  const missingFieldsRes = await verifyPaybuzzTokenPaymentOnChain(
+    { rule: mvcRule, paymentTxId: targetTxId },
+    {
+      fetchMvcFtVerifiedUtxos: async () => [
+        { codehash: MVC_CODEHASH, genesis: MVC_GENESIS, ownerAddress: AUTHOR_MVC_ADDR, amountBase: '9999999999' },
+        { txId: targetTxId, genesis: MVC_GENESIS, ownerAddress: AUTHOR_MVC_ADDR, amountBase: '9999999999' },
+        { txId: targetTxId, codehash: MVC_CODEHASH, ownerAddress: AUTHOR_MVC_ADDR, amountBase: '9999999999' },
+      ],
+    },
+  );
+  assert.equal(missingFieldsRes.valid, false);
+  assert.equal(missingFieldsRes.reason, 'MVC_FT_OUTPUT_NOT_FOUND');
+
+  // Metalet v4 shape (`txid` + `codeHash` + `valueString`) passes when matching targetTxId
+  const metaletV4Res = await verifyPaybuzzTokenPaymentOnChain(
+    { rule: mvcRule, paymentTxId: targetTxId },
+    {
+      fetchMvcFtVerifiedUtxos: async () => [
+        {
+          txid: 'bb'.repeat(32),
+          codeHash: MVC_CODEHASH,
+          genesis: MVC_GENESIS,
+          address: AUTHOR_MVC_ADDR,
+          valueString: '9999999999',
+        },
+        {
+          txid: targetTxId,
+          codeHash: MVC_CODEHASH,
+          genesis: MVC_GENESIS,
+          address: AUTHOR_MVC_ADDR,
+          valueString: '5000000000',
+        },
+      ],
+    },
+  );
+  assert.equal(metaletV4Res.valid, true);
+  assert.equal(metaletV4Res.matchedAmountBase, '5000000000');
+});
+
