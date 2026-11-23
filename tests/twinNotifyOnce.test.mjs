@@ -43,21 +43,28 @@ function makeKv() {
 /**
  * Service + real SqliteStore/OrchestrationStore, with a recording
  * insertCrossSession spy. console.log is captured so the skip-path assertion
- * can read the operator-visible line.
+ * can read the operator-visible line. `studioCapture` wires the Studio
+ * back-office intercept (returning true = silent capture, no front-office
+ * message). The owner completion push (2026-11-23 root fix) is always wired
+ * into `h.ownerPushes`.
  */
-async function makeHarness() {
+async function makeHarness({ studioCapture = null } = {}) {
   const sqliteStore = await SqliteStore.create(makeTempDir());
   const store = new OrchestrationStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
   const db = sqliteStore.getDatabase();
   const bots = makeBots();
   const kv = makeKv();
   const inserts = [];
+  const ownerPushes = [];
   // How many claim rows were visible at the exact moment the insert ran — the
   // "row is written BEFORE the cross-session insert" invariant.
   const rowsSeenAtInsert = [];
   const logs = [];
+  const warns = [];
   const originalLog = console.log;
+  const originalWarn = console.warn;
   console.log = (...args) => { logs.push(args.map(String).join(' ')); };
+  console.warn = (...args) => { warns.push(args.map(String).join(' ')); };
 
   const service = new TwinOrchestrationService({
     orchestrationStore: store,
@@ -71,6 +78,11 @@ async function makeHarness() {
     getMetabotById: (id) => bots.find((bot) => bot.id === id) ?? null,
     getWorkerWorkspace: () => '/tmp/idbots-worker-2',
     runWorkerTurn: async () => 'unused by these tests',
+    notifyOwnerCompletion: (event) => {
+      if (event.workerName === '__throw__') throw new Error('sink exploded');
+      ownerPushes.push(event);
+    },
+    ...(studioCapture ? { onStudioWorkerTerminalState: studioCapture } : {}),
     insertCrossSessionUserMessage: (input) => {
       const count = db.exec('SELECT COUNT(*) FROM orchestration_notifications')[0]?.values?.[0]?.[0] ?? 0;
       rowsSeenAtInsert.push(Number(count));
@@ -97,11 +109,13 @@ async function makeHarness() {
     db,
     kv,
     inserts,
+    ownerPushes,
     rowsSeenAtInsert,
     logs,
+    warns,
     service,
-    restore: () => { console.log = originalLog; },
-    close: () => { console.log = originalLog; sqliteStore.close(); },
+    restore: () => { console.log = originalLog; console.warn = originalWarn; },
+    close: () => { console.log = originalLog; console.warn = originalWarn; sqliteStore.close(); },
   };
 }
 
@@ -381,6 +395,58 @@ test('the DB-claim skip leaves a log line naming task, attempt and outcome', asy
     assert.ok(skipLine.includes(ledger.task.id), 'log names the task');
     assert.ok(skipLine.includes(ledger.attempt.id), 'log names the attempt');
     assert.match(skipLine, /outcome completed/);
+  } finally {
+    h.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 7. Owner completion push (2026-11-23 root fix): rides the freshly won claim
+//    row, at-most-once, ahead of the silent back-office capture.
+// ---------------------------------------------------------------------------
+test('the owner completion push rides the won claim row exactly once', async () => {
+  const h = await makeHarness();
+  try {
+    const ledger = seedLedger(h.store, 'owner-push-once');
+    h.service.notifyTwinTerminalState(ledger.task, ledger.attempt, 'Builder', 'completed');
+    assert.equal(h.ownerPushes.length, 1, 'one terminal state, one owner push');
+    assert.equal(h.ownerPushes[0].taskId, ledger.task.id);
+    assert.equal(h.ownerPushes[0].attemptId, ledger.attempt.id);
+    assert.equal(h.ownerPushes[0].outcome, 'completed');
+    assert.equal(h.ownerPushes[0].sourceSessionId, ledger.task.sourceSessionId);
+
+    // Duplicate terminal transition: the claim loses, so no second push.
+    h.service.notifyTwinTerminalState(ledger.task, ledger.attempt, 'Builder', 'completed');
+    assert.equal(h.ownerPushes.length, 1, '重复事件不重复推 — the claim row is the arbiter');
+  } finally {
+    h.close();
+  }
+});
+
+test('a silent back-office capture still leaves one owner-visible push', async () => {
+  // The 2026-11-22 case: Studio-origin settlements are captured silently into
+  // the hidden [督办] session — the front-office message is suppressed. The
+  // owner push must fire REGARDLESS of that capture (it runs before it).
+  const h = await makeHarness({ studioCapture: () => true });
+  try {
+    const ledger = seedLedger(h.store, 'owner-push-silent-capture');
+    h.service.notifyTwinTerminalState(ledger.task, ledger.attempt, 'Builder', 'completed');
+    assert.equal(h.inserts.length, 0, 'front-office message suppressed by the capture');
+    assert.equal(h.ownerPushes.length, 1, 'the owner still hears about the delivery');
+  } finally {
+    h.close();
+  }
+});
+
+test('a throwing owner-push sink never breaks the settlement flow', async () => {
+  const h = await makeHarness();
+  try {
+    const ledger = seedLedger(h.store, 'owner-push-throw');
+    h.service.notifyTwinTerminalState(ledger.task, ledger.attempt, '__throw__', 'completed');
+    assert.equal(h.inserts.length, 1, 'the cross-session notification still went out');
+    assert.equal(h.kv.get(`orch_notify:${ledger.task.id}:${ledger.attempt.id}:completed`), '1', 'kv mirror still set');
+    const failLine = h.warns.find((line) => line.includes('owner completion push failed'));
+    assert.ok(failLine, 'the sink failure is logged, not silent');
   } finally {
     h.close();
   }

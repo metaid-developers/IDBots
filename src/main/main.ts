@@ -560,6 +560,17 @@ import { DreamStore } from './dreamStore';
 import { DailyReportStore } from './dailyReportStore';
 import { NotificationStore } from './notificationStore';
 import { NotificationService } from './services/notificationService';
+import {
+  buildDecisionEnqueuedCopy,
+  buildLongTermTaskCopy,
+  buildOrchestrationAttemptCopy,
+  buildOrchestrationAttemptEventId,
+} from './services/notificationService';
+import {
+  createCompletionNotifier,
+  notifyOwnerCompletion,
+  type CompletionDesktopNotify,
+} from './services/completionNotifier';
 import { startNotificationDeliveryLoop, type NotificationDeliveryLoop } from './services/notificationDeliveryService';
 import { startDailyReportService, stopDailyReportService } from './services/dailyReportService';
 import { collectDailyReportFacts, createDailyReportDbAccessor } from './services/dailyReportCollector';
@@ -6861,6 +6872,36 @@ const getNotificationService = (): NotificationService => {
   return notificationService;
 };
 
+/**
+ * Completion-state desktop push (2026-11-23 root fix): the active leg that was
+ * missing when four re-verified deliveries sat silently in the decision queue —
+ * notification-center rows existed, but nothing on desktop consumed them and
+ * the OS-notification channel was wired only to owner-asks. Same injected
+ * primitives and foreground-suppression policy as the owner-ask notifier above:
+ * a focused app means the owner is already present (no popup), and a click
+ * raises the window — the notification informs and jumps, it never performs
+ * the acceptance itself.
+ */
+let completionDesktopNotify: CompletionDesktopNotify | null = null;
+const getCompletionDesktopNotify = (): CompletionDesktopNotify => {
+  if (!completionDesktopNotify) {
+    completionDesktopNotify = createCompletionNotifier({
+      isSupported: () => Notification.isSupported(),
+      isWindowForeground: () =>
+        Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()),
+      createNotification: ({ title, body }) => new Notification({ title, body }),
+      showWindow: () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        if (!mainWindow.isVisible()) mainWindow.show();
+        if (!mainWindow.isFocused()) mainWindow.focus();
+      },
+      log: (message, error) => console.warn(message, error),
+    });
+  }
+  return completionDesktopNotify;
+};
+
 const recordCoworkTerminalNotification = (sessionId: string, outcome: 'completed' | 'failed'): void => {
   try {
     const session = getCoworkStore().getSessionWithoutMessages(sessionId);
@@ -11583,18 +11624,32 @@ const getLongTermTaskStore = () => {
       )) {
         try {
           const subtask = detailForFocus.subtasks.find((item) => item.id === change.subtaskId);
-          getNotificationService().recordLongTermTask({
-            taskId: detailForFocus.id,
-            subtaskId: change.subtaskId,
-            reason: change.reason,
-            title: subtask && subtask.title !== detailForFocus.title
-              ? `${detailForFocus.title} · ${subtask.title}`
-              : detailForFocus.title,
-            metabotId: detailForFocus.currentAssigneeMetabotId ?? null,
-            sessionId: detailForFocus.definitionSessionId,
-            outcome: change.status === 'waiting_owner' ? 'waiting_owner' : change.status === 'accepted' ? 'completed' : 'failed',
-            language: getPersistedAppLanguage(),
-          });
+          const notificationTitle = subtask && subtask.title !== detailForFocus.title
+            ? `${detailForFocus.title} · ${subtask.title}`
+            : detailForFocus.title;
+          const notificationOutcome = change.status === 'waiting_owner'
+            ? 'waiting_owner'
+            : change.status === 'accepted' ? 'completed' : 'failed';
+          // Completion-state owner push (2026-11-23 root fix): the
+          // notification-center row is the dedup arbiter (eventId
+          // longterm:task:sub:reason PRIMARY KEY); the desktop popup rides ONLY
+          // a fresh insert, so a replayed transition can never pop twice.
+          notifyOwnerCompletion(
+            {
+              record: () => getNotificationService().recordLongTermTask({
+                taskId: detailForFocus.id,
+                subtaskId: change.subtaskId,
+                reason: change.reason,
+                title: notificationTitle,
+                metabotId: detailForFocus.currentAssigneeMetabotId ?? null,
+                sessionId: detailForFocus.definitionSessionId,
+                outcome: notificationOutcome,
+                language: getPersistedAppLanguage(),
+              }),
+              notifyDesktop: getCompletionDesktopNotify(),
+            },
+            buildLongTermTaskCopy(notificationOutcome, notificationTitle, getPersistedAppLanguage()),
+          );
         } catch (error) {
           console.warn('[Notification] Failed to record long-term task transition:', error);
         }
@@ -12000,6 +12055,37 @@ const getStudioDecisionQueueStore = () => {
     );
     studioDecisionQueueStore.onChange((event) => {
       broadcastLongTermTaskUpdate([], `studio_queue_${event.reason}`);
+      // Completion-state owner push (2026-11-23 root fix): a NEWLY enqueued
+      // decision card must reach the owner now, not whenever the conversation
+      // next goes idle. 'enqueued' fires only for genuinely fresh rows — a
+      // dedupeKey replay reuses the row and emits 'updated', which never
+      // pushes, so the queue item id is the natural anti-spam dedup key.
+      if (event.reason !== 'enqueued') return;
+      try {
+        const item = studioDecisionQueueStore.getById(event.itemId);
+        // Longterm-linked cards are already covered by the subtask-status push
+        // (recordLongTermTask on waiting_owner); pushing both would be exactly
+        // the double popup this fix refuses to introduce.
+        if (!item || item.longtermTaskId) return;
+        notifyOwnerCompletion(
+          {
+            record: () => getNotificationService().recordDecisionEnqueued({
+              itemId: item.id,
+              taskTitle: item.title,
+              kind: item.kind,
+              twinMetabotId: item.twinMetabotId,
+              originStudioSessionId: item.originStudioSessionId,
+              longtermTaskId: item.longtermTaskId,
+              longtermSubtaskId: item.longtermSubtaskId,
+              language: getPersistedAppLanguage(),
+            }),
+            notifyDesktop: getCompletionDesktopNotify(),
+          },
+          buildDecisionEnqueuedCopy(item.title, getPersistedAppLanguage()),
+        );
+      } catch (error) {
+        console.warn('[Notification] Failed to push decision-enqueued notification:', error);
+      }
     });
   }
   return studioDecisionQueueStore;
@@ -12485,6 +12571,33 @@ const getTwinOrchestrationService = () => new TwinOrchestrationService({
     getStudioChiefOfStaffService().onStudioWorkerTerminalState(event),
   onA2AWorkerTerminalState: (event) =>
     getProactiveWorldPerceptionService().onWorkerSettledForA2ASession(event),
+  // Completion-state owner push (2026-11-23 root fix): fires inside the service
+  // right after the (attempt_id, outcome) claim row is WON — at-most-once and
+  // ahead of the back-office/A2A intercepts, so a settlement captured silently
+  // into the [督办] back-office still leaves one owner-visible trace. The
+  // notification row is the dedup arbiter on this side; its eventId mirrors
+  // UNIQUE(attempt_id, outcome).
+  notifyOwnerCompletion: (event) => {
+    try {
+      notifyOwnerCompletion(
+        {
+          record: () => getNotificationService().recordOrchestrationAttempt({
+            taskId: event.taskId,
+            attemptId: event.attemptId,
+            outcome: event.outcome,
+            workerName: event.workerName,
+            detail: event.detail,
+            sessionId: event.sourceSessionId ?? null,
+            language: getPersistedAppLanguage(),
+          }),
+          notifyDesktop: getCompletionDesktopNotify(),
+        },
+        buildOrchestrationAttemptCopy(event, getPersistedAppLanguage()),
+      );
+    } catch (error) {
+      console.warn('[Notification] Failed to push orchestration attempt notification:', error);
+    }
+  },
   directory: {
     getSession: (id) => getCoworkStore().getSession(id),
     listMetabots: () => getMetabotStore().listMetabots(),

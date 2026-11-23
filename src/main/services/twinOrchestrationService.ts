@@ -182,6 +182,27 @@ export interface TwinOrchestrationServiceDeps {
     notifySummaryText: string;
   }) => boolean;
   /**
+   * Completion-state owner push (2026-11-23 root fix): called exactly when the
+   * (attempt_id, outcome) claim row has just been WON — at-most-once per
+   * terminal state, ahead of every downstream routing decision. Deliberately
+   * fired BEFORE the studio back-office / A2A intercepts: those intercepts
+   * intentionally keep the settlement out of the front-office chat stream,
+   * which is precisely how four re-verified-green deliveries sat silently in
+   * the decision queue on 2026-11-22 — this owner-visible push restores the
+   * visibility the silent capture removes. main.ts wires it to
+   * NotificationService.recordOrchestrationAttempt + the desktop completion
+   * notifier; tests inject a recording spy.
+   */
+  notifyOwnerCompletion?: (event: {
+    taskId: string;
+    stepId: string;
+    attemptId: string;
+    outcome: 'completed' | 'failed';
+    workerName: string;
+    detail?: string | null;
+    sourceSessionId?: string | null;
+  }) => void;
+  /**
    * Round-4 r6: secondary, fast-path terminal-notification marker (kv key
    * `orch_notify:<taskId>:<attemptId>:<status>`). The durable arbiter is the
    * `orchestration_notifications` row claimed by
@@ -350,6 +371,23 @@ export class TwinOrchestrationService {
           `attempt ${attempt.id} outcome ${outcome}`,
         );
         return;
+      }
+      // Owner-visible completion push rides the freshly won claim row — before
+      // the back-office/A2A intercepts, so a silent capture still leaves one
+      // at-most-once trace where the owner actually looks. A throwing sink
+      // must never break the settlement flow (the claim already succeeded).
+      try {
+        this.deps.notifyOwnerCompletion?.({
+          taskId: task.id,
+          stepId: attempt.stepId,
+          attemptId: attempt.id,
+          outcome,
+          workerName,
+          detail,
+          sourceSessionId: task.sourceSessionId ?? null,
+        });
+      } catch (error) {
+        console.warn('[TwinOrchestration] owner completion push failed:', error);
       }
       const text = messageOverride?.trim() || (outcome === 'completed'
         ? buildOrchNotifyCompleted(workerName, task.id)

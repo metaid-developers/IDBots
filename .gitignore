@@ -109,6 +109,7 @@ tests/*
 !tests/qqGateway.test.ts
 !tests/tradeBadge.test.mjs
 !tests/escrowOrderStateMachine.test.ts
+!tests/completionNotifier.test.mjs
 !tests/escrowCardMarkdown.test.tsx
 !tests/escrowAgentTools.test.mjs
 !tests/nftCaService.test.mjs
