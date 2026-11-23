@@ -269,10 +269,38 @@ function migration5(db: Database.Database): void {
   `);
 }
 
+function migration6(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE invite_grants (
+      user_id          TEXT PRIMARY KEY REFERENCES users(id),
+      tenant_id        TEXT NOT NULL REFERENCES tenants(id),
+      code             TEXT NOT NULL,
+      redemption_id    TEXT,
+      grant_ticket_enc TEXT,
+      plan_id          TEXT NOT NULL,
+      plan_name        TEXT,
+      plan_name_en     TEXT,
+      period_days      INTEGER NOT NULL,
+      trial_ends_at    INTEGER,
+      claimed_at       INTEGER,
+      claim_attempts   INTEGER NOT NULL DEFAULT 0,
+      last_claim_error TEXT,
+      hibernated_at    INTEGER,
+      woken_at         INTEGER,
+      last_checked_at  INTEGER,
+      created_at       INTEGER NOT NULL,
+      updated_at       INTEGER NOT NULL
+    );
+    CREATE INDEX idx_invite_grants_pending_claim ON invite_grants(claimed_at);
+    CREATE INDEX idx_invite_grants_trial_ends ON invite_grants(trial_ends_at, hibernated_at);
+  `);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'initial-schema', up: migration1 },
   { version: 2, name: 'asr-usage', up: migration2 },
   { version: 3, name: 'credit-ledger', up: migration3 },
   { version: 4, name: 'credit-apply', up: migration4 },
   { version: 5, name: 'notification-device-delivery', up: migration5 },
+  { version: 6, name: 'invite-grants', up: migration6 },
 ];

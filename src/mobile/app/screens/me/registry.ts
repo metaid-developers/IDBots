@@ -6,6 +6,7 @@ import {
   ChatBubbleLeftRightIcon,
   Cog6ToothIcon,
   CpuChipIcon,
+  GiftIcon,
   InformationCircleIcon,
   PuzzlePieceIcon,
   ShieldCheckIcon,
@@ -21,6 +22,7 @@ export type MeRoute =
   | 'bots'
   | 'nfts'
   | 'weixinBind'
+  | 'invite'
   | 'skills'
   | 'memory'
   | 'model'
@@ -39,6 +41,7 @@ export interface MeEntrySummaryInput {
   themeLabel: string | null;
   appVersion: string | null;
   meTotal: number | null;
+  inviteSummary?: string | null;
 }
 
 export interface MeEntry {
@@ -84,6 +87,14 @@ export const ME_ENTRIES: readonly MeEntry[] = [
     icon: ChatBubbleLeftEllipsisIcon,
     titleKey: 'mobile.me.entry.weixinBind',
     testId: 'me-entry-weixin-bind',
+  },
+  {
+    id: 'invite',
+    group: 'bots',
+    icon: GiftIcon,
+    titleKey: 'mobile.me.entry.invite',
+    testId: 'me-entry-invite',
+    summary: (input) => input.inviteSummary ?? null,
   },
   {
     id: 'usage',

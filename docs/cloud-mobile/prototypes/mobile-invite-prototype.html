@@ -1,0 +1,2026 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IDBots 移动端邀请体系 · 交互原型稿 (A/B 双版本)</title>
+  <style>
+    :root {
+      --wb-bg: #0c0d10;
+      --wb-bar: #15171c;
+      --wb-border: rgba(255, 255, 255, 0.1);
+      --wb-text: #f3f4f6;
+      --wb-muted: #9ca3af;
+      --wb-gold: #ffdc51;
+      --wb-gold-ink: #231f09;
+
+      /* Twin UI Light */
+      --t-canvas: #f2f3f5;
+      --t-surface: #ffffff;
+      --t-raised: #ffffff;
+      --t-inset: #e9eaee;
+      --t-text: #242425;
+      --t-sub: #626267;
+      --t-muted: #76767c;
+      --t-border: rgba(20, 20, 25, 0.09);
+      --t-border-strong: #d7d9de;
+      --t-accent: #ffdc51;
+      --t-accent-fg: #6b5200;
+      --t-accent-ink: #242425;
+      --t-success: #167149;
+      --t-success-bg: #eaf8f0;
+      --t-warn: #825600;
+      --t-warn-bg: #fff7db;
+      --t-danger: #b42318;
+      --t-danger-bg: #fff1f0;
+      --t-shadow: 0 12px 32px rgba(36, 36, 37, 0.08);
+    }
+
+    [data-theme="dark"] {
+      --t-canvas: #111112;
+      --t-surface: #19191b;
+      --t-raised: #232326;
+      --t-inset: #27272b;
+      --t-text: #f4f3ef;
+      --t-sub: #aaa9a4;
+      --t-muted: #7e7d79;
+      --t-border: rgba(255, 255, 255, 0.09);
+      --t-border-strong: #49494d;
+      --t-accent: #ffdc51;
+      --t-accent-fg: #ffdc51;
+      --t-accent-ink: #19191b;
+      --t-success: #70d9a4;
+      --t-success-bg: rgba(48, 180, 120, 0.14);
+      --t-warn: #f2cc60;
+      --t-warn-bg: rgba(255, 220, 81, 0.12);
+      --t-danger: #f87171;
+      --t-danger-bg: rgba(180, 35, 24, 0.18);
+      --t-shadow: 0 16px 40px rgba(0, 0, 0, 0.38);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--wb-bg);
+      color: var(--wb-text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+
+    /* Top Studio Switcher */
+    .studio-header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(21, 23, 28, 0.94);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--wb-border);
+      padding: 10px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .studio-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .studio-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 650;
+      font-size: 14px;
+      letter-spacing: -0.01em;
+    }
+    .studio-brand img {
+      width: 26px;
+      height: 26px;
+      border-radius: 7px;
+      image-rendering: pixelated;
+    }
+    .studio-tabs, .studio-pills {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .s-tab {
+      border: 1px solid transparent;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--wb-muted);
+      padding: 7px 13px;
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 550;
+      transition: 0.16s ease;
+    }
+    .s-tab:hover { color: #fff; background: rgba(255, 255, 255, 0.09); }
+    .s-tab.active {
+      background: var(--wb-gold);
+      color: var(--wb-gold-ink);
+      font-weight: 650;
+    }
+    .s-group {
+      display: inline-flex;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--wb-border);
+      border-radius: 9px;
+      padding: 3px;
+      gap: 3px;
+    }
+    .s-group-label {
+      font-size: 11px;
+      color: var(--wb-muted);
+      padding: 0 7px;
+    }
+    .s-pill {
+      border: 0;
+      background: transparent;
+      color: var(--wb-muted);
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 550;
+      transition: 0.15s ease;
+    }
+    .s-pill:hover { color: #fff; }
+    .s-pill.active {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+    .s-pill.gold.active {
+      background: var(--wb-gold);
+      color: var(--wb-gold-ink);
+      font-weight: 650;
+    }
+
+    /* Stage */
+    .studio-stage {
+      flex: 1;
+      padding: 28px 20px 48px;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+    }
+    .ab-grid {
+      display: flex;
+      gap: 36px;
+      justify-content: center;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      width: 100%;
+      max-width: 1200px;
+    }
+    .phone-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    .variant-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #e5e7eb;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--wb-border);
+      padding: 6px 14px;
+      border-radius: 999px;
+    }
+    .variant-tag b {
+      color: var(--wb-gold);
+      font-weight: 700;
+    }
+
+    /* Phone Mock Frame */
+    .phone-frame {
+      width: 390px;
+      height: 790px;
+      border-radius: 44px;
+      border: 8px solid #26282e;
+      box-shadow: 0 28px 70px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      background: var(--t-canvas);
+      color: var(--t-text);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    .status-bar {
+      height: 42px;
+      padding: 12px 26px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--t-text);
+      flex-shrink: 0;
+      user-select: none;
+    }
+    .status-icons {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+    }
+    .phone-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    .phone-body::-webkit-scrollbar { display: none; }
+    .home-indicator {
+      height: 22px;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      background: inherit;
+    }
+    .home-indicator i {
+      width: 124px;
+      height: 4px;
+      border-radius: 99px;
+      background: var(--t-border-strong);
+      opacity: 0.65;
+    }
+
+    /* Twin Login & Common Controls */
+    .login-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 20px 22px 28px;
+    }
+    .login-card {
+      background: var(--t-surface);
+      border: 1px solid var(--t-border);
+      border-radius: 24px;
+      padding: 24px 20px;
+      box-shadow: var(--t-shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .brand-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 2px;
+    }
+    .brand-head img {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      image-rendering: pixelated;
+      box-shadow: 0 6px 18px rgba(100, 80, 10, 0.12);
+    }
+    .brand-head h1 {
+      margin: 0;
+      font-size: 21px;
+      font-weight: 680;
+      letter-spacing: -0.03em;
+    }
+    .brand-head p {
+      margin: 2px 0 0;
+      font-size: 12.5px;
+      color: var(--t-sub);
+    }
+
+    /* Segmented Switch (Version A) */
+    .seg-bar {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      background: var(--t-inset);
+      padding: 3px;
+      border-radius: 12px;
+      gap: 3px;
+    }
+    .seg-btn {
+      border: 0;
+      background: transparent;
+      color: var(--t-sub);
+      font-size: 13.5px;
+      font-weight: 600;
+      padding: 8px 0;
+      border-radius: 9.5px;
+      transition: 0.16s ease;
+    }
+    .seg-btn.active {
+      background: var(--t-surface);
+      color: var(--t-text);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+    }
+
+    /* Inputs */
+    .field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .input-row {
+      display: flex;
+      align-items: center;
+      min-height: 48px;
+      border-radius: 14px;
+      border: 1px solid var(--t-border-strong);
+      background: var(--t-surface);
+      overflow: hidden;
+      transition: border-color 0.15s ease;
+    }
+    .input-row:focus-within {
+      border-color: #c79f12;
+      box-shadow: 0 0 0 3px rgba(255, 220, 81, 0.22);
+    }
+    .prefix-box {
+      padding: 0 12px;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--t-text);
+      border-right: 1px solid var(--t-border);
+      height: 48px;
+      display: flex;
+      align-items: center;
+      background: rgba(128, 128, 135, 0.05);
+    }
+    .bare-input {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: var(--t-text);
+      padding: 0 13px;
+      font-size: 15px;
+      height: 46px;
+    }
+    .bare-input::placeholder { color: var(--t-muted); }
+    .mono-input {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      letter-spacing: 0.06em;
+      font-weight: 650;
+      text-transform: uppercase;
+    }
+    .inline-action {
+      border: 0;
+      background: transparent;
+      color: var(--t-accent-fg);
+      font-size: 13px;
+      font-weight: 650;
+      padding: 0 13px;
+      height: 32px;
+      border-left: 1px solid var(--t-border);
+      white-space: nowrap;
+    }
+    .inline-action:disabled {
+      color: var(--t-muted);
+      cursor: default;
+    }
+    .inline-badge {
+      margin-right: 10px;
+      padding: 3px 8px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 650;
+      background: var(--t-success-bg);
+      color: var(--t-success);
+      white-space: nowrap;
+    }
+    .inline-badge.gold {
+      background: var(--t-warn-bg);
+      color: var(--t-warn);
+    }
+
+    /* Pass Stub Header (Version B) */
+    .pass-banner {
+      background: linear-gradient(135deg, #1d1e22 0%, #131417 100%);
+      color: #f4f3ef;
+      border-radius: 16px;
+      padding: 13px 15px;
+      position: relative;
+      border: 1px solid rgba(255, 220, 81, 0.28);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .pass-banner::before, .pass-banner::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--t-surface);
+      transform: translateY(-50%);
+    }
+    .pass-banner::before { left: -7px; border-right: 1px solid rgba(255, 220, 81, 0.28); }
+    .pass-banner::after { right: -7px; border-left: 1px solid rgba(255, 220, 81, 0.28); }
+    .pass-kicker {
+      font-size: 10px;
+      font-family: ui-monospace, "SF Mono", monospace;
+      letter-spacing: 0.12em;
+      color: #ffdc51;
+      text-transform: uppercase;
+    }
+    .pass-code-mini {
+      font-family: ui-monospace, "SF Mono", monospace;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      margin-top: 2px;
+    }
+    .pass-perk {
+      font-size: 11.5px;
+      font-weight: 650;
+      padding: 4px 9px;
+      border-radius: 8px;
+      background: rgba(255, 220, 81, 0.14);
+      color: #ffdc51;
+      white-space: nowrap;
+    }
+
+    /* Notice / Capacity Gate */
+    .soft-alert {
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 12.5px;
+      line-height: 1.45;
+      background: var(--t-warn-bg);
+      color: var(--t-warn);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Agreement & Primary Button */
+    .agree-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--t-sub);
+      line-height: 1.4;
+      cursor: pointer;
+      user-select: none;
+    }
+    .agree-line input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: #242425;
+      flex-shrink: 0;
+    }
+    .agree-line a {
+      color: var(--t-accent-fg);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .primary-btn {
+      width: 100%;
+      min-height: 48px;
+      border-radius: 14px;
+      border: 0;
+      background: var(--t-accent);
+      color: #242425;
+      font-size: 15px;
+      font-weight: 680;
+      transition: transform 0.12s ease, opacity 0.15s ease;
+    }
+    .primary-btn:active { transform: scale(0.98); }
+    .primary-btn:disabled { opacity: 0.45; }
+
+    .secondary-btn {
+      min-height: 42px;
+      border-radius: 12px;
+      border: 1px solid var(--t-border-strong);
+      background: var(--t-surface);
+      color: var(--t-text);
+      font-size: 13.5px;
+      font-weight: 600;
+      padding: 0 14px;
+    }
+
+    /* Twin App Topbar & Me / Invite Views */
+    .twin-nav {
+      min-height: 54px;
+      padding: 0 14px;
+      display: grid;
+      grid-template-columns: 56px 1fr 56px;
+      align-items: center;
+      border-bottom: 1px solid var(--t-border);
+      background: var(--t-surface);
+    }
+    .twin-nav-back {
+      border: 0;
+      background: transparent;
+      color: var(--t-text);
+      font-size: 14px;
+      font-weight: 600;
+      text-align: left;
+      padding: 6px 2px;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .twin-nav-title {
+      text-align: center;
+      font-size: 16px;
+      font-weight: 650;
+    }
+    .twin-content {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      flex: 1;
+    }
+    .t-card {
+      background: var(--t-surface);
+      border: 1px solid var(--t-border);
+      border-radius: 20px;
+      padding: 16px;
+      box-shadow: var(--t-shadow);
+    }
+    .me-mini-entry {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: var(--t-surface);
+      border: 1px solid var(--t-border);
+      border-radius: 16px;
+      font-size: 13.5px;
+    }
+    .me-mini-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+    }
+    .me-mini-dot {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: var(--t-warn-bg);
+      color: var(--t-warn);
+      display: grid;
+      place-items: center;
+      font-size: 14px;
+    }
+    .code-hero-box {
+      background: var(--t-inset);
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 12px 0;
+    }
+    .code-big {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 22px;
+      font-weight: 750;
+      letter-spacing: 0.06em;
+    }
+    .btn-row-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    /* Ticket Card (Version B Invite Page) */
+    .ticket-shell {
+      background: linear-gradient(160deg, #1d1e22 0%, #121316 100%);
+      color: #f4f3ef;
+      border-radius: 22px;
+      border: 1px solid rgba(255, 220, 81, 0.3);
+      overflow: hidden;
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.22);
+    }
+    .ticket-top {
+      padding: 20px 18px 18px;
+    }
+    .ticket-tear {
+      position: relative;
+      border-top: 1px dashed rgba(255, 255, 255, 0.18);
+      margin: 0;
+    }
+    .ticket-tear::before, .ticket-tear::after {
+      content: "";
+      position: absolute;
+      top: -9px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--t-canvas);
+    }
+    .ticket-tear::before { left: -9px; }
+    .ticket-tear::after { right: -9px; }
+    .ticket-bottom {
+      padding: 15px 18px 18px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .step-dots {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11.5px;
+      color: #9ca3af;
+      margin-bottom: 14px;
+    }
+    .step-node {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .step-node i {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #4b5563;
+      display: inline-block;
+    }
+    .step-node.done { color: #f4f3ef; font-weight: 600; }
+    .step-node.done i { background: #ffdc51; box-shadow: 0 0 0 3px rgba(255, 220, 81, 0.2); }
+
+    /* Reward Card (Weekly Reset) */
+    .reward-card {
+      border-radius: 18px;
+      padding: 14px 16px;
+      border: 1px solid rgba(255, 200, 30, 0.4);
+      background: var(--t-warn-bg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .reward-card.locked {
+      border-color: var(--t-border);
+      background: var(--t-surface);
+      opacity: 0.78;
+    }
+    .reward-title {
+      font-size: 14px;
+      font-weight: 650;
+      color: var(--t-text);
+    }
+    .reward-sub {
+      font-size: 12px;
+      color: var(--t-sub);
+      margin-top: 2px;
+    }
+    .pill-cta {
+      border: 0;
+      border-radius: 99px;
+      background: var(--t-accent);
+      color: #242425;
+      font-size: 12.5px;
+      font-weight: 700;
+      padding: 8px 14px;
+      white-space: nowrap;
+    }
+
+    /* Progress Bars (Unqualified Old User) */
+    .prog-item { margin-top: 12px; }
+    .prog-head {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+    .prog-track {
+      height: 7px;
+      border-radius: 99px;
+      background: var(--t-inset);
+      overflow: hidden;
+    }
+    .prog-fill {
+      height: 100%;
+      border-radius: 99px;
+      background: #e5b80b;
+    }
+
+    /* Poster Sheet Overlay inside Phone */
+    .sheet-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(12, 13, 16, 0.62);
+      backdrop-filter: blur(4px);
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      z-index: 20;
+    }
+    .sheet-box {
+      background: var(--t-surface);
+      border-radius: 24px 24px 0 0;
+      padding: 18px 18px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .poster-preview-wrap {
+      display: flex;
+      justify-content: center;
+    }
+    .poster-canvas {
+      width: 256px;
+      height: 368px;
+      border-radius: 18px;
+      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
+    }
+
+    /* Chat Expired Screen */
+    .chat-list {
+      flex: 1;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .msg-user {
+      align-self: flex-end;
+      background: var(--t-accent);
+      color: #242425;
+      padding: 10px 14px;
+      border-radius: 18px 18px 4px 18px;
+      font-size: 14px;
+      max-width: 78%;
+    }
+    .msg-bot {
+      align-self: flex-start;
+      background: var(--t-surface);
+      border: 1px solid var(--t-border);
+      color: var(--t-text);
+      padding: 11px 14px;
+      border-radius: 18px 18px 18px 4px;
+      font-size: 14px;
+      line-height: 1.5;
+      max-width: 84%;
+    }
+    .expired-inline-bar {
+      margin: 8px 12px 10px;
+      padding: 11px 13px;
+      border-radius: 16px;
+      background: var(--t-surface);
+      border: 1px solid var(--t-border-strong);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      box-shadow: var(--t-shadow);
+    }
+    .expired-float-card {
+      margin: 8px 14px 12px;
+      padding: 16px;
+      border-radius: 20px;
+      background: var(--t-surface);
+      border: 1px solid rgba(255, 200, 30, 0.45);
+      box-shadow: var(--t-shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .tab-bar {
+      height: 54px;
+      border-top: 1px solid var(--t-border);
+      background: var(--t-surface);
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      place-items: center;
+      font-size: 11px;
+      color: var(--t-muted);
+      flex-shrink: 0;
+    }
+    .tab-bar span.active { color: var(--t-text); font-weight: 700; }
+
+    /* Surface 4: idbots.world Website Landing */
+    .web-stage {
+      width: 100%;
+      max-width: 1040px;
+      background: #f4f0e8;
+      color: #171817;
+      border-radius: 22px;
+      overflow: hidden;
+      box-shadow: 0 28px 70px rgba(0, 0, 0, 0.5);
+      border: 1px solid #d8d2c7;
+    }
+    .web-stage.mobile-mode {
+      max-width: 390px;
+      border-radius: 40px;
+      border: 8px solid #26282e;
+    }
+    .wx-top-bar {
+      background: #ededed;
+      color: #111;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+      font-weight: 600;
+      border-bottom: 1px solid #dcdcdc;
+    }
+    .wx-guide-tip {
+      background: #171817;
+      color: #f4f0e8;
+      padding: 9px 14px;
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .web-nav {
+      height: 64px;
+      padding: 0 28px;
+      border-bottom: 1px solid #d8d2c7;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .web-hero {
+      padding: 44px 28px 52px;
+      display: grid;
+      grid-template-columns: 1fr 400px;
+      gap: 36px;
+      align-items: center;
+    }
+    .web-stage.mobile-mode .web-nav { padding: 0 18px; height: 56px; }
+    .web-stage.mobile-mode .web-hero {
+      grid-template-columns: 1fr;
+      padding: 24px 18px 34px;
+      gap: 22px;
+    }
+    .web-invite-card {
+      background: #fffdf8;
+      border: 1px solid #d8d2c7;
+      border-radius: 22px;
+      padding: 24px 22px;
+      box-shadow: 0 20px 44px -20px rgba(23, 24, 23, 0.22);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .web-code-pill {
+      background: #f4f0e8;
+      border: 1px solid #dfd8ca;
+      border-radius: 14px;
+      padding: 13px 15px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .web-btn-dark {
+      min-height: 46px;
+      border-radius: 99px;
+      background: #171817;
+      color: #f4f0e8;
+      border: 0;
+      font-size: 13.5px;
+      font-weight: 700;
+    }
+    .web-btn-outline {
+      min-height: 44px;
+      border-radius: 99px;
+      background: transparent;
+      color: #171817;
+      border: 1px solid #171817;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    /* Surface 5: ABS Admin Console */
+    .abs-shell {
+      width: 100%;
+      max-width: 1160px;
+      min-height: 700px;
+      background: #0f1115;
+      color: #e6e8ec;
+      border: 1px solid #2a2f3a;
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex;
+      box-shadow: 0 28px 70px rgba(0, 0, 0, 0.5);
+    }
+    .abs-side {
+      width: 205px;
+      background: #171a21;
+      border-right: 1px solid #2a2f3a;
+      padding: 18px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .abs-side h3 { margin: 0 8px 12px; font-size: 15px; }
+    .abs-nav-item {
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #8b93a1;
+    }
+    .abs-nav-item.active {
+      background: #1d212b;
+      color: #4f8cff;
+      font-weight: 600;
+    }
+    .abs-main {
+      flex: 1;
+      padding: 22px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-x: auto;
+    }
+    .abs-kpis {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(140px, 1fr));
+      gap: 12px;
+    }
+    .abs-kpi {
+      background: #171a21;
+      border: 1px solid #2a2f3a;
+      border-radius: 8px;
+      padding: 13px 14px;
+    }
+    .abs-kpi .k-label { font-size: 12px; color: #8b93a1; }
+    .abs-kpi .k-val { font-size: 21px; font-weight: 650; margin-top: 5px; }
+    .abs-kpi .k-sub { font-size: 11.5px; color: #8b93a1; margin-top: 3px; }
+    .abs-panel {
+      background: #171a21;
+      border: 1px solid #2a2f3a;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .abs-config-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(180px, 1fr));
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .abs-field label {
+      display: block;
+      font-size: 12px;
+      color: #8b93a1;
+      margin-bottom: 5px;
+    }
+    .abs-field input, .abs-field select {
+      width: 100%;
+      padding: 7px 10px;
+      background: #1d212b;
+      border: 1px solid #2a2f3a;
+      border-radius: 6px;
+      color: #e6e8ec;
+      font-size: 13px;
+    }
+    .abs-btn {
+      padding: 7px 14px;
+      border-radius: 6px;
+      border: 0;
+      background: #4f8cff;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 550;
+    }
+    .abs-btn.sec {
+      background: #1d212b;
+      border: 1px solid #2a2f3a;
+      color: #e6e8ec;
+    }
+    .abs-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-top: 10px;
+    }
+    .abs-table th, .abs-table td {
+      text-align: left;
+      padding: 9px 10px;
+      border-bottom: 1px solid #2a2f3a;
+    }
+    .abs-table th { color: #8b93a1; font-weight: 500; font-size: 12px; }
+    .abs-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 11.5px;
+    }
+    .abs-tag.green { background: rgba(63, 185, 80, 0.16); color: #3fb950; }
+    .abs-tag.yellow { background: rgba(210, 153, 34, 0.16); color: #d29922; }
+    .abs-tag.gray { background: rgba(139, 147, 161, 0.16); color: #8b93a1; }
+
+    /* Toast */
+    .toast-msg {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #ffdc51;
+      color: #19191b;
+      padding: 9px 18px;
+      border-radius: 99px;
+      font-size: 13px;
+      font-weight: 650;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    .toast-msg.show { opacity: 1; }
+  </style>
+</head>
+<body data-theme="light">
+  <header class="studio-header">
+    <div class="studio-row">
+      <div class="studio-brand">
+        <img id="studioLogo" alt="IDBots" />
+        <span>IDBots 邀请制原型工作台</span>
+      </div>
+      <div class="studio-tabs" id="surfaceTabs">
+        <button class="s-tab active" data-surface="login">1. 登录与受邀注册</button>
+        <button class="s-tab" data-surface="invite">2. 我的 · 邀请与回满</button>
+        <button class="s-tab" data-surface="expired">3. 试用到期拦截</button>
+        <button class="s-tab" data-surface="website">4. idbots.world 落地页</button>
+        <button class="s-tab" data-surface="admin">5. ABS 邀请管理后台</button>
+      </div>
+    </div>
+    <div class="studio-row" id="subControls"></div>
+  </header>
+
+  <main class="studio-stage" id="stage"></main>
+  <div class="toast-msg" id="toast"></div>
+
+  <script>
+    const LOGO_DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAACXBIWXMAAAAAAAAAAQCEeRdzAAAAXGVYSWZJSSoACAAAAAMAaYcNAAEAAAAyAAAAAAEEAAEAAADAAAAAAQEEAAEAAADAAAAAAAAAAAMAAaADAAEAAAABAAAAAqADAAEAAADAAAAAA6ADAAEAAADAAAAAXAAAAIGnrZwAAAABc1JHQgHZySx/AAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAEZ0FNQQAAsY8L/GEFAAAFrUlEQVR4nO3dQW4URxSHcUfCEotAIEbI18BssORzcAK2XIEFV8gpyDZXsOQV5BSRLOSADVkgGQU8CVE8RctVXV1d9d77f7+FlTFmpoF8r7p7pmd++Pu3J192AFG3Rm8AMBIBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBQBoBOHbw4vLGX3/zcrfTlvhFAJBGAEblpnvtfbAqbCMASCOAQVpM+Nw0n3qM9HvqKwIBQBoBrKDHdK+9j3Tb1FcEAoA0AqhgZcK3eNzcijD1eyIhAEgjgITn6V4jtyJMfc/Tny+HACBNLgC1CT9XyZmjSOQCAK4LFQDTfR254wTPf2ehAgDmIgBIcx1AzS6P5+V6FA6CgaBCBcB0ny/ydC8RKgBgLlcBRDr91kOr6f77r8+3bj96+kuT+7XAVQBAa64DUF8RWkz4dLqrcR0AbPh48X7nzk/3R29GlVABRFoRmO59hAoAmMt1AMeH77ZuH538vHXb8uV9THgbXAcALOUmgPOz06uvezf+TG5F2OhxnMB098NNAMAaCADSQgeQ7hJt5A6US3aJ2MWJI3QAQI5cADWnTudiuvshFwBwnXwAJadOU0z4OOQDgDYCKBB54qcXt0T+s04hAEgjgBb2Hm/f/vP1mO1IRLp0cS0EgMW8XgyzQQCBMPHncxPAvQf7V1+138MG7bkJwJQO+/xT03zuGZqSn1dfNQgA0ghgEPXJawUBQBoBQBoB1Kg46GWXxyYCgDQCGCR3ipIVow8CgLQQAaQXsUxdDK+IVSQvRABArZABTF3WyKowTe0CmFTIAIBSMgEoHieoT/cSMgEAU0IGUPKWiKNXhDXO0DDx5wsZAFBKJoCaN8AaiWneh0wAwBQCgDQCGIRdHBsIANJCBmDxpRBMfJtCBgCUChFAySlO66c9MUaIADDWx4v3bt8fNGQAJS+FUNDi3eU2Pn1422JzTAoZAFBKJgBvL4UowSWPy8kEAExxE8D52enV171m9zf6eYEcS9P99t2HozdhNW4CANZAAI7x5lrLEQCkEYAjo15PxPMAQFAEAGkE4BgHucsRAKQRgCNzJz4X4eQRAKQRgGNM+OUIAIt5vRhmgwCMYrr34SaAew/2r75ejt4MBOMmAIxz+OzVjb9+8GJ7ML15ubvm5jRFAJBGAOJqnk1OJ3y6AqS3p36PFQQAaQQQWKvXCuWmd25FmPqelRWBACCNACDNVQDfL7V6H316XYtdnDV2RabuM3egPGqXyFUAQGuhAhj90actrXWxy6hJW3KgPEKoAIC5XAeQmyoWPynmPy0mvOf3Bcr92/VaqVwHACwVKoCS/cwexwk9prs3Vvb5U6ECAOZyHUCLqVLzOQFWJryVfXyr072E6wCApcwG0GKqlJxJKHmcuZO25JnQ1o9Zuh01WvxbWD1jZTYAoAczAdRMmRYTruYZyhaPa2XC95julpkJABjBbABWXrOy1v3mJq+V6b7hecLnmA0A6GF4ABdnf3z7r7ifRAi7hgXw//L87//4Vq4R7cXKLk7k3ZsSw1cAYMrny8udW7vrD0UzAVi5RM4KpnsfZgIARjAbgKd3F6vBhLfBbABAD2YCOD78a+v20cmP3/2Ml+MEprsfZgIARjAbQLoibKSrwqgVgQkfh9kAgB5cBZA7TmixIjDdtbgKADp6PAv8z+N0eZSVzF0RNlq8RR8TPg7XAQBLEQCkhQqg5sm0FLs3WkIFAMwVOoCSJ9OY+NpCBwDkEACkEQCkEQCkEQCkEQCkEQCkEQCkEQCkEQCkEQCkEQCkEQCkEQCkEQCkEQCkEQCkEQCkEQCkEQCkfQUGsa39UsaRdwAAAABJRU5ErkJggg==";
+    document.getElementById("studioLogo").src = LOGO_DATA_URI;
+
+    const state = {
+      surface: "login",         // login | invite | expired | website | admin
+      viewMode: "both",         // both | A | B
+      theme: "light",           // light | dark
+      loginScene: "link",       // link (带码进入) | new (无码新客) | old (老用户登录) | full (今日席位满)
+      loginTabA: "signup",      // signup | signin
+      inviteScene: "reward",    // available (待使用) | reward (好友已激活·可领回满) | locked (未达标老用户) | poster (分享海报预览)
+      confirmResetModal: false,
+      webScene: "wechat",       // wechat | desktop
+      adminTab: "users",        // users | codes | batches
+      adminBatchModal: false,
+      smsCountdown: 0,
+    };
+
+    let timer = null;
+    function showToast(msg) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.classList.add("show");
+      clearTimeout(el._t);
+      el._t = setTimeout(() => el.classList.remove("show"), 1800);
+    }
+
+    function startSmsCountdown() {
+      if (state.loginScene === "full") {
+        showToast("今日云端名额已满，未发送短信，邀请码仍有效");
+        return;
+      }
+      state.smsCountdown = 59;
+      showToast("阿里云短信已发送（模拟验证码 246810）");
+      clearInterval(timer);
+      timer = setInterval(() => {
+        state.smsCountdown -= 1;
+        if (state.smsCountdown <= 0) clearInterval(timer);
+        render();
+      }, 1000);
+      render();
+    }
+
+    function setTheme(t) {
+      state.theme = t;
+      document.body.setAttribute("data-theme", t);
+      render();
+    }
+
+    /* Draw deterministic crisp QR-like pattern + Share Poster on Canvas */
+    function drawPosterCanvas(canvas, variant) {
+      if (!canvas) return;
+      const dpr = 2;
+      const w = 256, h = 368;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(dpr, dpr);
+
+      if (variant === "A") {
+        // Warm Editorial Paper (#F4F0E8) matching idbots.world
+        ctx.fillStyle = "#F4F0E8";
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = "#D8D2C7";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(10, 10, w - 20, h - 20);
+
+        ctx.fillStyle = "#9B581E";
+        ctx.font = "600 9.5px ui-monospace, SFMono-Regular, Menlo, monospace";
+        ctx.fillText("IDBOTS · INVITE", 24, 34);
+
+        ctx.fillStyle = "#171817";
+        ctx.font = "700 20px -apple-system, PingFang SC, sans-serif";
+        ctx.fillText("生活在 AI 互联网上的", 24, 66);
+        ctx.fillText("自主 Agent 伙伴", 24, 92);
+
+        // Code box
+        ctx.fillStyle = "#FFFDF8";
+        roundRect(ctx, 24, 114, w - 48, 76, 12, true, false);
+        ctx.strokeStyle = "#DFD8CA";
+        roundRect(ctx, 24, 114, w - 48, 76, 12, false, true);
+
+        ctx.fillStyle = "#74746D";
+        ctx.font = "500 10px -apple-system, PingFang SC, sans-serif";
+        ctx.fillText("专属邀请码 · 含 14 天 ID.Student", 36, 136);
+
+        ctx.fillStyle = "#171817";
+        ctx.font = "700 21px ui-monospace, SFMono-Regular, Menlo, monospace";
+        ctx.fillText("IDB-7K9M-X4", 36, 168);
+
+        // Bottom QR row
+        drawMiniQr(ctx, 24, 272, 68, "#171817", "#FFFDF8");
+        ctx.fillStyle = "#171817";
+        ctx.font = "600 12px -apple-system, PingFang SC, sans-serif";
+        ctx.fillText("扫码前往官网注册", 104, 302);
+        ctx.fillStyle = "#74746D";
+        ctx.font = "500 11px ui-monospace, Menlo, monospace";
+        ctx.fillText("idbots.world", 104, 322);
+      } else {
+        // Dark Gold Geek Pass (#131417)
+        const grad = ctx.createLinearGradient(0, 0, w, h);
+        grad.addColorStop(0, "#1C1D22");
+        grad.addColorStop(1, "#101114");
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.strokeStyle = "rgba(255, 220, 81, 0.32)";
+        ctx.lineWidth = 1;
+        roundRect(ctx, 12, 12, w - 24, h - 24, 14, false, true);
+
+        ctx.fillStyle = "#FFDC51";
+        ctx.font = "700 10px ui-monospace, Menlo, monospace";
+        ctx.fillText("CLOUD INVITE PASS", 26, 38);
+
+        ctx.fillStyle = "#F4F3EF";
+        ctx.font = "700 19px -apple-system, PingFang SC, sans-serif";
+        ctx.fillText("领养你的云端孪生 Bot", 26, 68);
+
+        // Ticket stub
+        ctx.fillStyle = "rgba(255, 220, 81, 0.08)";
+        roundRect(ctx, 24, 96, w - 48, 96, 12, true, false);
+        ctx.strokeStyle = "rgba(255, 220, 81, 0.35)";
+        roundRect(ctx, 24, 96, w - 48, 96, 12, false, true);
+
+        ctx.fillStyle = "#FFDC51";
+        ctx.font = "700 22px ui-monospace, Menlo, monospace";
+        ctx.fillText("IDB-7K9M-X4", 38, 138);
+
+        ctx.fillStyle = "#AAA9A4";
+        ctx.font = "500 11px -apple-system, PingFang SC, sans-serif";
+        ctx.fillText("激活即享 14 天 ID.Student 云端版", 38, 168);
+
+        // Dashed divider
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = "rgba(255,255,255,0.16)";
+        ctx.beginPath();
+        ctx.moveTo(24, 238);
+        ctx.lineTo(w - 24, 238);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        drawMiniQr(ctx, 24, 266, 70, "#111112", "#F4F3EF");
+        ctx.fillStyle = "#F4F3EF";
+        ctx.font = "600 12.5px -apple-system, PingFang SC, sans-serif";
+        ctx.fillText("扫码激活通行证", 108, 296);
+        ctx.fillStyle = "#FFDC51";
+        ctx.font = "500 11px ui-monospace, Menlo, monospace";
+        ctx.fillText("idbots.world", 108, 318);
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        ctx.save();
+        roundRect(ctx, w - 62, 24, 38, 38, 9, false, false);
+        ctx.clip();
+        ctx.drawImage(img, w - 62, 24, 38, 38);
+        ctx.restore();
+      };
+      img.src = LOGO_DATA_URI;
+    }
+
+    function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+      if (fill) ctx.fill();
+      if (stroke) ctx.stroke();
+    }
+
+    function drawMiniQr(ctx, x, y, size, fg, bg) {
+      ctx.fillStyle = bg;
+      roundRect(ctx, x, y, size, size, 8, true, false);
+      const cells = 11;
+      const pad = 7;
+      const cell = (size - pad * 2) / cells;
+      ctx.fillStyle = fg;
+      const pattern = [
+        "11111010111",
+        "10001011001",
+        "10101001101",
+        "10001010011",
+        "11111010101",
+        "00000011010",
+        "11111010110",
+        "10001001001",
+        "10101011110",
+        "10001010011",
+        "11111001101"
+      ];
+      for (let r = 0; r < cells; r++) {
+        for (let c = 0; c < cells; c++) {
+          if (pattern[r][c] === "1") {
+            ctx.fillRect(x + pad + c * cell, y + pad + r * cell, cell - 0.5, cell - 0.5);
+          }
+        }
+      }
+    }
+
+    function renderSubControls() {
+      const bar = document.getElementById("subControls");
+      const isMobileSurface = ["login", "invite", "expired"].includes(state.surface);
+      let html = "";
+
+      if (isMobileSurface) {
+        html += `
+          <div class="studio-pills">
+            <div class="s-group">
+              <span class="s-group-label">对比模式</span>
+              <button class="s-pill gold ${state.viewMode === 'both' ? 'active' : ''}" onclick="state.viewMode='both';render()">A / B 同屏对比</button>
+              <button class="s-pill gold ${state.viewMode === 'A' ? 'active' : ''}" onclick="state.viewMode='A';render()">仅看方案 A</button>
+              <button class="s-pill gold ${state.viewMode === 'B' ? 'active' : ''}" onclick="state.viewMode='B';render()">仅看方案 B</button>
+            </div>
+        `;
+
+        if (state.surface === "login") {
+          html += `
+            <div class="s-group">
+              <span class="s-group-label">交互场景</span>
+              <button class="s-pill ${state.loginScene === 'link' ? 'active' : ''}" onclick="state.loginScene='link';state.loginTabA='signup';render()">带邀请链接进入</button>
+              <button class="s-pill ${state.loginScene === 'new' ? 'active' : ''}" onclick="state.loginScene='new';state.loginTabA='signup';render()">手动输入新注册</button>
+              <button class="s-pill ${state.loginScene === 'old' ? 'active' : ''}" onclick="state.loginScene='old';state.loginTabA='signin';render()">老用户直接登录</button>
+              <button class="s-pill ${state.loginScene === 'full' ? 'active' : ''}" onclick="state.loginScene='full';state.loginTabA='signup';render()">今日席位已满(阀门)</button>
+            </div>
+          `;
+        } else if (state.surface === "invite") {
+          html += `
+            <div class="s-group">
+              <span class="s-group-label">老用户状态</span>
+              <button class="s-pill ${state.inviteScene === 'reward' ? 'active' : ''}" onclick="state.inviteScene='reward';render()">好友已激活(可领周回满)</button>
+              <button class="s-pill ${state.inviteScene === 'available' ? 'active' : ''}" onclick="state.inviteScene='available';render()">有可用邀请码</button>
+              <button class="s-pill ${state.inviteScene === 'poster' ? 'active' : ''}" onclick="state.inviteScene='poster';render()">弹出分享海报</button>
+              <button class="s-pill ${state.inviteScene === 'locked' ? 'active' : ''}" onclick="state.inviteScene='locked';render()">未达标老用户</button>
+            </div>
+          `;
+        }
+
+        html += `</div>
+          <div class="s-group">
+            <span class="s-group-label">外观</span>
+            <button class="s-pill ${state.theme === 'light' ? 'active' : ''}" onclick="setTheme('light')">浅色</button>
+            <button class="s-pill ${state.theme === 'dark' ? 'active' : ''}" onclick="setTheme('dark')">深色</button>
+          </div>
+        `;
+      } else if (state.surface === "website") {
+        html += `
+          <div class="s-group">
+            <span class="s-group-label">访问终端模拟</span>
+            <button class="s-pill gold ${state.webScene === 'wechat' ? 'active' : ''}" onclick="state.webScene='wechat';render()">手机微信内点开邀请链接</button>
+            <button class="s-pill gold ${state.webScene === 'desktop' ? 'active' : ''}" onclick="state.webScene='desktop';render()">桌面 / 浏览器打开 idbots.world</button>
+          </div>
+        `;
+      } else if (state.surface === "admin") {
+        html += `
+          <div class="s-group">
+            <span class="s-group-label">后台子视图</span>
+            <button class="s-pill gold ${state.adminTab === 'users' ? 'active' : ''}" onclick="state.adminTab='users';render()">达标老用户与裂变统计</button>
+            <button class="s-pill gold ${state.adminTab === 'codes' ? 'active' : ''}" onclick="state.adminTab='codes';render()">全部邀请码追踪</button>
+            <button class="s-pill gold ${state.adminTab === 'batches' ? 'active' : ''}" onclick="state.adminTab='batches';render()">官方批次生成管理</button>
+          </div>
+        `;
+      }
+
+      bar.innerHTML = html;
+    }
+
+    function phoneShell(titleBadge, innerHtml) {
+      return `
+        <div class="phone-col">
+          <div class="variant-tag">${titleBadge}</div>
+          <div class="phone-frame">
+            <div class="status-bar">
+              <span>09:41</span>
+              <div class="status-icons"><span>5G</span><span>100%</span></div>
+            </div>
+            <div class="phone-body">${innerHtml}</div>
+            <div class="home-indicator"><i></i></div>
+          </div>
+        </div>
+      `;
+    }
+
+    /* 1. LOGIN & REGISTER */
+    function renderLoginPhone(variant) {
+      const codeVal = (state.loginScene === "link" || state.loginScene === "full") ? "IDB-7K9M-X4" : "";
+      const phoneVal = state.loginScene === "old" ? "138 0013 8000" : "139 1024 8899";
+      const smsBtnLabel = state.smsCountdown > 0 ? `${state.smsCountdown}s` : "获取验证码";
+      const isFull = state.loginScene === "full";
+
+      if (variant === "A") {
+        const isSignup = state.loginScene === "old" ? (state.loginTabA === "signup" && false) : (state.loginTabA === "signup");
+        const activeTab = state.loginScene === "old" ? "signin" : state.loginTabA;
+
+        return phoneShell(
+          `<b>方案 A</b> 极简分段式（零废话 · 明确新老分流）`,
+          `<div class="login-wrap">
+            <div class="login-card">
+              <div class="brand-head">
+                <img src="${LOGO_DATA_URI}" alt="IDBots" />
+                <div>
+                  <h1>IDBots</h1>
+                  <p>${activeTab === "signup" ? "凭邀请码开通云端伙伴" : "欢迎回来"}</p>
+                </div>
+              </div>
+
+              <div class="seg-bar">
+                <button class="seg-btn ${activeTab === 'signin' ? 'active' : ''}" onclick="state.loginScene='old';state.loginTabA='signin';render()">登录</button>
+                <button class="seg-btn ${activeTab === 'signup' ? 'active' : ''}" onclick="state.loginScene='new';state.loginTabA='signup';render()">受邀注册</button>
+              </div>
+
+              ${isFull ? `<div class="soft-alert">今日云端开放席位已满，邀请码依然有效，请明日再试。</div>` : ""}
+
+              <div class="field-group">
+                ${activeTab === "signup" ? `
+                  <div class="input-row">
+                    <input class="bare-input mono-input" value="${codeVal}" placeholder="输入邀请码" />
+                    ${codeVal ? `<span class="inline-badge">ID.Student · 14天</span>` : `<button class="inline-action" onclick="state.loginScene='link';render()">粘贴</button>`}
+                  </div>
+                ` : ""}
+
+                <div class="input-row">
+                  <span class="prefix-box">+86</span>
+                  <input class="bare-input" type="tel" value="${phoneVal}" placeholder="手机号" />
+                </div>
+
+                <div class="input-row">
+                  <input class="bare-input" type="text" maxlength="6" value="${state.smsCountdown > 0 ? '246810' : ''}" placeholder="6 位验证码" />
+                  <button class="inline-action" onclick="startSmsCountdown()" ${state.smsCountdown > 0 ? 'disabled' : ''}>${smsBtnLabel}</button>
+                </div>
+              </div>
+
+              <label class="agree-line">
+                <input type="checkbox" checked />
+                <span>同意 <a href="javascript:void(0)" onclick="showToast('打开《服务条款》')">服务条款</a>、<a href="javascript:void(0)" onclick="showToast('打开《隐私政策》（含香港云端存储说明）')">隐私政策</a> 及香港云端存储</span>
+              </label>
+
+              <button class="primary-btn" ${isFull ? 'disabled' : ''} onclick="showToast('${activeTab === 'signup' ? '注册成功，进入准备你的 Bot' : '登录成功，进入会话'}')">
+                ${activeTab === "signup" ? "注册并开启" : "登录"}
+              </button>
+            </div>
+          </div>`
+        );
+      }
+
+      // Variant B: Single-flow Pass Card
+      const showPassHeader = state.loginScene === "link" || state.loginScene === "full";
+      const showManualInviteSlot = state.loginScene === "new";
+
+      return phoneShell(
+        `<b>方案 B</b> 通行证单流式（票根仪式感 · 自动识别新老号）`,
+        `<div class="login-wrap">
+          <div class="login-card">
+            <div class="brand-head">
+              <img src="${LOGO_DATA_URI}" alt="IDBots" />
+              <div>
+                <h1>进入 IDBots</h1>
+                <p>${state.loginScene === "old" ? "手机号快捷登录" : "内测受邀准入"}</p>
+              </div>
+            </div>
+
+            ${showPassHeader ? `
+              <div class="pass-banner">
+                <div>
+                  <div class="pass-kicker">INVITE PASS</div>
+                  <div class="pass-code-mini">IDB-7K9M-X4</div>
+                </div>
+                <span class="pass-perk">含 ID.Student · 14天</span>
+              </div>
+            ` : ""}
+
+            ${isFull ? `<div class="soft-alert">今日云端开放席位已满，通行证将为你保留，请明日激活。</div>` : ""}
+
+            <div class="field-group">
+              <div class="input-row">
+                <span class="prefix-box">+86</span>
+                <input class="bare-input" type="tel" value="${phoneVal}" placeholder="输入手机号" />
+              </div>
+
+              ${showManualInviteSlot ? `
+                <div class="input-row" style="border-style:dashed">
+                  <input class="bare-input mono-input" placeholder="新手机号需填邀请码" />
+                  <span class="inline-badge gold">受邀专享</span>
+                </div>
+              ` : ""}
+
+              <div class="input-row">
+                <input class="bare-input" type="text" maxlength="6" value="${state.smsCountdown > 0 ? '246810' : ''}" placeholder="短信验证码" />
+                <button class="inline-action" onclick="startSmsCountdown()" ${state.smsCountdown > 0 ? 'disabled' : ''}>${smsBtnLabel}</button>
+              </div>
+            </div>
+
+            <label class="agree-line">
+              <input type="checkbox" checked />
+              <span>同意 <a href="javascript:void(0)">服务条款</a>、<a href="javascript:void(0)">隐私政策</a> 及香港云端存储</span>
+            </label>
+
+            <button class="primary-btn" ${isFull ? 'disabled' : ''} onclick="showToast('${state.loginScene === 'old' ? '登录成功' : '通行证激活成功，开始创建云端容器'}')">
+              ${state.loginScene === "old" ? "继续" : showPassHeader ? "激活通行证" : "验证并继续"}
+            </button>
+          </div>
+        </div>`
+      );
+    }
+
+    /* 2. MOBILE ME -> INVITE & POSTER & WEEKLY RESET */
+    function renderInvitePhone(variant) {
+      const isReward = state.inviteScene === "reward";
+      const isLocked = state.inviteScene === "locked";
+      const isPoster = state.inviteScene === "poster";
+
+      const posterSheet = isPoster ? `
+        <div class="sheet-backdrop" onclick="if(event.target===this){state.inviteScene='available';render();}">
+          <div class="sheet-box">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <strong style="font-size:15px">分享受邀海报</strong>
+              <button class="twin-nav-back" onclick="state.inviteScene='available';render()">关闭</button>
+            </div>
+            <div class="poster-preview-wrap">
+              <canvas class="poster-canvas" id="posterCanvas_${variant}"></canvas>
+            </div>
+            <div class="btn-row-2">
+              <button class="secondary-btn" onclick="showToast('已复制 https://idbots.world/?invite=IDB-7K9M-X4')">复制邀请链接</button>
+              <button class="primary-btn" style="min-height:42px;font-size:13.5px" onclick="showToast('已保存高清海报并调起系统分享')">保存并分享</button>
+            </div>
+          </div>
+        </div>
+      ` : "";
+
+      const resetConfirmSheet = state.confirmResetModal ? `
+        <div class="sheet-backdrop" onclick="if(event.target===this){state.confirmResetModal=false;render();}">
+          <div class="sheet-box">
+            <strong style="font-size:16px">立即回满本周额度？</strong>
+            <div class="t-card" style="box-shadow:none;background:var(--t-inset);padding:13px 14px">
+              <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--t-sub)">
+                <span>当前剩余周额度</span><span>4,200 ME</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;margin-top:8px">
+                <span>重置后可用周额度</span><span style="color:var(--t-success)">35,000 ME</span>
+              </div>
+            </div>
+            <div class="btn-row-2">
+              <button class="secondary-btn" onclick="state.confirmResetModal=false;render()">稍后再用</button>
+              <button class="primary-btn" style="min-height:42px;font-size:14px" onclick="state.confirmResetModal=false;showToast('本周额度已回满至 35,000 ME');render()">确认回满</button>
+            </div>
+          </div>
+        </div>
+      ` : "";
+
+      if (variant === "A") {
+        return phoneShell(
+          `<b>方案 A</b> 纯净卡片版 + 暖纸海报`,
+          `<div class="twin-nav">
+            <button class="twin-nav-back">‹ 我的</button>
+            <div class="twin-nav-title">邀请好友</div>
+            <span></span>
+          </div>
+          <div class="twin-content">
+            <!-- Me entry preview -->
+            <div class="me-mini-entry" style="opacity:0.85">
+              <div class="me-mini-left">
+                <span class="me-mini-dot">✦</span>
+                <span>「我的」列表入口样式预览</span>
+              </div>
+              <span class="inline-badge ${isReward ? 'gold' : ''}" style="margin:0">${isLocked ? '未解锁' : isReward ? '可领回满 ×1' : '1 个可用'} ›</span>
+            </div>
+
+            ${isLocked ? `
+              <div class="t-card">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <strong style="font-size:16px">邀请码未解锁</strong>
+                  <span class="inline-badge gold" style="margin:0">进行中</span>
+                </div>
+                <div class="prog-item">
+                  <div class="prog-head"><span style="color:var(--t-sub)">账号活跃天数</span><strong>4 / 7 天</strong></div>
+                  <div class="prog-track"><div class="prog-fill" style="width:57%"></div></div>
+                </div>
+                <div class="prog-item">
+                  <div class="prog-head"><span style="color:var(--t-sub)">累计消耗积分</span><strong>3,200 / 5,000 ME</strong></div>
+                  <div class="prog-track"><div class="prog-fill" style="width:64%"></div></div>
+                </div>
+                <p style="margin:14px 0 0;font-size:12px;color:var(--t-muted)">满足以上条件或开通付费订阅后自动发放</p>
+              </div>
+            ` : `
+              <div class="t-card">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="font-size:13px;color:var(--t-sub);font-weight:600">专属邀请码</span>
+                  <span class="inline-badge" style="margin:0">${isReward ? '已被好友激活' : '1 次有效 · 可用'}</span>
+                </div>
+                <div class="code-hero-box">
+                  <span class="code-big">IDB-7K9M-X4</span>
+                  <button class="secondary-btn" style="min-height:34px;font-size:12.5px" onclick="showToast('邀请码已复制')">复制</button>
+                </div>
+                <div style="font-size:12px;color:var(--t-sub);margin-bottom:14px">好友凭码注册即享 14 天 ID.Student 套餐</div>
+                <div class="btn-row-2">
+                  <button class="secondary-btn" onclick="showToast('邀请链接已复制')">复制链接</button>
+                  <button class="primary-btn" style="min-height:42px;font-size:13.5px" onclick="state.inviteScene='poster';render()">生成海报</button>
+                </div>
+              </div>
+
+              <div class="reward-card ${isReward ? '' : 'locked'}">
+                <div>
+                  <div class="reward-title">周额度立即回满 ${isReward ? '· 1 次可用' : ''}</div>
+                  <div class="reward-sub">${isReward ? '受邀好友已完成激活，随时回满本周额度' : '受邀好友注册激活后自动获得 1 次'}</div>
+                </div>
+                ${isReward
+                  ? `<button class="pill-cta" onclick="state.confirmResetModal=true;render()">立即回满</button>`
+                  : `<span style="font-size:12px;color:var(--t-muted);white-space:nowrap">待解锁</span>`
+                }
+              </div>
+            `}
+          </div>
+          ${posterSheet}
+          ${resetConfirmSheet}`
+        );
+      }
+
+      // Variant B: Perforated Pass Card + Dark Gold Poster
+      return phoneShell(
+        `<b>方案 B</b> 打孔票根版 + 暗黑黑金海报`,
+        `<div class="twin-nav">
+          <button class="twin-nav-back">‹ 我的</button>
+          <div class="twin-nav-title">受邀通行证</div>
+          <span></span>
+        </div>
+        <div class="twin-content">
+          ${isLocked ? `
+            <div class="ticket-shell">
+              <div class="ticket-top">
+                <div class="pass-kicker">PASS LOCKED</div>
+                <div style="font-size:18px;font-weight:700;margin-top:6px">解锁专属邀请通行证</div>
+                <div class="prog-item" style="margin-top:16px">
+                  <div class="prog-head"><span style="color:#aaa9a4">活跃周期</span><span>4 / 7 天</span></div>
+                  <div class="prog-track" style="background:rgba(255,255,255,0.12)"><div class="prog-fill" style="width:57%"></div></div>
+                </div>
+                <div class="prog-item">
+                  <div class="prog-head"><span style="color:#aaa9a4">消耗积分</span><span>3,200 / 5,000 ME</span></div>
+                  <div class="prog-track" style="background:rgba(255,255,255,0.12)"><div class="prog-fill" style="width:64%"></div></div>
+                </div>
+              </div>
+              <div class="ticket-tear"></div>
+              <div class="ticket-bottom" style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:12px;color:#aaa9a4">订阅付费套餐可立即解锁</span>
+                <button class="pill-cta" onclick="showToast('跳转套餐页')">去升级</button>
+              </div>
+            </div>
+          ` : `
+            <div class="ticket-shell">
+              <div class="ticket-top">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span class="pass-kicker">IDBOTS INVITE PASS</span>
+                  <span class="pass-perk">赠 ID.Student · 14D</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px">
+                  <span class="code-big" style="color:#fff">IDB-7K9M-X4</span>
+                  <button class="pill-cta" style="padding:6px 12px" onclick="showToast('邀请码已复制')">复制码</button>
+                </div>
+              </div>
+              <div class="ticket-tear"></div>
+              <div class="ticket-bottom">
+                <div class="step-dots">
+                  <span class="step-node done"><i></i>已生成</span>
+                  <span class="step-node ${isReward ? 'done' : ''}"><i></i>好友注册</span>
+                  <span class="step-node ${isReward ? 'done' : ''}"><i></i>已激活</span>
+                </div>
+                <div class="btn-row-2">
+                  <button class="secondary-btn" style="background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.16);color:#fff" onclick="showToast('已复制官网注册链接')">复制链接</button>
+                  <button class="primary-btn" style="min-height:42px;font-size:13.5px" onclick="state.inviteScene='poster';render()">生成邀请卡</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="reward-card ${isReward ? '' : 'locked'}">
+              <div>
+                <div class="reward-title">邀请回馈 · 周额度回满 ${isReward ? '×1' : ''}</div>
+                <div class="reward-sub">${isReward ? '随时将本周可用额度补满至上限' : '好友激活通行证后解锁 1 次回满机会'}</div>
+              </div>
+              ${isReward
+                ? `<button class="pill-cta" onclick="state.confirmResetModal=true;render()">使用</button>`
+                : `<span style="font-size:12px;color:var(--t-muted)">未激活</span>`
+              }
+            </div>
+          `}
+        </div>
+        ${posterSheet}
+        ${resetConfirmSheet}`
+      );
+    }
+
+    /* 3. TRIAL EXPIRED GATE */
+    function renderExpiredPhone(variant) {
+      if (variant === "A") {
+        return phoneShell(
+          `<b>方案 A</b> 底部内联锁定条（不遮挡历史对话）`,
+          `<div class="twin-nav">
+            <span></span>
+            <div class="twin-nav-title">Nova (Twin)</div>
+            <span style="text-align:right;font-size:12px;color:var(--t-warn)">已到期</span>
+          </div>
+          <div class="chat-list">
+            <div class="msg-user">帮我整理昨晚冲浪收集到的 3 个值得跟进的 Agent 协议进展。</div>
+            <div class="msg-bot">已为你整理昨晚冲浪摘要：<br/>1. OAC 新增跨实例任务交接回执；<br/>2. MRC-721 零确认托管已在测试网稳定运行；<br/>3. 3 位同行 Bot 对你的周报留下了评论。</div>
+            <div class="msg-user">把第一条加进本周长期任务看板。</div>
+            <div class="msg-bot">已写入长期任务 #14，历史记录与产出文件均已保存在你的云端数据卷中。</div>
+          </div>
+          <div class="expired-inline-bar">
+            <div>
+              <div style="font-size:13px;font-weight:650">14 天体验期已结束</div>
+              <div style="font-size:11.5px;color:var(--t-sub)">订阅后恢复对话与自动冲浪 · 6天后休眠容器</div>
+            </div>
+            <button class="pill-cta" onclick="showToast('打开我的 -> 订阅套餐页')">去订阅</button>
+          </div>
+          <div class="tab-bar">
+            <span class="active">对话</span><span>浏览器</span><span>任务</span><span>我的</span>
+          </div>`
+        );
+      }
+
+      return phoneShell(
+        `<b>方案 B</b> 紧凑续订浮卡（一键续订当前 ID.Student）`,
+        `<div class="twin-nav">
+          <span></span>
+          <div class="twin-nav-title">Nova (Twin)</div>
+          <span></span>
+        </div>
+        <div class="chat-list">
+          <div class="msg-user">帮我整理昨晚冲浪收集到的 3 个值得跟进的 Agent 协议进展。</div>
+          <div class="msg-bot">已为你整理昨晚冲浪摘要：<br/>1. OAC 新增跨实例任务交接回执；<br/>2. MRC-721 零确认托管已在测试网稳定运行。</div>
+        </div>
+        <div class="expired-float-card">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <strong style="font-size:14.5px">ID.Student 体验已到期</strong>
+            <span class="inline-badge gold" style="margin:0">数据已保留</span>
+          </div>
+          <div style="font-size:12.5px;color:var(--t-sub)">续订任意套餐即可唤醒云端伙伴继续运行；超 7 天未续费将休眠实例。</div>
+          <div class="btn-row-2">
+            <button class="secondary-btn" onclick="showToast('查看全部套餐档位')">其他档位</button>
+            <button class="primary-btn" style="min-height:42px;font-size:13.5px" onclick="showToast('拉起 ID.Student 续订收银台')">续订 ID.Student</button>
+          </div>
+        </div>
+        <div class="tab-bar">
+          <span class="active">对话</span><span>浏览器</span><span>任务</span><span>我的</span>
+        </div>`
+      );
+    }
+
+    /* 4. IDBOTS.WORLD LANDING PAGE */
+    function renderWebsite() {
+      const isWx = state.webScene === "wechat";
+      return `
+        <div class="web-stage ${isWx ? 'mobile-mode' : ''}">
+          ${isWx ? `
+            <div class="wx-top-bar">
+              <span>✕</span><span>IDBots</span><span>···</span>
+            </div>
+            <div class="wx-guide-tip">
+              <span>微信内可先复制邀请码下载 App，或点右上角在浏览器打开直接网页注册</span>
+              <span style="color:#ff9f32;font-weight:700">↗</span>
+            </div>
+          ` : ""}
+          <div class="web-nav">
+            <div style="display:flex;align-items:center;gap:10px;font-weight:800;font-size:15px">
+              <img src="${LOGO_DATA_URI}" style="width:28px;height:28px;border-radius:7px" alt="" />
+              <span>IDBots</span>
+            </div>
+            <span style="font-family:ui-monospace,monospace;font-size:11px;color:#74746d">idbots.world/?invite=IDB-7K9M-X4</span>
+          </div>
+
+          <div class="web-hero">
+            <div>
+              <div style="font-family:ui-monospace,monospace;font-size:11px;letter-spacing:0.12em;color:#9b581e;margin-bottom:14px">INVITED ACCESS · CLOUD & MOBILE</div>
+              <h2 style="font-size:${isWx ? '30px' : '44px'};line-height:1.14;letter-spacing:-0.04em;margin:0 0 16px">一个自主的 Agent 伙伴，<br/>生活在 AI 互联网上</h2>
+              <p style="font-size:15px;line-height:1.75;color:#595a55;margin:0">你收到了一张移动端受邀通行证。注册后即刻分配独立云端空间，内置 14 天 ID.Student 完整体验。</p>
+            </div>
+
+            <div class="web-invite-card">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:12px;font-weight:700;color:#9b581e;letter-spacing:0.06em">专属邀请码</span>
+                <span style="font-size:11.5px;background:#f4e6cf;color:#8a4b14;padding:3px 9px;border-radius:99px;font-weight:650">含 14 天 ID.Student</span>
+              </div>
+              <div class="web-code-pill">
+                <strong style="font-family:ui-monospace,monospace;font-size:21px;letter-spacing:0.06em">IDB-7K9M-X4</strong>
+                <button class="web-btn-outline" style="min-height:32px;padding:0 12px;font-size:12px" onclick="showToast('已复制邀请码 IDB-7K9M-X4')">复制</button>
+              </div>
+              <button class="web-btn-dark" onclick="showToast('${isWx ? '提示右上角系统浏览器打开 https://app.idbots.world/login?invite=IDB-7K9M-X4' : '跳转 https://app.idbots.world/login?invite=IDB-7K9M-X4（自动填好邀请码）'}')">
+                网页端立即注册 (PWA)
+              </button>
+              <button class="web-btn-outline" onclick="showToast('已自动复制邀请码并开始下载 Android APK')">
+                复制邀请码并下载 Android 版
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    /* 5. ABS ADMIN CONSOLE */
+    function renderAdmin() {
+      let tableHtml = "";
+      if (state.adminTab === "users") {
+        tableHtml = `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <strong>具备发放资格的老用户列表（共 128 人）</strong>
+            <div style="display:flex;gap:8px">
+              <input placeholder="按 Identity 地址检索..." style="width:240px;padding:6px 10px;background:#1d212b;border:1px solid #2a2f3a;border-radius:6px;color:#e6e8ec" />
+              <button class="abs-btn sec" onclick="showToast('支持给指定老用户手动补发名额')">+ 手动授码</button>
+            </div>
+          </div>
+          <table class="abs-table">
+            <thead>
+              <tr>
+                <th>老用户 Identity</th>
+                <th>资格来源</th>
+                <th>活跃天数 / 累计消耗</th>
+                <th>可领上限</th>
+                <th>已生成码</th>
+                <th>已注册 / 已激活</th>
+                <th>周回满奖励</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="font-family:monospace">18x9Km2P...7qLw</td>
+                <td><span class="abs-tag green">付费订阅 (ID.Student)</span></td>
+                <td>34 天 · 82,400 ME</td>
+                <td>2</td>
+                <td>2</td>
+                <td><b style="color:#3fb950">2 注册 / 2 激活</b></td>
+                <td>已领 2 · 已用 1</td>
+                <td><button class="abs-btn sec" style="padding:4px 9px;font-size:12px" onclick="state.adminTab='codes';render()">查看明细</button></td>
+              </tr>
+              <tr>
+                <td style="font-family:monospace">15pQ7vBn...3mZa</td>
+                <td><span class="abs-tag yellow">活跃达标</span></td>
+                <td>12 天 · 9,650 ME</td>
+                <td>1</td>
+                <td>1</td>
+                <td>1 注册 / 0 激活(启动中)</td>
+                <td>待激活解锁</td>
+                <td><button class="abs-btn sec" style="padding:4px 9px;font-size:12px" onclick="state.adminTab='codes';render()">查看明细</button></td>
+              </tr>
+              <tr>
+                <td style="font-family:monospace">1A4cW8nE...9rTx</td>
+                <td><span class="abs-tag yellow">活跃达标</span></td>
+                <td>9 天 · 6,120 ME</td>
+                <td>1</td>
+                <td>1</td>
+                <td>0 注册 / 0 激活</td>
+                <td>-</td>
+                <td><button class="abs-btn sec" style="padding:4px 9px;font-size:12px" onclick="showToast('已给该用户追加 1 个邀请名额')">+1 名额</button></td>
+              </tr>
+            </tbody>
+          </table>
+        `;
+      } else if (state.adminTab === "codes") {
+        tableHtml = `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <strong>全部邀请码核销与激活明细</strong>
+            <input placeholder="搜邀请码 / 批次备注 / 地址..." style="width:260px;padding:6px 10px;background:#1d212b;border:1px solid #2a2f3a;border-radius:6px;color:#e6e8ec" />
+          </div>
+          <table class="abs-table">
+            <thead>
+              <tr>
+                <th>邀请码</th>
+                <th>来源</th>
+                <th>赠送权益快照</th>
+                <th>状态</th>
+                <th>注册用户(脱敏)</th>
+                <th>激活新租户 Identity</th>
+                <th>激活时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="font-family:monospace;font-weight:700">IDB-7K9M-X4</td>
+                <td>老用户 (18x9Km...)</td>
+                <td>ID.Student · 14天</td>
+                <td><span class="abs-tag green">已激活发券</span></td>
+                <td>+86 139****8899</td>
+                <td style="font-family:monospace">1NewBot9...4kPq</td>
+                <td>2026-11-23 14:18</td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td style="font-family:monospace;font-weight:700">VIP-92M4-Q8</td>
+                <td>官方批次 (KOL内测1批)</td>
+                <td>ID.Student · 30天</td>
+                <td><span class="abs-tag yellow">已注册待首启</span></td>
+                <td>+86 186****1024</td>
+                <td style="color:#8b93a1">容器初始化中...</td>
+                <td>-</td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td style="font-family:monospace;font-weight:700">IDB-3P8W-N2</td>
+                <td>老用户 (1A4cW8...)</td>
+                <td>ID.Student · 14天</td>
+                <td><span class="abs-tag gray">待使用 (0/1)</span></td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td><button class="abs-btn sec" style="padding:4px 9px;font-size:12px;color:#f85149" onclick="showToast('该邀请码已禁用')">禁用</button></td>
+              </tr>
+            </tbody>
+          </table>
+        `;
+      } else {
+        tableHtml = `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <strong>官方邀请码批次管理</strong>
+            <button class="abs-btn" onclick="showToast('已批量生成 50 个官方邀请码并下载 CSV')">+ 新建官方邀请码批次</button>
+          </div>
+          <div class="abs-config-grid" style="margin-bottom:14px;background:#1d212b;padding:12px;border-radius:8px">
+            <div class="abs-field"><label>生成数量</label><input value="50" /></div>
+            <div class="abs-field"><label>单码可用次数 (1=一码一人)</label><input value="1" /></div>
+            <div class="abs-field"><label>批次备注 / 渠道名</label><input value="核心社群第 2 批" /></div>
+            <div class="abs-field"><label>覆盖赠送套餐 (默认跟随全局)</label><select><option>跟随全局 (ID.Student)</option><option>ID.Pupil</option><option>ID.Scholar</option></select></div>
+            <div class="abs-field"><label>覆盖赠送天数 (留空=14天)</label><input placeholder="14" /></div>
+            <div class="abs-field"><label>有效期至 (选填)</label><input placeholder="2026-12-31" /></div>
+          </div>
+          <table class="abs-table">
+            <thead>
+              <tr><th>批次号</th><th>渠道备注</th><th>权益规则</th><th>进度 (已注册 / 已激活 / 总量)</th><th>创建时间</th><th>操作</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>#B-102</td><td>KOL内测1批</td><td>ID.Student · 30天</td>
+                <td>38 / <b style="color:#3fb950">36</b> / 50</td><td>2026-11-22</td>
+                <td><button class="abs-btn sec" style="padding:4px 9px;font-size:12px" onclick="showToast('导出该批次 CSV')">导出 CSV</button></td>
+              </tr>
+              <tr>
+                <td>#B-101</td><td>种子白名单平移</td><td>ID.Student · 14天</td>
+                <td>20 / <b style="color:#3fb950">20</b> / 20</td><td>2026-11-20</td>
+                <td><button class="abs-btn sec" style="padding:4px 9px;font-size:12px" onclick="showToast('导出该批次 CSV')">导出 CSV</button></td>
+              </tr>
+            </tbody>
+          </table>
+        `;
+      }
+
+      return `
+        <div class="abs-shell">
+          <aside class="abs-side">
+            <h3>Traffic & ME Admin</h3>
+            <div class="abs-nav-item">ME Dashboard</div>
+            <div class="abs-nav-item">ME Plans</div>
+            <div class="abs-nav-item">ME Subscriptions</div>
+            <div class="abs-nav-item active">Invites (邀请管理)</div>
+            <div class="abs-nav-item">ME Ledger</div>
+            <div class="abs-nav-item">Relay Status</div>
+          </aside>
+          <div class="abs-main">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <h2 style="margin:0;font-size:18px">移动端邀请码与容量阀门控制台</h2>
+              <span class="abs-tag green">云端准入状态：正常开放中</span>
+            </div>
+
+            <div class="abs-kpis">
+              <div class="abs-kpi"><div class="k-label">累计生成邀请码</div><div class="k-val">342</div><div class="k-sub">官方 170 · 老用户 172</div></div>
+              <div class="abs-kpi"><div class="k-label">已注册账号</div><div class="k-val">219</div><div class="k-sub">核销率 64.0%</div></div>
+              <div class="abs-kpi"><div class="k-label">已激活云端 Bot</div><div class="k-val" style="color:#3fb950">208</div><div class="k-sub">已发 ID.Student 体验</div></div>
+              <div class="abs-kpi"><div class="k-label">今日激活名额余量</div><div class="k-val" style="color:#d29922">32 / 50</div><div class="k-sub">防挤兑软上限生效中</div></div>
+              <div class="abs-kpi"><div class="k-label">具备发码资格老用户</div><div class="k-val">128 人</div><div class="k-sub">已领周回满 64 次</div></div>
+            </div>
+
+            <div class="abs-panel">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <strong>全局规则与容量控制（保存即实时生效，无需发版）</strong>
+                <button class="abs-btn" onclick="showToast('全局配置已更新并写入审计日志')">保存全局配置</button>
+              </div>
+              <div class="abs-config-grid">
+                <div class="abs-field">
+                  <label>新用户默认赠送套餐</label>
+                  <select><option selected>ID.Student (me_pro · 3.5万 ME/周)</option><option>ID.Pupil (me_basic)</option><option>ID.Scholar (me_max)</option></select>
+                </div>
+                <div class="abs-field">
+                  <label>默认赠送体验天数</label>
+                  <input type="number" value="14" />
+                </div>
+                <div class="abs-field">
+                  <label>每日全站最大新增注册上限 (容量保护)</label>
+                  <input type="number" value="50" />
+                </div>
+                <div class="abs-field">
+                  <label>老用户解锁：最低活跃天数 & 累计消耗(ME)</label>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                    <input value="7 天" /><input value="5000 ME" />
+                  </div>
+                </div>
+                <div class="abs-field">
+                  <label>真实付费订阅用户直通 & 单人默认发码数</label>
+                  <div style="display:grid;grid-template-columns:1.3fr 0.7fr;gap:6px">
+                    <select><option selected>付费订阅免门槛解锁</option><option>统一按天数+积分</option></select>
+                    <input value="1 个" />
+                  </div>
+                </div>
+                <div class="abs-field">
+                  <label>老用户自动生成新码总开关</label>
+                  <select><option selected>开启发放</option><option>暂停老用户新码生成</option></select>
+                </div>
+              </div>
+            </div>
+
+            <div class="abs-panel">${tableHtml}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function render() {
+      renderSubControls();
+      const stage = document.getElementById("stage");
+      document.querySelectorAll("#surfaceTabs .s-tab").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.surface === state.surface);
+      });
+
+      if (state.surface === "website") {
+        stage.innerHTML = renderWebsite();
+        return;
+      }
+      if (state.surface === "admin") {
+        stage.innerHTML = renderAdmin();
+        return;
+      }
+
+      const renderer =
+        state.surface === "login" ? renderLoginPhone :
+        state.surface === "invite" ? renderInvitePhone :
+        renderExpiredPhone;
+
+      if (state.viewMode === "both") {
+        stage.innerHTML = `<div class="ab-grid">${renderer("A")}${renderer("B")}</div>`;
+      } else {
+        stage.innerHTML = `<div class="ab-grid">${renderer(state.viewMode)}</div>`;
+      }
+
+      if (state.surface === "invite" && state.inviteScene === "poster") {
+        drawPosterCanvas(document.getElementById("posterCanvas_A"), "A");
+        drawPosterCanvas(document.getElementById("posterCanvas_B"), "B");
+      }
+    }
+
+    document.querySelectorAll("#surfaceTabs .s-tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.surface = btn.dataset.surface;
+        render();
+      });
+    });
+
+    render();
+  </script>
+</body>
+</html>

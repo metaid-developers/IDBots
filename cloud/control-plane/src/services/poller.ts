@@ -1,5 +1,6 @@
 import type { AppContext } from '../context.js';
 import { sendAlert } from '../alerts.js';
+import { sweepExpiredTrialHibernation } from './hibernation.js';
 import { probeTenant } from './probe.js';
 import { isProvisioningInFlight } from './provisioning.js';
 import { recoverTenant } from './recovery.js';
@@ -32,6 +33,8 @@ export interface PollerOptions {
   probeTimeoutMs?: number;
   /** Runtime safety net for provisioning rows stuck by a dead process. */
   staleProvisioningMs?: number;
+  /** Periodic interval for >7-day post-trial hibernation checks. */
+  hibernationCheckIntervalMs?: number;
   now?: () => number;
 }
 
@@ -56,10 +59,12 @@ export class TenantPoller {
   private readonly timeouts: Timeouts;
   private readonly probeTimeoutMs: number;
   private readonly staleProvisioningMs: number;
+  private readonly hibernationCheckIntervalMs: number;
   private readonly now: () => number;
   private timer: NodeJS.Timeout | null = null;
   private chain: Promise<void> = Promise.resolve();
   private readonly nextPollAt = new Map<string, number>();
+  private nextHibernationCheckAt = 0;
 
   constructor(
     private readonly app: Pick<AppContext, 'config' | 'db' | 'docker'> & Partial<Pick<AppContext, 'metrics'>>,
@@ -70,6 +75,7 @@ export class TenantPoller {
     this.timeouts = { ...DEFAULT_TIMEOUTS, ...opts.timeouts };
     this.probeTimeoutMs = opts.probeTimeoutMs ?? 2000;
     this.staleProvisioningMs = opts.staleProvisioningMs ?? 300_000;
+    this.hibernationCheckIntervalMs = opts.hibernationCheckIntervalMs ?? 10 * 60 * 1000;
     this.now = opts.now ?? (() => Date.now());
   }
 
@@ -102,6 +108,22 @@ export class TenantPoller {
 
   private async sweep(): Promise<void> {
     await this.recoverStaleProvisioningRows();
+    const sweepNow = this.now();
+    if (sweepNow >= this.nextHibernationCheckAt) {
+      this.nextHibernationCheckAt = sweepNow + this.hibernationCheckIntervalMs;
+      try {
+        await sweepExpiredTrialHibernation(this.app, sweepNow);
+      } catch (err) {
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            component: 'poller',
+            msg: 'expired trial hibernation sweep failed',
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      }
+    }
     const rows = this.app.db
       .prepare(
         "SELECT * FROM tenants WHERE status IN ('booting', 'onboarding', 'ready', 'degraded')",

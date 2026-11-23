@@ -9,7 +9,11 @@ import { encryptSecret } from '../crypto.js';
  * invite use, and get a `provisioning` tenant row; `with_redeem` invites
  * additionally claim the oldest unassigned redeem code atomically (an empty
  * pool proceeds without a code and flags it for the caller to warn/alert).
- * HTTP wiring lands in a later phase.
+ *
+ * When `externalInviteGrant` is supplied (ABS partner invite mode), the
+ * upstream service has already validated and reserved the invite seat, so
+ * sign-up persists the `users`, `tenants`, and `invite_grants` rows in one
+ * local transaction without touching the legacy local `invites` table.
  */
 
 export type SignupErrorCode =
@@ -66,6 +70,18 @@ export interface SignupErr {
 
 export type SignupResult = SignupOk | SignupErr;
 
+export interface ExternalInviteGrantInput {
+  userId: string;
+  tenantId: string;
+  code: string;
+  redemptionId?: string | null;
+  grantTicket?: string | null;
+  planId: string;
+  planName?: string | null;
+  planNameEn?: string | null;
+  periodDays: number;
+}
+
 export interface SignupInput {
   phone: string;
   displayName?: string | null;
@@ -77,11 +93,13 @@ export interface SignupInput {
     tenantImage: string;
   };
   masterKey: Buffer;
+  externalInviteGrant?: ExternalInviteGrantInput;
 }
 
 const DEFAULT_DISPLAY_NAME = 'IDBots User';
 const DEFAULT_LOCALE = 'zh';
 const TENANT_STATUS_PROVISIONING = 'provisioning';
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function getUserByPhone(db: Database.Database, phone: string): UserRow | undefined {
   return db.prepare('SELECT * FROM users WHERE phone_e164 = ?').get(phone) as
@@ -124,6 +142,77 @@ function signupInner(db: Database.Database, input: SignupInput): SignupResult {
     };
   }
 
+  const displayName = input.displayName?.trim() ? input.displayName.trim() : DEFAULT_DISPLAY_NAME;
+  const locale = input.locale?.trim() ? input.locale.trim() : DEFAULT_LOCALE;
+
+  if (input.externalInviteGrant) {
+    const ext = input.externalInviteGrant;
+    const userId = ext.userId;
+    const tenantId = ext.tenantId;
+    const secret = newGatewaySecret();
+
+    db.prepare(
+      `INSERT INTO users (id, phone_e164, display_name, locale, status, invite_code, created_at)
+       VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+    ).run(userId, input.phone, displayName, locale, ext.code, now);
+
+    db.prepare(
+      `INSERT INTO tenants (
+         id, user_id, host_id, container_name, volume_name, image,
+         gateway_secret_enc, status, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      tenantId,
+      userId,
+      input.tenantDefaults.hostId,
+      `idb-${tenantId}`,
+      `idb-${tenantId}-data`,
+      input.tenantDefaults.tenantImage,
+      encryptSecret(input.masterKey, secret),
+      TENANT_STATUS_PROVISIONING,
+      now,
+      now,
+    );
+
+    const periodDays = Math.max(1, Math.trunc(ext.periodDays || 14));
+    const trialEndsAt = now + periodDays * DAY_MS;
+    const ticketEnc = ext.grantTicket
+      ? encryptSecret(input.masterKey, ext.grantTicket)
+      : null;
+
+    db.prepare(
+      `INSERT INTO invite_grants (
+         user_id, tenant_id, code, redemption_id, grant_ticket_enc,
+         plan_id, plan_name, plan_name_en, period_days, trial_ends_at,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      userId,
+      tenantId,
+      ext.code,
+      ext.redemptionId ?? null,
+      ticketEnc,
+      ext.planId || 'me_pro',
+      ext.planName ?? null,
+      ext.planNameEn ?? null,
+      periodDays,
+      trialEndsAt,
+      now,
+      now,
+    );
+
+    const user = getUserByPhone(db, input.phone) as UserRow;
+    const tenant = getTenantByUserId(db, userId) as TenantRow;
+    return {
+      ok: true,
+      user,
+      tenant,
+      isNewUser: true,
+      inviteConsumed: true,
+      redeemCodeClaimed: false,
+    };
+  }
+
   if (!input.inviteCode) {
     return { ok: false, code: 'INVITE_REQUIRED', message: 'an invite code is required to sign up' };
   }
@@ -142,8 +231,6 @@ function signupInner(db: Database.Database, input: SignupInput): SignupResult {
 
   const userId = newUserId();
   const tenantId = newTenantId();
-  const displayName = input.displayName?.trim() ? input.displayName.trim() : DEFAULT_DISPLAY_NAME;
-  const locale = input.locale?.trim() ? input.locale.trim() : DEFAULT_LOCALE;
 
   // Spend the invite use before writing anything else; a guarded failure here
   // leaves the database untouched.

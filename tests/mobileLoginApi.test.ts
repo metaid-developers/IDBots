@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getMe, logout, requestAccountDeletion, sendCode, verifyCode } from '../src/mobile/login/loginApi';
+import { getMe, logout, previewInvite, requestAccountDeletion, sendCode, verifyCode } from '../src/mobile/login/loginApi';
 
 // Distinct phones per scenario keep the mock's "new vs returning phone"
 // state deterministic (node:test runs a file's tests sequentially).
@@ -181,4 +181,33 @@ test('loginApi.requestAccountDeletion rejects without a session and clears it af
     return true;
   });
   await assert.rejects(requestAccountDeletion());
+});
+
+test('loginApi.previewInvite returns public grant metadata and daily cap fixtures', async () => {
+  const valid = await previewInvite('IDB-7K9M-X4');
+  assert.equal(valid.valid, true);
+  assert.equal(valid.planId, 'me_pro');
+  assert.equal(valid.periodDays, 14);
+  assert.equal(valid.dailyCapFull, false);
+
+  const bad = await previewInvite('BAD');
+  assert.equal(bad.valid, false);
+  assert.equal(bad.reasonCode, 'INVITE_INVALID_CODE');
+
+  const cap = await previewInvite('CAPFULL');
+  assert.equal(cap.valid, false);
+  assert.equal(cap.dailyCapFull, true);
+  assert.equal(cap.reasonCode, 'INVITE_DAILY_CAP_FULL');
+});
+
+test('loginApi.sendCode prechecks optional inviteCode before dispatching SMS', async () => {
+  await assert.rejects(
+    sendCode('+8613900000222', 'login', { inviteCode: 'CAPFULL' }),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, 'INVITE_DAILY_CAP_FULL');
+      return true;
+    },
+  );
+  const ok = await sendCode('+8613900000222', 'login', { inviteCode: 'IDB-7K9M-X4' });
+  assert.deepEqual(ok, { resendAfterSec: 60 });
 });

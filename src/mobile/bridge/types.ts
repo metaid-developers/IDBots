@@ -187,6 +187,10 @@ export interface MobileMockControl {
   emitCoworkStream: (channel: MobileMockCoworkStreamChannel, payload: unknown) => void;
   /** S9 ME points demo: flip the mock subscription between free and active. */
   setMeSubscribed?: (value: boolean) => void;
+  /** Override the mock subscription payload (e.g. invite_trial or expired invite_trial). */
+  setMeSubscriptionOverride?: (subscription: { statusText: string; raw: Record<string, unknown> } | null) => void;
+  /** Configure mock invite center scenario for mobile UI / E2E tests. */
+  setMeInviteScenario?: (scenario: 'eligible_unissued' | 'eligible_issued' | 'locked_trial' | 'refill_ready') => void;
   /** Move one subscription/top-up order to the authoritative credited state. */
   confirmMeOrder?: (orderId: string) => boolean;
 }

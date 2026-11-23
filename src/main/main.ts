@@ -347,6 +347,7 @@ import {
   meRelease,
 } from './services/meChargeService';
 import { startCreditPullLoop, type CreditPullLoop } from './services/creditPullService';
+import { startInviteGrantPullLoop, type InviteGrantPullLoop } from './services/inviteGrantPullService';
 import { initBundleService, registerBundleIpcHandlers } from './services/bundleService';
 import { initLlmRelayService, registerLlmRelayIpcHandlers, getLlmRelayQuota } from './services/llmRelayService';
 import { createRelayCatalogRefresh, RELAY_CATALOG_REFRESH_INTERVAL_MS } from './services/relayCatalogFreshness';
@@ -3233,6 +3234,7 @@ let relayCatalogRefresh: ReturnType<typeof createRelayCatalogRefresh> | null = n
 let relayCatalogRefreshTimer: ReturnType<typeof setInterval> | null = null;
 /** Plan B: tenant-side pull of pending credit grants (server mode only). */
 let creditPullLoop: CreditPullLoop | null = null;
+let inviteGrantPullLoop: InviteGrantPullLoop | null = null;
 let notificationDeliveryLoop: NotificationDeliveryLoop | null = null;
 
 function text(value: unknown): string {
@@ -24424,6 +24426,8 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     relayCatalogRefresh = null;
     creditPullLoop?.stop();
     creditPullLoop = null;
+    inviteGrantPullLoop?.stop();
+    inviteGrantPullLoop = null;
     notificationDeliveryLoop?.stop();
     notificationDeliveryLoop = null;
     await stopMetaAppServer().catch((error) => {
@@ -24813,6 +24817,10 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       creditPullLoop = startCreditPullLoop({
         log: (level, msg, extra) => serverPhaseLog(level, 'credit-pull', msg, extra),
       });
+      inviteGrantPullLoop = startInviteGrantPullLoop({
+        log: (level, msg, extra) => serverPhaseLog(level, 'invite-grant-pull', msg, extra),
+      });
+      void serverBootstrapRun.finished.then(() => inviteGrantPullLoop?.runNow()).catch(() => undefined);
       notificationDeliveryLoop = startNotificationDeliveryLoop(getNotificationService().getStore(), {
         log: (level, msg, extra) => serverPhaseLog(level, 'notification-delivery', msg, extra),
       });

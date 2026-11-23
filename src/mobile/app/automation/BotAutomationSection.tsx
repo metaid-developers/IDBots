@@ -4,6 +4,7 @@ import type { MobileMetabot } from '../../bridge/types';
 import { t } from '../../i18n';
 import type { useMetabots, BotOperationResult } from '../hooks/useMetabots';
 import { Switch } from '../components/Switch';
+import { isMeExpiredInviteTrial, useMeStore } from '../me/mePointsStore';
 import { useBotAutomation } from './useBotAutomation';
 import {
   DAILY_REPORT_ENABLED_KEY,
@@ -22,8 +23,11 @@ export function BotAutomationSection(props: {
   bot: MobileMetabot;
   actions: BotAutomationActions;
   onOpenSession?: (sessionId: string) => Promise<boolean>;
+  onOpenSubscribe?: () => void;
   highlightRunId?: string;
 }): JSX.Element {
+  const me = useMeStore();
+  const trialExpired = isMeExpiredInviteTrial(me.subscription);
   const controller = useBotAutomation(props.bot.id, props.bot.metabot_type);
   const [interactionBudget, setInteractionBudget] = useState(String(controller.settings.interactionBudget));
   const [creationBudget, setCreationBudget] = useState(String(controller.settings.creationBudget));
@@ -56,6 +60,27 @@ export function BotAutomationSection(props: {
 
   return (
     <div className="space-y-3" data-testid="bot-automation-page">
+      {trialExpired ? (
+        <div
+          data-testid="automation-trial-expired-bar"
+          className="flex items-center justify-between gap-3 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-3.5 py-2.5"
+        >
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-bold text-[var(--text-primary)]">{t('mobile.trial.expiredTitle')}</p>
+            <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{t('mobile.trial.expiredAutomationSub')}</p>
+          </div>
+          {props.onOpenSubscribe ? (
+            <button
+              type="button"
+              data-testid="automation-trial-subscribe-cta"
+              onClick={props.onOpenSubscribe}
+              className="twin-button twin-button-primary twin-button-small shrink-0 rounded-full px-3.5"
+            >
+              {t('mobile.trial.subscribeCta')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <section className="twin-panel twin-panel-padded space-y-3" data-testid="bot-operational-status">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -171,7 +196,7 @@ export function BotAutomationSection(props: {
         <button
           type="button"
           className="twin-button twin-button-primary twin-button-full"
-          disabled={controller.busy !== null || controller.runningId !== null}
+          disabled={trialExpired || controller.busy !== null || controller.runningId !== null}
           onClick={() => void controller.runSurf()}
           data-testid="bot-surf-run-now"
         >
@@ -211,7 +236,7 @@ export function BotAutomationSection(props: {
           <button
             type="button"
             className="twin-button twin-button-secondary twin-button-full"
-            disabled={dailyDisabled || !controller.settings.dailyEnabled || controller.busy !== null}
+            disabled={trialExpired || dailyDisabled || !controller.settings.dailyEnabled || controller.busy !== null}
             onClick={() => {
               setReportReady(false);
               void controller.runDaily().then(async (sessionId) => {

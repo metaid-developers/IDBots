@@ -81,8 +81,15 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
     },
     fakeSmsNumbers: [],
     alertWebhook: env.CP_ALERT_WEBHOOK ?? null,
-    // The CLI never serves HTTP; this is an inert default.
+    // The CLI never serves HTTP; these are inert defaults.
     loginBundleDir: '',
+    legalDir: '',
+    inviteService: {
+      baseUrl: null,
+      token: null,
+      hibernateAfterMs: 7 * 24 * 60 * 60 * 1000,
+      wakeGraceMs: 24 * 60 * 60 * 1000,
+    },
     // Push provider comes from the environment so `push.send-test` can use
     // the real FCM credentials when the operator sources deploy.env.
     push: parsePushConfig(env),
@@ -504,7 +511,9 @@ async function cmdTenantLifecycle(
     ctx.db.prepare("UPDATE tenants SET status = 'booting', updated_at = ? WHERE id = ?").run(Date.now(), id);
   } else if (action === 'stop') {
     await stopTenantContainer(ctx, tenant);
-    ctx.db.prepare("UPDATE tenants SET status = 'stopped', updated_at = ? WHERE id = ?").run(Date.now(), id);
+    const now = Date.now();
+    ctx.db.prepare("UPDATE tenants SET status = 'stopped', phase = NULL, updated_at = ? WHERE id = ?").run(now, id);
+    ctx.db.prepare('UPDATE invite_grants SET hibernated_at = NULL, updated_at = ? WHERE tenant_id = ?').run(now, id);
   } else {
     await startTenantContainer(ctx, tenant);
     ctx.db.prepare("UPDATE tenants SET status = 'booting', updated_at = ? WHERE id = ?").run(Date.now(), id);

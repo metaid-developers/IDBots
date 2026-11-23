@@ -2432,6 +2432,20 @@
       ]
     },
     {
+      "path": "mePoints.claimInviteRefill",
+      "kind": "invoke",
+      "channel": "me:claimInviteRefill",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "mePoints.generateInviteCode",
+      "kind": "invoke",
+      "channel": "me:generateInviteCode",
+      "args": []
+    },
+    {
       "path": "mePoints.getBalance",
       "kind": "invoke",
       "channel": "me:getBalance",
@@ -2446,6 +2460,12 @@
       "args": [
         "input"
       ]
+    },
+    {
+      "path": "mePoints.getInviteStatus",
+      "kind": "invoke",
+      "channel": "me:getInviteStatus",
+      "args": []
     },
     {
       "path": "mePoints.getPaymentInfo",

@@ -35,6 +35,11 @@ import { sendVoiceMessage, type HoldCancelReason } from '../voice/holdToSend';
 import { artifactBrowserUri } from '../artifacts';
 import { dismissErrorMessage, filterDismissedErrorMessages } from '../dismissedErrors';
 import { NotificationBell } from '../components/NotificationBell';
+import {
+  isMeExpiredInviteTrial,
+  meTrialDaysUntilHibernation,
+  useMeStore,
+} from '../me/mePointsStore';
 
 type Chat = ReturnType<typeof useChat>;
 
@@ -658,6 +663,7 @@ export default function ChatScreen(props: {
   botsError?: string | null;
   onReloadBots?: () => void;
   onOpenRecharge: () => void;
+  onOpenSubscribe?: () => void;
   onOpenUri?: (uri: string) => void;
   rechargeAllowed?: boolean;
   notificationUnreadCount?: number;
@@ -702,8 +708,17 @@ export default function ChatScreen(props: {
     setPreviewPath(filePath);
     return true;
   }, [props.onOpenUri]);
+  const me = useMeStore();
+  const trialExpired = isMeExpiredInviteTrial(me.subscription);
+  const hibernationDays = meTrialDaysUntilHibernation(me.subscription);
+  const trialExpiredSubtitle = hibernationDays !== null && hibernationDays > 0
+    ? t('mobile.trial.expiredChatSubCountdown', { days: hibernationDays })
+    : hibernationDays === 0
+      ? t('mobile.trial.expiredChatSubHibernating')
+      : t('mobile.trial.expiredChatSub');
   const turnPhase = chat.turnPhase ?? (chat.isStreaming ? 'running' : 'idle');
-  const composerBlocked = chat.isSending
+  const composerBlocked = trialExpired
+    || chat.isSending
     || chat.restoring
     || chat.pendingPermissionCount > 0
     || turnPhase === 'stopping'
@@ -712,7 +727,7 @@ export default function ChatScreen(props: {
     && !composerBlocked
     && !chat.isUploading;
   const canAttach = coworkAttachmentAdmission({
-    disabled: chat.isSending || chat.restoring || (!chat.sessionId && chat.metabotId === null),
+    disabled: trialExpired || chat.isSending || chat.restoring || (!chat.sessionId && chat.metabotId === null),
     isStreaming: chat.isStreaming,
     steerDisabled: chat.pendingPermissionCount > 0 || turnPhase === 'stopping',
   }) && !chat.isUploading;
@@ -1015,81 +1030,107 @@ export default function ChatScreen(props: {
       <SubmissionStatus chat={chat} />
 
       <div className="twin-composer-zone" style={{ paddingBottom: `calc(max(env(safe-area-inset-bottom), ${keyboardInset}px) + 8px)` }}>
-        {emojiPanelOpen ? (
-          <EmojiPickerPanel onSelect={insertEmoji} onClose={() => setEmojiPanelOpen(false)} />
-        ) : null}
-        <ChatComposerAttachments chat={chat} />
-        <VoiceErrorBanner state={voice.state} onDismiss={voice.dismissError} />
-        {voiceHint ? (
-          <div className="twin-voice-hint" role="status" data-testid="voice-hint">
-            {voiceHint}
-          </div>
-        ) : null}
-        <div className="twin-composer">
-          <button
-            type="button"
-            onClick={() => {
-              setEmojiPanelOpen(false);
-              setComposerMenuOpen(true);
-            }}
-            aria-label={t('mobile.chat.composerActions')}
-            aria-expanded={composerMenuOpen}
-            aria-haspopup="dialog"
-            className="twin-icon-button twin-composer-accessory twin-composer-plus"
-            data-testid="composer-plus"
+        {trialExpired ? (
+          <div
+            data-testid="chat-trial-expired-bar"
+            className="mx-3 flex items-center justify-between gap-3 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-3.5 py-2.5 shadow-sm"
           >
-            <PlusIcon className="h-6 w-6" aria-hidden />
-          </button>
-          {voiceComposerMode === 'text' ? (
-            <textarea
-              ref={textareaRef}
-              value={draft}
-              onChange={(event) => chat.setDraft(event.target.value)}
-              onFocus={() => {
-                setEmojiPanelOpen(false);
-                setComposerMenuOpen(false);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
-                event.preventDefault();
-                if (canSubmit) submit();
-              }}
-              enterKeyHint="send"
-              placeholder={t('mobile.chat.composerPlaceholder')}
-              aria-label={t('mobile.chat.composerPlaceholder')}
-              rows={1}
-              className="twin-composer-input max-h-32 resize-none"
-              data-testid="chat-composer-input"
-            />
-          ) : (
-            <VoiceButton variant="hold" {...voiceButtonProps} />
-          )}
-          {chat.isStreaming ? (
-            <button
-              type="button"
-              onClick={() => void chat.stop()}
-              disabled={turnPhase === 'stopping'}
-              aria-label={t('mobile.chat.stop')}
-              className="twin-icon-button twin-icon-button-danger twin-composer-tail"
-            >
-              <StopIcon className="h-5 w-5" aria-hidden />
-            </button>
-          ) : voiceComposerMode === 'text' ? (
-            <div className="twin-composer-tail">
-              <VoiceButton variant="icon" {...voiceButtonProps} />
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-bold text-[var(--text-primary)]">
+                {t('mobile.trial.expiredTitle')}
+              </p>
+              <p className="mt-0.5 truncate text-xs text-[var(--text-secondary)]">
+                {trialExpiredSubtitle}
+              </p>
             </div>
-          ) : (
             <button
               type="button"
-              onClick={toggleVoiceComposer}
-              aria-label={t('mobile.chat.voice.keyboard')}
-              className="twin-icon-button twin-composer-accessory twin-composer-tail"
-              data-testid="voice-keyboard-button"
+              data-testid="chat-trial-subscribe-cta"
+              onClick={() => (props.onOpenSubscribe ?? props.onOpenRecharge)()}
+              className="twin-button twin-button-primary twin-button-small shrink-0 rounded-full px-3.5"
             >
-              <KeyboardIcon className="h-5 w-5" aria-hidden />
+              {t('mobile.trial.subscribeCta')}
             </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          <>
+            {emojiPanelOpen ? (
+              <EmojiPickerPanel onSelect={insertEmoji} onClose={() => setEmojiPanelOpen(false)} />
+            ) : null}
+            <ChatComposerAttachments chat={chat} />
+            <VoiceErrorBanner state={voice.state} onDismiss={voice.dismissError} />
+            {voiceHint ? (
+              <div className="twin-voice-hint" role="status" data-testid="voice-hint">
+                {voiceHint}
+              </div>
+            ) : null}
+            <div className="twin-composer">
+              <button
+                type="button"
+                onClick={() => {
+                  setEmojiPanelOpen(false);
+                  setComposerMenuOpen(true);
+                }}
+                aria-label={t('mobile.chat.composerActions')}
+                aria-expanded={composerMenuOpen}
+                aria-haspopup="dialog"
+                className="twin-icon-button twin-composer-accessory twin-composer-plus"
+                data-testid="composer-plus"
+              >
+                <PlusIcon className="h-6 w-6" aria-hidden />
+              </button>
+              {voiceComposerMode === 'text' ? (
+                <textarea
+                  ref={textareaRef}
+                  value={draft}
+                  onChange={(event) => chat.setDraft(event.target.value)}
+                  onFocus={() => {
+                    setEmojiPanelOpen(false);
+                    setComposerMenuOpen(false);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+                    event.preventDefault();
+                    if (canSubmit) submit();
+                  }}
+                  enterKeyHint="send"
+                  placeholder={t('mobile.chat.composerPlaceholder')}
+                  aria-label={t('mobile.chat.composerPlaceholder')}
+                  rows={1}
+                  className="twin-composer-input max-h-32 resize-none"
+                  data-testid="chat-composer-input"
+                />
+              ) : (
+                <VoiceButton variant="hold" {...voiceButtonProps} />
+              )}
+              {chat.isStreaming ? (
+                <button
+                  type="button"
+                  onClick={() => void chat.stop()}
+                  disabled={turnPhase === 'stopping'}
+                  aria-label={t('mobile.chat.stop')}
+                  className="twin-icon-button twin-icon-button-danger twin-composer-tail"
+                >
+                  <StopIcon className="h-5 w-5" aria-hidden />
+                </button>
+              ) : voiceComposerMode === 'text' ? (
+                <div className="twin-composer-tail">
+                  <VoiceButton variant="icon" {...voiceButtonProps} />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={toggleVoiceComposer}
+                  aria-label={t('mobile.chat.voice.keyboard')}
+                  className="twin-icon-button twin-composer-accessory twin-composer-tail"
+                  data-testid="voice-keyboard-button"
+                >
+                  <KeyboardIcon className="h-5 w-5" aria-hidden />
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       <SessionDrawer

@@ -22,6 +22,8 @@ type BalanceResult = Awaited<ReturnType<MePointsAPI['getBalance']>>;
 type TopupPackagesResult = Awaited<ReturnType<MePointsAPI['getTopupPackages']>>;
 type HistoryResult = Awaited<ReturnType<MePointsAPI['getHistory']>>;
 type TopupOrdersResult = Awaited<ReturnType<MePointsAPI['getTopupOrders']>>;
+type InviteStatusResult = Awaited<ReturnType<MePointsAPI['getInviteStatus']>>;
+type ClaimInviteRefillResult = Awaited<ReturnType<MePointsAPI['claimInviteRefill']>>;
 
 export type MobileMePlan = NonNullable<PlansResult['plans']>[number];
 export type MobileMeRate = NonNullable<Awaited<ReturnType<MePointsAPI['getRates']>>['rates']>[number];
@@ -29,6 +31,8 @@ export type MobileMeBalance = NonNullable<BalanceResult['balance']>;
 export type MobileMeTopupPackage = NonNullable<TopupPackagesResult['topupPackages']>[number];
 export type MobileMeHistoryEntry = NonNullable<NonNullable<HistoryResult['history']>['entries']>[number];
 export type MobileMeTopupOrder = NonNullable<TopupOrdersResult['orders']>[number];
+export type MobileMeInviteStatus = NonNullable<InviteStatusResult['inviteStatus']>;
+export type MobileMeInviteRefillResult = NonNullable<ClaimInviteRefillResult['refillResult']>;
 export type MobileMeSubscription = { statusText: string; raw?: Record<string, unknown> };
 export type MobileMePaymentInfo = { qrContent: string; payeeHint: string };
 
@@ -59,9 +63,12 @@ interface MeSnapshot {
   historyLoading: boolean;
   historyError: string | null;
   historyNextCursor: string;
-  orders: MobileMeTopupOrder[];
+orders: MobileMeTopupOrder[];
   ordersLoading: boolean;
   ordersError: string | null;
+  inviteStatus: MobileMeInviteStatus | null;
+  inviteLoading: boolean;
+  inviteError: string | null;
 }
 
 let snapshot: MeSnapshot = {
@@ -85,6 +92,9 @@ let snapshot: MeSnapshot = {
   orders: [],
   ordersLoading: false,
   ordersError: null,
+  inviteStatus: null,
+  inviteLoading: false,
+  inviteError: null,
 };
 
 /**
@@ -192,17 +202,30 @@ export function meWeeklyUsedRatio(balance: MobileMeBalance | null): number {
 // Subscription / plan helpers
 // ---------------------------------------------------------------------------
 
-/** True when the subscription status reads as an active paid tier. */
-export function isMeSubscribed(subscription: MobileMeSubscription | null): boolean {
+/** True when the subscription status reads as an active tier (paid or active trial). */
+export function isMeSubscribed(subscription: MobileMeSubscription | null | undefined): boolean {
   if (!subscription) return false;
   return /^active/i.test((subscription.statusText || '').trim());
 }
 
-/** Active plan id from the subscription payload ('' for free/unknown). */
+/** True when the subscription row originates from a free invite trial grant. */
+export function isMeTrialSubscription(subscription: MobileMeSubscription | null | undefined): boolean {
+  const raw = subscription?.raw;
+  if (!raw) return false;
+  const sourceType = typeof raw.sourceType === 'string'
+    ? raw.sourceType.trim()
+    : typeof raw.source_type === 'string'
+      ? raw.source_type.trim()
+      : '';
+  return raw.isTrial === true || raw.is_trial === true || sourceType === 'invite_trial';
+}
+
+/** Active plan id from the subscription payload ('' for free/expired/unknown). */
 export function meActivePlanId(subscription: MobileMeSubscription | null): string {
+  if (!isMeSubscribed(subscription)) return '';
   const raw = subscription?.raw;
   if (!raw) return '';
-  for (const key of ['planId', 'plan_id', 'tier']) {
+  for (const key of ['planId', 'plan_id', 'subscribedPlanId', 'subscribed_plan_id', 'tier']) {
     const value = typeof raw[key] === 'string' ? (raw[key] as string).trim() : '';
     if (value) return value;
   }
@@ -319,8 +342,51 @@ export function isMePlanDowngrade(activeTierKey: string, targetTier: string): bo
   return target >= 0 && target < active;
 }
 
-/** Ladder key of the active tier: the raw subscription tier, else the plan id. */
+export const ME_TRIAL_HIBERNATION_GRACE_DAYS = 7;
+
+/**
+ * True when an invite-granted trial has ended and no paid subscription has
+ * replaced it. Default free accounts (`sourceType !== 'invite_trial'`) return
+ * false so standard free-tier surfaces are unaffected.
+ */
+export function isMeExpiredInviteTrial(
+  subscription: MobileMeSubscription | null | undefined,
+  nowMs = Date.now(),
+): boolean {
+  if (!subscription || !isMeTrialSubscription(subscription)) return false;
+  const expiryMs = meSubscriptionExpiryMs(subscription);
+  if (!isMeSubscribed(subscription)) {
+    return /^expired/i.test((subscription.statusText || '').trim())
+      || (expiryMs !== null && expiryMs <= nowMs);
+  }
+  return expiryMs !== null && expiryMs <= nowMs;
+}
+
+/**
+ * Days left before post-trial cloud container hibernation (7 days past trial
+ * expiry). Returns null when the subscription is not an expired invite trial
+ * or carries no parseable expiry timestamp.
+ */
+export function meTrialDaysUntilHibernation(
+  subscription: MobileMeSubscription | null | undefined,
+  nowMs = Date.now(),
+): number | null {
+  if (!isMeExpiredInviteTrial(subscription, nowMs)) return null;
+  const expiryMs = meSubscriptionExpiryMs(subscription);
+  if (expiryMs === null) return null;
+  const hibernateAtMs = expiryMs + ME_TRIAL_HIBERNATION_GRACE_DAYS * 86_400_000;
+  const remainingMs = hibernateAtMs - nowMs;
+  if (remainingMs <= 0) return 0;
+  return Math.max(1, Math.ceil(remainingMs / 86_400_000));
+}
+
+/**
+ * Ladder key of the active PAID tier: returns '' during a free invite_trial so
+ * ID.Pupil (me_standard) stays purchasable and no paid-upgrade proration prompt
+ * fires against a zero-cash trial.
+ */
 export function meActiveTierKey(subscription: MobileMeSubscription | null): string {
+  if (!isMeSubscribed(subscription) || isMeTrialSubscription(subscription)) return '';
   const rawTier = subscription?.raw?.tier;
   if (typeof rawTier === 'string' && rawTier.trim()) return rawTier;
   return meActivePlanId(subscription);
@@ -530,11 +596,105 @@ export async function loadMePaymentInfo(): Promise<MobileMePaymentInfo | null> {
   }
 }
 
+let inviteInFlight: Promise<void> | null = null;
+
+export async function refreshMeInviteStatus(): Promise<void> {
+  if (typeof window === 'undefined' || !window.electron?.mePoints?.getInviteStatus) return;
+  if (inviteInFlight) return inviteInFlight;
+  patch({ inviteLoading: true, inviteError: null });
+  inviteInFlight = (async () => {
+    try {
+      const res = await window.electron.mePoints.getInviteStatus();
+      if (res.success && res.inviteStatus) {
+        patch({
+          inviteStatus: res.inviteStatus,
+          inviteLoading: false,
+          inviteError: null,
+        });
+      } else {
+        patch({
+          inviteLoading: false,
+          inviteError: res.error || 'invite status unavailable',
+        });
+      }
+    } catch (error) {
+      patch({
+        inviteLoading: false,
+        inviteError: errorText(error, 'invite status unavailable'),
+      });
+    } finally {
+      inviteInFlight = null;
+    }
+  })();
+  return inviteInFlight;
+}
+
+export async function generateMeInvite(): Promise<
+  | { success: true; inviteStatus: MobileMeInviteStatus; error?: undefined }
+  | MeApiFailure
+> {
+  if (typeof window === 'undefined' || !window.electron?.mePoints?.generateInviteCode) {
+    return { success: false, error: 'invite service unavailable', featureUnavailable: true };
+  }
+  patch({ inviteLoading: true, inviteError: null });
+  try {
+    const res = await window.electron.mePoints.generateInviteCode();
+    if (res.success && res.inviteStatus) {
+      patch({
+        inviteStatus: res.inviteStatus,
+        inviteLoading: false,
+        inviteError: null,
+      });
+      return { success: true, inviteStatus: res.inviteStatus };
+    }
+    patch({
+      inviteLoading: false,
+      inviteError: res.error || 'failed to generate invite code',
+    });
+    return {
+      success: false,
+      error: res.error,
+      errorCode: res.errorCode,
+      featureUnavailable: res.featureUnavailable,
+    };
+  } catch (error) {
+    const msg = errorText(error, 'failed to generate invite code');
+    patch({ inviteLoading: false, inviteError: msg });
+    return { success: false, error: msg };
+  }
+}
+
+export async function claimMeWeeklyRefill(): Promise<
+  | { success: true; refill: MobileMeInviteRefillResult; error?: undefined }
+  | MeApiFailure
+> {
+  if (typeof window === 'undefined' || !window.electron?.mePoints?.claimInviteRefill) {
+    return { success: false, error: 'invite service unavailable', featureUnavailable: true };
+  }
+  try {
+    const res = await window.electron.mePoints.claimInviteRefill();
+    if (res.success && res.refillResult) {
+      invalidateMeBalance();
+      void refreshMeInviteStatus();
+      return { success: true, refill: res.refillResult };
+    }
+    return {
+      success: false,
+      error: res.error,
+      errorCode: res.errorCode,
+      featureUnavailable: res.featureUnavailable,
+    };
+  } catch (error) {
+    return { success: false, error: errorText(error, 'failed to claim weekly refill') };
+  }
+}
+
 /** Pull everything the Me home needs; cheap on repeat calls. */
 export function ensureMeOverview(): void {
   void refreshMeCatalog();
   void refreshMeBalance();
   void refreshMeSubscription();
+  void refreshMeInviteStatus();
 }
 
 /** After a submit/confirm: force a fresh ledger read. */
@@ -543,12 +703,18 @@ export function invalidateMeBalance(): void {
   void refreshMeBalance({ forceRefresh: true });
 }
 
+/** Test/QA seam: patch snapshot directly for deterministic SSR/unit tests. */
+export function patchMeStoreForTests(partial: Partial<MeSnapshot>): void {
+  patch(partial);
+}
+
 /** Test/QA seam: reset the module snapshot (not used by production screens). */
 export function resetMeStoreForTests(): void {
   lastBalanceAt = 0;
   paymentInfoCache = null;
   catalogInFlight = null;
   balanceInFlight = null;
+  inviteInFlight = null;
   snapshot = {
     balance: null,
     balanceLoading: false,
@@ -570,6 +736,9 @@ export function resetMeStoreForTests(): void {
     orders: [],
     ordersLoading: false,
     ordersError: null,
+    inviteStatus: null,
+    inviteLoading: false,
+    inviteError: null,
   };
   for (const listener of listeners) listener();
 }

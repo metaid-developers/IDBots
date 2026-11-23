@@ -6,6 +6,7 @@ import type { AppContext } from '../context.js';
 import { isOriginAllowed } from '../origin.js';
 import { resolveSession } from '../routes/auth.js';
 import { sha256Hex, maskPhone } from '../crypto.js';
+import { triggerWakeHibernatedTenant } from './hibernation.js';
 import { resolveTenantForUser } from './tenantLookup.js';
 
 /**
@@ -121,6 +122,7 @@ async function handleUpgrade(
   // 3. Tenant from the session only (REQ-B-15).
   const lookup = await resolveTenantForUser(app, session.user.id);
   if (!lookup.ok) {
+    triggerWakeHibernatedTenant(app, session.user.id);
     await closeWith(4013, 'tenant not available', {
       user: maskPhone(session.user.phone_e164),
       detail: lookup.message,

@@ -1,17 +1,12 @@
 import { test, expect } from './fixtures';
 
 async function signIn(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto('/login');
-  await page.getByPlaceholder('Phone number').fill('13800138000');
-  await page.getByRole('button', { name: 'Send code' }).click();
-  await page.getByPlaceholder('SMS code').fill('123456');
-  const consents = page.getByRole('checkbox');
-  await consents.nth(0).check();
-  await consents.nth(1).check();
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByPlaceholder('Invite code')).toBeVisible();
-  await page.getByPlaceholder('Invite code').fill('E2E-INVITE');
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.goto('/login?invite=E2E-INVITE');
+  await page.getByTestId('login-phone-input').fill('13800138000');
+  await page.getByTestId('login-send-code').click();
+  await page.getByTestId('login-code-input').fill('123456');
+  await page.getByTestId('login-agree-checkbox').check();
+  await page.getByTestId('login-submit').click();
   await page.waitForURL(/\/app\/?$/, { timeout: 60_000 });
 }
 

@@ -63,6 +63,7 @@ test.describe('A6 settings IA', () => {
     await openMe(page);
     const entries: Array<{ row: string; page: string }> = [
       { row: 'me-entry-bots', page: 'me-page-bots' },
+      { row: 'me-entry-invite', page: 'me-page-invite' },
       { row: 'me-entry-usage', page: 'me-page-usage' },
       { row: 'me-entry-skills', page: 'me-page-skills' },
       { row: 'me-entry-memory', page: 'me-page-memory' },
