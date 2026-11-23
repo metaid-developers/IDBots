@@ -113,6 +113,103 @@ test('mvc truth layer: headline from balance-info (Metalet parity), cross-checke
   }
 });
 
+test('mvc truth layer: dust-filtered list (2026-11-23 live repro) reconciles as ok with dust attribution', async () => {
+  // Live reproduction (Twin wallet 1GrqX7…5Za): balance-info says
+  // confirmed=691,503,316 utxoCount=16,943 while the list returns ONE row
+  // (691,460,179) — 16,942 list-filtered sub-600-sat rows (pin carriers)
+  // worth 43,137 sats. The naive per-row tolerance flagged this as a source
+  // disagreement and the 10-tx probe could never arbitrate a 10k-tx wallet.
+  const { getWalletBalanceSnapshot } = loadWalletQueryService();
+  const originalFetch = global.fetch;
+  const seenUrls = [];
+  global.fetch = async (url) => {
+    const href = String(url);
+    seenUrls.push(href);
+    if (href.includes('/mvc/address/balance-info')) {
+      return jsonResponse({ code: 0, data: { confirmed: 691_503_316, unconfirmed: 0, utxoCount: 16_943 } });
+    }
+    if (href.includes('/mvc/address/utxo-list')) {
+      return jsonResponse({ code: 0, data: { list: [{ txid: 'big', outIndex: 2, value: 691_460_179, height: 10 }] } });
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  try {
+    const snapshot = await getWalletBalanceSnapshot('mvc', '1MvcAddr1');
+    assert.equal(snapshot.total_sats, 691_503_316, 'headline stays on the Metalet-parity aggregate');
+    assert.equal(snapshot.mvc_truth.verdict, 'ok', 'dust accumulation reconciles — no degraded verdict');
+    assert.equal(snapshot.mvc_truth.dust_missing_utxos, 16_942);
+    assert.equal(snapshot.mvc_truth.dust_locked_sats_estimate, 43_137);
+    assert.ok(!seenUrls.some((u) => u.includes('/mvc/address/tx-list')), 'no history probe runs for an attributed gap');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('mvc truth layer: the 2026-11-20 carrier-only gap reconciles (31 missing rows, 31 sats)', async () => {
+  const { getWalletBalanceSnapshot } = loadWalletQueryService();
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes('/mvc/address/balance-info')) {
+      return jsonResponse({ code: 0, data: { confirmed: 8_169_543, unconfirmed: 0, utxoCount: 32 } });
+    }
+    if (href.includes('/mvc/address/utxo-list')) {
+      return jsonResponse({ code: 0, data: { list: [{ txid: 'spendable', outIndex: 0, value: 8_169_512, height: 100 }] } });
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  try {
+    const snapshot = await getWalletBalanceSnapshot('mvc', '1MvcAddr1');
+    assert.equal(snapshot.mvc_truth.verdict, 'ok');
+    assert.equal(snapshot.mvc_truth.dust_missing_utxos, 31);
+    assert.equal(snapshot.mvc_truth.dust_locked_sats_estimate, 31);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('mvc truth layer: a genuinely missing large UTXO still escalates beyond the dust allowance', async () => {
+  const { getWalletBalanceSnapshot } = loadWalletQueryService();
+  const originalFetch = global.fetch;
+  let pages = 0;
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes('/mvc/address/balance-info')) {
+      return jsonResponse({ code: 0, data: { confirmed: 550_000_000, unconfirmed: 0, utxoCount: 63 } });
+    }
+    if (href.includes('/mvc/address/utxo-list')) {
+      return jsonResponse({ code: 0, data: { list: [{ txid: 'spendable', outIndex: 0, value: 8_169_512, height: 100 }] } });
+    }
+    if (href.includes('/mvc/address/tx-list')) {
+      pages += 1;
+      // Every page has more rows with a fresh flag — the walk hits its bound.
+      return jsonResponse({
+        code: 0,
+        data: {
+          total: 999_999,
+          list: Array.from({ length: 10 }, (_, i) => ({
+            txid: `${String(pages % 100).padStart(2, '0')}${String(i).padStart(2, '0')}${'c'.repeat(60)}`,
+            income: 10,
+            outcome: 10,
+            height: 100,
+            flag: `p${pages + 1}`,
+          })),
+        },
+      });
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  try {
+    const snapshot = await getWalletBalanceSnapshot('mvc', '1MvcAddr1');
+    assert.equal(snapshot.mvc_truth.verdict, 'degraded', 'a 542M-class row loss overshoots the dust allowance');
+    assert.match(snapshot.mvc_truth.reason, /beyond the dust allowance/);
+    assert.match(snapshot.mvc_truth.reason, /1000-tx bound/, 'the disagreement probe walks 1000 txs, not 10');
+    assert.ok(pages > 50, 'the walk actually paged at scale');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('mvc truth layer: degraded fallback when the balance endpoint is down', async () => {
   const { getWalletBalanceSnapshot } = loadWalletQueryService();
   const originalFetch = global.fetch;
