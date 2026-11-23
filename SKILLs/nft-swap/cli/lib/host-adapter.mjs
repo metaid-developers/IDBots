@@ -9,7 +9,8 @@
  * burned-refuse, chain check, collection createAddress check).
  */
 
-import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
+import Module, { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -22,6 +23,50 @@ export const REPO_ROOT = path.resolve(__dirname, '../../../..');
 
 export function distMainPath(repoRoot = REPO_ROOT) {
   return path.join(repoRoot, 'dist-electron', 'main');
+}
+
+function hasHostBuild(candidateDir) {
+  if (!candidateDir) return false;
+  try {
+    return existsSync(path.join(candidateDir, 'sqliteStore.js'));
+  } catch {
+    return false;
+  }
+}
+
+export function resolveDistMainPath({ repoRoot, env = process.env } = {}) {
+  if (repoRoot && path.resolve(repoRoot) !== REPO_ROOT) {
+    return distMainPath(repoRoot);
+  }
+  const candidates = [];
+  if (env.IDBOTS_DIST_MAIN_PATH?.trim()) {
+    candidates.push(path.resolve(env.IDBOTS_DIST_MAIN_PATH.trim()));
+  }
+  if (env.IDBOTS_APP_PATH?.trim()) {
+    candidates.push(path.join(path.resolve(env.IDBOTS_APP_PATH.trim()), 'dist-electron', 'main'));
+  }
+  candidates.push(distMainPath(REPO_ROOT));
+  if (env.IDBOTS_ELECTRON_PATH?.trim()) {
+    const exeDir = path.dirname(path.resolve(env.IDBOTS_ELECTRON_PATH.trim()));
+    candidates.push(
+      path.resolve(exeDir, '../Resources/app.asar/dist-electron/main'),
+      path.resolve(exeDir, '../Resources/app/dist-electron/main'),
+      path.resolve(exeDir, 'resources/app.asar/dist-electron/main'),
+      path.resolve(exeDir, 'resources/app/dist-electron/main'),
+    );
+  }
+  if (process.platform === 'darwin') {
+    candidates.push(
+      '/Applications/IDBots.app/Contents/Resources/app.asar/dist-electron/main',
+      '/Applications/IDBots.app/Contents/Resources/app/dist-electron/main',
+    );
+  }
+  for (const candidate of candidates) {
+    if (hasHostBuild(candidate)) {
+      return candidate;
+    }
+  }
+  return distMainPath(repoRoot || REPO_ROOT);
 }
 
 /** Sum(inputs) − Sum(outputs) from a signed raw tx; null when unparseable. */
@@ -46,30 +91,51 @@ function feeFromRawTx(rawTx) {
  * resolves to the npm launcher string (path to Electron binary) rather than `{ app }`.
  * Populate a minimal CJS `app` shim before loading `dist-electron/main/*` modules.
  */
-function ensurePlainNodeElectronAppShim({ userDataPath, repoRoot }) {
+function ensurePlainNodeElectronAppShim({ userDataPath, appRoot }) {
+  const exePath = process.env.IDBOTS_ELECTRON_PATH || process.execPath;
+  const isPackaged = appRoot.includes('app.asar') || appRoot.includes(`${path.sep}Resources${path.sep}`);
+  const shimExports = {
+    app: {
+      isPackaged,
+      getAppPath: () => appRoot,
+      getPath: (name) => (name === 'exe' ? exePath : userDataPath),
+    },
+  };
   try {
-    const electronModuleId = require.resolve('electron', { paths: [repoRoot, __dirname] });
+    const electronModuleId = require.resolve('electron', { paths: [appRoot, REPO_ROOT, __dirname] });
     const rawElectron = require(electronModuleId);
     if (typeof rawElectron === 'string' && rawElectron.length > 0) {
       const cached = require.cache[electronModuleId];
       if (cached) {
         cached.exports = {
           app: {
-            isPackaged: false,
-            getAppPath: () => repoRoot,
+            ...shimExports.app,
             getPath: (name) => (name === 'exe' ? rawElectron : userDataPath),
           },
         };
       }
     }
+    return;
   } catch {
-    // Running inside Electron main process or without local electron package; service fallbacks apply.
+    // In a packaged IDBots install, `electron` is a built-in module rather than a node_modules package.
   }
+  if (!Module.__idbotsElectronShimInstalled) {
+    const origLoad = Module._load;
+    Module._load = function patchedLoad(request, parent, isMain) {
+      if (request === 'electron') {
+        return Module.__idbotsElectronShimExports || shimExports;
+      }
+      return origLoad.call(this, request, parent, isMain);
+    };
+    Module.__idbotsElectronShimInstalled = true;
+  }
+  Module.__idbotsElectronShimExports = shimExports;
 }
 
 export async function createHostAdapter({ userDataPath, metabotId, repoRoot = REPO_ROOT, feeRate = 1 }) {
-  const distMain = distMainPath(repoRoot);
-  ensurePlainNodeElectronAppShim({ userDataPath, repoRoot });
+  const distMain = resolveDistMainPath({ repoRoot });
+  const appRoot = path.resolve(distMain, '../..');
+  ensurePlainNodeElectronAppShim({ userDataPath, appRoot });
   let SqliteStore;
   let MetabotStore;
   let mrc721;

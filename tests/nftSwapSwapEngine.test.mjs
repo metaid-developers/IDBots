@@ -570,11 +570,19 @@ test('official-mint verification mismatch halts with the pin kept in mint_pendin
 
 test('createHostAdapter loads dist-electron cleanly under plain Node CLI without Electron main process', async () => {
   const { existsSync } = await import('node:fs');
-  const { createHostAdapter, distMainPath } = await import('../SKILLs/nft-swap/cli/lib/host-adapter.mjs');
+  const { createHostAdapter, distMainPath, resolveDistMainPath } = await import('../SKILLs/nft-swap/cli/lib/host-adapter.mjs');
   if (!existsSync(path.join(distMainPath(), 'sqliteStore.js'))) {
     // test:nft-swap also runs in lightweight mode without compile:electron; skip only if unbuilt.
     return;
   }
+  assert.equal(
+    resolveDistMainPath({ env: { IDBOTS_APP_PATH: path.resolve(distMainPath(), '../..') } }),
+    distMainPath(),
+  );
+  assert.equal(
+    resolveDistMainPath({ env: { IDBOTS_DIST_MAIN_PATH: distMainPath() } }),
+    distMainPath(),
+  );
   const dir = mkdtempSync(path.join(tmpdir(), 'nft-swap-host-adapter-'));
   let host = null;
   try {

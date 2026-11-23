@@ -333,6 +333,7 @@ import { registerMetabotNftIpcHandlers } from './services/metabotNftIpc';
 import { healNftCard } from './services/nftCardHealService';
 import { getNftCaRegistry } from './services/nftCaService';
 import { SwapOrderTrackerService } from './services/swapOrderTrackerService';
+import { SwapStationFulfillDaemon } from './services/swapStationFulfillDaemon';
 import { parseNftAvatarReference, prepareNftAvatarForIdentity, resolveLatestNftAvatarForIdentity, resolveNftAvatar } from './services/nftAvatarService';
 import { initTrafficAccountService, registerTrafficAccountIpcHandlers } from './services/trafficAccountService';
 import { initMePointsService, registerMePointsIpcHandlers } from './services/mePointsService';
@@ -417,6 +418,7 @@ import {
   stopOrchestrator as stopCognitiveOrchestrator,
 } from './services/cognitiveOrchestrator';
 import {
+  appendPrivateChatA2AMessage,
   endPrivateChatA2AConversation,
   getActiveA2AReplyTaskIds,
   interruptPrivateChatA2AGuidanceTurnBeforeOutput,
@@ -4440,6 +4442,39 @@ function getSwapOrderTrackerService(): SwapOrderTrackerService {
       getStore().getSaveFunction(),
       {
         emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+        onOrderStatus: (event) => {
+          if (!event.sessionId) return;
+          try {
+            const cStore = getCoworkStore();
+            if (!cStore.getSessionWithoutMessages(event.sessionId)) return;
+            const itemSummary = event.items
+              .map((item) => {
+                const confPart = typeof item.confirmations === 'number' ? ` (${item.confirmations} conf)` : '';
+                return `#${item.tokenIndex}: ${item.status}${confPart}`;
+              })
+              .join(', ');
+            const lines = [
+              `Legacy collectible swap update (${event.collectionSlug}, request ${event.requestId}): status=${event.wireStatus}${itemSummary ? ` [${itemSummary}]` : ''}.`,
+              ...(event.note ? [event.note] : []),
+            ];
+            const msg = cStore.addMessage(event.sessionId, {
+              type: 'assistant',
+              content: lines.join('\n'),
+              metadata: {
+                nftSwapOrderStatus: {
+                  requestId: event.requestId,
+                  collectionSlug: event.collectionSlug,
+                  wireStatus: event.wireStatus,
+                  note: event.note,
+                  updatedAt: event.updatedAt,
+                },
+              },
+            });
+            emitCoworkStreamMessage(event.sessionId, msg);
+          } catch (error) {
+            console.warn('[SwapOrderTracker] failed to post status message to session:', error);
+          }
+        },
         onOrderCompleted: (event) => {
           if (!event.sessionId) return;
           try {
@@ -4675,6 +4710,87 @@ function getPayReadFulfillDaemon(): PayReadFulfillDaemon {
   return payReadFulfillDaemon;
 }
 
+let swapStationFulfillDaemon: SwapStationFulfillDaemon | null = null;
+function getSwapStationFulfillDaemon(): SwapStationFulfillDaemon {
+  if (!swapStationFulfillDaemon) {
+    swapStationFulfillDaemon = new SwapStationFulfillDaemon(
+      getStore().getDatabase(),
+      getStore().getSaveFunction(),
+      {
+        getMetabotStore: () => getMetabotStore(),
+        getUserDataPath: () => app.getPath('userData'),
+        getFeeRate: () => getGlobalFeeRate('mvc'),
+        sendSwapWireMessage: async ({ metabotId, toGlobalMetaId, content }) => {
+          const mStore = getMetabotStore();
+          const wallet = mStore.getMetabotWalletByMetabotId(metabotId);
+          if (!wallet?.mnemonic?.trim()) {
+            throw new Error(`MetaBot ${metabotId} wallet is unavailable`);
+          }
+          const peerChatPubkey = await resolveChatPubkeyForProvider(toGlobalMetaId);
+          if (!peerChatPubkey) {
+            throw new Error(`peer ${toGlobalMetaId} has no chatPublicKey on chain`);
+          }
+          return withChainWriteBudget('nft_swap_station_dm', () =>
+            sendEncryptedSimplemsg({
+              metabotId,
+              wallet,
+              peerGlobalMetaId: toGlobalMetaId,
+              peerChatPubkey,
+              plaintext: content,
+              contentType: 'text/plain',
+              createPin: (id, payload) => createPin(mStore, id, payload, { feeRate: getGlobalFeeRate('mvc') }),
+            }),
+          );
+        },
+        recordA2AMessage: ({ metabotId, peerGlobalMetaId, direction, content, peerName, peerAvatar, pinId }) => {
+          const cStore = getCoworkStore();
+          const mStore = getMetabotStore();
+          if (direction === 'outgoing') {
+            recordOutgoingPrivateChatA2ADisplay({
+              coworkStore: cStore,
+              getMetabotById: (id) => mStore.getMetabotById(id),
+              metabotId,
+              peerGlobalMetaId,
+              peerName,
+              peerAvatar,
+              content,
+              chain: pinId ? { pinId } : undefined,
+              emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+            });
+            return;
+          }
+          const ensured = ensureCoworkA2ASession({
+            coworkStore: cStore,
+            getMetabotById: (id) => mStore.getMetabotById(id),
+            input: {
+              localMetabotId: metabotId,
+              peerGlobalMetaId,
+              peerName,
+              peerAvatar,
+            },
+          });
+          appendPrivateChatA2AMessage({
+            coworkStore: cStore,
+            sessionId: ensured.session.id,
+            externalConversationId: ensured.externalConversationId,
+            type: 'user',
+            content,
+            senderGlobalMetaId: peerGlobalMetaId,
+            senderName: peerName ?? null,
+            senderAvatar: peerAvatar ?? null,
+            extraMetadata: {
+              simplemsgKind: 'private_chat',
+              ...(pinId ? { pinId } : {}),
+            },
+            emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+          });
+        },
+      },
+    );
+  }
+  return swapStationFulfillDaemon;
+}
+
 interface SqliteBackedRestartState {
   restartScheduler: boolean;
   restartListener: boolean;
@@ -4718,6 +4834,10 @@ const resetSqliteBackedSingletons = async (): Promise<void> => {
     tokenOrderWatcher = null;
   }
   payReadFulfillDaemon = null;
+  if (swapStationFulfillDaemon) {
+    swapStationFulfillDaemon.stopPolling();
+    swapStationFulfillDaemon = null;
+  }
   if (providerDiscoveryService) {
     providerDiscoveryService.dispose();
   }
@@ -5426,10 +5546,15 @@ const startStartupMessageTier = (): void => {
     getSellerAutoFulfillDaemon(),
     (a2aEvent) => getProactiveWorldPerceptionService().observeA2ATurn(a2aEvent).then(() => undefined),
     getPayReadFulfillDaemon(),
+    getSwapStationFulfillDaemon(),
   );
   getSwapOrderTrackerService().startPolling();
   getSellerAutoFulfillDaemon().startPolling();
   getTokenOrderWatcher().startPolling();
+  getSwapStationFulfillDaemon().startPolling();
+  void getSwapStationFulfillDaemon().processDueClaimsOnce().catch((err) => {
+    console.warn('[SwapStation] startup claim sweep failed:', err);
+  });
 
   // Periodically reconcile private chat history with the MetaSO API so
   // messages missed by the socket push are recovered and processed.

@@ -66,7 +66,7 @@ export function parseCliArgs(argv, { values = [], booleans = [] } = {}) {
 }
 
 export function resolveUserData(args) {
-  return args['user-data'] || DEFAULT_USER_DATA;
+  return args['user-data'] || process.env.IDBOTS_USER_DATA_PATH || DEFAULT_USER_DATA;
 }
 
 export function resolveLedgerPath(userDataPath, args) {

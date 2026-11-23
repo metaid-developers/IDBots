@@ -39,6 +39,7 @@ import { isDshShutdownError } from '../libs/dshShutdownError';
 import { PrivateChatOrderCowork, type OrderCoworkRequest } from './privateChatOrderCowork';
 import { appendA2AGuidanceToSystemPrompt } from './a2aGuidance';
 import type { SwapOrderTrackerService } from './swapOrderTrackerService';
+import type { SwapStationFulfillDaemon } from './swapStationFulfillDaemon';
 import type { SellerAutoFulfillDaemon } from './sellerAutoFulfillDaemon';
 import type { PayReadFulfillDaemon } from './payReadFulfillDaemon';
 import { buildOrderPrompts } from './orderPromptBuilder';
@@ -4556,18 +4557,20 @@ async function resolveOutgoingPrivateChatPlaintext(params: {
   // Already plaintext — listener decrypted successfully.
   if (!content.startsWith('U2FsdGVkX1')) return content;
 
-  // Ciphertext — try to decrypt using the peer's chatPubkey (local history → chain API fallback).
-  const peerChatPubkey = await resolvePeerChatPubkey(
+  // Ciphertext — try to decrypt using candidate peer chatPubkeys:
+  // 1) Local MetaBot record (if peer is a local MetaBot whose key may have rotated)
+  // 2) Latest incoming private_chat_messages.from_chat_pubkey
+  // 3) MetaID chain API (in case local history carries a stale key)
+  const localMetabotPubkey =
+    typeof params.metabotStore.getMetabotByGlobalMetaId === 'function'
+      ? (params.metabotStore.getMetabotByGlobalMetaId(params.toGlobalMetaId)?.chat_public_key ?? '').trim()
+      : '';
+  const historyPeerPubkey = await resolvePeerChatPubkey(
     params.db,
     params.toGlobalMetaId,
     params.emitLog
   );
-  if (!peerChatPubkey) {
-    params.emitLog(
-      `[PrivateChat] Outgoing message ${params.row.id}: cannot decrypt — no peer chatPubkey for ${params.toGlobalMetaId.slice(0, 12)}…`
-    );
-    return null;
-  }
+  const candidatePubkeys = dedupeNonEmptyStrings([localMetabotPubkey, historyPeerPubkey]);
 
   try {
     const wallet = params.metabotStore.getMetabotWalletByMetabotId(params.metabot.id);
@@ -4576,9 +4579,26 @@ async function resolveOutgoingPrivateChatPlaintext(params: {
       wallet.mnemonic,
       wallet.path ?? "m/44'/10001'/0'/0/0"
     );
-    const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, peerChatPubkey);
-    const plain = ecdhDecrypt(content, sharedSecret);
-    if (plain && plain !== content) return plain;
+    for (const pubkey of candidatePubkeys) {
+      try {
+        const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, pubkey);
+        const plain = ecdhDecrypt(content, sharedSecret);
+        if (plain && plain !== content) return plain;
+      } catch {
+        // try next candidate
+      }
+    }
+    const chainPubkey = (await fetchPeerChatPubkeyFromChain(params.toGlobalMetaId, params.emitLog)).trim();
+    if (chainPubkey && !candidatePubkeys.includes(chainPubkey)) {
+      const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, chainPubkey);
+      const plain = ecdhDecrypt(content, sharedSecret);
+      if (plain && plain !== content) return plain;
+    }
+    if (candidatePubkeys.length === 0 && !chainPubkey) {
+      params.emitLog(
+        `[PrivateChat] Outgoing message ${params.row.id}: cannot decrypt — no peer chatPubkey for ${params.toGlobalMetaId.slice(0, 12)}…`
+      );
+    }
   } catch (e) {
     rethrowSqliteWasmBoundsError(e);
     params.emitLog(
@@ -4587,6 +4607,51 @@ async function resolveOutgoingPrivateChatPlaintext(params: {
   }
 
   return null;
+}
+
+const PEER_CHAT_PUBKEY_CHAIN_CACHE_TTL_MS = 5 * 60_000;
+const peerChatPubkeyChainCache = new Map<string, { pubkey: string; fetchedAt: number }>();
+
+async function fetchPeerChatPubkeyFromChain(
+  peerGlobalMetaId: string,
+  emitLog: (msg: string) => void
+): Promise<string> {
+  const normalizedId = peerGlobalMetaId.trim();
+  if (!normalizedId) return '';
+  const cached = peerChatPubkeyChainCache.get(normalizedId);
+  const now = Date.now();
+  if (cached && now - cached.fetchedAt < PEER_CHAT_PUBKEY_CHAIN_CACHE_TTL_MS) {
+    return cached.pubkey;
+  }
+
+  try {
+    const url = `https://file.metaid.io/metafile-indexer/api/v1/info/metaid/${encodeURIComponent(normalizedId)}`;
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) {
+      emitLog(`[PrivateChat] Peer chatPubkey API returned HTTP ${res.status} for ${normalizedId.slice(0, 12)}…`);
+      return '';
+    }
+    const json = await res.json() as Record<string, unknown>;
+    const data = (json.data && typeof json.data === 'object' ? json.data : json) as Record<string, unknown>;
+    const candidates = [data.chatpubkey, data.chatPubkey, data.chatPublicKey, data.pubkey];
+    for (const c of candidates) {
+      if (typeof c === 'string' && c.trim()) {
+        const pubkey = c.trim();
+        peerChatPubkeyChainCache.set(normalizedId, { pubkey, fetchedAt: now });
+        return pubkey;
+      }
+    }
+    emitLog(`[PrivateChat] Peer chatPubkey not found in API response for ${normalizedId.slice(0, 12)}…`);
+  } catch (e) {
+    rethrowSqliteWasmBoundsError(e);
+    emitLog(
+      `[PrivateChat] Peer chatPubkey API fetch failed for ${normalizedId.slice(0, 12)}…: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+
+  return '';
 }
 
 /**
@@ -4616,32 +4681,270 @@ async function resolvePeerChatPubkey(
   }
 
   // 2) Fallback: fetch from MetaID chain.
+  return fetchPeerChatPubkeyFromChain(peerGlobalMetaId, emitLog);
+}
+
+export interface ResolveIncomingPrivateChatContentResult {
+  ok: boolean;
+  empty?: boolean;
+  plaintext: string;
+  sharedSecretForReply: string;
+  resolvedFromChatPubkey: string;
+  fileAttachment: PrivateChatFileAttachment | null;
+  usedDbPlaintextFallback?: boolean;
+}
+
+function dedupeNonEmptyStrings(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const val of values) {
+    const trimmed = typeof val === 'string' ? val.trim() : '';
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function computeCandidateSecrets(
+  privateKeyBuffer: Buffer,
+  pubkey: string,
+): { sha256: string; raw: string } | null {
   try {
-    const url = `https://file.metaid.io/metafile-indexer/api/v1/info/metaid/${encodeURIComponent(peerGlobalMetaId)}`;
-    const res = await fetch(url, {
-      headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) {
-      emitLog(`[PrivateChat] Peer chatPubkey API returned HTTP ${res.status} for ${peerGlobalMetaId.slice(0, 12)}…`);
-      return '';
+    return {
+      sha256: computeEcdhSharedSecretSha256(privateKeyBuffer, pubkey),
+      raw: computeEcdhSharedSecret(privateKeyBuffer, pubkey),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveIncomingPrivateChatContent(params: {
+  row: Pick<
+    PrivateChatMessageRow,
+    'id' | 'content' | 'raw_data' | 'protocol' | 'content_type' | 'from_chat_pubkey' | 'from_global_metaid' | 'from_metaid'
+  >;
+  privateKeyBuffer: Buffer | null;
+  localPeerChatPubkey?: string | null;
+  fetchChainPeerChatPubkey?: (globalMetaId: string) => Promise<string>;
+  emitLog: (msg: string) => void;
+}): Promise<ResolveIncomingPrivateChatContentResult> {
+  const { row, privateKeyBuffer, emitLog } = params;
+  const contentInDb = (row.content ?? '').trim();
+  const contentInRawData = getCipherTextFromRawData(
+    typeof row.raw_data === 'string' ? row.raw_data : null
+  );
+  const rawFromChatPubkey = (row.from_chat_pubkey ?? '').trim();
+  const fromGlobalMetaId = (row.from_global_metaid || row.from_metaid || '').trim();
+  const initialCandidates = dedupeNonEmptyStrings([rawFromChatPubkey, params.localPeerChatPubkey]);
+
+  const fileMessagePayload = isPrivateChatFileMessageProtocol(row.protocol)
+    ? parsePrivateChatFileMessagePayload(contentInRawData || contentInDb, row.content_type ?? null)
+    : null;
+
+  if (!privateKeyBuffer || (initialCandidates.length === 0 && !fromGlobalMetaId)) {
+    if (fileMessagePayload) {
+      return {
+        ok: true,
+        plaintext: buildPrivateChatFileMessageContent({
+          payload: fileMessagePayload,
+          attachment: null,
+        }),
+        sharedSecretForReply: '',
+        resolvedFromChatPubkey: rawFromChatPubkey,
+        fileAttachment: null,
+      };
     }
-    const json = await res.json() as Record<string, unknown>;
-    // Unwrap { data: {...} } envelope if present.
-    const data = (json.data && typeof json.data === 'object' ? json.data : json) as Record<string, unknown>;
-    // Try common key names.
-    const candidates = [data.chatpubkey, data.chatPubkey, data.chatPublicKey, data.pubkey];
-    for (const c of candidates) {
-      if (typeof c === 'string' && c.trim()) return c.trim();
+    if (!contentInRawData && contentInDb && !looksLikeEncryptedPrivateContent(contentInDb)) {
+      return {
+        ok: true,
+        plaintext: contentInDb,
+        sharedSecretForReply: '',
+        resolvedFromChatPubkey: rawFromChatPubkey,
+        fileAttachment: null,
+      };
     }
-    emitLog(`[PrivateChat] Peer chatPubkey not found in API response for ${peerGlobalMetaId.slice(0, 12)}…`);
-  } catch (e) {
-    rethrowSqliteWasmBoundsError(e);
-    emitLog(
-      `[PrivateChat] Peer chatPubkey API fetch failed for ${peerGlobalMetaId.slice(0, 12)}…: ${e instanceof Error ? e.message : String(e)}`
-    );
+    if (!contentInRawData && !contentInDb) {
+      return {
+        ok: true,
+        empty: true,
+        plaintext: '',
+        sharedSecretForReply: '',
+        resolvedFromChatPubkey: rawFromChatPubkey,
+        fileAttachment: null,
+      };
+    }
+    return {
+      ok: false,
+      plaintext: '',
+      sharedSecretForReply: '',
+      resolvedFromChatPubkey: rawFromChatPubkey,
+      fileAttachment: null,
+    };
   }
 
-  return '';
+  const fetchChain = params.fetchChainPeerChatPubkey
+    ?? ((gmid: string) => fetchPeerChatPubkeyFromChain(gmid, emitLog));
+
+  const validEntries: Array<{ pubkey: string; sha256: string; raw: string }> = [];
+  for (const pubkey of initialCandidates) {
+    const secrets = computeCandidateSecrets(privateKeyBuffer, pubkey);
+    if (secrets) {
+      validEntries.push({ pubkey, ...secrets });
+    }
+  }
+
+  if (fileMessagePayload) {
+    let candidateSecrets = validEntries.flatMap((entry) => [entry.sha256, entry.raw]);
+    let fileAttachment = candidateSecrets.length > 0
+      ? await materializePrivateChatFileMessage({
+          payload: fileMessagePayload,
+          sharedSecretCandidates: candidateSecrets,
+          emitLog,
+        })
+      : null;
+
+    if (!fileAttachment && fromGlobalMetaId) {
+      const chainPubkey = (await fetchChain(fromGlobalMetaId)).trim();
+      if (chainPubkey && !initialCandidates.includes(chainPubkey)) {
+        const chainSecrets = computeCandidateSecrets(privateKeyBuffer, chainPubkey);
+        if (chainSecrets) {
+          validEntries.push({ pubkey: chainPubkey, ...chainSecrets });
+          fileAttachment = await materializePrivateChatFileMessage({
+            payload: fileMessagePayload,
+            sharedSecretCandidates: [chainSecrets.sha256, chainSecrets.raw],
+            emitLog,
+          });
+        }
+      }
+    }
+
+    const replyEntry =
+      validEntries.find((entry) => entry.pubkey === params.localPeerChatPubkey?.trim())
+      ?? validEntries[0];
+    return {
+      ok: true,
+      plaintext: buildPrivateChatFileMessageContent({
+        payload: fileMessagePayload,
+        attachment: fileAttachment,
+      }),
+      sharedSecretForReply: replyEntry?.sha256 ?? '',
+      resolvedFromChatPubkey: replyEntry?.pubkey ?? rawFromChatPubkey,
+      fileAttachment,
+    };
+  }
+
+  const cipherText = contentInRawData || contentInDb;
+  if (!cipherText && !contentInDb) {
+    return {
+      ok: true,
+      empty: true,
+      plaintext: '',
+      sharedSecretForReply: '',
+      resolvedFromChatPubkey: rawFromChatPubkey,
+      fileAttachment: null,
+    };
+  }
+
+  const shouldDecrypt = !!contentInRawData || looksLikeEncryptedPrivateContent(contentInDb);
+  if (!shouldDecrypt) {
+    const preferredReplyEntry =
+      validEntries.find((entry) => entry.pubkey === params.localPeerChatPubkey?.trim())
+      ?? validEntries[0];
+    return {
+      ok: true,
+      plaintext: contentInDb,
+      sharedSecretForReply: preferredReplyEntry?.sha256 ?? '',
+      resolvedFromChatPubkey: preferredReplyEntry?.pubkey ?? rawFromChatPubkey,
+      fileAttachment: null,
+    };
+  }
+
+  for (const entry of validEntries) {
+    const plainBySha256 = tryDecryptWithSecret(cipherText, entry.sha256);
+    if (plainBySha256 != null) {
+      return {
+        ok: true,
+        plaintext: plainBySha256,
+        sharedSecretForReply: entry.sha256,
+        resolvedFromChatPubkey: entry.pubkey,
+        fileAttachment: null,
+      };
+    }
+    const plainByRaw = tryDecryptWithSecret(cipherText, entry.raw);
+    if (plainByRaw != null) {
+      emitLog('[PrivateChat] Decrypt fallback: using raw shared secret for legacy payload.');
+      return {
+        ok: true,
+        plaintext: plainByRaw,
+        sharedSecretForReply: entry.raw,
+        resolvedFromChatPubkey: entry.pubkey,
+        fileAttachment: null,
+      };
+    }
+  }
+
+  if (fromGlobalMetaId) {
+    const chainPubkey = (await fetchChain(fromGlobalMetaId)).trim();
+    if (chainPubkey && !initialCandidates.includes(chainPubkey)) {
+      const chainSecrets = computeCandidateSecrets(privateKeyBuffer, chainPubkey);
+      if (chainSecrets) {
+        validEntries.push({ pubkey: chainPubkey, ...chainSecrets });
+        const plainBySha256 = tryDecryptWithSecret(cipherText, chainSecrets.sha256);
+        if (plainBySha256 != null) {
+          emitLog(`[PrivateChat] Decrypt fallback: resolved rotated chatPubkey from chain for message ${row.id}.`);
+          return {
+            ok: true,
+            plaintext: plainBySha256,
+            sharedSecretForReply: chainSecrets.sha256,
+            resolvedFromChatPubkey: chainPubkey,
+            fileAttachment: null,
+          };
+        }
+        const plainByRaw = tryDecryptWithSecret(cipherText, chainSecrets.raw);
+        if (plainByRaw != null) {
+          emitLog(`[PrivateChat] Decrypt fallback: resolved rotated chatPubkey (raw) from chain for message ${row.id}.`);
+          return {
+            ok: true,
+            plaintext: plainByRaw,
+            sharedSecretForReply: chainSecrets.raw,
+            resolvedFromChatPubkey: chainPubkey,
+            fileAttachment: null,
+          };
+        }
+      }
+    }
+  }
+
+  // If raw_data ciphertext failed decryption (e.g. sender rotated chat key after
+  // socket/backfill already stored decrypted plaintext in content), preserve the
+  // DB plaintext rather than parking the message as undecryptable.
+  if (contentInDb && !looksLikeEncryptedPrivateContent(contentInDb)) {
+    const preferredReplyEntry =
+      validEntries.find((entry) => entry.pubkey === params.localPeerChatPubkey?.trim())
+      ?? validEntries[validEntries.length - 1]
+      ?? validEntries[0];
+    emitLog(
+      `[PrivateChat] Using already-decrypted DB content for message ${row.id} after raw_data decrypt fallback exhausted.`
+    );
+    return {
+      ok: true,
+      plaintext: contentInDb,
+      sharedSecretForReply: preferredReplyEntry?.sha256 ?? '',
+      resolvedFromChatPubkey: preferredReplyEntry?.pubkey ?? rawFromChatPubkey,
+      fileAttachment: null,
+      usedDbPlaintextFallback: true,
+    };
+  }
+
+  return {
+    ok: false,
+    plaintext: '',
+    sharedSecretForReply: '',
+    resolvedFromChatPubkey: rawFromChatPubkey,
+    fileAttachment: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -5055,6 +5358,7 @@ async function processOne(
   swapOrderTracker?: SwapOrderTrackerService,
   sellerAutoFulfillDaemon?: SellerAutoFulfillDaemon,
   payReadFulfillDaemon?: PayReadFulfillDaemon,
+  swapStationFulfillDaemon?: SwapStationFulfillDaemon,
 ): Promise<void> {
   const taskKey = row.pin_id;
   if (thinkingTasks.has(taskKey)) return;
@@ -5185,8 +5489,12 @@ async function processOne(
     }
 
     const wallet = metabotStore.getMetabotWalletByMetabotId(metabot.id);
-    const fromChatPubkey = (row.from_chat_pubkey ?? '').trim();
+    let fromChatPubkey = (row.from_chat_pubkey ?? '').trim();
     const fromGlobalMetaId = (row.from_global_metaid || row.from_metaid || '').trim();
+    const localPeerChatPubkey =
+      fromGlobalMetaId && typeof metabotStore.getMetabotByGlobalMetaId === 'function'
+        ? (metabotStore.getMetabotByGlobalMetaId(fromGlobalMetaId)?.chat_public_key ?? '').trim()
+        : '';
 
     // Resolve the plaintext whenever the crypto material is available. The
     // OpenTeam interception below runs BEFORE the enabled/wallet/chat-pubkey
@@ -5197,7 +5505,7 @@ async function processOne(
     let sharedSecretForReply = '';
     /** Set when the row is a `/protocols/simplefilemsg` whose attachment was materialized. */
     let fileAttachment: PrivateChatFileAttachment | null = null;
-    if (wallet?.mnemonic?.trim() && fromChatPubkey) {
+    if (wallet?.mnemonic?.trim() && (fromChatPubkey || localPeerChatPubkey || fromGlobalMetaId)) {
       if (privateChatDecryptFailedIds.has(row.id)) {
         // Already known undecryptable for this daemon run; skip quietly while
         // keeping the row unprocessed so a restart can retry it.
@@ -5213,123 +5521,45 @@ async function processOne(
         return;
       }
 
-      let sharedSecretSha256: string;
-      let sharedSecretRaw: string;
-      try {
-        sharedSecretSha256 = computeEcdhSharedSecretSha256(privateKeyBuffer, fromChatPubkey);
-        sharedSecretRaw = computeEcdhSharedSecret(privateKeyBuffer, fromChatPubkey);
-      } catch (e) {
-        rethrowSqliteWasmBoundsError(e);
-        emitLog(`[PrivateChat] Skip message ${row.id}: invalid peer public key (${fromChatPubkey.slice(0, 16)}…): ${e instanceof Error ? e.message : e}`);
+      const resolvedContent = await resolveIncomingPrivateChatContent({
+        row,
+        privateKeyBuffer,
+        localPeerChatPubkey,
+        emitLog,
+      });
+
+      if (resolvedContent.empty) {
         markProcessed(db, row.id, saveDb);
         return;
       }
-      emitLog(
-        `[PrivateChat] ECDH ready: from_chat_pubkey(first/last16)=${fromChatPubkey.slice(0, 16)}...${fromChatPubkey.slice(-16)} sha256Secret(first/last16)=${sharedSecretSha256.slice(0, 16)}...${sharedSecretSha256.slice(-16)}`
-      );
 
-      // ---- File messages (/protocols/simplefilemsg) ---------------------
-      // A file message is a PLAINTEXT JSON payload whose `attachment` is a
-      // metafile URI; the file BODY (not the payload) is AES-encrypted with
-      // the ECDH shared secret. The text path below would try to AES-decrypt
-      // the URI string itself, fail, and leave the row unprocessed forever —
-      // the message never reaches the conversation and the owner sees nothing.
-      // Handle the protocol here: parse the payload, decrypt the body, and
-      // hand the message a body that carries the app-wide attachment marker
-      // line so the renderer shows the picture and the model can read it.
-      const contentInDb = (row.content ?? '').trim();
-      const contentInRawData = getCipherTextFromRawData(
-        typeof row.raw_data === 'string' ? row.raw_data : null
-      );
-      const fileMessagePayload = isPrivateChatFileMessageProtocol(row.protocol)
-        ? parsePrivateChatFileMessagePayload(contentInRawData || contentInDb, row.content_type ?? null)
-        : null;
-
-      if (fileMessagePayload) {
-        fileAttachment = await materializePrivateChatFileMessage({
-          payload: fileMessagePayload,
-          // sha256 variant first (what the reference client uses for file
-          // bodies), then the raw secret — same fallback order as the text path.
-          sharedSecretCandidates: [sharedSecretSha256, sharedSecretRaw],
-          emitLog,
-        });
-        plaintext = buildPrivateChatFileMessageContent({
-          payload: fileMessagePayload,
-          attachment: fileAttachment,
-        });
-        sharedSecretForReply = sharedSecretSha256;
+      if (!resolvedContent.ok) {
+        privateChatDecryptFailedIds.add(row.id);
         emitLog(
-          `[PrivateChat] File message ${row.id} (${fileMessagePayload.fileType || 'unknown type'}): ${
-            fileAttachment
-              ? `attachment materialized at ${fileAttachment.localPath}`
-              : 'attachment unavailable, stored a visible notice instead'
-          }`
+          `[PrivateChat] Keep message ${row.id} unprocessed: decrypt failed for both sha256/raw shared secret`
         );
-      } else {
-        const cipherText = contentInRawData || contentInDb;
-        if (!cipherText && !contentInDb) {
-          markProcessed(db, row.id, saveDb);
-          return;
-        }
+        return;
+      }
 
-        const shouldDecrypt =
-          !!contentInRawData || looksLikeEncryptedPrivateContent(contentInDb);
-        plaintext = contentInDb;
-        sharedSecretForReply = sharedSecretSha256;
-        if (shouldDecrypt) {
-          const plainBySha256 = tryDecryptWithSecret(cipherText, sharedSecretSha256);
-          if (plainBySha256 != null) {
-            plaintext = plainBySha256;
-            sharedSecretForReply = sharedSecretSha256;
-          } else {
-            const plainByRaw = tryDecryptWithSecret(cipherText, sharedSecretRaw);
-            if (plainByRaw != null) {
-              plaintext = plainByRaw;
-              sharedSecretForReply = sharedSecretRaw;
-              emitLog('[PrivateChat] Decrypt fallback: using raw shared secret for legacy payload.');
-            } else {
-              // Loss-stop: an undecryptable message must NOT be marked
-              // processed, otherwise the ciphertext is silently consumed and
-              // can never be retried (e.g. once an app update adds the missing
-              // key variant). Keep is_processed = 0 and only remember the id so
-              // the 5s poll loop skips the repeated ECDH/decrypt work;
-              // stopPrivateChatDaemon clears the set, so every daemon start
-              // retries these rows once.
-              privateChatDecryptFailedIds.add(row.id);
-              emitLog(
-                `[PrivateChat] Keep message ${row.id} unprocessed: decrypt failed for both sha256/raw shared secret`
-              );
-              return;
-            }
-          }
-        }
-        if (!plaintext.trim()) {
-          emitLog(`[PrivateChat] Skip message ${row.id}: plaintext empty after decode`);
-          markProcessed(db, row.id, saveDb);
-          return;
-        }
+      plaintext = resolvedContent.plaintext;
+      sharedSecretForReply = resolvedContent.sharedSecretForReply;
+      fileAttachment = resolvedContent.fileAttachment;
+      if (resolvedContent.resolvedFromChatPubkey) {
+        fromChatPubkey = resolvedContent.resolvedFromChatPubkey;
+      }
+      if (!fileAttachment && !plaintext.trim()) {
+        emitLog(`[PrivateChat] Skip message ${row.id}: plaintext empty after decode`);
+        markProcessed(db, row.id, saveDb);
+        return;
       }
     } else {
-      // Without the wallet or the peer chat pubkey the ciphertext is
-      // unreadable; only a row already stored as plaintext can still be
-      // inspected for an OpenTeam envelope below.
-      const contentInDb = (row.content ?? '').trim();
-      const contentInRawData = getCipherTextFromRawData(
-        typeof row.raw_data === 'string' ? row.raw_data : null
-      );
-      const undecryptableFileMessage = isPrivateChatFileMessageProtocol(row.protocol)
-        ? parsePrivateChatFileMessagePayload(contentInRawData || contentInDb, row.content_type ?? null)
-        : null;
-      if (undecryptableFileMessage) {
-        // No wallet ⇒ the body cannot be decrypted, but the message itself
-        // must still be visible rather than silently parked.
-        plaintext = buildPrivateChatFileMessageContent({
-          payload: undecryptableFileMessage,
-          attachment: null,
-        });
-      } else if (!contentInRawData && contentInDb && !looksLikeEncryptedPrivateContent(contentInDb)) {
-        plaintext = contentInDb;
-      }
+      const resolvedNoWallet = await resolveIncomingPrivateChatContent({
+        row,
+        privateKeyBuffer: null,
+        localPeerChatPubkey,
+        emitLog,
+      });
+      plaintext = resolvedNoWallet.plaintext;
     }
 
     // OpenTeam protocol envelopes (invite/accept/decline/kick) are handled by the
@@ -5370,6 +5600,24 @@ async function processOne(
       if (swapHandled.handled) {
         emitLog(
           `[PrivateChat] Handled ${swapHandled.type || 'swap'} message ${row.id} (requestId=${swapHandled.requestId ?? 'unknown'}, matched=${String(swapHandled.matched ?? false)})`,
+        );
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
+    }
+
+    if (plaintext.trim() && swapStationFulfillDaemon) {
+      const claimHandled = await swapStationFulfillDaemon.handleIncomingClaimMessage({
+        metabotId: metabot.id,
+        fromGlobalMetaId,
+        plaintext,
+        senderName: (row.from_name as string | null) ?? null,
+        senderAvatar: (row.from_avatar as string | null) ?? null,
+        pinId: row.pin_id,
+      });
+      if (claimHandled.handled) {
+        emitLog(
+          `[PrivateChat] Handled ${claimHandled.type || 'SWAP_CLAIM_V1'} message ${row.id} (requestId=${claimHandled.requestId ?? 'unknown'}, outcome=${claimHandled.outcome ?? 'ok'})`,
         );
         markProcessed(db, row.id, saveDb);
         return;
@@ -7953,6 +8201,7 @@ export function startPrivateChatDaemon(
   sellerAutoFulfillDaemon?: SellerAutoFulfillDaemon,
   onA2ATurnSettled?: (event: WorldPerceptionA2ATurnEvent) => void | Promise<void>,
   payReadFulfillDaemon?: PayReadFulfillDaemon,
+  swapStationFulfillDaemon?: SwapStationFulfillDaemon,
 ): void {
   void stopPrivateChatDaemon();
   const daemonGeneration = ++privateChatDaemonGeneration;
@@ -8066,6 +8315,7 @@ export function startPrivateChatDaemon(
               swapOrderTracker,
               sellerAutoFulfillDaemon,
               payReadFulfillDaemon,
+              swapStationFulfillDaemon,
             );
           })();
           trackPrivateChatDetachedWork(work);

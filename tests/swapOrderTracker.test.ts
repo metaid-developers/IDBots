@@ -367,3 +367,91 @@ test('SwapOrderTrackerService default MetaSo fetcher paginates cursor across >10
     disposeDb(db, dir);
   }
 });
+
+test('SwapOrderTrackerService surfaces SWAP_STATUS_V1 updates via onOrderStatus and deduplicates repeat status', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'swap-order-tracker-status-'));
+  const db = createNativeSqliteDatabase(path.join(dir, 'tracker.sqlite'));
+  const statusEvents: Array<{
+    requestId: string;
+    wireStatus: string;
+    note: string | null;
+    items: Array<{ tokenIndex: string; status: string; confirmations?: number }>;
+  }> = [];
+
+  try {
+    const tracker = new SwapOrderTrackerService(db, () => {}, {
+      onOrderStatus: (event) => {
+        statusEvents.push({
+          requestId: event.requestId,
+          wireStatus: event.wireStatus,
+          note: event.note,
+          items: event.items,
+        });
+      },
+    });
+
+    tracker.registerOrder({
+      requestId: 'req-status-1',
+      metabotId: 1,
+      stationGlobalMetaId: STATION_GMID,
+      collectionSlug: 'metabot-avatar',
+      targetCollectionPinId: TARGET_PIN,
+      sessionId: 'session-status-1',
+      recipientAddress: RECIPIENT_ADDR,
+      items: [{ tokenIndex: '8539', depositTxId: 'ee'.repeat(32) }],
+    });
+
+    const wireStatus1 = formatSwapWireMessage({
+      type: 'SWAP_STATUS_V1',
+      requestId: 'req-status-1',
+      collectionSlug: 'metabot-avatar',
+      status: 'pending_1_conf',
+      items: [{ tokenIndex: '8539', status: 'pending_1_conf', depositTxId: 'ee'.repeat(32), confirmations: 0 }],
+      note: 'Waiting for 1 confirmation(s) on deposit transaction.',
+    });
+
+    const res1 = await tracker.handleIncomingSwapMessage({
+      metabotId: 1,
+      fromGlobalMetaId: STATION_GMID,
+      plaintext: wireStatus1,
+    });
+    assert.equal(res1.handled, true);
+    assert.equal(res1.matched, true);
+    assert.equal(res1.notified, true);
+    assert.equal(statusEvents.length, 1);
+    assert.equal(statusEvents[0].wireStatus, 'pending_1_conf');
+    assert.equal(statusEvents[0].note, 'Waiting for 1 confirmation(s) on deposit transaction.');
+    assert.equal(tracker.getOrder('req-status-1')?.stationStatus, 'pending_1_conf');
+
+    // Repeat identical SWAP_STATUS_V1 should NOT re-notify
+    const res2 = await tracker.handleIncomingSwapMessage({
+      metabotId: 1,
+      fromGlobalMetaId: STATION_GMID,
+      plaintext: wireStatus1,
+    });
+    assert.equal(res2.handled, true);
+    assert.equal(res2.matched, true);
+    assert.equal(res2.notified, false);
+    assert.equal(statusEvents.length, 1);
+
+    // A changed status (e.g. failed) should notify again
+    const wireStatus2 = formatSwapWireMessage({
+      type: 'SWAP_STATUS_V1',
+      requestId: 'req-status-1',
+      collectionSlug: 'metabot-avatar',
+      status: 'failed',
+      note: 'SENDER_IDENTITY_MISMATCH',
+    });
+    const res3 = await tracker.handleIncomingSwapMessage({
+      metabotId: 1,
+      fromGlobalMetaId: STATION_GMID,
+      plaintext: wireStatus2,
+    });
+    assert.equal(res3.notified, true);
+    assert.equal(statusEvents.length, 2);
+    assert.equal(statusEvents[1].wireStatus, 'failed');
+  } finally {
+    disposeDb(db, dir);
+  }
+});
+

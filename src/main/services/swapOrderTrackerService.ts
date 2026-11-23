@@ -9,6 +9,8 @@ import {
   parseSwapWireMessage,
   type SwapClaimItemV1,
   type SwapCompletedResultItemV1,
+  type SwapStatusItemV1,
+  type SwapStatusMessageV1,
 } from './swapWireProtocol';
 
 export const NFT_SWAP_POLL_INTERVAL_MS = 45_000;
@@ -30,6 +32,9 @@ export interface NftSwapClientOrderRecord {
   items: SwapClaimItemV1[];
   status: NftSwapClientOrderStatus;
   completedItems: SwapCompletedResultItemV1[];
+  stationStatus: SwapStatusMessageV1['status'] | null;
+  stationNote: string | null;
+  stationStatusUpdatedAt: number | null;
   notifiedAt: number | null;
   createdAt: number;
   updatedAt: number;
@@ -44,6 +49,18 @@ export interface RegisterNftSwapOrderInput {
   sessionId?: string | null;
   recipientAddress: string;
   items: SwapClaimItemV1[];
+}
+
+export interface NftSwapOrderStatusEvent {
+  requestId: string;
+  metabotId: number;
+  stationGlobalMetaId: string;
+  collectionSlug: string;
+  sessionId: string | null;
+  wireStatus: SwapStatusMessageV1['status'];
+  note: string | null;
+  items: SwapStatusItemV1[];
+  updatedAt: number;
 }
 
 export interface NftSwapOrderCompletedEvent {
@@ -66,6 +83,7 @@ export interface SwapOrderTrackerDeps {
   ) => Promise<Mrc721ItemSummary[]>;
   verifyItem?: (itemPinId: string) => Promise<Mrc721VerifyInfo | null>;
   emitToRenderer?: (channel: string, payload: unknown) => void;
+  onOrderStatus?: (event: NftSwapOrderStatusEvent) => void | Promise<void>;
   onOrderCompleted?: (event: NftSwapOrderCompletedEvent) => void | Promise<void>;
   now?: () => number;
 }
@@ -83,6 +101,9 @@ export function ensureNftSwapClientOrderSchema(db: SqliteDatabase): void {
       items_json TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'submitted',
       completed_items_json TEXT NOT NULL DEFAULT '[]',
+      station_status TEXT,
+      station_note TEXT,
+      station_status_updated_at INTEGER,
       notified_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -109,6 +130,9 @@ export function ensureNftSwapClientOrderSchema(db: SqliteDatabase): void {
     addCol('session_id', 'session_id TEXT');
     addCol('recipient_address', `recipient_address TEXT NOT NULL DEFAULT ''`);
     addCol('completed_items_json', `completed_items_json TEXT NOT NULL DEFAULT '[]'`);
+    addCol('station_status', 'station_status TEXT');
+    addCol('station_note', 'station_note TEXT');
+    addCol('station_status_updated_at', 'station_status_updated_at INTEGER');
     addCol('notified_at', 'notified_at INTEGER');
   } catch (error) {
     console.warn('[SwapOrderTracker] schema heal warning:', error);
@@ -144,6 +168,15 @@ function rowToRecord(columns: string[], values: unknown[]): NftSwapClientOrderRe
     items: parseJsonArray<SwapClaimItemV1>(row.items_json),
     status: (String(row.status ?? 'submitted') as NftSwapClientOrderStatus) || 'submitted',
     completedItems: parseJsonArray<SwapCompletedResultItemV1>(row.completed_items_json),
+    stationStatus:
+      typeof row.station_status === 'string' && row.station_status.trim()
+        ? (row.station_status.trim() as SwapStatusMessageV1['status'])
+        : null,
+    stationNote: typeof row.station_note === 'string' && row.station_note.trim() ? row.station_note.trim() : null,
+    stationStatusUpdatedAt:
+      row.station_status_updated_at != null && Number.isFinite(Number(row.station_status_updated_at))
+        ? Number(row.station_status_updated_at)
+        : null,
     notifiedAt: row.notified_at != null && Number.isFinite(Number(row.notified_at)) ? Number(row.notified_at) : null,
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
@@ -344,12 +377,43 @@ export class SwapOrderTrackerService {
     }
 
     if (parsed.type === 'SWAP_STATUS_V1') {
+      const ts = this.now();
+      const nextStationStatus = parsed.status;
+      const nextStationNote = typeof parsed.note === 'string' && parsed.note.trim() ? parsed.note.trim() : null;
+      const statusChanged =
+        order.stationStatus !== nextStationStatus ||
+        (nextStationNote !== null && order.stationNote !== nextStationNote);
+
       this.db.run(
-        'UPDATE nft_swap_client_orders SET updated_at = ? WHERE request_id = ?',
-        [this.now(), order.requestId],
+        `UPDATE nft_swap_client_orders
+         SET station_status = ?, station_note = ?, station_status_updated_at = ?, updated_at = ?
+         WHERE request_id = ?`,
+        [nextStationStatus, nextStationNote, ts, ts, order.requestId],
       );
       this.saveDb();
-      return { handled: true, type: parsed.type, requestId: parsed.requestId, matched: true, notified: false };
+
+      let notified = false;
+      if (statusChanged && order.status !== 'completed') {
+        const statusEvent: NftSwapOrderStatusEvent = {
+          requestId: order.requestId,
+          metabotId: order.metabotId,
+          stationGlobalMetaId: order.stationGlobalMetaId,
+          collectionSlug: order.collectionSlug,
+          sessionId: order.sessionId,
+          wireStatus: nextStationStatus,
+          note: nextStationNote,
+          items: Array.isArray(parsed.items) ? parsed.items : [],
+          updatedAt: ts,
+        };
+        try {
+          await this.deps.onOrderStatus?.(statusEvent);
+          notified = Boolean(this.deps.onOrderStatus);
+        } catch (err) {
+          console.warn('[SwapOrderTracker] onOrderStatus failed:', err);
+        }
+      }
+
+      return { handled: true, type: parsed.type, requestId: parsed.requestId, matched: true, notified };
     }
 
     // SWAP_COMPLETED_V1

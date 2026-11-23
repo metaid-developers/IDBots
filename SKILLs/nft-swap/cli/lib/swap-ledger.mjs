@@ -109,6 +109,24 @@ CREATE TABLE IF NOT EXISTS swap_events (
   evidence_json TEXT,
   at_ms INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS swap_pending_claims (
+  request_id TEXT PRIMARY KEY,
+  station_metabot_id INTEGER NOT NULL,
+  sender_global_metaid TEXT NOT NULL,
+  sender_address TEXT,
+  collection_slug TEXT NOT NULL,
+  raw_message TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  last_wire_type TEXT,
+  last_wire_status TEXT,
+  last_error TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_retry_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_swap_pending_claims_due ON swap_pending_claims (status, next_retry_at);
 `;
 
 function resolveCollectionSlugKey(collectionOrGenesis) {
@@ -552,5 +570,145 @@ export class SwapLedger {
 
   eventsFor(rowId) {
     return this.db.prepare('SELECT * FROM swap_events WHERE ledger_id = ? ORDER BY id').all(rowId);
+  }
+
+  pendingClaimById(requestId) {
+    return this.db.prepare('SELECT * FROM swap_pending_claims WHERE request_id = ?').get(requestId) ?? null;
+  }
+
+  upsertPendingClaim({
+    requestId,
+    stationMetabotId,
+    senderGlobalMetaId,
+    senderAddress = null,
+    collectionSlug,
+    rawMessage,
+    nextRetryAt,
+    now = Date.now(),
+  }) {
+    const existing = this.pendingClaimById(requestId);
+    if (existing) {
+      this.db
+        .prepare(
+          `UPDATE swap_pending_claims
+           SET station_metabot_id = ?,
+               sender_global_metaid = ?,
+               sender_address = COALESCE(?, sender_address),
+               collection_slug = ?,
+               raw_message = ?,
+               next_retry_at = CASE WHEN status IN ('completed','failed') THEN next_retry_at ELSE ? END,
+               updated_at = ?
+           WHERE request_id = ?`,
+        )
+        .run(
+          stationMetabotId,
+          senderGlobalMetaId,
+          senderAddress,
+          collectionSlug,
+          rawMessage,
+          nextRetryAt ?? now,
+          now,
+          requestId,
+        );
+      return this.pendingClaimById(requestId);
+    }
+    this.db
+      .prepare(
+        `INSERT INTO swap_pending_claims (
+           request_id, station_metabot_id, sender_global_metaid, sender_address,
+           collection_slug, raw_message, status, attempts, next_retry_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+      )
+      .run(
+        requestId,
+        stationMetabotId,
+        senderGlobalMetaId,
+        senderAddress,
+        collectionSlug,
+        rawMessage,
+        nextRetryAt ?? now,
+        now,
+        now,
+      );
+    return this.pendingClaimById(requestId);
+  }
+
+  listDuePendingClaims({ stationMetabotId = null, now = Date.now(), limit = 20 } = {}) {
+    if (stationMetabotId != null) {
+      return this.db
+        .prepare(
+          `SELECT * FROM swap_pending_claims
+           WHERE status = 'pending' AND station_metabot_id = ? AND next_retry_at <= ?
+           ORDER BY next_retry_at ASC, created_at ASC
+           LIMIT ?`,
+        )
+        .all(stationMetabotId, now, limit);
+    }
+    return this.db
+      .prepare(
+        `SELECT * FROM swap_pending_claims
+         WHERE status = 'pending' AND next_retry_at <= ?
+         ORDER BY next_retry_at ASC, created_at ASC
+         LIMIT ?`,
+      )
+      .all(now, limit);
+  }
+
+  markPendingClaimRetry({
+    requestId,
+    lastWireType = null,
+    lastWireStatus = null,
+    lastError = null,
+    nextRetryAt,
+    now = Date.now(),
+  }) {
+    this.db
+      .prepare(
+        `UPDATE swap_pending_claims
+         SET status = 'pending',
+             last_wire_type = COALESCE(?, last_wire_type),
+             last_wire_status = COALESCE(?, last_wire_status),
+             last_error = ?,
+             attempts = attempts + 1,
+             next_retry_at = ?,
+             updated_at = ?
+         WHERE request_id = ?`,
+      )
+      .run(lastWireType, lastWireStatus, lastError, nextRetryAt, now, requestId);
+    return this.pendingClaimById(requestId);
+  }
+
+  markPendingClaimCompleted({ requestId, lastWireType = 'SWAP_COMPLETED_V1', now = Date.now() }) {
+    this.db
+      .prepare(
+        `UPDATE swap_pending_claims
+         SET status = 'completed',
+             last_wire_type = ?,
+             last_wire_status = 'completed',
+             last_error = NULL,
+             attempts = attempts + 1,
+             completed_at = ?,
+             updated_at = ?
+         WHERE request_id = ?`,
+      )
+      .run(lastWireType, now, now, requestId);
+    return this.pendingClaimById(requestId);
+  }
+
+  markPendingClaimFailed({ requestId, lastError = null, lastWireType = null, now = Date.now() }) {
+    this.db
+      .prepare(
+        `UPDATE swap_pending_claims
+         SET status = 'failed',
+             last_wire_type = COALESCE(?, last_wire_type),
+             last_wire_status = 'failed',
+             last_error = ?,
+             attempts = attempts + 1,
+             completed_at = ?,
+             updated_at = ?
+         WHERE request_id = ?`,
+      )
+      .run(lastWireType, lastError, now, now, requestId);
+    return this.pendingClaimById(requestId);
   }
 }

@@ -222,6 +222,18 @@ test('additive migration adds item_desc_pin_id to a ledger created before the co
     ledger.recordMintBroadcast(row.id, { itemPath: 'item-0001', mintPinId: 'a'.repeat(64) + 'i0', txids: [] });
     ledger.recordItemDescPin(row.id, { itemDescPinId: 'd'.repeat(64) + 'i0' });
     assert.equal(ledger.rowById(row.id).item_desc_pin_id, 'd'.repeat(64) + 'i0');
+    const pendingRow = ledger.upsertPendingClaim({
+      requestId: 'req-migrate-1',
+      stationMetabotId: 37,
+      senderGlobalMetaId: 'idq1sender',
+      senderAddress: '1Sender',
+      collectionSlug: 'metabot-avatar',
+      rawMessage: '{"type":"SWAP_CLAIM_V1"}',
+      nextRetryAt: 1000,
+      now: 1000,
+    });
+    assert.equal(pendingRow.status, 'pending');
+    assert.equal(ledger.listDuePendingClaims({ stationMetabotId: 37, now: 1000 }).length, 1);
   } finally {
     ledger.close();
     try {
