@@ -407,7 +407,6 @@ interface TokenOutputDecode {
  * without failing the whole verification.
  */
 function decodeMvc20Outputs(outputs: WalletTxOutput[]): TokenOutputDecode[] {
-  /* eslint-disable @typescript-eslint/no-var-requires */
   let ftProto: Record<string, (...args: unknown[]) => unknown>;
   try {
     ftProto = require('meta-contract/dist/mcp02/contract-proto/token.proto.js');

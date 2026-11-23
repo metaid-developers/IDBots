@@ -101,7 +101,6 @@ export function classifyMvcTokenSellSpendingTx(
 
   try {
     const parsed = parseRawTx(spendingRawHex);
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const ftProto = require('meta-contract/dist/mcp02/contract-proto/token.proto.js');
     const tokenRecipientHashes: string[] = [];
 

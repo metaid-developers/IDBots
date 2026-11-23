@@ -283,7 +283,6 @@ async function defaultFetchMvcFtVerifiedUtxos(params: {
   try {
     const tx = new mvc.Transaction(hex);
     if (tx.id.toLowerCase() !== params.paymentTxId.toLowerCase()) return [];
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const ftProto = require('meta-contract/dist/mcp02/contract-proto/token.proto.js');
     const expectedHash = new mvc.Address(params.receiveAddress).hashBuffer.toString('hex').toLowerCase();
     const outList: MvcFtVerifiedUtxo[] = [];

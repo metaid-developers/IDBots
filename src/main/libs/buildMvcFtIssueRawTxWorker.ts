@@ -25,9 +25,7 @@ import {
   selectMvcFundingUtxos,
 } from '../services/tokenTransferAdapters';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const ftProto = require('meta-contract/dist/mcp02/contract-proto/token.proto');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { TokenGenesisFactory } = require('meta-contract/dist/mcp02/contract-factory/tokenGenesis');
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
