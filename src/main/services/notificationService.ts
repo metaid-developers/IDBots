@@ -29,6 +29,13 @@ const COPY = {
     longTermWaiting: 'Decision needed',
     longTermFailed: 'Task needs attention',
     longTermBody: (title: string) => `Open “${title}” to review the work.`,
+    decisionEnqueued: 'Decision needed',
+    decisionBody: (title: string) => `“${title}” is queued and ready for your ruling.`,
+    attemptCompleted: 'Delivery completed',
+    attemptFailed: 'Delivery failed',
+    attemptCompletedBody: (worker: string) => `${worker} delivered; review when ready.`,
+    attemptFailedBody: (worker: string, detail: string) =>
+      detail ? `${worker} failed: ${detail}` : `${worker} failed.`,
   },
   zh: {
     workCompleted: '任务已完成',
@@ -49,6 +56,13 @@ const COPY = {
     longTermWaiting: '需要你处理',
     longTermFailed: '任务需要关注',
     longTermBody: (title: string) => `打开“${title}”查看结果。`,
+    decisionEnqueued: '需要你拍板',
+    decisionBody: (title: string) => `“${title}”已进入决策队列，等待你拍板。`,
+    attemptCompleted: '交付已完成',
+    attemptFailed: '交付失败',
+    attemptCompletedBody: (worker: string) => `${worker} 已完成交付，可以验收了。`,
+    attemptFailedBody: (worker: string, detail: string) =>
+      detail ? `${worker} 交付失败：${detail}` : `${worker} 交付失败。`,
   },
 } as const;
 
@@ -63,6 +77,50 @@ function text(value: string, maxLength: number): string {
 
 export function buildCoworkNotificationEventId(sessionId: string, outcome: 'completed' | 'failed', terminalMarker: string | number): string {
   return `cowork:${sessionId}:${outcome}:${terminalMarker}`;
+}
+
+/**
+ * Pure copy builders for the completion-state push (zh/en in one place, so the
+ * notification-center row and the desktop popup always say the same thing).
+ * main.ts calls these right after the matching record* method returns true,
+ * without re-deriving the copy.
+ */
+export function buildLongTermTaskCopy(
+  outcome: 'waiting_owner' | 'completed' | 'failed',
+  title: string,
+  lang?: string,
+): { title: string; body: string } {
+  const copy = COPY[language(lang)];
+  const waiting = outcome === 'waiting_owner';
+  const completed = outcome === 'completed';
+  return {
+    title: waiting ? copy.longTermWaiting : completed ? copy.workCompleted : copy.longTermFailed,
+    body: copy.longTermBody(text(title, 200)),
+  };
+}
+
+export function buildDecisionEnqueuedCopy(
+  title: string,
+  lang?: string,
+): { title: string; body: string } {
+  const copy = COPY[language(lang)];
+  return { title: copy.decisionEnqueued, body: copy.decisionBody(text(title, 200)) };
+}
+
+export function buildOrchestrationAttemptCopy(
+  input: { workerName: string; outcome: 'completed' | 'failed'; detail?: string | null },
+  lang?: string,
+): { title: string; body: string } {
+  const copy = COPY[language(lang)];
+  const worker = text(input.workerName || 'Worker', 60);
+  return input.outcome === 'completed'
+    ? { title: copy.attemptCompleted, body: copy.attemptCompletedBody(worker) }
+    : { title: copy.attemptFailed, body: copy.attemptFailedBody(worker, text(input.detail ?? '', 140)) };
+}
+
+/** Dedup key for attempt-terminal owner pushes — mirrors UNIQUE(attempt_id, outcome). */
+export function buildOrchestrationAttemptEventId(taskId: string, attemptId: string, outcome: 'completed' | 'failed'): string {
+  return `orchestration:${taskId}:${attemptId}:${outcome}`;
 }
 
 export class NotificationService {
@@ -227,7 +285,7 @@ export class NotificationService {
     outcome: 'waiting_owner' | 'completed' | 'failed';
     language?: string;
   }): boolean {
-    const copy = COPY[language(input.language)];
+    const copy = buildLongTermTaskCopy(input.outcome, input.title, language(input.language));
     const waiting = input.outcome === 'waiting_owner';
     const completed = input.outcome === 'completed';
     return this.record({
@@ -238,10 +296,83 @@ export class NotificationService {
       sessionId: input.sessionId,
       taskId: input.taskId,
       runId: input.subtaskId,
-      title: waiting ? copy.longTermWaiting : completed ? copy.workCompleted : copy.longTermFailed,
-      body: copy.longTermBody(text(input.title, 200)),
+      title: copy.title,
+      body: copy.body,
       priority: completed ? 'normal' : 'high',
       target: { kind: 'task', taskId: input.taskId },
+    });
+  }
+
+  /**
+   * A decision card entered the Studio queue (enqueue emits 'enqueued' only
+   * for a genuinely NEW row — dedupeKey updates reuse the row and emit
+   * 'updated', which never reaches this method). Callers that push a desktop
+   * notification from this row must skip longterm-linked cards: those are
+   * already covered by recordLongTermTask on the waiting_owner transition, and
+   * a second push for the same fact would be exactly the double popup this
+   * fix refuses to introduce.
+   */
+  recordDecisionEnqueued(input: {
+    itemId: string;
+    taskTitle: string;
+    kind: string;
+    twinMetabotId: number;
+    originStudioSessionId?: string | null;
+    longtermTaskId?: string | null;
+    longtermSubtaskId?: string | null;
+    metabotId?: number | null;
+    language?: string;
+  }): boolean {
+    const copy = buildDecisionEnqueuedCopy(input.taskTitle, language(input.language));
+    return this.record({
+      eventId: `decision:${input.itemId}`,
+      type: 'decision.enqueued',
+      category: 'action',
+      metabotId: input.metabotId ?? input.twinMetabotId,
+      sessionId: input.originStudioSessionId ?? null,
+      taskId: input.longtermTaskId ?? null,
+      runId: input.longtermSubtaskId ?? null,
+      title: copy.title,
+      body: copy.body,
+      priority: 'high',
+      target: input.longtermTaskId
+        ? { kind: 'task', taskId: input.longtermTaskId }
+        : { kind: 'session', sessionId: input.originStudioSessionId ?? '' },
+    });
+  }
+
+  /**
+   * A worker attempt reached a terminal state. Call this ONLY after
+   * orchestrationStore.claimNotification returned true for
+   * (attemptId, outcome) — the claim row is the durable at-most-once arbiter
+   * and this notification's eventId mirrors its uniqueness, so a duplicate
+   * transition can neither re-insert the row nor re-push the desktop notice.
+   */
+  recordOrchestrationAttempt(input: {
+    taskId: string;
+    attemptId: string;
+    outcome: 'completed' | 'failed';
+    workerName: string;
+    detail?: string | null;
+    metabotId?: number | null;
+    sessionId?: string | null;
+    language?: string;
+  }): boolean {
+    const copy = buildOrchestrationAttemptCopy(input, language(input.language));
+    return this.record({
+      eventId: buildOrchestrationAttemptEventId(input.taskId, input.attemptId, input.outcome),
+      type: input.outcome === 'completed' ? 'orchestration.attempt.completed' : 'orchestration.attempt.failed',
+      category: 'work',
+      metabotId: input.metabotId ?? null,
+      sessionId: input.sessionId ?? null,
+      taskId: input.taskId,
+      runId: input.attemptId,
+      title: copy.title,
+      body: copy.body,
+      priority: input.outcome === 'completed' ? 'normal' : 'high',
+      target: input.sessionId
+        ? { kind: 'session', sessionId: input.sessionId }
+        : { kind: 'task', taskId: input.taskId },
     });
   }
 
