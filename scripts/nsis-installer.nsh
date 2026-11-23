@@ -188,6 +188,14 @@
     ; absent (pre-Win10, or a machine that hides its version cannot be
     ; verified) or below 10. A hypothetical future Windows raising the major
     ; version still passes.
+    ; Clear any pre-existing NSIS error flag BEFORE ReadRegDWORD:
+    ; electron-builder's initMultiUser -> setInstallModePerUser runs right
+    ; before customInit and calls ReadRegStr on HKCU\...\InstallLocation,
+    ; leaving Errors set on every fresh install (when no prior install
+    ; exists). ReadRegDWORD only sets Errors on failure and never clears a
+    ; pre-existing flag on success, which otherwise triggers ${Errors} and
+    ; falsely blocks every clean Windows 10/11 (64-bit) install.
+    ClearErrors
     ReadRegDWORD $R1 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion" CurrentMajorVersionNumber
     ${If} ${Errors}
     ${OrIf} $R1 < 10
@@ -201,8 +209,10 @@
     ; installer process on Windows-on-ARM reports AMD64 under WOW64 emulation
     ; and passes here, as it should.
     ReadEnvStr $R2 "PROCESSOR_ARCHITEW6432"
+    ClearErrors
     ${If} $R2 == ""
       ReadEnvStr $R2 "PROCESSOR_ARCHITECTURE"
+      ClearErrors
       ${If} $R2 == "x86"
         MessageBox MB_OK|MB_ICONSTOP "IDBots requires a 64-bit edition of Windows. This computer is running a 32-bit edition of Windows, which IDBots cannot support." /SD IDOK
         Quit
