@@ -39,11 +39,20 @@ const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
 const MAX_UTXO_PAGES = 250;
 // Polite concurrency for batch queries (AC7: 18 bots × 3 chains < 10s).
 const BATCH_CONCURRENCY = 8;
-// Cross-source tolerance: 1-sat carrier UTXOs are filtered from the UTXO list
-// but counted in the balance endpoint's utxoCount, so |index − list| may
-// legitimately reach ~1 sat per UTXO plus rounding slack.
+// Cross-source tolerance: the UTXO list endpoint filters sub-600-sat dust
+// (the spend-path floor; MetaID sponsored pins leave one 1-sat carrier each,
+// so long-lived bot wallets accumulate thousands of them) while the balance
+// endpoint counts every UTXO. Each list-missing row is therefore AT MOST
+// ~600 sats of dust — tolerance scales with the missing-row count, so dust
+// accumulation never reads as a source disagreement, while a genuinely
+// missing large UTXO still overshoots and flags (the 2026-11-20 542M-sat
+// row loss was 542,838,717 sats against 62 missing rows: 36 orders beyond).
 const TRUTH_TOLERANCE_BASE_SATS = 1_000;
-const TRUTH_TOLERANCE_PER_UTXO_SATS = 2;
+// Per-missing-row ceiling: a row the list filtered out is sub-600-sat dust.
+const DUST_SATS_PER_LIST_MISSING_UTXO = 600;
+// Fallback per-LISTED-row slack when the balance endpoint's utxoCount is
+// unavailable and the missing-row count cannot be computed.
+const TRUTH_TOLERANCE_PER_LISTED_UTXO_SATS = 600;
 // tx-list pages are fixed at 10 rows server-side; the history walk stops at
 // 300 pages (~3000 txs) or the tx bound below, whichever comes first.
 const MAX_TX_HISTORY_PAGES = 300;
@@ -51,6 +60,10 @@ const MAX_TX_HISTORY_TXS = 3_000;
 // Cheap probe for the "index says the wallet is empty" case: one page tells
 // us whether the address has ANY transaction history (tx-list `total`).
 const TX_EMPTY_PROBE_TXS = 10;
+// History-walk budget when the cheap sources genuinely disagree beyond the
+// dust-adjusted tolerance: bounded but meaningful arbitration (10-tx probes
+// could never complete on active bot wallets with 10k+ transactions).
+const DISAGREEMENT_PROBE_TXS = 1_000;
 
 export type WalletQueryChain = 'mvc' | 'btc' | 'doge';
 
@@ -99,6 +112,15 @@ export interface MvcBalanceTruth {
   /** The UTXO list's own view: rows the list actually returned. */
   utxo_listed_sum_sats: number;
   utxo_listed_count: number;
+  /**
+   * Set when the index-vs-list gap is attributable to list-filtered dust
+   * (sub-600-sat carriers etc.): rows missing from the list and their
+   * observed sat sum. That dust is counted in total_sats but is NOT
+   * plain-spendable (the spend path floors at 600 sats) — the tool renders
+   * it as a dust-locked line, mirroring BTC's carrier-locked line.
+   */
+  dust_missing_utxos?: number;
+  dust_locked_sats_estimate?: number;
   /** Σ(income − outcome) over the tx history walk, when it ran. */
   history_total_sats?: number;
   history_confirmed_sats?: number;
@@ -303,8 +325,18 @@ async function fetchMvcHistoryBalanceSum(
   return { total, confirmed, unconfirmed, txCount, complete: false, serverTotal };
 }
 
-function truthToleranceSats(utxoCount: number | undefined): number {
-  return TRUTH_TOLERANCE_BASE_SATS + TRUTH_TOLERANCE_PER_UTXO_SATS * Math.max(0, utxoCount ?? 0);
+/**
+ * Index-vs-list tolerance. With the balance endpoint's utxoCount available,
+ * each list-missing row is at most ~600 sats of dust (the list's filter
+ * floor), so the tolerance scales with the MISSING-row count — dust/carrier
+ * accumulation reconciles, a missing large UTXO overshoots. Without the
+ * count, fall back to a per-listed-row slack.
+ */
+function truthToleranceSats(utxoCount: number | undefined, listedCount: number | undefined): number {
+  if (utxoCount != null && listedCount != null) {
+    return TRUTH_TOLERANCE_BASE_SATS + DUST_SATS_PER_LIST_MISSING_UTXO * Math.max(0, utxoCount - listedCount);
+  }
+  return TRUTH_TOLERANCE_BASE_SATS + TRUTH_TOLERANCE_PER_LISTED_UTXO_SATS * Math.max(0, listedCount ?? 0);
 }
 
 const MVC_DEGRADED_GUIDANCE =
@@ -387,25 +419,36 @@ export async function resolveMvcBalanceTruth(
   // Cross-source suspicion → escalate to the history walk (also on `deep`).
   const listedSum = utxoSum != null ? utxoSum.total_sats : null;
   const listedCount = utxoSum != null ? utxoSum.utxo_count : null;
-  const tolerance = truthToleranceSats(indexUtxoCount ?? listedCount ?? 0);
+  const tolerance = truthToleranceSats(indexUtxoCount ?? undefined, listedCount ?? undefined);
+  // When both sources answered, the index-vs-list gap is attributable to the
+  // list's dust filter: missing rows × their observed sat sum (each row is
+  // sub-600-sat by the filter's own floor). Attributed gaps reconcile — the
+  // dust stays in the headline (Metalet parity) and is surfaced separately
+  // as NOT plain-spendable (the spend path floors at 600 sats).
+  const missingUtxos = indexUtxoCount != null && listedCount != null
+    ? Math.max(0, indexUtxoCount - listedCount)
+    : null;
+  const indexListGap = balanceInfo != null && utxoSum != null ? indexTotal! - utxoSum.total_sats : null;
+  const dustAttributed = missingUtxos != null && indexListGap != null
+    && indexListGap > 0
+    && indexListGap <= tolerance;
   const zeroWallet = balanceInfo != null && indexTotal === 0 && (indexUtxoCount ?? 0) === 0
     && (utxoSum == null || (utxoSum.total_sats === 0 && utxoSum.utxo_count === 0));
   const sourcesDisagree = balanceInfo != null && utxoSum != null
-    && (Math.abs(indexTotal! - utxoSum.total_sats) > tolerance
-      || (indexUtxoCount != null && listedCount != null
-        && indexUtxoCount - listedCount > 0
-        && indexTotal! - utxoSum.total_sats > tolerance));
+    && !dustAttributed
+    && Math.abs(indexListGap!) > tolerance;
   const needDeep = options.deep === true || zeroWallet || sourcesDisagree
     || (balanceInfo == null && utxoSum != null && utxoSum.total_sats === 0);
+  const probeTxs = options.deep === true
+    ? MAX_TX_HISTORY_TXS
+    : zeroWallet
+      ? TX_EMPTY_PROBE_TXS
+      : DISAGREEMENT_PROBE_TXS;
 
   let history: MvcHistorySum | null = null;
   if (needDeep) {
     try {
-      history = await fetchMvcHistoryBalanceSum(
-        address,
-        options,
-        options.deep === true ? MAX_TX_HISTORY_TXS : TX_EMPTY_PROBE_TXS,
-      );
+      history = await fetchMvcHistoryBalanceSum(address, options, probeTxs);
     } catch {
       history = null;
     }
@@ -441,8 +484,9 @@ export async function resolveMvcBalanceTruth(
       reason = undefined;
     } else if (!history.complete && sourcesDisagree) {
       verdict = 'degraded';
-      reason = `balance endpoint and UTXO list disagree (index ${indexTotal} vs list ${listedSum} sats) ` +
-        `and the history walk stopped at the ${TX_EMPTY_PROBE_TXS}-tx probe bound — unverified`;
+      reason = `balance endpoint and UTXO list disagree beyond the dust allowance ` +
+        `(index ${indexTotal} vs list ${listedSum} sats) and the history walk stopped at ` +
+        `the ${probeTxs}-tx bound — unverified; cross-check Metalet or an explorer before acting on this number`;
     }
   }
 
@@ -455,6 +499,10 @@ export async function resolveMvcBalanceTruth(
     ...(indexUtxoCount != null ? { index_utxo_count: indexUtxoCount } : {}),
     utxo_listed_sum_sats: listedSum ?? 0,
     utxo_listed_count: listedCount ?? 0,
+    ...(dustAttributed && missingUtxos != null && indexListGap != null && indexListGap > 0 ? {
+      dust_missing_utxos: missingUtxos,
+      dust_locked_sats_estimate: indexListGap,
+    } : {}),
     ...(history ? {
       history_total_sats: history.total,
       history_confirmed_sats: history.confirmed,

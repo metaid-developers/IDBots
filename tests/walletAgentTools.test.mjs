@@ -99,6 +99,46 @@ function createHarness({ transferResult } = {}) {
   return { tool, handlers, control, tools };
 }
 
+test('wallet_balance renders the MVC dust-locked line for attributed carrier gaps', async () => {
+  const { buildWalletAgentTools } = loadWalletAgentTools();
+  const { handlers, control } = createHarness();
+  buildWalletAgentTools({ tool: (name, description, schema, handler) => { handlers[name] = { description, schema, handler }; }, control, sessionId: 's', resolveMetabotId: () => 1 });
+  // Point the address path at a snapshot carrying an attributed dust gap.
+  control.lastAddressBalanceQuery = null;
+  const originalGetBalanceForAddress = control.getBalanceForAddress;
+  control.getBalanceForAddress = async (chain, address, options) => {
+    if (chain !== 'mvc') return originalGetBalanceForAddress(chain, address, options);
+    // Self-consistent fixture mirroring the live Twin wallet: the index
+    // headline (Metalet parity) minus attributed dust = the list sum.
+    return {
+      chain: 'mvc',
+      address,
+      unit: 'SPACE',
+      confirmed_sats: 691_503_316,
+      unconfirmed_sats: 0,
+      total_sats: 691_503_316,
+      utxo_count: 1,
+      mvc_truth: {
+        verdict: 'ok',
+        index_total_sats: 691_503_316,
+        index_confirmed_sats: 691_503_316,
+        index_unconfirmed_sats: 0,
+        index_utxo_count: 16_943,
+        utxo_listed_sum_sats: 691_460_179,
+        utxo_listed_count: 1,
+        dust_missing_utxos: 16_942,
+        dust_locked_sats_estimate: 43_137,
+      },
+    };
+  };
+
+  const result = await handlers.wallet_balance.handler({ chain: 'mvc', address: '1MvcDust' });
+  const text = result.content[0].text;
+  assert.match(text, /dust-locked: ~43137 sats in ~16942 list-filtered sub-600-sat UTXOs/);
+  assert.match(text, /plain-spendable ≈ 691460179 sats/);
+  assert.doesNotMatch(text, /DEGRADED/, 'an attributed dust gap is not a degraded read');
+});
+
 test('wallet_balance batches ids and names into one readable sheet', async () => {
   const { buildWalletAgentTools } = loadWalletAgentTools();
   const { tool, handlers, control } = createHarness();

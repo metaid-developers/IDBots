@@ -216,6 +216,15 @@ function formatSnapshot(snapshot: WalletBalanceSnapshot): string {
       if (truth.history_complete === true && truth.history_total_sats != null) {
         lines.push(`- verified: transaction history sum agrees (${truth.history_total_sats} sats over ${truth.history_tx_count} txs)`);
       }
+      // Keep the agent's spendable math honest on MVC too: the balance
+      // headline includes list-filtered sub-600-sat dust (sponsored-pin
+      // carriers accumulate by the thousands), which the spend path refuses.
+      if ((truth.dust_locked_sats_estimate ?? 0) > 0 && truth.dust_missing_utxos != null) {
+        lines.push(
+          `- dust-locked: ~${truth.dust_locked_sats_estimate} sats in ~${truth.dust_missing_utxos} list-filtered sub-600-sat UTXOs ` +
+            `(pin carriers/dust — NOT plain-spendable; plain-spendable ≈ ${snapshot.total_sats - (truth.dust_locked_sats_estimate ?? 0)} sats)`,
+        );
+      }
     } else {
       // Degraded read: surface the verdict, the numbers behind it, and the
       // fixed rule — the agent must never report a broken read as fact.
