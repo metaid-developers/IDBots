@@ -4,6 +4,11 @@ import type { MetabotStore } from '../metabotStore';
 import { buildMvcFtTransferRawTx } from './walletRawTxService';
 import { isRetryableMvcBroadcastError, resolveBroadcastTxResult } from '../libs/mvcSpend';
 import { freshGetUrlAndInit } from './freshFetch';
+import {
+  recordMvcRecentRawTx,
+  recordMvcSpentOutpoints,
+  replaceMvcPendingFundingUtxos,
+} from './mvcSpendSessionState';
 import type { MvcFtTokenBalance } from './mvcTokenSellService';
 
 const METALET_HOST = 'https://www.metalet.space';
@@ -307,6 +312,13 @@ export async function executeMvcFtTransfer(
         amountCheckRawTx: raw.amount_check_raw_tx,
         rawTx: raw.raw_tx,
       }, deps.broadcastTx);
+      recordMvcFtBundleSpendSession({
+        metabotId: input.metabotId,
+        walletAddress: input.asset.address,
+        amountCheckRawTx: raw.amount_check_raw_tx,
+        rawTx: raw.raw_tx,
+        txId,
+      });
       return {
         txId,
         rawTx: raw.raw_tx,
@@ -331,4 +343,64 @@ export async function executeMvcFtTransfer(
   }
 
   throw new Error(getErrorMessage(lastError ?? 'MVC FT transfer failed'));
+}
+
+export function recordMvcFtBundleSpendSession(params: {
+  metabotId: number;
+  walletAddress: string;
+  amountCheckRawTx: string;
+  rawTx: string;
+  txId?: string;
+}): void {
+  try {
+    const spent = normalizeSpentOutpoints([
+      ...extractSpentOutpointsFromRawTx(params.amountCheckRawTx),
+      ...extractSpentOutpointsFromRawTx(params.rawTx),
+    ]);
+    const spentSet = new Set(spent);
+    let changeUtxo: { txId: string; outputIndex: number; satoshis: number; address: string } | null =
+      null;
+    const addr = String(params.walletAddress || '').trim();
+    if (addr) {
+      try {
+        const walletLockHex = mvc.Script.buildPublicKeyHashOut(
+          mvc.Address.fromString(addr, NET as any),
+        ).toHex();
+        const inspectForChange = (txHex: string) => {
+          const parsed = new mvc.Transaction(txHex);
+          const id = parsed.id.toLowerCase();
+          for (let i = parsed.outputs.length - 1; i >= 0; i -= 1) {
+            if (spentSet.has(`${id}:${i}`)) continue;
+            const out = parsed.outputs[i];
+            if (out.satoshis >= 546 && out.script.toHex() === walletLockHex) {
+              return { txId: id, outputIndex: i, satoshis: out.satoshis, address: addr };
+            }
+          }
+          return null;
+        };
+        changeUtxo =
+          inspectForChange(params.rawTx) ?? inspectForChange(params.amountCheckRawTx);
+      } catch {
+        // Non-fatal if rawTx in unit tests is synthetic hex
+      }
+    }
+    if (spent.length > 0) {
+      recordMvcSpentOutpoints(params.metabotId, spent);
+    }
+    if (changeUtxo) {
+      replaceMvcPendingFundingUtxos(params.metabotId, changeUtxo);
+    }
+    const finalTxId = params.txId || (() => {
+      try {
+        return new mvc.Transaction(params.rawTx).id;
+      } catch {
+        return '';
+      }
+    })();
+    if (finalTxId) {
+      recordMvcRecentRawTx(finalTxId, params.rawTx);
+    }
+  } catch {
+    // Non-fatal session hint
+  }
 }

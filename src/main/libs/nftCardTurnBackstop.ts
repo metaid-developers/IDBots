@@ -53,6 +53,7 @@ const ANNOUNCING_NFT_CARD_TOOLS = new Set<string>([
   'wallet_nft_cancel_sell',
   'wallet_nft_buy',
   'wallet_token_card',
+  'wallet_token_quote',
   'wallet_token_issue',
   'wallet_token_mint',
   'wallet_token_send',

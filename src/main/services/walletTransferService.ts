@@ -25,6 +25,7 @@ import { getMetabotAccountSummary } from './metabotAccountService';
 import { getWalletBalanceSnapshot, isBalanceRelatedError } from './walletQueryService';
 import { BotWalletTransferStore } from './botWalletTransferStore';
 import { executeTransfer, type TransferChain } from './transferService';
+import { convertGlobalMetaIdToAddresses, extractGlobalMetaIdCandidate } from './globalMetaid';
 
 const SATOSHI_PER_UNIT = 100_000_000;
 /** MVC P2PKH transfer vsize used for the fee estimate (same formula as buildTransferPreview). */
@@ -159,9 +160,22 @@ export async function executeWalletMvcTransfer(
   if (!Number.isInteger(metabotId) || metabotId <= 0) {
     return { success: false, error: 'metabot_id is required', error_code: 'invalid_params' };
   }
-  const toAddress = String(params.to || '').trim();
+  let toAddress = String(params.to || '').trim();
   if (!toAddress) {
     return { success: false, error: 'to is required', error_code: 'invalid_params' };
+  }
+  if (extractGlobalMetaIdCandidate(toAddress)) {
+    const resolvedGlobal = convertGlobalMetaIdToAddresses(toAddress);
+    if (!resolvedGlobal?.mvcAddress) {
+      return {
+        success: false,
+        error:
+          resolvedGlobal?.note ||
+          `GlobalMetaID "${toAddress}" cannot be offline-converted to an MVC address`,
+        error_code: 'invalid_params',
+      };
+    }
+    toAddress = resolvedGlobal.mvcAddress;
   }
   const amountSats = Number(params.amountSats);
   if (!Number.isInteger(amountSats) || amountSats < MIN_MVC_TRANSFER_SATS) {

@@ -241,7 +241,13 @@ import { openMetabotBtcWallet, signBtcPsbtPartial } from './services/btcPartialS
 import { broadcastBtcTx, fetchBtcUtxos } from './libs/btcApi';
 import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
 import { executeMvcTokenSellTrade, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
-import { broadcastMvcFtTransferBundle, listMvcFtAssets, mvcFtTokenBalanceFromAssets } from './services/mvcFtService';
+import {
+  broadcastMvcFtTransferBundle,
+  listMvcFtAssets,
+  mvcFtTokenBalanceFromAssets,
+  recordMvcFtBundleSpendSession,
+} from './services/mvcFtService';
+import { convertToGlobalMetaId } from './services/globalMetaid';
 import { executeMvcFtIssue, executeMvcFtMint, listMvcFtIssuances } from './services/mvcFtIssueService';
 import { executeMrc20Transfer, listMrc20Assets } from './services/mrc20Service';
 import { TokenOrderWatcher } from './services/tokenOrderWatcher';
@@ -250,6 +256,7 @@ import {
   getFtBatchOrderProgress,
   listFtActiveOrders,
   markFtOrdersCanceledByOutpoint,
+  registerFtActiveOrder,
   updateFtOrderStatus,
 } from './services/ftOrderStore';
 import {
@@ -9375,6 +9382,45 @@ const getCoworkRunner = () => {
           feeRate: getGlobalFeeRate('mvc'),
         }),
       ),
+      splitMvcFtForSell: ({ metabotId, codehash, genesis, amountBase }) =>
+        withChainWriteBudget('wallet_token_sell_split', async () => {
+          const store = getMetabotStore();
+          const bot = store.getMetabotById(metabotId);
+          if (!bot?.mvc_address) {
+            throw new Error(`MetaBot ${metabotId} MVC address not found`);
+          }
+          const feeRate = getGlobalFeeRate('mvc');
+          const built = await buildMvcFtTransferRawTx(store, {
+            metabotId,
+            token: {
+              codeHash: codehash,
+              genesisHash: genesis,
+            },
+            toAddress: bot.mvc_address,
+            amount: amountBase,
+            feeRate,
+          });
+          const broadcasted = await broadcastMvcFtTransferBundle(
+            {
+              amountCheckRawTx: built.amount_check_raw_tx,
+              rawTx: built.raw_tx,
+            },
+            (rawTx) => broadcastMvcTx(rawTx),
+          );
+          recordMvcFtBundleSpendSession({
+            metabotId,
+            walletAddress: bot.mvc_address,
+            amountCheckRawTx: built.amount_check_raw_tx,
+            rawTx: built.raw_tx,
+            txId: broadcasted.txId,
+          });
+          return {
+            txId: broadcasted.txId,
+            outputIndex: built.output_index,
+            amountBase,
+            rawTx: built.raw_tx,
+          };
+        }),
       takeToken: (params) => withChainWriteBudget(
         'wallet_token_buy',
         () => executeMvcTokenSellTrade(getMetabotStore(), {
@@ -9427,12 +9473,53 @@ const getCoworkRunner = () => {
           metabotId: filter?.metabotId,
           status: 'active',
         }),
+      registerActiveFtOrder: (orderInput) => {
+        const row = registerFtActiveOrder(getStore().getDatabase(), orderInput);
+        getStore().getSaveFunction()?.();
+        return row;
+      },
+      cancelActiveFtOrderByOutpoint: (metabotId, outpoint) => {
+        const changed = markFtOrdersCanceledByOutpoint(
+          getStore().getDatabase(),
+          metabotId,
+          outpoint,
+        );
+        if (changed > 0) getStore().getSaveFunction()?.();
+        return changed;
+      },
+      resolveLocalMetabotByGlobalMetaId: (globalMetaId) => {
+        const target = String(globalMetaId || '').trim().toLowerCase();
+        if (!target) return null;
+        for (const bot of getMetabotStore().listMetabots()) {
+          const candidates = [
+            bot.globalmetaid || '',
+            bot.mvc_address ? convertToGlobalMetaId(bot.mvc_address) : '',
+            bot.btc_address ? convertToGlobalMetaId(bot.btc_address) : '',
+            bot.doge_address ? convertToGlobalMetaId(bot.doge_address) : '',
+          ]
+            .map((s) => s.trim().toLowerCase())
+            .filter(Boolean);
+          if (candidates.includes(target)) {
+            return {
+              id: bot.id,
+              name: bot.name,
+              mvcAddress: bot.mvc_address || undefined,
+              btcAddress: bot.btc_address ?? undefined,
+              dogeAddress: bot.doge_address ?? undefined,
+            };
+          }
+        }
+        return null;
+      },
       getMetabotSummary: (metabotId) => {
         const bot = getMetabotStore().getMetabotById(metabotId);
         if (!bot) return null;
         return {
           id: bot.id,
           name: bot.name,
+          globalMetaId:
+            bot.globalmetaid ||
+            (bot.mvc_address ? convertToGlobalMetaId(bot.mvc_address) : undefined),
           mvcAddress: bot.mvc_address,
           btcAddress: bot.btc_address ?? undefined,
           dogeAddress: bot.doge_address ?? undefined,

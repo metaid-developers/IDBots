@@ -264,10 +264,12 @@ const TOOLS_BY_DOMAIN: Record<Exclude<ToolDomain, 'browser_automation'>, readonl
     'wallet_nft_sell',
     'wallet_nft_sell_orders',
     'wallet_nft_transfer',
+    'wallet_resolve_global_metaid',
     'wallet_token_balance',
     'wallet_token_bridge_card',
     'wallet_token_buy',
     'wallet_token_card',
+    'wallet_token_quote',
     'wallet_token_cancel_sell',
     'wallet_token_my_orders',
     'wallet_token_portfolio',
@@ -456,7 +458,7 @@ export function isToolAllowedForHostEnv(toolName: string, hostEnv: HostEnv): boo
 
 const MOBILE_TOOL_PATTERNS: Record<MobileToolExpansion, RegExp> = {
   workerEconomy: /\b(?:metatask|agentpedia|escrow|prediction_record|metaprotocol|group[_ -]?task)\b|群任务|托管订单|预测账本|元协议|竞赛任务/i,
-  financial: /(?:^|[\s(（])\$[A-Za-z][A-Za-z0-9_-]{1,15}\b|\b(?:wallet|btc|space|doge|mrc20|idcoin|id-coin|mrc721|nft|token|tokens|issue|mint|bridge|payment|multisig|goods)\b|钱包|转账|余额|持仓|比特币|代币|币价|行情|市值|地板价|涨幅|挂单|撤单|跨链|资产桥|发币|铸造|增发|支付|付款|收款|充值|积分|手续费|矿工费|商品/i,
+  financial: /(?:^|[\s(（])\$[A-Za-z][A-Za-z0-9_-]{1,15}\b|\bid[qpzrt]1[a-z0-9]{20,}\b|\b(?:wallet|btc|space|doge|mrc20|idcoin|id-coin|mrc721|nft|token|tokens|issue|mint|bridge|payment|multisig|goods|globalmetaid)\b|钱包|转账|余额|持仓|比特币|代币|币价|行情|市值|地板价|比价|涨幅|挂单|撤单|跨链|资产桥|发币|铸造|增发|支付|付款|收款|充值|积分|手续费|矿工费|商品|转换.*地址|地址转换/i,
   social: /\b(?:buzz|simpleqa|simplequestion|simplenote|simplelog|omni_cast|group[_ -]?chat|private[_ -]?chat)\b|动态|私聊|群聊|问答|笔记|日志|点赞|评论|发帖|发文章|发短文|发长文|好友|关注|转发/i,
   metaweb: /\b(?:metaweb|metaid|metaapp|chain|pin|protocol)\b|链上|协议|动态|问答|帖子| agent internet|agent 互联网/i,
   orchestration: /\b(?:task|tasks|subagent|delegate|orchestrat\w*|longterm|schedule|todo|worker)\b|任务|督办|长期|定时|编排|委派|员工|团队|分身|子代理|子任务|待办/i,

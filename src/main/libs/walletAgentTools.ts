@@ -33,14 +33,25 @@ import type {
 } from '../services/mvcFtIssueService';
 import { appendNftCardBlock, findNftCardDetail, type NftCardEmitFields } from './nftCardMarkdown';
 import { withNftCardHostStamp } from './tradeActivityStamp';
+import Decimal from 'decimal.js';
 import {
+  convertGlobalMetaIdToAddresses,
+  convertToGlobalMetaId,
+  extractGlobalMetaIdCandidate,
+} from '../services/globalMetaid';
+import {
+  buildFtQuoteCardSnapshot,
   buildTokenCardSnapshot,
+  fetchLiveFtSellerOrders,
   formatTokenAmountDisplay,
+  type BuildFtQuoteCardInput,
+  type BuildFtQuoteCardResult,
   type BuildTokenCardInput,
   type BuildTokenCardResult,
+  type FetchLiveFtSellerOrdersInput,
   type TokenCardMetabotSummary,
 } from '../services/tokenCardService';
-import type { FtActiveOrderRecord } from '../services/ftOrderStore';
+import type { FtActiveOrderRecord, RegisterFtActiveOrderInput } from '../services/ftOrderStore';
 import {
   FT_ACTION_CARD_FENCE_TAG,
   FT_BRIDGE_CARD_FENCE_TAG,
@@ -54,6 +65,7 @@ import {
   formatFtMyOrdersCardFence,
   formatFtOrderCardFence,
   formatFtPortfolioCardFence,
+  type FtCardRail,
   type FtMyOrderItem,
   type FtPortfolioHolding,
 } from '../../renderer/components/chat/ftCardSyntax';
@@ -160,10 +172,17 @@ export type WalletToolsControl = {
     codehash: string;
     tokenTxid?: string;
     tokenVout?: number;
+    tokenTxHex?: string;
     tokenAmount?: string;
     priceSats: number;
     seedSats?: number;
   }): Promise<{ txId: string; fundingTxIds: string[]; listing?: import('../services/walletRawTxService').MvcTokenSellListing }>;
+  splitMvcFtForSell?(params: {
+    metabotId: number;
+    codehash: string;
+    genesis: string;
+    amountBase: string;
+  }): Promise<{ txId: string; outputIndex: number; amountBase: string; rawTx?: string }>;
   takeToken(params: {
     metabotId: number;
     listing: import('../services/walletRawTxService').MvcTokenSellListingRef;
@@ -191,7 +210,16 @@ export type WalletToolsControl = {
   }): MvcFtIssuanceRecord[];
   getMetabotSummary?(metabotId: number): TokenCardMetabotSummary | null;
   getTokenCard?(input: BuildTokenCardInput): Promise<BuildTokenCardResult>;
+  getTokenQuote?(input: BuildFtQuoteCardInput): Promise<BuildFtQuoteCardResult>;
   listActiveFtOrders?(filter?: { metabotId?: number }): FtActiveOrderRecord[];
+  registerActiveFtOrder?(input: RegisterFtActiveOrderInput): FtActiveOrderRecord;
+  cancelActiveFtOrderByOutpoint?(metabotId: number, outpoint: string): number;
+  fetchLiveSellerFtOrders?(
+    input: FetchLiveFtSellerOrdersInput,
+  ): Promise<{ items: FtMyOrderItem[]; mvcSatsTotal: number; meTotal: number; btcSatsTotal: number }>;
+  resolveLocalMetabotByGlobalMetaId?(
+    globalMetaId: string,
+  ): { id: number; name: string; mvcAddress?: string; btcAddress?: string; dogeAddress?: string } | null;
 };
 
 /** Minimal shape of the claude-agent-sdk tool() helper we depend on. */
@@ -219,9 +247,17 @@ function appendFtSuiteFence(summaryText: string, fence: string, fenceTag: string
   return `${summaryText}\n\nInclude the following \`\`\`${fenceTag} block verbatim in your reply:\n\n${fence}`;
 }
 
-function formatBaseUnitToDisplay(baseUnits: string | undefined, decimals = 0): string {
+function formatBaseUnitToDisplay(
+  baseUnits: string | undefined,
+  decimals = 0,
+  alreadyDisplay = false,
+): string {
   const raw = String(baseUnits ?? '').trim();
-  if (!/^\d+$/.test(raw)) return raw || '0';
+  if (!raw) return '0';
+  if (alreadyDisplay || raw.includes('.')) {
+    return formatTokenAmountDisplay(raw, Math.min(8, Math.max(4, decimals)));
+  }
+  if (!/^\d+$/.test(raw)) return raw;
   if (!decimals || decimals <= 0) return formatTokenAmountDisplay(raw, 4);
   const padded = raw.padStart(decimals + 1, '0');
   const intPart = padded.slice(0, padded.length - decimals);
@@ -230,50 +266,99 @@ function formatBaseUnitToDisplay(baseUnits: string | undefined, decimals = 0): s
   return formatTokenAmountDisplay(decimalStr, Math.min(8, decimals));
 }
 
+function parseDisplayAmountToBaseUnits(displayAmount: string, decimals: number): bigint | null {
+  const clean = String(displayAmount ?? '').trim();
+  if (!clean) return null;
+  try {
+    const dec = new Decimal(clean);
+    if (!dec.isFinite() || dec.lte(0)) return null;
+    const scaled = dec.mul(new Decimal(10).pow(decimals));
+    if (!scaled.isInteger()) return null;
+    const str = scaled.toFixed(0);
+    return /^\d+$/.test(str) ? BigInt(str) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveMvcFtMetaFromWallet(
   control: WalletToolsControl,
   metabotId: number,
   genesis: string,
   codehash?: string,
-): Promise<{ symbol: string; decimals: number; balanceDisplay?: string }> {
+): Promise<{
+  symbol: string;
+  decimals: number;
+  canonicalGenesis: string;
+  balanceDisplay?: string;
+  totalBalanceBase?: bigint;
+  utxoCount?: number;
+}> {
   const targetGen = genesis.toLowerCase();
   const targetCode = codehash?.toLowerCase();
+  let canonicalGenesis = targetGen;
+  let issuedSymbol: string | undefined;
+  let issuedDecimals: number | undefined;
+
   try {
     if (control.listIssuedTokens) {
       const issued = control.listIssuedTokens({ limit: 100 });
-      const foundIssued = issued.find(
-        (r) =>
-          r.genesis.toLowerCase() === targetGen &&
-          (!targetCode || r.codehash.toLowerCase() === targetCode),
-      );
+      const foundIssued = issued.find((r) => {
+        const g = r.genesis.toLowerCase();
+        const txId = r.genesisTxId.toLowerCase();
+        const sid = r.sensibleId.toLowerCase();
+        const matchesGen =
+          g === targetGen ||
+          ((targetGen.length === 64 || targetGen.length === 72) &&
+            (txId === targetGen || sid === targetGen || sid.startsWith(targetGen)));
+        return matchesGen && (!targetCode || r.codehash.toLowerCase() === targetCode);
+      });
       if (foundIssued) {
-        return {
-          symbol: foundIssued.tokenSymbol || 'FT',
-          decimals: foundIssued.decimals ?? 8,
-        };
+        canonicalGenesis = foundIssued.genesis.toLowerCase();
+        issuedSymbol = foundIssued.tokenSymbol || undefined;
+        issuedDecimals = foundIssued.decimals ?? 8;
       }
     }
     if (typeof control.listMvcFtTokens === 'function') {
       const entries = await control.listMvcFtTokens({ metabotIds: [metabotId] });
       const tokens = entries[0]?.balance?.tokens ?? [];
-      const match = tokens.find(
-        (t) =>
-          String(t.genesis || '').toLowerCase() === targetGen &&
-          (!targetCode || !t.codeHash || String(t.codeHash).toLowerCase() === targetCode),
-      );
+      const match = tokens.find((t) => {
+        const g = String(t.genesis || '').toLowerCase();
+        return (
+          (g === canonicalGenesis || g === targetGen) &&
+          (!targetCode || !t.codeHash || String(t.codeHash).toLowerCase() === targetCode)
+        );
+      });
       if (match) {
-        const decimals = match.decimal ?? 0;
+        const decimals = match.decimal ?? issuedDecimals ?? 0;
+        const rawBal = String(match.balance || '0').trim();
+        const alreadyDisplay =
+          rawBal.includes('.') ||
+          match.confirmed !== undefined ||
+          match.unconfirmed !== undefined;
+        const totalBalanceBase = alreadyDisplay
+          ? parseDisplayAmountToBaseUnits(rawBal, decimals) ?? (rawBal === '0' || /^0(?:\.0+)?$/.test(rawBal) ? 0n : undefined)
+          : /^\d+$/.test(rawBal)
+            ? BigInt(rawBal)
+            : undefined;
         return {
-          symbol: match.symbol || 'FT',
+          symbol: match.symbol || issuedSymbol || 'FT',
           decimals,
-          balanceDisplay: formatBaseUnitToDisplay(match.balance, decimals),
+          canonicalGenesis: String(match.genesis || canonicalGenesis).toLowerCase(),
+          balanceDisplay: formatBaseUnitToDisplay(match.balance, decimals, alreadyDisplay),
+          ...(totalBalanceBase !== undefined ? { totalBalanceBase } : {}),
+          ...(match.count !== undefined ? { utxoCount: match.count } : {}),
         };
       }
     }
   } catch {
     // Non-fatal enrichment
   }
-  return { symbol: 'FT', decimals: 0 };
+  return {
+    symbol: issuedSymbol || 'FT',
+    decimals: issuedDecimals ?? 0,
+    canonicalGenesis,
+  };
 }
 
 function formatSnapshot(snapshot: WalletBalanceSnapshot): string {
@@ -332,8 +417,88 @@ function formatBalanceEntry(entry: MetabotWalletBalanceEntry): string {
 }
 
 function looksLikeMvcAddress(value: string): boolean {
+  // Exclude GlobalMetaIDs (`idq1...` / `idz1...` / `idp1...` / `idr1...` / `idt1...`) and URIs.
+  if (/^id[qpzrt]1/i.test(value) || /^metaid:/i.test(value)) return false;
   // MVC/SPACE livenet addresses are base58 (start with 1, 20+ chars).
   return /^[1-9A-HJ-NP-Za-km-z]{20,}$/.test(value);
+}
+
+function resolveMvcTargetAddress(
+  control: WalletToolsControl,
+  rawTarget: string,
+  toolName: string,
+):
+  | { ok: true; address: string; toMetabotId: number | null; toName?: string; globalMetaId?: string }
+  | { ok: false; error: string } {
+  const trimmed = asString(rawTarget);
+  if (!trimmed) {
+    return {
+      ok: false,
+      error: `${toolName} requires a target (local metabot_id, local bot name, GlobalMetaID idq1..., or MVC address).`,
+    };
+  }
+
+  // 1. Numeric local metabot_id
+  if (/^\d+$/.test(trimmed)) {
+    const id = Number(trimmed);
+    const address = control.getMetabotMvcAddress(id);
+    if (!address) {
+      return { ok: false, error: `${toolName}: local MetaBot not found: ${trimmed}` };
+    }
+    return { ok: true, address, toMetabotId: id };
+  }
+
+  // 2. GlobalMetaID (`idq1...`, `idz1...`, `metaid://idq1...`, etc.)
+  if (extractGlobalMetaIdCandidate(trimmed)) {
+    const decoded = convertGlobalMetaIdToAddresses(trimmed);
+    if (!decoded) {
+      return { ok: false, error: `${toolName}: invalid GlobalMetaID "${trimmed}".` };
+    }
+    const localHit = control.resolveLocalMetabotByGlobalMetaId?.(decoded.globalMetaId) ?? null;
+    if (localHit?.mvcAddress) {
+      return {
+        ok: true,
+        address: localHit.mvcAddress,
+        toMetabotId: localHit.id,
+        toName: localHit.name,
+        globalMetaId: decoded.globalMetaId,
+      };
+    }
+    if (!decoded.mvcAddress) {
+      return {
+        ok: false,
+        error:
+          `${toolName}: GlobalMetaID "${decoded.globalMetaId}" encodes a ${decoded.addressType.toUpperCase()} payload ` +
+          `${decoded.btcAddress ? `(${decoded.btcAddress}) ` : ''}and cannot be offline-converted to a 20-byte MVC P2PKH address. ` +
+          `Use metaid_profile to check whether this user registered a separate MVC address.`,
+      };
+    }
+    return {
+      ok: true,
+      address: decoded.mvcAddress,
+      toMetabotId: null,
+      globalMetaId: decoded.globalMetaId,
+    };
+  }
+
+  // 3. Raw MVC address
+  if (looksLikeMvcAddress(trimmed)) {
+    return { ok: true, address: trimmed, toMetabotId: null };
+  }
+
+  // 4. Local MetaBot display name
+  const id = control.resolveMetabotIdByName(trimmed);
+  if (id == null) {
+    return {
+      ok: false,
+      error: `${toolName}: "${trimmed}" is neither a local MetaBot name, a GlobalMetaID (idq1...), nor an MVC address.`,
+    };
+  }
+  const address = control.getMetabotMvcAddress(id) ?? '';
+  if (!address) {
+    return { ok: false, error: `${toolName}: MetaBot ${trimmed} has no mvc address.` };
+  }
+  return { ok: true, address, toMetabotId: id, toName: trimmed };
 }
 
 function formatTransferSuccess(result: WalletTransferResult & { success: true }): string {
@@ -560,10 +725,29 @@ export function buildWalletAgentTools(deps: {
         }
         const address = asString(args.address);
         if (address) {
+          const globalDecoded = extractGlobalMetaIdCandidate(address)
+            ? convertGlobalMetaIdToAddresses(address)
+            : null;
+          if (extractGlobalMetaIdCandidate(address) && !globalDecoded) {
+            return textResult(`wallet_balance: invalid GlobalMetaID "${address}".`, true);
+          }
           const list = chains ?? (['mvc', 'btc', 'doge'] as WalletQueryChain[]);
           for (const chain of list) {
+            const chainAddr = globalDecoded
+              ? chain === 'mvc'
+                ? globalDecoded.mvcAddress
+                : chain === 'btc'
+                  ? globalDecoded.btcAddress
+                  : globalDecoded.dogeAddress
+              : address;
+            if (!chainAddr) {
+              sections.push(
+                `- ${chain}: skipped (${globalDecoded?.note || `GlobalMetaID ${address} has no ${chain} address`})`,
+              );
+              continue;
+            }
             try {
-              sections.push(formatSnapshot(await control.getBalanceForAddress(chain, address, queryOptions)));
+              sections.push(formatSnapshot(await control.getBalanceForAddress(chain, chainAddr, queryOptions)));
             } catch (error) {
               sections.push(`- ${chain}: lookup failed: ${error instanceof Error ? error.message : String(error)}`);
             }
@@ -618,38 +802,11 @@ export function buildWalletAgentTools(deps: {
         );
       }
 
-      const toRaw = asString(args.to);
-      if (!toRaw) {
-        return textResult('wallet_transfer requires `to` (metabot_id, name, or address).', true);
+      const resolvedTarget = resolveMvcTargetAddress(control, args.to, 'wallet_transfer');
+      if (resolvedTarget.ok === false) {
+        return textResult(resolvedTarget.error, true);
       }
-      // Resolve `to`: metabot id or local name → local mvc address; else raw address.
-      let toAddress = '';
-      let toMetabotId: number | null = null;
-      if (/^\d+$/.test(toRaw)) {
-        const id = Number(toRaw);
-        const address = control.getMetabotMvcAddress(id);
-        if (address) {
-          toAddress = address;
-          toMetabotId = id;
-        } else {
-          return textResult(`wallet_transfer: local MetaBot not found: ${toRaw}`, true);
-        }
-      } else if (!looksLikeMvcAddress(toRaw)) {
-        const id = control.resolveMetabotIdByName(toRaw);
-        if (id == null) {
-          return textResult(
-            `wallet_transfer: "${toRaw}" is neither a local MetaBot name nor an address. For an external address pass the full MVC address.`,
-            true,
-          );
-        }
-        toMetabotId = id;
-        toAddress = control.getMetabotMvcAddress(id) ?? '';
-        if (!toAddress) {
-          return textResult(`wallet_transfer: MetaBot ${toRaw} has no mvc address.`, true);
-        }
-      } else {
-        toAddress = toRaw;
-      }
+      const toAddress = resolvedTarget.address;
 
       const amount = Number(args.amount);
       if (!Number.isFinite(amount) || amount <= 0) {
@@ -745,33 +902,12 @@ export function buildWalletAgentTools(deps: {
           true,
         );
       }
-      // Resolve `to` exactly like wallet_transfer: metabot id or local name →
-      // local mvc address; else raw address (gate parity depends on the same
-      // roster match).
-      const toRaw = asString(args.to);
-      if (!toRaw) {
-        return textResult('wallet_token_send requires `to` (metabot_id, name, or address).', true);
+      // Resolve `to` across local metabot_id, GlobalMetaID (idq1...), raw MVC address, or local bot name.
+      const resolvedTarget = resolveMvcTargetAddress(control, args.to, 'wallet_token_send');
+      if (resolvedTarget.ok === false) {
+        return textResult(resolvedTarget.error, true);
       }
-      let toAddress = '';
-      if (/^\d+$/.test(toRaw)) {
-        const id = Number(toRaw);
-        const address = control.getMetabotMvcAddress(id);
-        if (!address) return textResult(`wallet_token_send: local MetaBot not found: ${toRaw}`, true);
-        toAddress = address;
-      } else if (!looksLikeMvcAddress(toRaw)) {
-        const id = control.resolveMetabotIdByName(toRaw);
-        if (id == null) {
-          return textResult(
-            `wallet_token_send: "${toRaw}" is neither a local MetaBot name nor an address. For an external address pass the full MVC address.`,
-            true,
-          );
-        }
-        const address = control.getMetabotMvcAddress(id) ?? '';
-        if (!address) return textResult(`wallet_token_send: MetaBot ${toRaw} has no mvc address.`, true);
-        toAddress = address;
-      } else {
-        toAddress = toRaw;
-      }
+      const toAddress = resolvedTarget.address;
       const amount = asString(args.amount);
       if (!amount) {
         return textResult('wallet_token_send requires `amount` in token display units (e.g. "0.1").', true);
@@ -800,7 +936,9 @@ export function buildWalletAgentTools(deps: {
         // discriminated union.
         if (result.success === true) {
           const summary = formatTokenSendSuccess(result);
-          const assetKey = `mvc-ft:${asString(args.codehash).toLowerCase() || 'mvc'}:${result.token_genesis.toLowerCase()}`;
+          const resolvedCodehash =
+            (result.token_codehash || asString(args.codehash) || 'mvc').toLowerCase();
+          const assetKey = `mvc-ft:${resolvedCodehash}:${result.token_genesis.toLowerCase()}`;
           const fence = formatFtActionCardFence({
             action: 'transfer',
             symbol: result.token_symbol || 'FT',
@@ -962,7 +1100,17 @@ export function buildWalletAgentTools(deps: {
         }
         if (!metabotIds.includes(id)) metabotIds.push(id);
       }
-      const address = asString(args.address);
+      let address = asString(args.address);
+      if (address && extractGlobalMetaIdCandidate(address)) {
+        const decoded = convertGlobalMetaIdToAddresses(address);
+        if (!decoded?.mvcAddress) {
+          return textResult(
+            decoded?.note || `wallet_nft_balance: GlobalMetaID "${address}" cannot be offline-converted to an MVC address.`,
+            true,
+          );
+        }
+        address = decoded.mvcAddress;
+      }
       if (metabotIds.length === 0 && !address) {
         return textResult(
           'wallet_nft_balance requires metabot_ids, names, or address (pass the ids you want in ONE call).',
@@ -1021,39 +1169,13 @@ export function buildWalletAgentTools(deps: {
         );
       }
 
-      const toRaw = asString(args.to);
-      if (!toRaw) {
-        return textResult('wallet_nft_transfer requires `to` (metabot_id, name, or address).', true);
+      const resolvedTarget = resolveMvcTargetAddress(control, args.to, 'wallet_nft_transfer');
+      if (resolvedTarget.ok === false) {
+        return textResult(resolvedTarget.error, true);
       }
-      let toAddress = '';
-      let toMetabotId: number | null = null;
-      let toName: string | undefined;
-      if (/^\d+$/.test(toRaw)) {
-        const id = Number(toRaw);
-        const address = control.getMetabotMvcAddress(id);
-        if (address) {
-          toAddress = address;
-          toMetabotId = id;
-        } else {
-          return textResult(`wallet_nft_transfer: local MetaBot not found: ${toRaw}`, true);
-        }
-      } else if (!looksLikeMvcAddress(toRaw)) {
-        const id = control.resolveMetabotIdByName(toRaw);
-        if (id == null) {
-          return textResult(
-            `wallet_nft_transfer: "${toRaw}" is neither a local MetaBot name nor an address. For an external address pass the full MVC address.`,
-            true,
-          );
-        }
-        toMetabotId = id;
-        toName = toRaw;
-        toAddress = control.getMetabotMvcAddress(id) ?? '';
-        if (!toAddress) {
-          return textResult(`wallet_nft_transfer: MetaBot ${toRaw} has no mvc address.`, true);
-        }
-      } else {
-        toAddress = toRaw;
-      }
+      const toAddress = resolvedTarget.address;
+      const toMetabotId = resolvedTarget.toMetabotId;
+      const toName = resolvedTarget.toName;
 
       const genesis = asString(args.genesis);
       const codehash = asString(args.codehash);
@@ -1150,7 +1272,17 @@ export function buildWalletAgentTools(deps: {
         const id = control.resolveMetabotIdByName(String(rawName || '').trim());
         if (id != null && !metabotIds.includes(id)) metabotIds.push(id);
       }
-      const address = asString(args.address);
+      let address = asString(args.address);
+      if (address && extractGlobalMetaIdCandidate(address)) {
+        const decoded = convertGlobalMetaIdToAddresses(address);
+        if (!decoded?.mvcAddress) {
+          return textResult(
+            decoded?.note || `wallet_nft_sell_orders: GlobalMetaID "${address}" cannot be offline-converted to an MVC address.`,
+            true,
+          );
+        }
+        address = decoded.mvcAddress;
+      }
       if (!metabotIds.length && !address) {
         return textResult('wallet_nft_sell_orders requires metabot_ids, names, or address.', true);
       }
@@ -1467,7 +1599,17 @@ export function buildWalletAgentTools(deps: {
         }
         if (!metabotIds.includes(id)) metabotIds.push(id);
       }
-      const address = asString(args.address);
+      let address = asString(args.address);
+      if (address && extractGlobalMetaIdCandidate(address)) {
+        const decoded = convertGlobalMetaIdToAddresses(address);
+        if (!decoded?.mvcAddress) {
+          return textResult(
+            decoded?.note || `wallet_token_balance: GlobalMetaID "${address}" cannot be offline-converted to an MVC address.`,
+            true,
+          );
+        }
+        address = decoded.mvcAddress;
+      }
       if (metabotIds.length === 0 && !address) {
         return textResult('wallet_token_balance requires metabot_ids, names, or address (pass the ids you want in ONE call).', true);
       }
@@ -1531,7 +1673,17 @@ export function buildWalletAgentTools(deps: {
         }
         if (!metabotIds.includes(id)) metabotIds.push(id);
       }
-      const address = asString(args.address);
+      let address = asString(args.address);
+      if (address && extractGlobalMetaIdCandidate(address)) {
+        const decoded = convertGlobalMetaIdToAddresses(address);
+        if (!decoded?.btcAddress) {
+          return textResult(
+            decoded?.note || `wallet_mrc20_balance: GlobalMetaID "${address}" cannot be offline-converted to a BTC address.`,
+            true,
+          );
+        }
+        address = decoded.btcAddress;
+      }
       if (metabotIds.length === 0 && !address) {
         return textResult('wallet_mrc20_balance requires metabot_ids, names, or address (pass the ids you want in ONE call).', true);
       }
@@ -1564,11 +1716,11 @@ export function buildWalletAgentTools(deps: {
       'Token moves are irreversible on-chain — confirm the token and receiver with the owner before calling when ambiguous.',
     ].join(' '),
     {
-      genesis: z.string().min(1).describe('FT genesis id (64 hex).'),
+      genesis: z.string().min(1).describe('FT genesis id (40 hex canonical MCP02 genesis, or 64 hex).'),
       codehash: z.string().min(1).describe('FT codehash (40 hex).'),
       token_txid: z.string().optional().describe('Token utxo txid (64 hex) — required when the address holds several utxos of this genesis.'),
       token_vout: z.number().int().nonnegative().optional().describe('Token utxo output index.'),
-      receiver_address: z.string().min(1).describe('Raw MVC address receiving the full token utxo.'),
+      receiver_address: z.string().min(1).describe('MVC address, GlobalMetaID (idq1...), local metabot_id, or local MetaBot name receiving the full token utxo.'),
     },
     async (args: {
       genesis: string;
@@ -1583,22 +1735,24 @@ export function buildWalletAgentTools(deps: {
       }
       const genesis = asString(args.genesis).toLowerCase();
       const codehash = asString(args.codehash).toLowerCase();
-      if (!/^[0-9a-f]{64}$/.test(genesis) || !/^[0-9a-f]{40}$/.test(codehash)) {
-        return textResult('wallet_token_transfer requires genesis (64 hex) and codehash (40 hex). Use wallet_token_balance to look them up.', true);
+      if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(genesis) || !/^[0-9a-f]{40}$/.test(codehash)) {
+        return textResult('wallet_token_transfer requires genesis (40 or 64 hex) and codehash (40 hex). Use wallet_token_balance to look them up. (For partial-amount FT transfers by symbol or GlobalMetaID, prefer wallet_token_send.)', true);
       }
-      const receiverAddress = asString(args.receiver_address).trim();
-      if (!receiverAddress || !looksLikeMvcAddress(receiverAddress)) {
-        return textResult('wallet_token_transfer: receiver_address must be a raw MVC address (tokens only transfer to addresses, not local bots).', true);
+      const resolvedReceiver = resolveMvcTargetAddress(control, args.receiver_address, 'wallet_token_transfer');
+      if (resolvedReceiver.ok === false) {
+        return textResult(resolvedReceiver.error, true);
       }
+      const receiverAddress = resolvedReceiver.address;
       const tokenTxid = asString(args.token_txid).toLowerCase();
       if (tokenTxid && !/^[0-9a-f]{64}$/.test(tokenTxid)) {
         return textResult('wallet_token_transfer: token_txid must be 64 hex.', true);
       }
       try {
         const preMeta = await resolveMvcFtMetaFromWallet(control, metabotId, genesis, codehash);
+        const canonicalGenesis = preMeta.canonicalGenesis || genesis;
         const result = await control.transferToken({
           metabotId,
-          genesis,
+          genesis: canonicalGenesis,
           codehash,
           tokenTxid: tokenTxid || undefined,
           tokenVout: args.token_vout,
@@ -1616,7 +1770,7 @@ export function buildWalletAgentTools(deps: {
           symbol: preMeta.symbol,
           chain: 'mvc',
           standard: 'mvc-ft',
-          assetKey: `mvc-ft:${codehash}:${genesis}`,
+          assetKey: `mvc-ft:${codehash}:${canonicalGenesis}`,
           amountDisplay: preMeta.balanceDisplay || '1 UTXO',
           receiverAddress,
           txid: result.txId,
@@ -1723,24 +1877,27 @@ export function buildWalletAgentTools(deps: {
   const walletTokenSell = tool(
     'wallet_token_sell',
     [
-      'List ONE FT token utxo (MetaContract FT, full-utxo listing) owned by THIS session MetaBot for sale on-chain via the TokenSell contract.',
-      'Identify the token with genesis + codehash (see wallet_token_balance); when the address holds several utxos of that genesis also pass token_txid/token_vout. price_sats is the ask price in satoshis (1 SPACE = 1e8 sats; pass price_space to convert). Minimum 22000 sats — mirrors the wallet_nft_sell floor.',
-      'Partial-quantity listings are REJECTED at construction (they break the checker conservation) — the whole token utxo is listed; split the token first if you need less.',
-      'Signing runs in a subprocess worker; ordered txs broadcast (checker mint → seed → listing). Returns the listing tuple to share with takers. Confirm the price with the owner when ambiguous.',
+      'List MetaContract FT tokens owned by THIS session MetaBot for sale on-chain via the MVC TokenSell contract (`mvc-tokensell`) and emit a native ```ft-order-card (`O1`).',
+      'Identify the token with genesis (40-hex canonical MCP02 genesis from wallet_token_balance / wallet_token_issued_list, or 64-hex genesisTxId) + codehash (40-hex).',
+      'Pass `amount` in human display units (e.g. "100") to sell a specific quantity: if your wallet holds a larger UTXO or multiple UTXOs, this tool automatically splits an exact FT UTXO on-chain (0-conf chained) and lists it on TokenSell in one call! Omit `amount` only when selling an entire existing single UTXO (or pass token_txid + token_vout).',
+      'price_sats is the total lot ask price in satoshis (1 SPACE = 1e8 sats; pass price_space e.g. 0.1 to convert). Minimum 22000 sats.',
+      'Signing runs in a subprocess worker; ordered txs broadcast ([optional split] → checker mint → seed → listing) and persist in local active orders so wallet_token_my_orders can manage/cancel them.',
     ].join(' '),
     {
-      genesis: z.string().min(1).describe('FT genesis id (64 hex).'),
+      genesis: z.string().min(1).describe('FT genesis id (40-hex canonical MCP02 genesis, or 64-hex genesisTxId).'),
       codehash: z.string().min(1).describe('FT codehash (40 hex).'),
-      token_txid: z.string().optional().describe('Token utxo txid (64 hex) — required when the address holds several utxos of this genesis.'),
-      token_vout: z.number().int().nonnegative().optional().describe('Token utxo output index.'),
-      token_amount: z.string().optional().describe('Explicit amount — MUST equal the utxo\'s full amount (full-utxo listings only).'),
-      price_sats: z.number().int().positive().optional().describe('Ask price in satoshis (1 SPACE = 1e8 sats).'),
-      price_space: z.number().positive().optional().describe('Ask price in SPACE (converted to sats; sats wins if both given).'),
+      amount: z.string().optional().describe('Quantity of tokens to list in human display units (e.g. "100"). Automatically splits an exact UTXO when smaller than your full balance or spread across multiple UTXOs.'),
+      token_txid: z.string().optional().describe('Explicit token utxo txid (64 hex) when listing an already-isolated UTXO.'),
+      token_vout: z.number().int().nonnegative().optional().describe('Token utxo output index when token_txid is provided.'),
+      token_amount: z.string().optional().describe('Explicit base-unit amount — used only when matching an exact UTXO (prefer `amount` in display units for partial sales).'),
+      price_sats: z.number().int().positive().optional().describe('Total ask price for this lot in satoshis (1 SPACE = 1e8 sats).'),
+      price_space: z.number().positive().optional().describe('Total ask price for this lot in SPACE (converted to sats; price_sats wins if both given).'),
       seed_sats: z.number().int().min(600).optional().describe('Seed utxo denomination (default 2032, the live-fire value).'),
     },
     async (args: {
       genesis: string;
       codehash: string;
+      amount?: string;
       token_txid?: string;
       token_vout?: number;
       token_amount?: string;
@@ -1752,10 +1909,10 @@ export function buildWalletAgentTools(deps: {
       if (metabotId == null) {
         return textResult('wallet_token_sell could not determine which MetaBot owns this session; sells must spend the session bot\'s own wallet.', true);
       }
-      const genesis = asString(args.genesis);
-      const codehash = asString(args.codehash);
-      if (!/^[0-9a-fA-F]{64}$/.test(genesis) || !/^[0-9a-fA-F]{40}$/.test(codehash)) {
-        return textResult('wallet_token_sell requires genesis (64 hex) and codehash (40 hex). Use wallet_token_balance to look them up.', true);
+      const genesis = asString(args.genesis).toLowerCase();
+      const codehash = asString(args.codehash).toLowerCase();
+      if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(genesis) || !/^[0-9a-f]{40}$/.test(codehash)) {
+        return textResult('wallet_token_sell requires genesis (40 or 64 hex) and codehash (40 hex). Use wallet_token_balance or wallet_token_issued_list to look them up.', true);
       }
       let priceSats = Number(args.price_sats);
       if (!Number.isSafeInteger(priceSats) || priceSats <= 0) {
@@ -1776,44 +1933,188 @@ export function buildWalletAgentTools(deps: {
         const preMeta = await resolveMvcFtMetaFromWallet(
           control,
           metabotId,
-          genesis.toLowerCase(),
-          codehash.toLowerCase(),
+          genesis,
+          codehash,
         );
-        const result = await control.sellToken({
-          metabotId,
-          genesis: genesis.toLowerCase(),
-          codehash: codehash.toLowerCase(),
-          tokenTxid: tokenTxid || undefined,
-          tokenVout: args.token_vout,
-          tokenAmount: asString(args.token_amount) || undefined,
-          priceSats,
-          seedSats: args.seed_sats,
-        });
+        const canonicalGenesis = preMeta.canonicalGenesis || genesis;
+
+        let resolvedTokenTxid: string | undefined = tokenTxid || undefined;
+        let resolvedTokenVout: number | undefined = args.token_vout;
+        let resolvedTokenTxHex: string | undefined;
+        let resolvedTokenAmountBase: string | undefined = asString(args.token_amount) || undefined;
+        let splitTxIdUsed: string | undefined;
+
+        const displayAmountArg = asString(args.amount);
+        if (displayAmountArg) {
+          const targetBase = parseDisplayAmountToBaseUnits(displayAmountArg, preMeta.decimals);
+          if (targetBase == null || targetBase <= 0n) {
+            return textResult(
+              `wallet_token_sell: invalid display amount "${displayAmountArg}" for token ${preMeta.symbol} (decimals=${preMeta.decimals}).`,
+              true,
+            );
+          }
+          if (preMeta.totalBalanceBase !== undefined && targetBase > preMeta.totalBalanceBase) {
+            return textResult(
+              `wallet_token_sell: insufficient ${preMeta.symbol} balance — requested ${displayAmountArg}, wallet holds ${preMeta.balanceDisplay ?? '0'}.`,
+              true,
+            );
+          }
+          resolvedTokenAmountBase = targetBase.toString();
+
+          const needsSplit =
+            !resolvedTokenTxid &&
+            (preMeta.totalBalanceBase === undefined ||
+              targetBase < preMeta.totalBalanceBase ||
+              (preMeta.utxoCount ?? 1) > 1);
+
+          if (needsSplit) {
+            if (!control.splitMvcFtForSell) {
+              return textResult(
+                `wallet_token_sell: selling partial amount ${displayAmountArg} ${preMeta.symbol} requires FT UTXO splitting, which is not wired on this host.`,
+                true,
+              );
+            }
+            const splitRes = await control.splitMvcFtForSell({
+              metabotId,
+              codehash,
+              genesis: canonicalGenesis,
+              amountBase: targetBase.toString(),
+            });
+            resolvedTokenTxid = splitRes.txId;
+            resolvedTokenVout = splitRes.outputIndex;
+            resolvedTokenTxHex = splitRes.rawTx;
+            resolvedTokenAmountBase = splitRes.amountBase;
+            splitTxIdUsed = splitRes.txId;
+          }
+        }
+
+        let result: Awaited<ReturnType<WalletToolsControl['sellToken']>>;
+        try {
+          result = await control.sellToken({
+            metabotId,
+            genesis: canonicalGenesis,
+            codehash,
+            tokenTxid: resolvedTokenTxid,
+            tokenVout: resolvedTokenVout,
+            tokenTxHex: resolvedTokenTxHex,
+            tokenAmount: resolvedTokenAmountBase,
+            priceSats,
+            seedSats: args.seed_sats,
+          });
+        } catch (sellErr) {
+          const errMsg = sellErr instanceof Error ? sellErr.message : String(sellErr);
+          const canConsolidate =
+            !resolvedTokenTxid &&
+            control.splitMvcFtForSell &&
+            /holds\s+\d+\s+FT\s+utxos/i.test(errMsg) &&
+            (resolvedTokenAmountBase || preMeta.totalBalanceBase !== undefined);
+          if (!canConsolidate) throw sellErr;
+          const targetBaseStr =
+            resolvedTokenAmountBase || preMeta.totalBalanceBase!.toString();
+          const splitRes = await control.splitMvcFtForSell!({
+            metabotId,
+            codehash,
+            genesis: canonicalGenesis,
+            amountBase: targetBaseStr,
+          });
+          splitTxIdUsed = splitRes.txId;
+          result = await control.sellToken({
+            metabotId,
+            genesis: canonicalGenesis,
+            codehash,
+            tokenTxid: splitRes.txId,
+            tokenVout: splitRes.outputIndex,
+            tokenTxHex: splitRes.rawTx,
+            tokenAmount: splitRes.amountBase,
+            priceSats,
+            seedSats: args.seed_sats,
+          });
+          resolvedTokenAmountBase = splitRes.amountBase;
+        }
+
         const l = result.listing;
+        const listedGenesis = (l?.token_genesis || canonicalGenesis).toLowerCase();
+        const listedCodehash = (l?.token_codehash || codehash).toLowerCase();
+        const listedAmountBase = l?.token_amount || resolvedTokenAmountBase;
+        const lotDisplay = listedAmountBase
+          ? formatBaseUnitToDisplay(listedAmountBase, preMeta.decimals)
+          : displayAmountArg
+            ? formatTokenAmountDisplay(displayAmountArg, 8)
+            : preMeta.balanceDisplay || '1';
+
+        const spaceDisplay = (priceSats / SATOSHI_PER_UNIT).toFixed(8).replace(/\.?0+$/, '');
+        const lotQtyNum = Number(String(lotDisplay).replace(/,/g, ''));
+        const perTokenSpace =
+          Number.isFinite(lotQtyNum) && lotQtyNum > 0
+            ? (priceSats / SATOSHI_PER_UNIT / lotQtyNum).toFixed(8).replace(/\.?0+$/, '')
+            : null;
+        const unitPriceLabel =
+          perTokenSpace && lotQtyNum !== 1
+            ? `${perTokenSpace} SPACE / ${preMeta.symbol} (${spaceDisplay} SPACE lot)`
+            : `${spaceDisplay} SPACE (${priceSats.toLocaleString('en-US')} sats)`;
+
+        const batchGroupId = `tokensell_${result.txId.slice(0, 12)}`;
+        const assetKey = `mvc-ft:${listedCodehash}:${listedGenesis}`;
+        const sellOutIndex = l?.sell_output_index ?? 0;
+        const sellerAddr = l?.seller_address || control.getMetabotMvcAddress(metabotId) || undefined;
+
+        try {
+          control.registerActiveFtOrder?.({
+            metabotId,
+            rail: 'mvc-tokensell',
+            chain: 'mvc',
+            assetKey,
+            symbol: preMeta.symbol,
+            decimals: preMeta.decimals,
+            codehash: listedCodehash,
+            genesis: listedGenesis,
+            amountBase: listedAmountBase || '0',
+            amountDisplay: String(lotDisplay).replace(/,/g, ''),
+            priceSats,
+            listingKey: `mvc-tokensell:${result.txId}:${sellOutIndex}`,
+            batchGroupId,
+            utxoOutpoint: `${result.txId}:${sellOutIndex}`,
+            ...(sellerAddr ? { sellerAddress: sellerAddr } : {}),
+            ...(sessionId ? { sessionId } : {}),
+            tokenSellJson: JSON.stringify(
+              l ?? {
+                sell_txid: result.txId,
+                sell_output_index: sellOutIndex,
+                sell_price_sats: priceSats,
+                seller_address: sellerAddr ?? '',
+                token_genesis: listedGenesis,
+                token_codehash: listedCodehash,
+                token_amount: listedAmountBase ?? '0',
+              },
+            ),
+          });
+        } catch {
+          // Non-fatal local ledger registration
+        }
+
         const lines = [
           'TokenSell LISTING broadcast on-chain.',
+          splitTxIdUsed ? `- auto-split txid: ${splitTxIdUsed} (${lotDisplay} ${preMeta.symbol})` : '',
           `- listing txid: ${result.txId}`,
           `- funding txids: ${result.fundingTxIds.join(', ')}`,
+          `- listed amount: ${lotDisplay} ${preMeta.symbol}`,
           `- price: ${priceSats} sats (${(priceSats / SATOSHI_PER_UNIT).toFixed(8)} SPACE)`,
           l ? `- listing tuple for takers: sell_txid=${l.sell_txid} sell_output_index=${l.sell_output_index} sell_price_sats=${l.sell_price_sats} seller_address=${l.seller_address}` : '',
-          '- Verify with wallet_token_sell_orders (pass the tuple); take it down with wallet_token_cancel_sell (self-take).',
+          '- Verify with wallet_token_sell_orders (pass the tuple) or view/cancel anytime via wallet_token_my_orders.',
         ].filter(Boolean);
-        const spaceDisplay = (priceSats / SATOSHI_PER_UNIT).toFixed(8).replace(/\.?0+$/, '');
-        const lotDisplay = args.token_amount
-          ? formatBaseUnitToDisplay(asString(args.token_amount), preMeta.decimals)
-          : preMeta.balanceDisplay || '1';
+
         const orderFence = formatFtOrderCardFence({
-          batchGroupId: `tokensell_${result.txId.slice(0, 12)}`,
-          assetKey: `mvc-ft:${codehash.toLowerCase()}:${genesis.toLowerCase()}`,
+          batchGroupId,
+          assetKey,
           symbol: preMeta.symbol,
-          caVerified: false,
+          caVerified: preMeta.symbol.toUpperCase() === 'METAID' || preMeta.symbol.toUpperCase() === 'MSP',
           rail: 'mvc-tokensell',
           chain: 'mvc',
           standard: 'mvc-ft',
           lotAmountDisplay: lotDisplay,
           totalLots: 1,
           filledLots: 0,
-          unitPriceLabel: `${spaceDisplay} SPACE (${priceSats.toLocaleString('en-US')} sats)`,
+          unitPriceLabel,
           totalValueLabel: `${spaceDisplay} SPACE`,
           autoFulfill: false,
           orderRefs: [result.txId],
@@ -1859,9 +2160,13 @@ export function buildWalletAgentTools(deps: {
       if (!listing) {
         return textResult('wallet_token_buy: sell_txid must be 64 hex, sell_output_index a non-negative integer, sell_price_sats a positive integer, seller_address required.', true);
       }
-      const receiverAddress = asString(args.receiver_address);
-      if (receiverAddress && !looksLikeMvcAddress(receiverAddress)) {
-        return textResult('wallet_token_buy: receiver_address must be a raw MVC address (tokens only transfer to addresses, not local bots).', true);
+      let receiverAddress = asString(args.receiver_address);
+      if (receiverAddress) {
+        const resolvedReceiver = resolveMvcTargetAddress(control, receiverAddress, 'wallet_token_buy');
+        if (resolvedReceiver.ok === false) {
+          return textResult(resolvedReceiver.error, true);
+        }
+        receiverAddress = resolvedReceiver.address;
       }
       try {
         const result = await control.takeToken({
@@ -1939,6 +2244,14 @@ export function buildWalletAgentTools(deps: {
       }
       try {
         const result = await control.cancelTokenSell({ metabotId, listing });
+        try {
+          control.cancelActiveFtOrderByOutpoint?.(
+            metabotId,
+            `${listing.sell_txid}:${listing.sell_output_index}`,
+          );
+        } catch {
+          // Non-fatal local ledger cleanup
+        }
         const lines = [
           'TokenSell listing cancelled on-chain (self-take).',
           `- self-take txid: ${result.txId}`,
@@ -2438,7 +2751,15 @@ export function buildWalletAgentTools(deps: {
           const codehash = String(tok.codeHash || 'mvc').toLowerCase();
           const genesis = String(tok.genesis || '').toLowerCase();
           const assetKey = `mvc-ft:${codehash}:${genesis}`;
-          const totalDisp = formatBaseUnitToDisplay(tok.balance, tok.decimal ?? 0);
+          const tokAlreadyDisplay =
+            String(tok.balance || '').includes('.') ||
+            tok.confirmed !== undefined ||
+            tok.unconfirmed !== undefined;
+          const totalDisp = formatBaseUnitToDisplay(
+            tok.balance,
+            tok.decimal ?? 0,
+            tokAlreadyDisplay,
+          );
           const locked = lockedByAssetKey.get(assetKey) ?? 0;
           return {
             assetKey,
@@ -2495,11 +2816,198 @@ export function buildWalletAgentTools(deps: {
     },
   );
 
+  const walletResolveGlobalMetaId = tool(
+    'wallet_resolve_global_metaid',
+    [
+      'Instantly convert a GlobalMetaID (`idq1...`, `idz1...`, `idp1...`, `idr1...`, `idt1...`, or `metaid://idq1...`) into its underlying MVC, BTC, and DOGE blockchain addresses offline — OR convert any blockchain address (`1...`, `bc1q...`, `bc1p...`, `D...`) / local MetaBot name or id into its GlobalMetaID and multi-chain addresses.',
+      'ALWAYS use this built-in tool (or pass `idq1...` directly to `wallet_transfer` / `wallet_token_send` / `wallet_balance`) whenever you see a GlobalMetaID. NEVER write bash/python scripts or web searches to decode `idq1...` addresses.',
+    ].join(' '),
+    {
+      query: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          'GlobalMetaID (`idq1...` / `idt1...` / `metaid://idq1...`), blockchain address (`1...` / `bc1q...` / `D...`), or local MetaBot name/id.',
+        ),
+      global_metaid: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Alias of `query` when passing a GlobalMetaID (`idq1...`).'),
+      address: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Alias of `query` when passing a blockchain address (`1...` / `bc1q...` / `D...`).'),
+    },
+    async (args: { query?: string; global_metaid?: string; address?: string }) => {
+      const raw = asString(args.query) || asString(args.global_metaid) || asString(args.address);
+      if (!raw) {
+        return textResult('wallet_resolve_global_metaid requires `query` (or `global_metaid` / `address`).', true);
+      }
+
+      // Case 1: GlobalMetaID input
+      if (extractGlobalMetaIdCandidate(raw)) {
+        const decoded = convertGlobalMetaIdToAddresses(raw);
+        if (!decoded) {
+          return textResult(`wallet_resolve_global_metaid: invalid GlobalMetaID "${raw}".`, true);
+        }
+        const localHit = control.resolveLocalMetabotByGlobalMetaId?.(decoded.globalMetaId) ?? null;
+        const lines = [
+          `GlobalMetaID resolved (${decoded.addressType.toUpperCase()}):`,
+          `- globalMetaId: ${decoded.globalMetaId}`,
+          decoded.mvcAddress ? `- mvcAddress (SPACE / MVC FT): ${decoded.mvcAddress}` : '- mvcAddress: (unavailable offline)',
+          decoded.btcAddress ? `- btcAddress: ${decoded.btcAddress}` : '',
+          decoded.btcLegacyAddress && decoded.btcLegacyAddress !== decoded.btcAddress
+            ? `- btcLegacyAddress (P2PKH): ${decoded.btcLegacyAddress}`
+            : '',
+          decoded.btcSegwitAddress && decoded.btcSegwitAddress !== decoded.btcAddress
+            ? `- btcSegwitAddress (P2WPKH): ${decoded.btcSegwitAddress}`
+            : '',
+          decoded.dogeAddress ? `- dogeAddress: ${decoded.dogeAddress}` : '',
+          localHit ? `- localMetaBot: ${localHit.name} (metabot_id ${localHit.id})` : '- localMetaBot: external (not in local roster)',
+          decoded.note ? `- note: ${decoded.note}` : '',
+        ].filter(Boolean);
+        return textResult(lines.join('\n'));
+      }
+
+      // Case 2: Local MetaBot id or name
+      let localBotId: number | null = null;
+      if (/^\d+$/.test(raw)) {
+        localBotId = Number(raw);
+      } else if (!looksLikeMvcAddress(raw) && !/^(?:bc1|tb1|[13DLM])[a-zA-HJ-NP-Z0-9]{20,}$/i.test(raw)) {
+        localBotId = control.resolveMetabotIdByName(raw);
+      }
+      if (localBotId != null) {
+        const summary = control.getMetabotSummary?.(localBotId) ?? null;
+        const mvcAddr = summary?.mvcAddress || control.getMetabotMvcAddress(localBotId) || '';
+        if (!mvcAddr && !summary?.btcAddress) {
+          return textResult(`wallet_resolve_global_metaid: local MetaBot not found: ${raw}`, true);
+        }
+        const gmid =
+          summary?.globalMetaId ||
+          (mvcAddr ? convertToGlobalMetaId(mvcAddr) : summary?.btcAddress ? convertToGlobalMetaId(summary.btcAddress) : '');
+        const lines = [
+          `Local MetaBot resolved: ${summary?.name || `metabot_id ${localBotId}`} (metabot_id ${localBotId})`,
+          gmid ? `- globalMetaId: ${gmid}` : '',
+          mvcAddr ? `- mvcAddress: ${mvcAddr}` : '',
+          summary?.btcAddress ? `- btcAddress: ${summary.btcAddress}` : '',
+          summary?.dogeAddress ? `- dogeAddress: ${summary.dogeAddress}` : '',
+        ].filter(Boolean);
+        return textResult(lines.join('\n'));
+      }
+
+      // Case 3: Raw blockchain address -> GlobalMetaID + cross-chain equivalents
+      try {
+        const gmid = convertToGlobalMetaId(raw);
+        const decoded = gmid ? convertGlobalMetaIdToAddresses(gmid) : null;
+        if (!gmid || !decoded) {
+          return textResult(`wallet_resolve_global_metaid: unsupported address or GlobalMetaID "${raw}".`, true);
+        }
+        const localHit = control.resolveLocalMetabotByGlobalMetaId?.(gmid) ?? null;
+        const lines = [
+          `Address converted to GlobalMetaID (${decoded.addressType.toUpperCase()}):`,
+          `- inputAddress: ${raw}`,
+          `- globalMetaId: ${gmid}`,
+          decoded.mvcAddress ? `- mvcAddress: ${decoded.mvcAddress}` : '',
+          decoded.btcAddress ? `- btcAddress: ${decoded.btcAddress}` : '',
+          decoded.btcSegwitAddress && decoded.btcSegwitAddress !== decoded.btcAddress
+            ? `- btcSegwitAddress: ${decoded.btcSegwitAddress}`
+            : '',
+          decoded.dogeAddress ? `- dogeAddress: ${decoded.dogeAddress}` : '',
+          localHit ? `- localMetaBot: ${localHit.name} (metabot_id ${localHit.id})` : '',
+          decoded.note ? `- note: ${decoded.note}` : '',
+        ].filter(Boolean);
+        return textResult(lines.join('\n'));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_resolve_global_metaid failed: ${msg}`, true);
+      }
+    },
+  );
+
+  const walletTokenQuote = tool(
+    'wallet_token_quote',
+    [
+      'Compare live multi-rail token prices, floor asks, orderbook depth, and budget fill simulation across BTC `metaid.market` (`btc-psbt`), ME Points Trade (`me-escrow`), MVC TokenSell Contract (`mvc-tokensell`), and MVC TokenSwap AMM (`mvc-swap`), and emit a native visual ```ft-quote-card (`Q1` 4-rail router card).',
+      'ALWAYS call this tool FIRST whenever the user asks for multi-venue / multi-rail price comparison, floor & depth comparison, or "which venue gives me the most $TOKEN for X ME / SPACE / BTC budget" ("三端比价 / 四端比价 / 各渠道地板价和深度 / 看看哪边划算 / 我有 50 ME 预算买 $METAID") — even if external skills like `metabot-token-broker` are also installed — so the chat renders the native ```ft-quote-card instead of plain text.',
+      'Automatically handles bridged dual-chain tokens ($METAID, $MSP) across both BTC MRC-20 and MVC MetaContract rails in one snapshot without disambiguation errors.',
+      'Include the returned ```ft-quote-card block VERBATIM in your reply and keep accompanying prose concise (1-3 short sentences highlighting the best rail or budget strategy).',
+    ].join(' '),
+    {
+      token: z
+        .string()
+        .min(1)
+        .describe(
+          'Token ticker symbol (e.g. "METAID", "$MSP", "$MOON", "$TDC"), canonical asset_key ("mrc20:<pinId>" or "mvc-ft:<codehash>:<genesis>"), or mrc20Id.',
+        ),
+      budget: z
+        .union([z.number(), z.string()])
+        .optional()
+        .describe('Optional buyer budget amount (e.g. 50 for "50 ME", 0.5 for "0.5 SPACE", or 10000 for "10000 sats").'),
+      budget_unit: z
+        .string()
+        .optional()
+        .describe('Optional budget currency unit: "ME", "SPACE", "BTC", "sats", or "USD".'),
+      chain: z
+        .enum(['btc', 'mvc'])
+        .optional()
+        .describe('Optional chain focus ("btc" or "mvc"); omit to compare all available rails across both chains.'),
+      metabot_id: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Optional local MetaBot id; defaults to THIS session MetaBot.'),
+    },
+    async (args: {
+      token: string;
+      budget?: number | string;
+      budget_unit?: string;
+      chain?: 'btc' | 'mvc';
+      metabot_id?: number;
+    }) => {
+      const tokenQuery = asString(args.token);
+      if (!tokenQuery) {
+        return textResult('wallet_token_quote requires `token` (e.g. "METAID").', true);
+      }
+      const targetMetabotId = args.metabot_id ?? resolveMetabotId(sessionId);
+      const quoteInput: BuildFtQuoteCardInput = {
+        query: tokenQuery,
+        budget: args.budget,
+        budgetUnit: asString(args.budget_unit) || undefined,
+        chain: args.chain,
+        metabotId: targetMetabotId,
+      };
+      try {
+        const result = control.getTokenQuote
+          ? await control.getTokenQuote(quoteInput)
+          : await buildFtQuoteCardSnapshot(quoteInput, {
+              getBalances: (input) => control.getBalances(input),
+              listMrc20s: (input) => control.listMrc20s(input),
+              listMvcFtTokens: (input) => control.listMvcFtTokens(input),
+              listIssuedTokens: control.listIssuedTokens
+                ? (filter) => control.listIssuedTokens!(filter)
+                : undefined,
+              getMetabotSummary: control.getMetabotSummary
+                ? (id) => control.getMetabotSummary!(id)
+                : undefined,
+            });
+        return textResult(result.summaryText);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_token_quote failed: ${msg}`, true);
+      }
+    },
+  );
+
   const walletTokenMyOrders = tool(
     'wallet_token_my_orders',
     [
-      'List THIS session MetaBot\'s active token sell orders across ME Points Trade (`me-escrow`), BTC `metaid.market` (`btc-psbt`), and MVC TokenSell Contract (`mvc-tokensell`), and emit a visual ```ft-my-orders-card (`O1` ticket stack card with cancel actions).',
-      'Use whenever the user asks "我挂了哪些单 / 查看我的在售挂单 / 撤单管理 / my active token orders". Include the returned ```ft-my-orders-card block VERBATIM in your reply.',
+      'List THIS session MetaBot\'s active token sell orders across ME Points Trade (`me-escrow`), BTC `metaid.market` (`btc-psbt`), and MVC TokenSell Contract (`mvc-tokensell`), and emit a native visual ```ft-my-orders-card (`O1` ticket stack card with cancel actions).',
+      'ALWAYS call this tool FIRST whenever the user asks "查看我当前所有的代币在售挂单列表 / 我挂了哪些单 / 查看我的在售挂单 / 撤单管理 / my active token orders" — even if external skills like `metabot-token-broker` are also installed — so the chat renders the native ```ft-my-orders-card instead of plain text.',
+      'Combines local active orders (including off-index MVC TokenSell tuples) with live open seller orders from `metaid.market` and MetaSo FT Market. Include the returned ```ft-my-orders-card block VERBATIM in your reply.',
     ].join(' '),
     {
       metabot_id: z
@@ -2508,19 +3016,31 @@ export function buildWalletAgentTools(deps: {
         .positive()
         .optional()
         .describe('Optional local MetaBot id; defaults to THIS session MetaBot.'),
+      symbol: z
+        .string()
+        .optional()
+        .describe('Optional ticker filter (e.g. "METAID", "TDC").'),
+      rail: z
+        .enum(['btc-psbt', 'mvc-tokensell', 'me-escrow'])
+        .optional()
+        .describe('Optional rail filter.'),
     },
-    async (args: { metabot_id?: number }) => {
+    async (args: { metabot_id?: number; symbol?: string; rail?: FtCardRail }) => {
       const targetId = args.metabot_id ?? resolveMetabotId(sessionId);
       if (targetId == null) {
         return textResult('wallet_token_my_orders requires a session MetaBot or explicit metabot_id.', true);
       }
       try {
         const summary = control.getMetabotSummary?.(targetId) ?? null;
+        const symbolFilter = asString(args.symbol).replace(/^\$+/, '').toUpperCase();
+        const railFilter = args.rail;
         const rawOrders = control.listActiveFtOrders?.({ metabotId: targetId }) ?? [];
 
         const grouped = new Map<string, FtActiveOrderRecord[]>();
         for (const row of rawOrders) {
           if (row.status !== 'active') continue;
+          if (symbolFilter && row.symbol.toUpperCase() !== symbolFilter) continue;
+          if (railFilter && row.rail !== railFilter) continue;
           const key = row.batchGroupId || row.listingKey;
           const list = grouped.get(key) ?? [];
           list.push(row);
@@ -2528,16 +3048,42 @@ export function buildWalletAgentTools(deps: {
         }
 
         const items: FtMyOrderItem[] = [];
+        const seenDedupKeys = new Set<string>();
+        let totalMeVal = 0;
+        let totalMvcSatsVal = 0;
+        let totalBtcSatsVal = 0;
+
         for (const [batchId, lots] of grouped.entries()) {
           const first = lots[0];
-          const unitPriceLabel =
-            first.rail === 'me-escrow' && first.priceMeMilli != null
-              ? `${(first.priceMeMilli / 1000).toFixed(3).replace(/\.?0+$/, '')} ME / lot`
-              : first.priceSats != null
-                ? first.chain === 'mvc'
-                  ? `${(first.priceSats / SATOSHI_PER_UNIT).toFixed(6).replace(/\.?0+$/, '')} SPACE`
-                  : `${first.priceSats.toLocaleString('en-US')} sats`
-                : 'Listed';
+          const lotQty = Number(String(first.amountDisplay).replace(/,/g, '')) || 0;
+          let unitPriceLabel = 'Listed';
+          if (first.rail === 'me-escrow' && first.priceMeMilli != null) {
+            const lotMe = first.priceMeMilli / 1000;
+            totalMeVal += lotMe * lots.length;
+            const lotMeText = lotMe.toFixed(3).replace(/\.?0+$/, '');
+            if (lotQty > 0 && lotQty !== 1) {
+              const perTok = (lotMe / lotQty).toFixed(4).replace(/\.?0+$/, '');
+              unitPriceLabel = `${perTok} ME / ${first.symbol} (${lotMeText} ME)`;
+            } else {
+              unitPriceLabel = `${lotMeText} ME / lot`;
+            }
+          } else if (first.priceSats != null) {
+            if (first.chain === 'mvc') {
+              totalMvcSatsVal += first.priceSats * lots.length;
+              const spaceText = (first.priceSats / SATOSHI_PER_UNIT).toFixed(6).replace(/\.?0+$/, '');
+              if (lotQty > 0 && lotQty !== 1) {
+                const perTok = (first.priceSats / SATOSHI_PER_UNIT / lotQty)
+                  .toFixed(6)
+                  .replace(/\.?0+$/, '');
+                unitPriceLabel = `${perTok} SPACE / ${first.symbol} (${spaceText} SPACE)`;
+              } else {
+                unitPriceLabel = `${spaceText} SPACE`;
+              }
+            } else {
+              totalBtcSatsVal += first.priceSats * lots.length;
+              unitPriceLabel = `${first.priceSats.toLocaleString('en-US')} sats`;
+            }
+          }
 
           let sellTxid: string | undefined;
           let sellOutputIndex: number | undefined;
@@ -2551,6 +3097,16 @@ export function buildWalletAgentTools(deps: {
             } catch {
               // ignore malformed json
             }
+          }
+
+          for (const lot of lots) {
+            seenDedupKeys.add(lot.listingKey.toLowerCase());
+            if (lot.marketOrderId) seenDedupKeys.add(`order:${lot.marketOrderId.toLowerCase()}`);
+            if (lot.sellPinId) seenDedupKeys.add(`pin:${lot.sellPinId.toLowerCase()}`);
+            if (lot.utxoOutpoint) seenDedupKeys.add(`utxo:${lot.utxoOutpoint.toLowerCase()}`);
+          }
+          if (sellTxid && sellOutputIndex !== undefined) {
+            seenDedupKeys.add(`utxo:${sellTxid.toLowerCase()}:${sellOutputIndex}`);
           }
 
           items.push({
@@ -2572,16 +3128,70 @@ export function buildWalletAgentTools(deps: {
           });
         }
 
+        // Merge live open orders from metaid.market (BTC PSBT) + MetaSo FT Market (MVC / ME)
+        // so listings created externally (e.g. via metabot-token-broker or web UI) also appear!
+        const mvcAddr = summary?.mvcAddress || control.getMetabotMvcAddress(targetId) || undefined;
+        const btcAddr = summary?.btcAddress || undefined;
+        if (control.fetchLiveSellerFtOrders || summary?.mvcAddress || summary?.btcAddress) {
+          const liveInput: FetchLiveFtSellerOrdersInput = {
+            metabotId: targetId,
+            mvcAddress: mvcAddr,
+            btcAddress: btcAddr,
+            symbol: symbolFilter || undefined,
+            rail: railFilter,
+          };
+          const liveRes = control.fetchLiveSellerFtOrders
+            ? await control.fetchLiveSellerFtOrders(liveInput).catch(() => null)
+            : await fetchLiveFtSellerOrders(liveInput).catch(() => null);
+          if (liveRes) {
+            for (const extItem of liveRes.items) {
+              if (symbolFilter && extItem.symbol.toUpperCase() !== symbolFilter) continue;
+              if (railFilter && extItem.rail !== railFilter) continue;
+              const candKeys = [
+                extItem.id.toLowerCase(),
+                extItem.orderId ? `order:${extItem.orderId.toLowerCase()}` : '',
+                extItem.orderId ? `pin:${extItem.orderId.toLowerCase()}` : '',
+                extItem.sellTxid && extItem.sellOutputIndex !== undefined
+                  ? `utxo:${extItem.sellTxid.toLowerCase()}:${extItem.sellOutputIndex}`
+                  : '',
+              ].filter(Boolean);
+              if (candKeys.some((k) => seenDedupKeys.has(k))) continue;
+              for (const k of candKeys) seenDedupKeys.add(k);
+              items.push(extItem);
+              if (extItem.rail === 'mvc-tokensell' && extItem.sellPriceSats) {
+                totalMvcSatsVal += extItem.sellPriceSats;
+              } else if (extItem.rail === 'btc-psbt' && extItem.sellPriceSats) {
+                totalBtcSatsVal += extItem.sellPriceSats;
+              }
+            }
+            if (totalMeVal === 0 && liveRes.meTotal > 0) {
+              totalMeVal += liveRes.meTotal;
+            }
+          }
+        }
+
+        const valParts: string[] = [];
+        if (totalBtcSatsVal > 0) valParts.push(`${totalBtcSatsVal.toLocaleString('en-US')} sats`);
+        if (totalMvcSatsVal > 0) {
+          valParts.push(
+            `${(totalMvcSatsVal / SATOSHI_PER_UNIT).toFixed(4).replace(/\.?0+$/, '')} SPACE`,
+          );
+        }
+        if (totalMeVal > 0) {
+          valParts.push(`${totalMeVal.toFixed(2).replace(/\.?0+$/, '')} ME`);
+        }
+
         const fence = formatFtMyOrdersCardFence({
           ...(summary?.name ? { botName: summary.name } : {}),
           metabotId: targetId,
           totalOrdersCount: items.length,
+          ...(valParts.length > 0 ? { totalValuationText: valParts.join(' + ') } : {}),
           orders: items,
         });
 
         return textResult(
           appendFtSuiteFence(
-            `Found ${items.length} active token sell order group(s) for ${summary?.name || `metabot_id ${targetId}`}.`,
+            `Found ${items.length} active token sell order(s) for ${summary?.name || `metabot_id ${targetId}`}.`,
             fence,
             FT_MY_ORDERS_CARD_FENCE_TAG,
           ),
@@ -2697,9 +3307,11 @@ export function buildWalletAgentTools(deps: {
   );
 
   return [
+    walletResolveGlobalMetaId,
     walletBalance,
     walletMrc20Balance,
     walletTokenCard,
+    walletTokenQuote,
     walletTokenPortfolio,
     walletTokenMyOrders,
     walletTokenBridgeCard,

@@ -20,6 +20,7 @@ import type { SqliteDatabase as Database } from '../sqliteTypes';
 import type { MetabotStore } from '../metabotStore';
 import type { BotWalletTransferStore } from './botWalletTransferStore';
 import { resolveMetabotIdByName } from './assignGroupChatTaskService';
+import { convertGlobalMetaIdToAddresses, extractGlobalMetaIdCandidate } from './globalMetaid';
 import {
   MAX_MCP02_DECIMALS,
   MAX_MCP02_TOKEN_AMOUNT_BASE,
@@ -692,7 +693,22 @@ export function resolveFtReceiverAddress(
     return { address: bot.mvc_address.trim(), toMetabotId: targetId };
   }
 
-  // 2. Valid base58check MVC address
+  // 2. GlobalMetaID (idq1... / idz1... / metaid://idq1...)
+  if (extractGlobalMetaIdCandidate(target)) {
+    const resolvedGlobal = convertGlobalMetaIdToAddresses(target);
+    if (!resolvedGlobal?.mvcAddress) {
+      throw new Error(
+        resolvedGlobal?.note ||
+          `Invalid receiver GlobalMetaID "${target}": cannot offline-derive an MVC P2PKH address`,
+      );
+    }
+    const localMatch = metabotStore
+      .listMetabots()
+      .find((b) => b.mvc_address?.trim() === resolvedGlobal.mvcAddress);
+    return { address: resolvedGlobal.mvcAddress, toMetabotId: localMatch?.id ?? null };
+  }
+
+  // 3. Valid base58check MVC address
   try {
     const parsed = new mvc.Address(target, 'livenet' as any);
     const normalizedAddr = parsed.toString();
@@ -702,7 +718,7 @@ export function resolveFtReceiverAddress(
     // Not a raw MVC address; try local MetaBot name resolution
   }
 
-  // 3. Local MetaBot display name
+  // 4. Local MetaBot display name
   const resolvedId = resolveMetabotIdByName(metabotStore, target);
   if (resolvedId != null) {
     const bot = metabotStore.getMetabotById(resolvedId);
@@ -712,7 +728,7 @@ export function resolveFtReceiverAddress(
   }
 
   throw new Error(
-    `Invalid receiver "${target}": pass a valid MVC address, a local metabot_id, or a local MetaBot name`,
+    `Invalid receiver "${target}": pass a valid MVC address, a GlobalMetaID (idq1...), a local metabot_id, or a local MetaBot name`,
   );
 }
 
