@@ -187,6 +187,28 @@ test('Windows NSIS install gates the installer version resource before spawning 
   );
 });
 
+test('NSIS customInit clears pre-existing errors before checking Windows 10+ version', () => {
+  const source = read('scripts/nsis-installer.nsh');
+  const customInitMatch = source.match(/!macro customInit([\s\S]*?)!macroend/);
+  assert.ok(customInitMatch, 'customInit macro must exist');
+  const customInitBody = customInitMatch[1];
+
+  // electron-builder's initMultiUser -> setInstallModePerUser leaves the NSIS
+  // error flag set on every fresh install (HKCU\...\InstallLocation missing).
+  // ClearErrors MUST precede ReadRegDWORD so ${Errors} reflects only whether
+  // CurrentMajorVersionNumber failed to read on pre-Win10 systems.
+  assert.match(
+    customInitBody,
+    /!ifndef BUILD_UNINSTALLER[\s\S]*?ClearErrors\s+ReadRegDWORD \$R1 HKLM "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion" CurrentMajorVersionNumber\s+\$\{If\} \$\{Errors\}\s+\$\{OrIf\} \$R1 < 10/,
+    'ClearErrors must run immediately before ReadRegDWORD CurrentMajorVersionNumber',
+  );
+  assert.match(
+    customInitBody,
+    /ReadEnvStr \$R2 "PROCESSOR_ARCHITEW6432"\s+ClearErrors[\s\S]*?ReadEnvStr \$R2 "PROCESSOR_ARCHITECTURE"\s+ClearErrors/,
+    'ReadEnvStr checks should clear any missing-var error flag',
+  );
+});
+
 test('NSIS customCheckAppRunning closes IDBots and INSTDIR child processes safely and repairs broken shortcuts', () => {
   const source = read('scripts/nsis-installer.nsh');
   assert.doesNotMatch(source, /taskkill[^"\n]*\/T/i);
