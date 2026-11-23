@@ -447,6 +447,12 @@ interface BotBrowserCoworkPanelProps {
   /** Switch the sidebar back to BotWorks (no-Twin bootstrap guidance). */
   onOpenBotHome?: () => void;
   /**
+   * Switch the Studio right pane back to Bot Browser when a prompt is
+   * submitted while the user is viewing another Studio catalog (e.g. Tasks,
+   * MetaApps, My Bots).
+   */
+  onRevealBrowser?: () => void;
+  /**
    * Session-records overlay state (owner spec 2026-11-08 21:31). The records
    * toggle lives in the shared surface header bar — beside the surface pill,
    * where the owner's screenshot puts it — so the panel receives the open
@@ -550,6 +556,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   onShowSkills,
   onOpenNewProject,
   onOpenBotHome,
+  onRevealBrowser,
   historyOpen,
   onHistoryOpenChange,
 }) => {
@@ -1151,6 +1158,12 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     if (!currentSession && selectedMetabotId == null) return; // botless machines never start sessions here
     setShowHistory(false);
     pinListToBottom();
+    onRevealBrowser?.();
+    if (currentSession && !currentSession.id.startsWith('optimistic-browser-')) {
+      void sessionTabBinding.revealSessionTab(currentSession.id);
+    } else if (!currentSession) {
+      void sessionTabBinding.prepareDraftTab(effectiveMetabotId);
+    }
     const captureOutgoingPrompt = async () => {
       // Element-picker capture (ABC v0.10.0): live marks first, then the
       // pre-navigation cache. First sends pass this preparation into start so
