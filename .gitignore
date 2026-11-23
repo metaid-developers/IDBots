@@ -1182,3 +1182,4 @@ blob-report/
 
 # Native Token Visualization Card (S1 Simple + D1 Detailed, wallet_token_card, standalone bubbles)
 !tests/tokenCard.test.tsx
+!tests/panelAutoScroll.test.ts

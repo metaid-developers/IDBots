@@ -58,23 +58,27 @@ test('③ every PanelMessage root carries the measurable row id', () => {
   assert.equal(hits.length, 5, 'user, assistant-mode, professional, failure-card and chapter-divider roots all tagged');
 });
 
-test('③ the transcript auto-scroll sticks to the live tail and re-engages deliberately', () => {
-  // 2026-11-17 rework (supersedes the "behavior is untouched" pin, which
-  // asserted the old unconditional scrollToBottom): the Studio scroll-HUD
-  // line turned the effect conditional — the transcript still snaps to the
-  // bottom on every message/stream update, but only while the owner is
-  // already at the live tail (shouldAutoScrollRef, 96px at-bottom threshold
-  // maintained by handleListScroll), so reading history is never yanked
-  // back down. pinningScrollRef marks programmatic writes so they do not
-  // clear the flag; the floating scroll-to-bottom button re-engages it.
-  assert.match(panelSource, /const list = listRef\.current;\s*\n\s*if \(list && shouldAutoScrollRef\.current\) \{\s*\n\s*pinningScrollRef\.current = true;\s*\n\s*list\.scrollTop = list\.scrollHeight;\s*\n\s*pinningScrollRef\.current = false;\s*\n\s*\}/);
-  assert.match(panelSource, /\}, \[visibleMessages\.length, isStreaming\]\);/);
-  // The gate: only genuinely-at-bottom proximity keeps auto-scroll armed,
-  // and loading earlier history opts out explicitly.
-  assert.match(panelSource, /shouldAutoScrollRef\.current = distanceToBottom <= 96;/);
-  assert.match(panelSource, /shouldAutoScrollRef\.current = false;\s*\n\s*setIsLoadingEarlier\(true\);/);
-  // The scroll-to-bottom button restores the live-tail follow.
-  assert.match(panelSource, /scroller\.scrollTop = scroller\.scrollHeight;\s*\n\s*pinningScrollRef\.current = false;\s*\n\s*shouldAutoScrollRef\.current = true;/);
+test('③ the transcript auto-scroll follows streaming content, pins completion, and keeps bottom status outside the scroller', () => {
+  // 2026-11-17 rework -> Studio streaming & bottom-status fix:
+  // - Auto-scroll uses useLayoutEffect + buildPanelAutoScrollFollowSignal so
+  //   in-place streaming delta growth (where visibleMessages.length does not
+  //   change) and stream completion always snap to the bottom even if the
+  //   scrollbar had been scrolled up earlier.
+  // - ResizeObserver watches both the scroller and its inner content wrapper so
+  //   async layout growth (images, markdown tables, token cards) and bottom
+  //   status height changes stay pinned.
+  // - resolvePanelScrollInteraction only disengages auto-scroll when the user
+  //   actually scrolls UP (not when content grows downward), while loading
+  //   earlier history opts out explicitly.
+  // - data-slot="panel-bottom-status" lives outside the listRef scroller so
+  //   AssistantActivityIndicator / PanelDelegationStatusRow stay pinned visible.
+  assert.match(panelSource, /const autoScrollFollowSignal = useMemo\(\s*\n\s*\(\) => buildPanelAutoScrollFollowSignal\(visibleMessages, isStreaming\)/);
+  assert.match(panelSource, /useLayoutEffect\(\(\) => \{[\s\S]*?shouldPinPanelToBottomOnUpdate\([\s\S]*?pinListToBottom\(\);[\s\S]*?\}, \[currentSession\?\.id, autoScrollFollowSignal, isStreaming, pinListToBottom\]\);/);
+  assert.match(panelSource, /new ResizeObserver\(\(\) => \{[\s\S]*?if \(isLoadingEarlierRef\.current\) return;[\s\S]*?if \(isStreamingRef\.current \|\| shouldAutoScrollRef\.current\) \{\s*\n\s*pinListToBottom\(\);\s*\n\s*\}/);
+  assert.match(panelSource, /resolvePanelScrollInteraction\(/);
+  assert.match(panelSource, /isLoadingEarlierRef\.current = true;\s*\n\s*shouldAutoScrollRef\.current = false;\s*\n\s*setIsLoadingEarlier\(true\);/);
+  assert.match(panelSource, /const handleScrollToBottomClick = useCallback\(\(\) => \{\s*\n\s*pinListToBottom\(\);\s*\n\s*\}, \[pinListToBottom\]\);/);
+  assert.match(panelSource, /data-slot="panel-bottom-status"/);
   // The rail reads scroll state only: it never writes scrollTop outside the
   // two interaction mappings (drag handle / click jump).
   const writes = railSource.match(/container\.scrollTop\s*=/g) ?? [];
