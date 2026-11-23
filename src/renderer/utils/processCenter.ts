@@ -109,7 +109,16 @@ export interface ProcessStatusInfo {
 
 export const resolveProcessStatus = (
   session: Pick<CoworkSessionSummary, 'status' | 'followUpState' | 'updatedAt' | 'id'>,
-  options?: { decisionSessionIds?: ReadonlySet<string>; nowMs?: number },
+  options?: {
+    decisionSessionIds?: ReadonlySet<string>;
+    nowMs?: number;
+    /** The session the app is streaming RIGHT NOW (redux isStreaming).
+     * The list snapshot's `status` lags behind the DB — measured live: the DB
+     * row said 'running' while the row's summary still said 'completed', which
+     * painted the only running process grey. A live signal wins over a stale
+     * snapshot, never the other way round. */
+    liveSessionId?: string | null;
+  },
 ): ProcessStatusInfo => {
   const nowMs = options?.nowMs ?? Date.now();
   const error = session.status === 'error' || session.status === 'error_retried';
@@ -122,7 +131,9 @@ export const resolveProcessStatus = (
     }
     return { kind: 'pending', error, stalePending: false };
   }
-  if (session.status === 'running') return { kind: 'live', error, stalePending: false };
+  if (session.status === 'running' || options?.liveSessionId === session.id) {
+    return { kind: 'live', error, stalePending: false };
+  }
   return { kind: 'dead', error, stalePending: false };
 };
 
@@ -211,8 +222,9 @@ const toEntry = (
   awaitingVerdict: boolean,
   decisionSessionIds?: ReadonlySet<string>,
   nowMs?: number,
+  liveSessionId?: string | null,
 ): ProcessEntry => {
-  const status = resolveProcessStatus(session, { decisionSessionIds, nowMs });
+  const status = resolveProcessStatus(session, { decisionSessionIds, nowMs, liveSessionId });
   return {
     session,
     kind: processKindOf(session),
@@ -303,6 +315,7 @@ export const splitProcessHub = (
    * sites keep their positional contract while they migrate. */
   _runningWindowMs: number = PROCESS_RUNNING_WINDOW_MS,
   lineageOverrides?: LineageOverrides | null,
+  liveSessionId?: string | null,
 ): ProcessHubModel => {
   const { followUpSessions, autoSessions } = splitSessionsWithFollowUp(
     sessions,
@@ -329,12 +342,12 @@ export const splitProcessHub = (
       // bot-bucket row still carries the awaited state, it just doesn't ask
       // the owner for anything.
       if (lineageBucketOf(session.id, lineageOverrides) === 'human') {
-        awaiting.push(toEntry(session, true, decisionSessionIds, nowMs));
+        awaiting.push(toEntry(session, true, decisionSessionIds, nowMs, liveSessionId));
       } else {
-        botSelfDigested.push(toEntry(session, false, decisionSessionIds, nowMs));
+        botSelfDigested.push(toEntry(session, false, decisionSessionIds, nowMs, liveSessionId));
       }
     } else {
-      running.push(toEntry(session, false, decisionSessionIds, nowMs));
+      running.push(toEntry(session, false, decisionSessionIds, nowMs, liveSessionId));
     }
   }
   // The human list is the COMPLEMENT of the process set, not the split's
@@ -403,6 +416,38 @@ export const buildArchivedProcessEntries = (
 
 /** The three v2 zones, in rail order. */
 export type ProcessZone = 'orch' | 'scheduled' | 'longterm';
+
+/* ───────────── v4: 动态进程优先 (owner ruling 2026-11-23 00:09) ─────────────
+ *
+ * The owner's verdict on the v2/v3 landing: three flat counts (编排树 567 /
+ * 定时 657 / 长期 5) plus a long orchestration list is not what a process
+ * center should show first — the LIVE processes were buried. One screen cannot
+ * hold four sources, so the sources become SECONDARY tabs and the landing page
+ * is 动态: 正在运行 (breathing rows) + 最近结束 (completed / failed).
+ *
+ * 动态 is a re-projection of the SAME three-state model (pending / live / dead)
+ * the strip and the rows already use — no new table, no second policy.
+ */
+
+/** The panel's top tabs, in rail order: 动态 first, then the three sources. */
+export type ProcessHubTab = 'dynamic' | ProcessZone;
+
+export const PROCESS_HUB_TAB_ORDER: readonly ProcessHubTab[] = [
+  'dynamic',
+  'orch',
+  'scheduled',
+  'longterm',
+];
+
+export const PROCESS_HUB_TAB_LABEL_KEY: Record<ProcessHubTab, string> = {
+  dynamic: 'processTabDynamic',
+  orch: 'processZoneOrch',
+  scheduled: 'processZoneScheduled',
+  longterm: 'processZoneLongterm',
+};
+
+/** 最近结束 mounts this many rows before the "show more" step takes over. */
+export const PROCESS_RECENT_ENDED_BUDGET = 8;
 
 /**
  * Which zone a row belongs to. Derived from the CREATION fact, never the title:
@@ -531,6 +576,51 @@ export const buildProcessZones = (
   };
 };
 
+/** Everything the 动态 tab renders. */
+export interface ProcessDynamicModel {
+  /** 正在运行 — statusKind 'live', newest first (the breathing rows). */
+  running: ProcessEntry[];
+  /** 最近结束 — statusKind 'dead', newest first (completed + failed). */
+  recentlyEnded: ProcessEntry[];
+  /** Finished without an error (status 'completed'). */
+  completedCount: number;
+  /** Finished with an error (status 'error' / 'error_retried'). */
+  failedCount: number;
+}
+
+/**
+ * The 动态 tab's model, derived from the running bucket of `splitProcessHub`
+ * (the one place that already resolved membership + the three-state band).
+ *
+ * `pending` rows deliberately enter NEITHER band: an awaited run lives in the
+ * 待你拍板 strip / the bot bar, which stay pinned across tabs. Counting it as
+ * "recently finished" would be a lie, and counting it as "running" would
+ * double-render the strip.
+ *
+ * A dead row that is neither 'completed' nor an error (a stopped / idle run)
+ * still appears in the list — it just does not inflate either count, so the two
+ * numbers never claim more than the rows actually prove.
+ */
+export const buildProcessDynamic = (entries: readonly ProcessEntry[]): ProcessDynamicModel => {
+  const running: ProcessEntry[] = [];
+  const recentlyEnded: ProcessEntry[] = [];
+  let completedCount = 0;
+  let failedCount = 0;
+  for (const entry of entries) {
+    if (entry.statusKind === 'live') {
+      running.push(entry);
+      continue;
+    }
+    if (entry.statusKind !== 'dead') continue;
+    recentlyEnded.push(entry);
+    if (entry.error) failedCount += 1;
+    else if (entry.session.status === 'completed') completedCount += 1;
+  }
+  running.sort(NEWEST_FIRST);
+  recentlyEnded.sort(NEWEST_FIRST);
+  return { running, recentlyEnded, completedCount, failedCount };
+};
+
 /* ───────────── v3: hub view state + Twin steering prompt ─────────────
  *
  * Owner order 2026-11-21 17:45 (two interaction cuts):
@@ -546,7 +636,8 @@ export const buildProcessZones = (
 
 /** Where the hub was when the owner stepped into a process. */
 export interface ProcessHubViewState {
-  zone: ProcessZone;
+  /** v4: the top tab the owner left on (动态 is the landing page). */
+  tab: ProcessHubTab;
   archivedMode: boolean;
   /** Scroll offset of the tree viewport, in px. */
   scrollTop: number;
@@ -560,7 +651,7 @@ export interface ProcessHubViewState {
 }
 
 export const DEFAULT_PROCESS_HUB_VIEW_STATE: ProcessHubViewState = {
-  zone: 'orch',
+  tab: 'dynamic',
   archivedMode: false,
   scrollTop: 0,
   expandedTaskKeys: [],
@@ -645,4 +736,180 @@ export const lastAssistantDigest = (
     return flat.length > maxChars ? `${flat.slice(0, maxChars - 1)}…` : flat;
   }
   return null;
+};
+
+/* ───────────── v5: 动作沉浸 (Friday 稿四步, owner approval 2026-11-23 06:07) ─────────────
+ *
+ * L2 动作沉浸 + L3 决策沉浸的纯模型件。Blueprint:
+ * bots/6/2026-11-23/reports/process-action-immersion-{inventory,report}.md §5-7,
+ * five forks ruled 1A/2A/3A/4B/5A. Pure pieces only — the panel supplies data.
+ */
+
+/**
+ * fork 1A — the row-valve gate becomes TRI-STATE by lineage, replacing the old
+ * boolean `allowValve` that opened 归档/移出/改桶 on EVERY non-archived row:
+ *
+ *   'none'         archived rows: no valves at all (unchanged contract);
+ *   'housekeeping' bot-origin rows (autoOrigin != null): 整理类 only — the three
+ *                  existing valves, because they only move WHERE a run is visible,
+ *                  never what it does next (判据② exemption);
+ *   'full'         human-origin rows (autoOrigin == null): housekeeping PLUS
+ *                  steer-class valves (转向类, e.g. R1 retry) — the only class
+ *                  the lineage gate constrains.
+ *
+ * The brake class (S1 停止) is exempt from the lineage gate entirely and is
+ * keyed on `statusKind === 'live'`, so it is NOT expressed through this level.
+ */
+export type ProcessRowValveLevel = 'none' | 'housekeeping' | 'full';
+
+export const rowValveLevelOf = (
+  session: Pick<CoworkSessionSummary, 'autoOrigin'>,
+): Exclude<ProcessRowValveLevel, 'none'> => (session.autoOrigin ? 'housekeeping' : 'full');
+
+/**
+ * R1 重试 (fork 2A) visibility: steer-class valve, so lineage-gated (human rows
+ * only) AND failure-gated (a dead row that ended in error — retrying a run that
+ * is waiting on a verdict or finished cleanly is not a retry). The action itself
+ * is a Twin-handoff draft, never a direct rerun.
+ */
+export const retrySteerVisible = (
+  entry: Pick<ProcessEntry, 'statusKind' | 'error' | 'session'>,
+): boolean => entry.statusKind === 'dead' && entry.error === true && !entry.session.autoOrigin;
+
+/* ───────────── 三例外闸只读条 (判据③): classify, never decide ───────────── */
+
+/** The three exception-gate classes the blueprint fixes (判据③ G1/G2/G3). */
+export type ProcessGateClass = 'delete' | 'funds' | 'capability';
+
+/** The wire shape the hub needs off the global pending-permission mirror
+ * (the same data `cowork:permission:listPending` replays; zero new channel). */
+export interface ProcessGatePermissionLike {
+  requestId: string;
+  sessionId: string;
+  toolName: string;
+  toolInput?: Record<string, unknown> | null;
+  expiresAt?: number | null;
+  timeoutDefault?: 'allow' | 'deny' | null;
+}
+
+/** Minimal host-stamped safety context (same wire shape as
+ * `parseSafetyContext` — re-read locally to keep this module React-free). */
+interface GateSafetyContext {
+  requestedToolName: string;
+  destructive: boolean;
+}
+
+const gateSafetyContextOf = (permission: ProcessGatePermissionLike): GateSafetyContext | null => {
+  if (permission.toolName !== 'AskUserQuestion') return null;
+  const context = permission.toolInput?.context;
+  if (!context || typeof context !== 'object') return null;
+  const record = context as Record<string, unknown>;
+  if (typeof record.requestedToolName !== 'string' || !record.requestedToolName) return null;
+  const requestedToolInput = record.requestedToolInput;
+  if (!requestedToolInput || typeof requestedToolInput !== 'object') return null;
+  return {
+    requestedToolName: record.requestedToolName,
+    destructive: record.destructive === true,
+  };
+};
+
+/** G2 转账类 (money & chain): wallet transfers / ME charges / payment cards /
+ * BTC multisig / on-chain uploads — the requested tool names the host stamps at
+ * coworkRunner.ts `:8991 / :9055 / :9109 / :9137 / :8941`. */
+export const PROCESS_GATE_FUNDS_TOOL_PATTERN = /^(wallet_|me_charge$|payment_card_emit$|upload_file$)/;
+
+/** G3 能力类: per-request capability grants — skill installs (`:8838`) and
+ * precise location (`:8889`). (动电脑 is a one-time per-bot switch, never a
+ * pending request; unrecognized future gates default here rather than masquerade
+ * as money.) */
+export const PROCESS_GATE_CAPABILITY_TOOL_PATTERN = /^(skill_tool$|get_host_location$)/;
+
+/**
+ * Classify one pending permission into the blueprint's three exception-gate
+ * classes, or null when it is NOT an exception gate at all (a plain
+ * AskUserQuestion wizard has its own surfaces and stays out of the bar).
+ * Order is fixed: the destructive flag is host-stamped, so G1 wins first.
+ */
+export const classifyProcessGate = (permission: ProcessGatePermissionLike): ProcessGateClass | null => {
+  const context = gateSafetyContextOf(permission);
+  if (!context) return null;
+  if (context.destructive) return 'delete';
+  if (PROCESS_GATE_FUNDS_TOOL_PATTERN.test(context.requestedToolName)) return 'funds';
+  return 'capability';
+};
+
+/** One read-only bar entry: the gate, its class, and where to jump. */
+export interface ProcessGateEntry {
+  requestId: string;
+  sessionId: string;
+  gateClass: ProcessGateClass;
+  requestedToolName: string;
+  /** Epoch ms the watchdog fires; null = waits for a person. */
+  expiresAt: number | null;
+  /** Which side the watchdog presses; null = no watchdog. */
+  timeoutDefault: 'allow' | 'deny' | null;
+}
+
+/** Project the global pending-permission mirror down to exception gates. */
+export const buildProcessGateEntries = (
+  permissions: readonly ProcessGatePermissionLike[],
+): ProcessGateEntry[] =>
+  permissions.flatMap((permission) => {
+    const gateClass = classifyProcessGate(permission);
+    if (!gateClass) return [];
+    const context = gateSafetyContextOf(permission);
+    return [{
+      requestId: permission.requestId,
+      sessionId: permission.sessionId,
+      gateClass,
+      requestedToolName: context?.requestedToolName ?? permission.toolName,
+      expiresAt: typeof permission.expiresAt === 'number' ? permission.expiresAt : null,
+      timeoutDefault: permission.timeoutDefault === 'allow' || permission.timeoutDefault === 'deny'
+        ? permission.timeoutDefault
+        : null,
+    }];
+  });
+
+/** The host-written safety question, flattened to one readable line. */
+export const processGateQuestionOf = (permission: ProcessGatePermissionLike): string | null => {
+  if (permission.toolName !== 'AskUserQuestion') return null;
+  const questions = permission.toolInput?.questions;
+  if (!Array.isArray(questions)) return null;
+  for (const item of questions) {
+    const question = (item as { question?: unknown } | null)?.question;
+    if (typeof question === 'string' && question.trim()) {
+      return question.replace(/\s+/g, ' ').trim();
+    }
+  }
+  return null;
+};
+
+/* ───────────── L3 决策卡: link open decisions to hub rows ───────────── */
+
+/** The sliver of `StudioDecisionQueueItem` the linkage needs. */
+export interface ProcessDecisionLike {
+  id: string;
+  longtermTaskId?: string | null;
+}
+
+/**
+ * Which open decision cards belong to a hub row: the row's board card binds it
+ * to a task via `decisionSessionIds`, and an open decision binds to the same
+ * task via `longtermTaskId`. Decisions with no task linkage stay in the decision
+ * block — they simply get no row-level 拍板 jump.
+ */
+export const openDecisionIdsForSession = (
+  sessionId: string,
+  cards: ReadonlyArray<{ id: string; decisionSessionIds?: readonly string[] | null }> | null | undefined,
+  openDecisions: readonly ProcessDecisionLike[],
+): string[] => {
+  const linkedTaskIds = new Set(
+    (cards ?? [])
+      .filter((card) => (card.decisionSessionIds ?? []).includes(sessionId))
+      .map((card) => card.id),
+  );
+  if (linkedTaskIds.size === 0) return [];
+  return openDecisions
+    .filter((item) => (item.longtermTaskId ? linkedTaskIds.has(item.longtermTaskId) : false))
+    .map((item) => item.id);
 };

@@ -146,10 +146,134 @@ export type LiveStageTaskHudEntry = {
   isCurrent?: boolean;
 };
 
+/**
+ * The ONE owner-decision card the stage hosts inline (批 B · P0-3, owner
+ * ruling 2026-11-23 22:23: 「决策要回到 Live Stage，这才是真正做决策的地方」).
+ *
+ * The card is a VIEW over the same `StudioDecisionQueueStore.listOpen()` rows
+ * the Process Hub's decision block renders, and it resolves through the same
+ * `longtermTask:decisionResolve` IPC — one data source, one resolve channel,
+ * two seats. The stage never holds its own copy of a ruling.
+ */
+export type LiveStageDecisionEvidence = {
+  kind: string;
+  uri: string;
+  note?: string;
+};
+
+export type LiveStageDecisionOption = {
+  label: string;
+  description?: string;
+  recommended?: boolean;
+};
+
+/** The structural slice of a `StudioDecisionQueueItem` the stage card needs. */
+export type LiveStageDecisionItem = {
+  id: string;
+  kind: string;
+  title: string;
+  question: string;
+  recommendation?: string | null;
+  backgroundSummary?: string | null;
+  options?: readonly LiveStageDecisionOption[] | null;
+  evidence?: readonly LiveStageDecisionEvidence[] | null;
+  longtermTaskId?: string | null;
+  originStudioSessionId?: string | null;
+};
+
+export type LiveStageDecisionCard = {
+  /** Studio decision-queue item id — the resolve key, verbatim. */
+  id: string;
+  kind: string;
+  title: string;
+  question: string;
+  recommendation?: string | null;
+  backgroundSummary?: string | null;
+  options: LiveStageDecisionOption[];
+  evidence: LiveStageDecisionEvidence[];
+  longtermTaskId?: string | null;
+  /**
+   * True when the card came from another session's queue (the machine-wide
+   * single-pending fallback) — the stage labels it as coming from elsewhere
+   * instead of pretending it was born here.
+   */
+  foreign?: boolean;
+};
+
 export type LiveStageTaskHud = {
   queuedDecisions: number;
   tasks: LiveStageTaskHudEntry[];
+  /**
+   * The inline decision card, when one belongs on this stage (P0-3). Absent /
+   * null = the stage shows only the count; the Process Hub keeps the list.
+   */
+  decision?: LiveStageDecisionCard | null;
 };
+
+/**
+ * Pick the ONE decision that belongs on this stage.
+ *
+ * Precedence (first hit wins):
+ *   1. the item was born in THIS session (`originStudioSessionId`);
+ *   2. the item's task is one this session owns (focused / linked / dispatched);
+ *   3. exactly one decision is open machine-wide — that single pending ruling
+ *      is the owner's next act, so it is hosted here and marked `foreign`.
+ *
+ * Anything else → null: several foreign decisions are a LIST, and the list
+ * lives in the Process Hub (the summary seat), not on a stage that belongs to
+ * one session.
+ */
+export function buildLiveStageDecisionCard(params: {
+  items: readonly LiveStageDecisionItem[];
+  sessionId: string;
+  sessionOwnedTaskIds: ReadonlySet<string>;
+  maxOptions?: number;
+  maxEvidence?: number;
+}): LiveStageDecisionCard | null {
+  const { items, sessionId, sessionOwnedTaskIds, maxOptions = 3, maxEvidence = 3 } = params;
+  if (items.length === 0) return null;
+  let picked: LiveStageDecisionItem | null = null;
+  let foreign = false;
+  if (sessionId) {
+    picked = items.find((item) => item.originStudioSessionId === sessionId) ?? null;
+  }
+  if (!picked) {
+    picked = items.find((item) => item.longtermTaskId != null && sessionOwnedTaskIds.has(item.longtermTaskId)) ?? null;
+  }
+  if (!picked && items.length === 1) {
+    picked = items[0];
+    foreign = true;
+  }
+  if (!picked) return null;
+  const options = (picked.options ?? [])
+    .filter((option) => option && typeof option.label === 'string' && option.label.trim())
+    .slice(0, maxOptions)
+    .map((option) => ({
+      label: option.label.trim(),
+      ...(option.description ? { description: option.description } : {}),
+      ...(option.recommended ? { recommended: true } : {}),
+    }));
+  const evidence = (picked.evidence ?? [])
+    .filter((entry) => entry && typeof entry.uri === 'string' && entry.uri.trim())
+    .slice(0, maxEvidence)
+    .map((entry) => ({
+      kind: String(entry.kind ?? 'other'),
+      uri: entry.uri.trim(),
+      ...(entry.note ? { note: entry.note } : {}),
+    }));
+  return {
+    id: picked.id,
+    kind: String(picked.kind ?? 'other'),
+    title: String(picked.title ?? '').trim() || String(picked.question ?? '').trim() || 'Decision',
+    question: String(picked.question ?? '').trim(),
+    ...(picked.recommendation ? { recommendation: picked.recommendation } : {}),
+    ...(picked.backgroundSummary ? { backgroundSummary: picked.backgroundSummary } : {}),
+    options,
+    evidence,
+    ...(picked.longtermTaskId ? { longtermTaskId: picked.longtermTaskId } : {}),
+    ...(foreign ? { foreign: true } : {}),
+  };
+}
 
 /**
  * Pure builder for the Studio Live Stage bottom-right Task HUD:
@@ -165,6 +289,8 @@ export function buildStudioLiveTaskHud(params: {
   studioBusy: boolean;
   rawQueuedDecisions: number;
   maxTasks?: number;
+  /** P0-3: the inline owner-decision card this stage hosts (null/absent = none). */
+  decision?: LiveStageDecisionCard | null;
 }): LiveStageTaskHud | null {
   const {
     cards,
@@ -173,6 +299,7 @@ export function buildStudioLiveTaskHud(params: {
     studioBusy,
     rawQueuedDecisions,
     maxTasks = 10,
+    decision = null,
   } = params;
 
   const candidates = cards
@@ -182,7 +309,7 @@ export function buildStudioLiveTaskHud(params: {
   const waitingOwnerBoardCount = candidates.filter((c) => c.managedState === 'waiting_owner').length;
   const queuedDecisions = studioBusy ? 0 : Math.max(rawQueuedDecisions, waitingOwnerBoardCount);
 
-  if (candidates.length === 0 && synthesizedCurrent.length === 0 && queuedDecisions === 0) {
+  if (candidates.length === 0 && synthesizedCurrent.length === 0 && queuedDecisions === 0 && !decision) {
     return null;
   }
 
@@ -277,7 +404,7 @@ export function buildStudioLiveTaskHud(params: {
   }
 
   const activeTasks = [...synthesizedCurrent, ...treeOrdered].slice(0, maxTasks);
-  return { queuedDecisions, tasks: activeTasks };
+  return { queuedDecisions, tasks: activeTasks, ...(decision ? { decision } : {}) };
 }
 
 export type LiveStageState = {
