@@ -121,9 +121,14 @@ test('component renders exactly three groups with the agreed data keys', () => {
   for (const group of ['decision', 'completed', 'failed']) {
     assert.match(source, new RegExp(`data-group="${group}"`), `missing group ${group}`);
   }
-  assert.match(source, /data-testid="notification-bell"/);
-  assert.match(source, /data-unread-count=\{unreadCount\}/);
   assert.match(source, /data-testid="notification-decision-row"/);
+  // Since the 通知中心/进程中心 alignment (2026-11-24 00:38) the BUTTON is not
+  // drawn here any more: the panel hands its trigger slot to the rail, which
+  // renders the shared RailButton. A locally drawn bell would be a second copy
+  // of the rail's entry — the exact drift this test now forbids.
+  assert.doesNotMatch(source, /data-slot="rail-item"/);
+  assert.doesNotMatch(source, /<button[\s\S]{0,120}data-testid="notification-bell"/);
+  assert.match(source, /renderTrigger\(\{ open, unreadCount, decisionCount, label, toggle \}\)/);
 });
 
 test('component jumps decisions to the Live Stage first, Process Hub as fallback', () => {
@@ -140,6 +145,12 @@ test('mount: the rail system zone hosts the bell on both faces', () => {
   assert.match(rail, /onOpenProcesses=\{\(\) => \{/);
   assert.match(rail, /onSelectInternetPane\('processes' as BotInternetPane\)/);
   assert.match(rail, /handleHomeItem\('processes'\)/);
+  // The bell's identity attributes ride the rail's entry, because that is where
+  // the button is rendered now (same DOM contract as before the alignment).
+  assert.match(rail, /testId="notification-bell"/);
+  assert.match(rail, /'data-unread-count': unreadCount/);
+  assert.match(rail, /'data-decision-count': decisionCount/);
+  assert.match(rail, /badgeTestId="notification-bell-badge"/);
 });
 
 test('i18n: every notification-center key exists in BOTH languages', () => {

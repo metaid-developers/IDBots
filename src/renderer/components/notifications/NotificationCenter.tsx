@@ -1,6 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BellIcon } from '@heroicons/react/24/outline';
-import Tooltip from '../ui/Tooltip';
 import { i18nService } from '../../services/i18n';
 import { sessionTabBinding } from '../../services/sessionTabBinding';
 import type { AgentNotification } from '../../types/notification';
@@ -29,6 +27,11 @@ import {
  * Nothing is invented: both are existing read channels, and a decision row
  * jumps to the seat that actually decides (Live Stage first, Process Hub when
  * the row has no session).
+ *
+ * The ENTRY is not drawn here. `renderTrigger` hands the button back to the
+ * host whose rail it sits on, so 通知中心 rides the same RailButton as 进程中心
+ * (owner order 2026-11-24 00:38: 对齐两个按钮) — one geometry, one hover
+ * language, one count badge, and no second copy to drift.
  */
 
 interface OpenDecisionRow {
@@ -43,6 +46,29 @@ interface OpenDecisionRow {
 interface NotificationCenterProps {
   /** Switch the shell to the Process Hub (the summary seat for decisions). */
   onOpenProcesses: () => void;
+  /**
+   * The entry that opens this panel — supplied BY THE RAIL, not drawn here.
+   *
+   * 通知中心 and 进程中心 are the rail's two system entries and the owner asked
+   * for them to be aligned (2026-11-24 00:38). Drawing a second, privately
+   * styled bell in this file is exactly how the two drifted apart (20 px glyph
+   * vs the rail's 24 px, accent/20 fill vs the rail's hover tokens, its own
+   * badge markup vs the shared count pill). The panel therefore owns only the
+   * state and the surface; the host renders the trigger with the rail's ONE
+   * RailButton, so both entries are the same component by construction.
+   */
+  renderTrigger: (state: NotificationTriggerState) => React.ReactNode;
+}
+
+/** Everything the rail's entry needs to be a real toggle of this panel. */
+export interface NotificationTriggerState {
+  open: boolean;
+  unreadCount: number;
+  /** 待拍板 rows the panel would show (live decisions + permission rows). */
+  decisionCount: number;
+  /** The localized entry label (tooltip + accessible name). */
+  label: string;
+  toggle: () => void;
 }
 
 const MAX_ITEMS = 60;
@@ -99,7 +125,7 @@ const NotificationRow: React.FC<{
   );
 };
 
-const NotificationCenter: React.FC<NotificationCenterProps> = ({ onOpenProcesses }) => {
+const NotificationCenter: React.FC<NotificationCenterProps> = ({ onOpenProcesses, renderTrigger }) => {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<AgentNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -220,37 +246,15 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ onOpenProcesses
     });
   }, [load]);
 
+  const label = i18nService.t('notificationsBellLabel');
+  const toggle = useCallback(() => {
+    if (!open) void load();
+    setOpen((value) => !value);
+  }, [open, load]);
+
   return (
-    <div ref={panelRef} className="relative w-full">
-      <Tooltip content={i18nService.t('notificationsBellLabel')} position="right">
-        <button
-          type="button"
-          data-testid="notification-bell"
-          data-unread-count={unreadCount}
-          data-decision-count={decisionCount}
-          aria-expanded={open}
-          aria-label={i18nService.t('notificationsBellLabel')}
-          onClick={() => {
-            setOpen((value) => !value);
-            if (!open) void load();
-          }}
-          className={`non-draggable relative mx-auto flex h-10 w-10 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
-            open
-              ? 'bg-claude-accent/20 dark:text-claude-darkText text-claude-text'
-              : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text'
-          }`}
-        >
-          <BellIcon className="h-5 w-5" />
-          {unreadCount > 0 ? (
-            <span
-              data-testid="notification-bell-badge"
-              className="absolute -right-[3px] -top-[3px] flex h-[14px] min-w-[14px] items-center justify-center rounded-full bg-red-500 px-[3px] text-[9.5px] font-bold leading-none text-white"
-            >
-              {unreadCount > 99 ? '99+' : unreadCount}
-            </span>
-          ) : null}
-        </button>
-      </Tooltip>
+    <div ref={panelRef} className="relative flex w-full justify-center">
+      {renderTrigger({ open, unreadCount, decisionCount, label, toggle })}
 
       {open ? (
         <div

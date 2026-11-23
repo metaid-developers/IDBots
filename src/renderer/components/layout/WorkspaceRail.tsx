@@ -3,6 +3,7 @@ import { useSelector } from 'react-redux';
 import {
   ArchiveBoxIcon,
   BellAlertIcon,
+  BellIcon,
   Cog6ToothIcon,
   MapIcon,
   ShoppingBagIcon,
@@ -197,6 +198,18 @@ const renderRailIcon = (icon: string): React.ReactNode => {
   }
 };
 
+/**
+ * THE rail entry form — one component, every entry.
+ *
+ * 通知中心 and 进程中心 are the two SYSTEM entries at the rail's foot, and the
+ * owner asked for them to be aligned (2026-11-24 00:38). The alignment is not a
+ * copied class string: the notification bell is rendered BY this component —
+ * NotificationCenter hands its trigger slot back to the rail (see its
+ * `renderTrigger` prop) — so geometry (h-10 w-10 / rounded-[8px]: 37.5×37.5 px
+ * on this app's 15 px root, measured), the hover
+ * language and the count badge below are shared by construction. Change one,
+ * both move.
+ */
 const RailButton: React.FC<{
   label: string;
   active: boolean;
@@ -206,15 +219,46 @@ const RailButton: React.FC<{
   indicatorKind?: 'running' | 'decision';
   indicatorLabel?: string;
   badgeCount?: number;
+  /** The unit the count badge renders: 进程 = runs, 通知 = unread. */
+  countUnit?: 'runs' | 'unread';
+  /** Cap the RENDERED number ("99+"); data-rail-badge-count keeps the raw count. */
+  badgeMaxDisplay?: number;
+  /** The badge's own test hook. */
+  badgeTestId?: string;
+  /** The button's own test hook (entries are otherwise found by data-rail-item). */
+  testId?: string;
+  /** Extra data-* attributes for probes (count snapshots and the like). */
+  buttonDataAttributes?: { [key: `data-${string}`]: string | number };
+  /** A popover entry publishes its panel state on top of the pressed state. */
+  ariaExpanded?: boolean;
   children: React.ReactNode;
-}> = ({ label, active, onClick, itemId, hasIndicator, indicatorKind, indicatorLabel, badgeCount, children }) => (
+}> = ({
+  label,
+  active,
+  onClick,
+  itemId,
+  hasIndicator,
+  indicatorKind,
+  indicatorLabel,
+  badgeCount,
+  countUnit = 'runs',
+  badgeMaxDisplay,
+  badgeTestId,
+  testId,
+  buttonDataAttributes,
+  ariaExpanded,
+  children,
+}) => (
   <Tooltip content={label} position="right" delay={200}>
     <button
       type="button"
       data-slot="rail-item"
       data-rail-item={itemId}
+      {...buttonDataAttributes}
+      data-testid={testId}
       aria-label={label}
       aria-pressed={active}
+      aria-expanded={ariaExpanded}
       onClick={onClick}
       className={`non-draggable relative inline-flex h-10 w-10 items-center justify-center rounded-[8px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
         active
@@ -244,10 +288,13 @@ const RailButton: React.FC<{
               aria-label={indicatorLabel}
               title={indicatorLabel}
               data-rail-badge-count={badgeCount}
-              data-count-unit="runs"
+              data-count-unit={countUnit}
+              data-testid={badgeTestId}
               className="absolute -right-[3px] -top-[3px] flex h-[14px] min-w-[14px] shrink-0 items-center justify-center rounded-full bg-red-500 px-[3px] text-[9.5px] font-bold leading-none text-white"
             >
-              {badgeCount}
+              {typeof badgeMaxDisplay === 'number' && badgeCount > badgeMaxDisplay
+                ? `${badgeMaxDisplay}+`
+                : badgeCount}
             </span>
           ) : (
             // The plain decision dot: the amber glow that means "you are the
@@ -505,14 +552,44 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
         </nav>
       )}
       <div className="mt-auto flex w-full flex-col items-center gap-1.5 px-1.5 pb-3 pt-1">
-        {/* 通知中心 (批 B · P0-4): the faucet for the notification pipeline the
-            host already writes. Rail-bottom bell + unread badge; its panel
-            groups 完成 / 失败 / 待拍板 and jumps by target. */}
+        {/* System zone, in this order (top → bottom): 通知中心 → 进程中心 →
+            设置 → 版本更新模块. The two count-bearing entries sit adjacent so
+            the owner reads them as one pair (owner order 2026-11-24 00:38).
+            通知中心 (批 B · P0-4): the faucet for the notification pipeline the
+            host already writes. The panel hands its trigger slot BACK to the
+            rail, so the bell below is the very RailButton 进程中心 uses —
+            same h-10 w-10/rounded-[8px] tile, same hover language, same 14 px
+            count badge — instead of a second, privately styled button. */}
         <NotificationCenter
           onOpenProcesses={() => {
             if (mode === 'browser') onSelectInternetPane('processes' as BotInternetPane);
             else handleHomeItem('processes');
           }}
+          renderTrigger={({ open: notificationsOpen, unreadCount, decisionCount, label, toggle }) => (
+            <RailButton
+              itemId="notifications"
+              label={label}
+              active={notificationsOpen}
+              onClick={toggle}
+              hasIndicator={unreadCount > 0}
+              indicatorKind="decision"
+              indicatorLabel={unreadCount > 0
+                ? i18nService.t('notificationsUnreadBadge').replace('{count}', String(unreadCount))
+                : label}
+              badgeCount={unreadCount}
+              countUnit="unread"
+              badgeMaxDisplay={99}
+              badgeTestId="notification-bell-badge"
+              testId="notification-bell"
+              buttonDataAttributes={{
+                'data-unread-count': unreadCount,
+                'data-decision-count': decisionCount,
+              }}
+              ariaExpanded={notificationsOpen}
+            >
+              <BellIcon className="h-6 w-6" />
+            </RailButton>
+          )}
         />
         {/* System zone (the rail's existing `mt-auto` group): 进程中心 sits
             directly above Settings and outside the common button group. */}

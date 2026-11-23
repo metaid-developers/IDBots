@@ -1780,8 +1780,16 @@ test('批 A P1-4: ONE count unit — runs — on the tabs, the section headings 
     assert.match(block, /badgeCount: \w+ > 0 \? \w+ : undefined/, `${face}: the processes entry carries the count`);
     assert.match(block, /indicatorLabel: [\s\S]{0,120}t\('processCenterAwaitingBadge'\)\.replace\('\{count\}', String\(\w+\)\)/, `${face}: the label names the count`);
   }
-  // The badge element declares the unit it renders.
-  assert.match(rail, /data-rail-badge-count=\{badgeCount\}[\s\S]{0,80}data-count-unit="runs"/);
+  // The badge element declares the unit it renders. Since the 通知中心/进程中心
+  // alignment (2026-11-24 00:38) the RailButton carries that unit as its
+  // `countUnit` prop — 进程 = runs (the default, unchanged), 通知 = unread — so
+  // the literal "runs" now lives in the destructuring default.
+  assert.match(rail, /data-rail-badge-count=\{badgeCount\}[\s\S]{0,80}data-count-unit=\{countUnit\}/);
+  assert.match(rail, /countUnit = 'runs',/);
+  // …and the 进程 entry never overrides it: only the notification bell does.
+  const processesMount = rail.slice(rail.indexOf('{processesItem ? ('), rail.indexOf('renderRailIcon(processesItem.icon)'));
+  assert.ok(processesMount.length > 0, 'the 进程 mount is found');
+  assert.doesNotMatch(processesMount, /countUnit=/, 'the 进程 entry keeps the runs unit');
   // Same source of truth as the panel (the awaiting bucket of the SAME model).
   assert.match(rail, /countAwaitingProcesses\(\s*\n?\s*splitProcessHub\(coworkSessions, decisionSessionIds, Date\.now\(\), undefined, lineageOverrides\),\s*\n?\s*\)/);
 

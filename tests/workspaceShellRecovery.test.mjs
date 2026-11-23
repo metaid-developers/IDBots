@@ -52,10 +52,16 @@ test('every rail entry resolves to a real pane renderer — an icon can never be
   const internet = getRailInternetNavModel({ t }).filter((item) => !item.hidden);
   const home = getRailHomeNavModel({ t, hasRunningScheduledTask: false }).filter((item) => !item.hidden);
 
-  // Four visible Studio destinations (browser, tasks, metaapps, myBots);
+  // Five visible Studio destinations (browser, tasks, metaapps, myBots) plus
+  // `processes` — the 进程中心 SYSTEM entry (owner order 2026-11-21 17:00),
+  // which is a model entry rendered at the rail's foot, never in the nav list.
+  // This count went stale when that entry landed (baseline debt found and
+  // synced during the 通知中心/进程中心 alignment, 2026-11-24 00:38); the loop
+  // below is the real contract and it covers the system entry too.
   // BotWorks keeps its four (newTask, longTerm/scheduled, groupTasks, records).
-  assert.equal(internet.length, 4, 'internet rail entries');
+  assert.equal(internet.length, 5, 'internet rail entries');
   assert.ok(home.length >= 4, 'home rail entries');
+  assert.ok(internet.some((item) => item.id === 'processes'), 'the system entry stays in the model');
 
   for (const item of internet) {
     const key = resolveRailEntryRenderer('browser', item.id);
