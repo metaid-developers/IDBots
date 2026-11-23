@@ -279,6 +279,12 @@ import {
   type Mrc721CreatePinFn,
 } from './services/mrc721Service';
 import {
+  buildNftFillCardFence,
+  buildNftSwapCardFence,
+  normalizeMrc721Cover,
+} from './libs/nftCardMarkdown';
+import { withNftCardHostStamp } from './libs/tradeActivityStamp';
+import {
   broadcastMrc721TradeReceipt,
   cancelMrc721SellIntent,
   declareMrc721SellIntent,
@@ -4473,9 +4479,32 @@ function getSwapOrderTrackerService(): SwapOrderTrackerService {
                 return `#${item.tokenIndex}: ${item.status}${confPart}`;
               })
               .join(', ');
+            const swapStatusCard = buildNftSwapCardFence({
+              requestId: event.requestId,
+              status: event.wireStatus === 'failed' ? 'failed' : 'confirming',
+              collectionSlug: event.collectionSlug,
+              stationGlobalMetaId: event.stationGlobalMetaId,
+              caVerified: true,
+              totalCount: event.items.length,
+              completedCount: event.items.filter((i) => i.status === 'completed' || i.status === 'delivered').length,
+              items: event.items.map((item) => ({
+                tokenIndex: item.tokenIndex,
+                status:
+                  item.status === 'completed' || item.status === 'delivered'
+                    ? ('completed' as const)
+                    : item.status === 'failed' || item.status === 'rejected'
+                      ? ('failed' as const)
+                      : ('confirming' as const),
+                confirmations: typeof item.confirmations === 'number' ? item.confirmations : undefined,
+                newItemPinId: (item as { itemPinId?: string }).itemPinId || undefined,
+                error: (item as { error?: string }).error || undefined,
+              })),
+            });
             const lines = [
               `Legacy collectible swap update (${event.collectionSlug}, request ${event.requestId}): status=${event.wireStatus}${itemSummary ? ` [${itemSummary}]` : ''}.`,
               ...(event.note ? [event.note] : []),
+              '',
+              swapStatusCard,
             ];
             const msg = cStore.addMessage(event.sessionId, {
               type: 'assistant',
@@ -4501,6 +4530,30 @@ function getSwapOrderTrackerService(): SwapOrderTrackerService {
             const cStore = getCoworkStore();
             if (!cStore.getSessionWithoutMessages(event.sessionId)) return;
             const completedCount = event.results.filter((r) => r.status === 'completed').length;
+            const swapDoneCard = buildNftSwapCardFence({
+              requestId: event.requestId,
+              status:
+                event.status === 'completed'
+                  ? 'completed'
+                  : event.status === 'partially_completed'
+                    ? 'partial'
+                    : 'failed',
+              collectionSlug: event.collectionSlug,
+              targetCollectionPinId: event.targetCollectionPinId || undefined,
+              stationGlobalMetaId: event.stationGlobalMetaId,
+              caVerified: true,
+              totalCount: event.results.length,
+              completedCount,
+              items: event.results.map((r) => ({
+                tokenIndex: r.tokenIndex,
+                name: r.itemName || undefined,
+                ...normalizeMrc721Cover((r as { cover?: string }).cover),
+                status: r.status === 'completed' ? ('completed' as const) : ('failed' as const),
+                newItemPinId: r.itemPinId || undefined,
+                deliveryTxId: (r as { deliveryTxId?: string }).deliveryTxId || undefined,
+                error: r.error || undefined,
+              })),
+            });
             const lines = [
               `Legacy collectible swap completed (${event.collectionSlug}, request ${event.requestId}, source=${event.source}): ${completedCount}/${event.results.length} item(s) delivered.`,
               ...event.results.map((r) =>
@@ -4508,6 +4561,8 @@ function getSwapOrderTrackerService(): SwapOrderTrackerService {
                   ? `- #${r.tokenIndex}: ${r.itemName || 'MRC-721'} (pin: ${r.itemPinId || 'n/a'})`
                   : `- #${r.tokenIndex}: failed (${r.error || 'unknown'})`,
               ),
+              '',
+              swapDoneCard,
             ];
             const msg = cStore.addMessage(event.sessionId, {
               type: 'assistant',
@@ -4638,7 +4693,78 @@ function getSellerAutoFulfillDaemon(): SellerAutoFulfillDaemon {
             console.warn('[SellerAutoFulfill/FT] recordNotification failed:', err);
           }
         },
-        emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+        emitToRenderer: (channel, data) => {
+          broadcastToRenderers(channel, data);
+          if (channel === 'goodsTrade:autoSold' && data && typeof data === 'object') {
+            const payload = data as {
+              orderId?: string;
+              sellerMetabotId?: number;
+              itemPinId?: string;
+              buyerAddress?: string;
+              amountMilli?: number;
+              assetKey?: string;
+              deliveryTxId?: string;
+              tradePinId?: string;
+            };
+            const sellerBotId = Number(payload.sellerMetabotId);
+            const soldPinId = String(payload.itemPinId ?? '').trim();
+            if (Number.isInteger(sellerBotId) && sellerBotId > 0 && isMrc721PinId(soldPinId)) {
+              void (async () => {
+                try {
+                  const cStore = getCoworkStore();
+                  const targetSession = cStore
+                    .listSessions({ metabotId: sellerBotId, omitInlinePeerDataAvatar: true })
+                    .find((s) => s.sessionType !== 'a2a');
+                  if (!targetSession) return;
+                  const itemSnap = await fetchMrc721ItemInfo({ pinId: soldPinId }).catch(() => null);
+                  const fillFence = buildNftFillCardFence(
+                    withNftCardHostStamp(
+                      {
+                        side: 'sold',
+                        rail: payload.assetKey ? 'token-for-goods' : 'me-escrow',
+                        format: 'mrc721',
+                        pinId: soldPinId,
+                        number: itemSnap?.number,
+                        name: itemSnap?.name || undefined,
+                        series: itemSnap?.collectionName || undefined,
+                        ...normalizeMrc721Cover(itemSnap?.cover),
+                        priceMeMilli:
+                          typeof payload.amountMilli === 'number' && payload.amountMilli > 0
+                            ? payload.amountMilli
+                            : undefined,
+                        tokenAssetKey: payload.assetKey || undefined,
+                        counterpartyAddress: payload.buyerAddress || undefined,
+                        txId: payload.deliveryTxId || undefined,
+                        deliveryTxId: payload.deliveryTxId || undefined,
+                        tradePinId: payload.tradePinId || undefined,
+                        orderId: payload.orderId || undefined,
+                      },
+                      targetSession.id,
+                    ),
+                  );
+                  const summaryLine =
+                    typeof payload.amountMilli === 'number' && payload.amountMilli > 0
+                      ? `Auto-fulfilled digital goods order ${payload.orderId || ''}: +${payload.amountMilli / 1000} ME settled.`
+                      : `Auto-fulfilled digital goods token swap ${payload.orderId || ''}.`;
+                  const msg = cStore.addMessage(targetSession.id, {
+                    type: 'assistant',
+                    content: `${summaryLine}\n\n${fillFence}`,
+                    metadata: {
+                      goodsAutoSoldReceipt: {
+                        orderId: payload.orderId,
+                        itemPinId: soldPinId,
+                        deliveryTxId: payload.deliveryTxId,
+                      },
+                    },
+                  });
+                  emitCoworkStreamMessage(targetSession.id, msg);
+                } catch (postErr) {
+                  console.warn('[SellerAutoFulfill] failed to post F1 sold card to cowork session:', postErr);
+                }
+              })();
+            }
+          }
+        },
       },
     );
   }
@@ -22455,6 +22581,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         } catch {
           // Best-effort quote consumption
         }
+        const resolvedShopPinId =
+          (typeof input.shopMetaAppPinId === 'string' && input.shopMetaAppPinId.trim())
+          || item.activeListing?.shopMetaAppPinId;
         broadcastToRenderers('goodsTrade:purchaseSettled', {
           metabotId: botId,
           orderId: latestOrder.orderId,
@@ -22466,11 +22595,60 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
           buyerAddress: bot.mvc_address,
           itemName: item.name || item.activeListing?.itemName,
           collectionName: item.collectionName || item.activeListing?.collectionName,
-          shopMetaAppPinId:
-            (typeof input.shopMetaAppPinId === 'string' && input.shopMetaAppPinId.trim())
-            || item.activeListing?.shopMetaAppPinId,
+          shopMetaAppPinId: resolvedShopPinId,
           source: 'ipc_buy_with_me',
         });
+        try {
+          const cStore = getCoworkStore();
+          const explicitSid = typeof input.sessionId === 'string' ? input.sessionId.trim() : '';
+          const targetSessionId =
+            (explicitSid && cStore.getSessionWithoutMessages(explicitSid) ? explicitSid : '')
+            || cStore
+              .listSessions({ metabotId: botId, omitInlinePeerDataAvatar: true })
+              .find((s) => s.sessionType !== 'a2a')?.id
+            || '';
+          if (targetSessionId) {
+            const fillFence = buildNftFillCardFence(
+              withNftCardHostStamp(
+                {
+                  side: 'bought',
+                  rail: 'me-escrow',
+                  format: 'mrc721',
+                  pinId: itemPinId,
+                  number: item.number,
+                  name: item.name || item.activeListing?.itemName,
+                  series: item.collectionName || item.activeListing?.collectionName,
+                  ...normalizeMrc721Cover(item.cover || item.activeListing?.cover),
+                  caVerified: item.activeListing?.caVerified,
+                  priceMeMilli: latestOrder.amountMilli || amountMilli,
+                  priceCnyCents: item.activeListing?.prices?.fiat?.amountCents,
+                  counterpartyName: item.activeListing?.seller?.name,
+                  counterpartyAddress: sellerBotAddress,
+                  counterpartyGlobalMetaId: sellerMetaId,
+                  txId: latestOrder.deliveryTxId,
+                  deliveryTxId: latestOrder.deliveryTxId,
+                  orderId: latestOrder.orderId,
+                  shopMetaAppPinId: resolvedShopPinId,
+                },
+                targetSessionId,
+              ),
+            );
+            const msg = cStore.addMessage(targetSessionId, {
+              type: 'assistant',
+              content: `ME Escrow Order SETTLED (${latestOrder.orderId}): received ${item.name || itemPinId}.\n\n${fillFence}`,
+              metadata: {
+                goodsPurchaseSettledReceipt: {
+                  orderId: latestOrder.orderId,
+                  itemPinId,
+                  deliveryTxId: latestOrder.deliveryTxId,
+                },
+              },
+            });
+            emitCoworkStreamMessage(targetSessionId, msg);
+          }
+        } catch (postErr) {
+          console.warn('[goodsTrade:buyWithMe] failed to post F1 bought card to cowork session:', postErr);
+        }
       }
 
       return { success: true, order: latestOrder };
