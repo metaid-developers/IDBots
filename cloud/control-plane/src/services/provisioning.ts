@@ -80,6 +80,18 @@ export function buildContainerSpec(
     }
   }
 
+  const inviteGrant = app.db
+    .prepare(
+      'SELECT grant_ticket_enc FROM invite_grants WHERE user_id = ? AND claimed_at IS NULL',
+    )
+    .get(input.user.id) as { grant_ticket_enc: string | null } | undefined;
+  if (inviteGrant?.grant_ticket_enc) {
+    env.IDBOTS_BOOTSTRAP_INVITE_GRANT_TICKET = decryptSecret(
+      app.config.masterKey,
+      inviteGrant.grant_ticket_enc,
+    );
+  }
+
   for (const [key, value] of Object.entries(app.config.tenantEnv)) {
     env[key] = value;
   }

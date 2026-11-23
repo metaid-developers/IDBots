@@ -265,22 +265,22 @@ test('login palette matches the app theme tokens in both schemes', () => {
   assert.equal(light.page.backgroundColor, LOGIN_PAGE_BG.light);
   assert.equal(dark.page.color, '#F4F3EF');
   assert.equal(light.page.color, '#242425');
-  assert.notEqual(dark.input.backgroundColor, light.input.backgroundColor);
+  assert.notEqual(dark.inputRow.backgroundColor, light.inputRow.backgroundColor);
   assert.notEqual(dark.error.color, light.error.color);
   // Brand yellow (#ffdc51, --color-primary) is theme-invariant by design.
-  assert.equal(dark.button.backgroundColor, '#ffdc51');
-  assert.equal(light.button.backgroundColor, '#ffdc51');
+  assert.equal(String(dark.button.backgroundColor).toLowerCase(), '#ffdc51');
+  assert.equal(String(light.button.backgroundColor).toLowerCase(), '#ffdc51');
   assert.equal(dark.logo.imageRendering, 'pixelated');
 });
 
 test('login card uses the active surface and concentric radius in both schemes', () => {
   for (const isDark of [true, false]) {
     const styles = buildStyles(isDark);
-    assert.equal(styles.loginCard.backgroundColor, styles.input.backgroundColor);
+    assert.equal(styles.loginCard.backgroundColor, styles.inputRow.backgroundColor);
     assert.equal(styles.loginCard.borderRadius, 24);
-    assert.equal(styles.loginCard.padding, '26px 22px');
-    assert.equal(styles.input.borderRadius, 14);
-    assert.equal(styles.phoneField.borderRadius, 14);
+    assert.equal(styles.loginCard.padding, '24px 20px');
+    assert.equal(styles.inputRow.borderRadius, 14);
+    assert.equal(styles.segBar.borderRadius, 12);
     assert.ok(String(styles.loginCard.boxShadow).length > 0);
   }
 });

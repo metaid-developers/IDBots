@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getMe, logout, requestAccountDeletion, sendCode, verifyCode } from '../src/mobile/login/loginApi';
+import { getMe, logout, previewInvite, requestAccountDeletion, sendCode, verifyCode } from '../src/mobile/login/loginApi';
 
 /**
  * Real-C3-mode loginApi tests (no VITE_MOBILE_MOCK): every fetch is stubbed,
@@ -343,4 +343,52 @@ test('real loginApi logs never contain the phone number, SMS code, or invite cod
   assert.ok(!all.includes('INVITE-TOKEN'), 'invite code must not be logged');
   assert.ok(!all.includes('Secret Name'), 'display name value must not be logged');
   assert.ok(!all.includes('a reason'), 'deletion reason must not be logged');
+});
+
+test('real sendCode forwards inviteCode when provided and omits it when blank', async () => {
+  await withStubbedFetch(
+    () => jsonResponse(200, { resendAfterSec: 60 }),
+    async (calls) => {
+      await sendCode(PHONE, 'login', { inviteCode: 'IDB-7K9M-X4' });
+      await sendCode(PHONE, 'login', { inviteCode: '   ' });
+      assert.deepEqual(
+        calls[0].init?.body,
+        JSON.stringify({ phone: PHONE, purpose: 'login', inviteCode: 'IDB-7K9M-X4' }),
+      );
+      assert.deepEqual(calls[1].init?.body, JSON.stringify({ phone: PHONE, purpose: 'login' }));
+    },
+  );
+});
+
+test('real previewInvite GETs /api/v1/auth/invite/preview and never logs the code', async () => {
+  const lines: string[] = [];
+  const original = console.info;
+  console.info = (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  };
+  try {
+    await withStubbedFetch(
+      () =>
+        jsonResponse(200, {
+          valid: true,
+          code: 'IDB-SECRET-99',
+          planId: 'me_pro',
+          planName: 'ID.Student',
+          planNameEn: 'ID.Student',
+          periodDays: 14,
+          registrationEnabled: true,
+          dailyCapFull: false,
+        }),
+      async (calls) => {
+        const res = await previewInvite('IDB-SECRET-99');
+        assert.equal(res.valid, true);
+        assert.equal(res.periodDays, 14);
+        assert.equal(calls[0].input, '/api/v1/auth/invite/preview?code=IDB-SECRET-99');
+        assert.equal(calls[0].init?.method, 'GET');
+      },
+    );
+  } finally {
+    console.info = original;
+  }
+  assert.ok(!lines.join('\n').includes('IDB-SECRET-99'), 'invite preview code must not be logged');
 });

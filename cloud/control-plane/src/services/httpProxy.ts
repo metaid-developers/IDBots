@@ -2,6 +2,7 @@ import http from 'node:http';
 import type { AppContext } from '../context.js';
 import { writeError, type RequestCtx, type Route } from '../http.js';
 import { resolveSession } from '../routes/auth.js';
+import { triggerWakeHibernatedTenant } from './hibernation.js';
 import { resolveTenantForUser, type TenantLookupResult } from './tenantLookup.js';
 
 /**
@@ -213,6 +214,7 @@ async function proxyApp(
   }
   const lookup = await resolveTenantForUser(app, session.user.id);
   if (!lookup.ok) {
+    triggerWakeHibernatedTenant(app, session.user.id);
     // Not ready/degraded (or anything else): the client polls /me and returns.
     redirectToLogin(reqCtx);
     return;

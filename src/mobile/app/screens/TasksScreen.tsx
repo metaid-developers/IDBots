@@ -20,6 +20,7 @@ import { UnifiedTasksSection } from '../components/unifiedTasks/UnifiedTasksSect
 import { UnifiedTaskDetail } from '../components/unifiedTasks/UnifiedTaskDetail';
 import { useUnifiedTasks } from '../hooks/useUnifiedTasks';
 import { NotificationBell } from '../components/NotificationBell';
+import { isMeExpiredInviteTrial, useMeStore } from '../me/mePointsStore';
 
 type ScheduleKind = 'interval' | 'daily' | 'cron';
 type TaskScreen = ReturnType<typeof useScheduledTasks>;
@@ -99,11 +100,13 @@ function TaskRuns({
 function TaskRow({
   task,
   screen,
+  trialExpired,
   onEdit,
   onDelete,
 }: {
   task: ScheduledTask;
   screen: TaskScreen;
+  trialExpired?: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }): JSX.Element {
@@ -165,7 +168,7 @@ function TaskRow({
         <button
           type="button"
           onClick={() => void (running ? screen.stopTask(task.id) : screen.runTask(task.id))}
-          disabled={pending !== null}
+          disabled={pending !== null || (!running && Boolean(trialExpired))}
           aria-label={`${t(running ? 'mobile.tasks.stop' : 'mobile.tasks.runNow')} · ${task.name}`}
           className="twin-button twin-button-secondary twin-button-small"
         >
@@ -384,6 +387,7 @@ export default function TasksScreen({
   onOpenSession,
   onOpenDraft = () => undefined,
   onOpenUri = () => undefined,
+  onOpenSubscribe,
   onAttentionCount = () => undefined,
   notificationUnreadCount = 0,
   onOpenNotifications,
@@ -396,12 +400,15 @@ export default function TasksScreen({
   onOpenSession: OpenWorkSession;
   onOpenDraft?: (draft: string) => void;
   onOpenUri?: (uri: string) => void;
+  onOpenSubscribe?: () => void;
   onAttentionCount?: (count: number) => void;
   notificationUnreadCount?: number;
   onOpenNotifications?: () => void;
   requestedTaskId?: string;
   requestedScheduledRun?: { taskId: string; runId: string };
 }): JSX.Element {
+  const me = useMeStore();
+  const trialExpired = isMeExpiredInviteTrial(me.subscription);
   const [primaryTab, setPrimaryTab] = useState<PrimaryTaskTab>(readPrimaryTaskTab);
   const [scheduledSubTab, setScheduledSubTab] = useState<'schedules' | 'history'>('schedules');
   const [activityRevision, setActivityRevision] = useState(0);
@@ -473,8 +480,9 @@ export default function TasksScreen({
           {onOpenNotifications ? <NotificationBell count={notificationUnreadCount ?? 0} onClick={onOpenNotifications} /> : null}
           <button
             type="button"
+            disabled={trialExpired}
             onClick={primaryTab === 'tasks' ? () => onOpenDraft(t('mobile.taskCenter.newTaskDraft')) : openScheduleForm}
-            className="twin-icon-button twin-icon-button-primary"
+            className="twin-icon-button twin-icon-button-primary disabled:opacity-40"
             aria-label={t(primaryTab === 'tasks' ? 'mobile.taskCenter.newTask' : 'mobile.tasks.create')}
             data-testid="task-center-create"
           >
@@ -495,6 +503,27 @@ export default function TasksScreen({
           {t('mobile.taskCenter.scheduledTab')}
         </button>
       </div>
+      {trialExpired ? (
+        <div
+          data-testid="tasks-trial-expired-bar"
+          className="mx-3 mt-2.5 flex items-center justify-between gap-3 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-3.5 py-2.5"
+        >
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-bold text-[var(--text-primary)]">{t('mobile.trial.expiredTitle')}</p>
+            <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{t('mobile.trial.expiredTasksSub')}</p>
+          </div>
+          {onOpenSubscribe ? (
+            <button
+              type="button"
+              data-testid="tasks-trial-subscribe-cta"
+              onClick={onOpenSubscribe}
+              className="twin-button twin-button-primary twin-button-small shrink-0 rounded-full px-3.5"
+            >
+              {t('mobile.trial.subscribeCta')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="twin-scroll p-3">
         {primaryTab === 'tasks' ? <UnifiedTasksSection screen={unified} /> : (
           <>
@@ -507,7 +536,12 @@ export default function TasksScreen({
                   {t('mobile.taskCenter.history')}
                 </button>
               </div>
-              <button type="button" className="twin-button twin-button-primary twin-button-small" onClick={openScheduleForm}>
+              <button
+                type="button"
+                disabled={trialExpired}
+                className="twin-button twin-button-primary twin-button-small disabled:opacity-40"
+                onClick={openScheduleForm}
+              >
                 {t('mobile.tasks.create')}
               </button>
             </div>
@@ -525,6 +559,7 @@ export default function TasksScreen({
                     key={task.id}
                     task={task}
                     screen={screen}
+                    trialExpired={trialExpired}
                     onEdit={() => { setEditTask(task); setFormOpen(true); }}
                     onDelete={() => setDeleteTarget(task)}
                   />

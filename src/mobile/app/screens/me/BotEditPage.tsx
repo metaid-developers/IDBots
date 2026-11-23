@@ -18,6 +18,7 @@ export function BotEditPage(props: {
   onSaved: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onOpenSession?: (sessionId: string) => Promise<boolean>;
+  onOpenSubscribe?: () => void;
   initialTab?: import('../../components/BotEditorForm').EditorTabKey;
   initialSurfRunId?: string;
 }): JSX.Element {
@@ -51,6 +52,7 @@ export function BotEditPage(props: {
           onDirtyChange={props.onDirtyChange}
           automationActions={manager}
           onOpenSession={props.onOpenSession}
+          onOpenSubscribe={props.onOpenSubscribe}
           initialTab={props.initialTab}
           initialSurfRunId={props.initialSurfRunId}
           onClose={props.onBack}

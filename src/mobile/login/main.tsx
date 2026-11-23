@@ -1,23 +1,11 @@
 /**
- * Mobile login entry (REQ-E-10): full SMS sign-in / invite-only sign-up flow
- * on top of the loginApi C3 seam — every action goes through loginApi, no
- * fetch and no hard-coded outcomes, so wiring the real control plane later
- * only changes loginApi.ts.
+ * Mobile login entry (REQ-E-10 + CR-WSE-005 Variant A): minimalist segmented
+ * SMS sign-in / invited sign-up flow on top of the loginApi seam.
  *
- * Also renders the WeChat/QQ in-app browser guide (those webviews cannot
- * finish sign-in) and the iPhone Safari "Add to Home Screen" hint.
- *
- * The theme follows the same stored preference as the app: the app settings
- * service mirrors the confirmed `app_config.theme` into localStorage
- * (themeMirror.ts) and this entry resolves it synchronously pre-paint
- * (login/theme.ts), falling back to the OS scheme like the app's `system`
- * default. Styling stays inline, keyed on the palette in loginStyles.ts.
- *
- * The import graph stays tiny (react + mobile i18n + loginApi +
- * inAppBrowser + theme/loginStyles): the control plane serves this bundle
- * before any session exists and it must fit the 80 KB gzip budget
- * (REQ-E-19). No desktop i18n, no redux, no Tailwind, no window.electron:
- * styling is inline.
+ * Also renders the WeChat/QQ in-app browser guide and the iPhone Safari
+ * "Add to Home Screen" hint while keeping the bundle well within the 80 KB
+ * gzip budget (REQ-E-19): no desktop i18n, no redux, no Tailwind, no
+ * window.electron.
  */
 
 import '../native/installNativeBootstrapFirst';
@@ -30,7 +18,14 @@ import {
   isIosSafari,
   isStandaloneDisplay,
 } from './inAppBrowser';
-import { getMe, logout, sendCode, verifyCode } from './loginApi';
+import {
+  getMe,
+  logout,
+  previewInvite,
+  sendCode,
+  verifyCode,
+  type InvitePreviewResult,
+} from './loginApi';
 import { probeSessionRecovery } from './sessionRecovery';
 import { mobileLegalUrl } from '../legal';
 import { LoginPlaceholderStyle, useLoginStyles } from './loginStyleHooks';
@@ -39,37 +34,54 @@ const PreparingScreen = React.lazy(() => import('./PreparingScreen'));
 
 mobileI18n.initFromDeviceLocale();
 
-const DISPLAY_NAME_MIN = 1;
-const DISPLAY_NAME_MAX = 24;
+type LoginTab = 'signin' | 'signup';
+type ErrorField = 'phone' | 'code' | 'invite' | 'general';
+
+function readInitialInviteParam(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    const raw = new URLSearchParams(window.location.search).get('invite') ?? '';
+    return raw.trim().toUpperCase().slice(0, 32);
+  } catch {
+    return '';
+  }
+}
 
 function normalizePhone(input: string): string {
   let digits = input.replace(/[\s-]/g, '');
-  // Accept paste-in international formats even though the field shows a fixed
-  // +86 prefix: "+8613800138000" and "8613800138000" both reduce to 11 digits.
   if (/^\+?86\d{11}$/.test(digits)) {
     digits = digits.replace(/^\+?86/, '');
   }
   return /^\d{11}$/.test(digits) ? `+86${digits}` : digits;
 }
 
-function isValidDisplayName(name: string): boolean {
-  const length = name.trim().length;
-  return length >= DISPLAY_NAME_MIN && length <= DISPLAY_NAME_MAX;
-}
-
 function readErrorCode(error: unknown): string | undefined {
   return (error as { code?: string } | null)?.code;
 }
 
-/** Localized copy for every loginApi error code the sign-in path can hit. */
-function verifyErrorText(code: string | undefined): string {
+function authErrorText(code: string | undefined): string {
   switch (code) {
+    case 'INVALID_PHONE':
+      return t('mobile.login.invalidPhone');
     case 'INVITE_REQUIRED':
       return t('mobile.login.inviteRequired');
     case 'INVITE_INVALID':
+    case 'INVALID_INVITE_CODE':
       return t('mobile.login.inviteInvalid');
     case 'INVITE_EXHAUSTED':
       return t('mobile.login.inviteExhausted');
+    case 'INVITE_DAILY_CAP_FULL':
+      return t('mobile.login.inviteDailyCapFull');
+    case 'INVITE_DISABLED':
+      return t('mobile.login.inviteDisabled');
+    case 'SMS_SEND_FAILED':
+      return t('mobile.login.smsSendFailed');
+    case 'RATE_LIMITED':
+      return t('mobile.login.rateLimited');
+    case 'TOO_MANY_ATTEMPTS':
+      return t('mobile.login.tooManyAttempts');
+    case 'USER_DISABLED':
+      return t('mobile.login.userDisabled');
     case 'CODE_EXPIRED':
       return t('mobile.login.codeExpired');
     case 'CODE_INVALID':
@@ -96,19 +108,19 @@ function SessionRecoveryScreen(props: { failed: boolean; onRetry: () => void }):
 
 function LoginPage(): JSX.Element {
   const styles = useLoginStyles();
+  const [initialInvite] = useState(readInitialInviteParam);
+  const [activeTab, setActiveTab] = useState<LoginTab>(() => (initialInvite ? 'signup' : 'signin'));
+  const [inviteCode, setInviteCode] = useState(initialInvite);
+  const [invitePreview, setInvitePreview] = useState<InvitePreviewResult | null>(null);
+  const [capFullAlert, setCapFullAlert] = useState(false);
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
-  const [codeSent, setCodeSent] = useState(false);
   const [countdown, setCountdown] = useState(0);
-  const [busy, setBusy] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState('');
-  const [errorField, setErrorField] = useState<'phone' | 'code' | 'invite' | 'displayName' | 'general'>('general');
-  const [inviteVisible, setInviteVisible] = useState(false);
-  const [inviteCode, setInviteCode] = useState('');
-  const [displayNameVisible, setDisplayNameVisible] = useState(false);
-  const [displayName, setDisplayName] = useState(() => t('mobile.login.displayNameDefault'));
-  const [agreeTerms, setAgreeTerms] = useState(false);
-  const [hkConsent, setHkConsent] = useState(false);
+  const [errorField, setErrorField] = useState<ErrorField>('general');
+  const [agreed, setAgreed] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [sessionState, setSessionState] = useState<'checking' | 'login' | 'retry'>('checking');
   const [sessionAttempt, setSessionAttempt] = useState(0);
@@ -133,7 +145,6 @@ function LoginPage(): JSX.Element {
     };
   }, [sessionAttempt]);
 
-  // 1 s ticks for the resend countdown started by sendCode's resendAfterSec.
   useEffect(() => {
     if (countdown <= 0) {
       return undefined;
@@ -142,66 +153,151 @@ function LoginPage(): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [countdown]);
 
+  useEffect(() => {
+    const trimmed = inviteCode.trim();
+    if (activeTab !== 'signup' || trimmed.length < 3) {
+      setInvitePreview(null);
+      if (!trimmed) setCapFullAlert(false);
+      return undefined;
+    }
+    let cancelled = false;
+    const delayMs = trimmed === initialInvite ? 0 : 180;
+    const timer = window.setTimeout(() => {
+      void previewInvite(trimmed)
+        .then((res) => {
+          if (cancelled) return;
+          setInvitePreview(res);
+          setCapFullAlert(Boolean(res.dailyCapFull));
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setInvitePreview(null);
+          }
+        });
+    }, delayMs);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeTab, inviteCode, initialInvite]);
+
   const clearError = () => {
     setError('');
     setErrorField('general');
   };
-  const showError = (message: string, field: 'phone' | 'code' | 'invite' | 'displayName' | 'general' = 'general') => {
+
+  const showError = (message: string, field: ErrorField = 'general') => {
     setError(message);
     setErrorField(field);
   };
 
+  const switchTab = (tab: LoginTab) => {
+    setActiveTab(tab);
+    clearError();
+    if (tab === 'signin') {
+      setCapFullAlert(false);
+    }
+  };
+
+  const onPasteInvite = async () => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.readText) return;
+    try {
+      const clip = (await navigator.clipboard.readText()).trim();
+      if (!clip) return;
+      const match = clip.match(/[?&]invite=([A-Za-z0-9_-]{3,32})/i);
+      const extracted = (match ? match[1] : clip).toUpperCase().replace(/\s+/g, '').slice(0, 32);
+      if (extracted) {
+        setInviteCode(extracted);
+        clearError();
+      }
+    } catch {
+      // Clipboard read permission denied; ignore silently so user can type manually.
+    }
+  };
+
   const normalizedPhone = normalizePhone(phone);
-  const displayNameReady = !displayNameVisible || isValidDisplayName(displayName);
-  const canSignIn = !busy && code.length > 0 && agreeTerms && hkConsent && displayNameReady;
+  const busy = sendingCode || verifying;
+  const capacityBlocked = activeTab === 'signup' && capFullAlert;
+  const sendDisabled = busy || !phone || countdown > 0 || capacityBlocked;
+  const canSubmit = !busy && Boolean(phone) && code.length > 0 && agreed && !capacityBlocked;
 
   const onSendCode = async () => {
-    setBusy(true);
+    if (sendDisabled) return;
     clearError();
+    if (activeTab === 'signup' && !inviteCode.trim()) {
+      showError(t('mobile.login.inviteRequired'), 'invite');
+      return;
+    }
+    setSendingCode(true);
     try {
-      const result = await sendCode(normalizedPhone);
-      setCodeSent(true);
+      const result = await sendCode(
+        normalizedPhone,
+        'login',
+        activeTab === 'signup' ? { inviteCode: inviteCode.trim() } : undefined,
+      );
       setCountdown(result.resendAfterSec);
     } catch (sendError) {
-      showError(
-        readErrorCode(sendError) === 'INVALID_PHONE'
-          ? t('mobile.login.invalidPhone')
-          : t('mobile.login.genericError'),
-        readErrorCode(sendError) === 'INVALID_PHONE' ? 'phone' : 'general',
-      );
+      const errCode = readErrorCode(sendError);
+      if (errCode === 'INVITE_DAILY_CAP_FULL') {
+        setActiveTab('signup');
+        setCapFullAlert(true);
+        return;
+      }
+      if (errCode === 'INVITE_REQUIRED') {
+        setActiveTab('signup');
+        showError(authErrorText(errCode), 'invite');
+        return;
+      }
+      if (errCode?.startsWith('INVITE_')) {
+        setActiveTab('signup');
+        showError(authErrorText(errCode), 'invite');
+        return;
+      }
+      showError(authErrorText(errCode), errCode === 'INVALID_PHONE' ? 'phone' : 'general');
     } finally {
-      setBusy(false);
+      setSendingCode(false);
     }
   };
 
   const onVerify = async () => {
-    if (!canSignIn) {
+    if (!canSubmit) return;
+    clearError();
+    if (activeTab === 'signup' && !inviteCode.trim()) {
+      showError(t('mobile.login.inviteRequired'), 'invite');
       return;
     }
-    setBusy(true);
-    clearError();
+    setVerifying(true);
     try {
       await verifyCode(normalizedPhone, code, {
-        inviteCode: inviteVisible && inviteCode.trim() ? inviteCode.trim() : undefined,
-        displayName: displayNameVisible ? displayName.trim() : undefined,
+        inviteCode: activeTab === 'signup' && inviteCode.trim() ? inviteCode.trim() : undefined,
       });
       setPreparing(true);
     } catch (verifyError) {
-      const errorCode = readErrorCode(verifyError);
-      // Sign-up path: a new account needs an invite and picks the on-chain
-      // display name before the next verify attempt.
-      if (errorCode === 'INVITE_REQUIRED') {
-        setInviteVisible(true);
-        setDisplayNameVisible(true);
+      const errCode = readErrorCode(verifyError);
+      if (errCode === 'INVITE_DAILY_CAP_FULL') {
+        setActiveTab('signup');
+        setCapFullAlert(true);
+        return;
       }
-      const field = errorCode === 'CODE_INVALID' || errorCode === 'CODE_EXPIRED'
-        ? 'code'
-        : errorCode?.startsWith('INVITE_')
-          ? 'invite'
-          : 'general';
-      showError(verifyErrorText(errorCode), field);
+      if (errCode === 'INVITE_REQUIRED') {
+        setActiveTab('signup');
+        showError(authErrorText(errCode), 'invite');
+        return;
+      }
+      const field: ErrorField =
+        errCode === 'CODE_INVALID' || errCode === 'CODE_EXPIRED'
+          ? 'code'
+          : errCode?.startsWith('INVITE_')
+            ? 'invite'
+            : errCode === 'INVALID_PHONE'
+              ? 'phone'
+              : 'general';
+      if (field === 'invite') {
+        setActiveTab('signup');
+      }
+      showError(authErrorText(errCode), field);
     } finally {
-      setBusy(false);
+      setVerifying(false);
     }
   };
 
@@ -235,149 +331,226 @@ function LoginPage(): JSX.Element {
     );
   }
 
+  const lang = mobileI18n.getLanguage();
+  const previewPlanLabel = invitePreview?.valid
+    ? (lang === 'zh'
+      ? invitePreview.planName || invitePreview.planNameEn || 'ID.Student'
+      : invitePreview.planNameEn || invitePreview.planName || 'ID.Student')
+    : '';
+  const previewDays = invitePreview?.periodDays || 14;
+  const demoNote = t('mobile.login.demoNote');
+
   return (
     <div style={styles.page}>
-      <div style={styles.loginCard}>
-      <img src="/icon-192.png" alt="IDBots" style={styles.logo} />
-      <h1 style={styles.title}>{t('mobile.login.title')}</h1>
-      <p style={styles.subtitle}>{t('mobile.login.subtitle')}</p>
-      <div style={styles.field}>
-        <label htmlFor="login-phone" style={styles.label}>{t('mobile.login.phoneLabel')}</label>
-        <div className="login-ui-field" style={styles.phoneField}>
-          <span style={styles.phonePrefix} aria-hidden="true">+86</span>
-          <input
-            id="login-phone"
-            type="tel"
-            inputMode="numeric"
-            autoComplete="tel-national"
-            maxLength={11}
-            value={phone}
-            onChange={(event) => {
-              setPhone(event.target.value.replace(/\D/g, '').slice(0, 11));
-              clearError();
-            }}
-            placeholder={t('mobile.login.phonePlaceholder')}
-            style={styles.phoneInput}
-            aria-invalid={errorField === 'phone' && Boolean(error)}
-          />
-        </div>
-        {errorField === 'phone' && error ? <p style={styles.errorLeft} role="alert">{error}</p> : null}
-      </div>
-      <button
-        type="button"
-        onClick={onSendCode}
-        disabled={busy || !phone || countdown > 0}
-        style={{ ...styles.button, ...((busy || !phone || countdown > 0) ? styles.buttonDisabled : null) }}
-      >
-        {busy ? t('mobile.login.sending') : countdown > 0 ? t('mobile.login.resendIn', { sec: countdown }) : t('mobile.login.sendCode')}
-      </button>
-      {codeSent && (
-        <>
-          <div style={styles.field}>
-            <label htmlFor="login-code" style={styles.label}>{t('mobile.login.codeLabel')}</label>
-            <input
-              id="login-code"
-              type="text"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={6}
-              className="login-ui-input"
-              value={code}
-              onChange={(event) => {
-                setCode(event.target.value.replace(/\D/g, '').slice(0, 6));
-                clearError();
-              }}
-              placeholder={t('mobile.login.codePlaceholder')}
-              style={styles.codeInput}
-              aria-invalid={errorField === 'code' && Boolean(error)}
-            />
-            {errorField === 'code' && error ? <p style={styles.errorLeft} role="alert">{error}</p> : null}
+      <div style={styles.loginCard} data-testid="login-card">
+        <div style={styles.brandHead}>
+          <img src="/icon-192.png" alt="IDBots" style={styles.brandLogo} />
+          <div>
+            <h1 style={styles.brandTitle}>{t('mobile.login.title')}</h1>
+            <p style={styles.brandSubtitle}>
+              {t(activeTab === 'signup' ? 'mobile.login.subtitleSignup' : 'mobile.login.subtitleSignin')}
+            </p>
           </div>
-          {inviteVisible && (
-            <div style={styles.field}>
-              <label htmlFor="login-invite" style={styles.label}>{t('mobile.login.inviteLabel')}</label>
+        </div>
+
+        <div style={styles.segBar} role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'signin'}
+            data-testid="login-tab-signin"
+            onClick={() => switchTab('signin')}
+            style={{
+              ...styles.segBtn,
+              ...(activeTab === 'signin' ? styles.segBtnActive : null),
+            }}
+          >
+            {t('mobile.login.tabSignin')}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'signup'}
+            data-testid="login-tab-signup"
+            onClick={() => switchTab('signup')}
+            style={{
+              ...styles.segBtn,
+              ...(activeTab === 'signup' ? styles.segBtnActive : null),
+            }}
+          >
+            {t('mobile.login.tabSignup')}
+          </button>
+        </div>
+
+        {capacityBlocked ? (
+          <div style={styles.softAlert} role="status" data-testid="login-capacity-alert">
+            {t('mobile.login.inviteDailyCapFull')}
+          </div>
+        ) : null}
+
+        <div style={styles.fieldGroup}>
+          {activeTab === 'signup' ? (
+            <div>
+              <div className="login-ui-field" style={styles.inputRow}>
+                <input
+                  id="login-invite"
+                  data-testid="login-invite-input"
+                  aria-label={t('mobile.login.inviteLabel')}
+                  type="text"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  maxLength={32}
+                  value={inviteCode}
+                  onChange={(event) => {
+                    setInviteCode(event.target.value.toUpperCase().replace(/\s+/g, ''));
+                    setCapFullAlert(false);
+                    clearError();
+                  }}
+                  placeholder={t('mobile.login.invitePlaceholder')}
+                  style={{ ...styles.bareInput, ...styles.monoInput }}
+                  aria-invalid={errorField === 'invite' && Boolean(error)}
+                />
+                {!inviteCode.trim() ? (
+                  <button
+                    type="button"
+                    data-testid="login-paste-invite"
+                    onClick={() => {
+                      void onPasteInvite();
+                    }}
+                    style={styles.inlineAction}
+                  >
+                    {t('mobile.login.pasteInvite')}
+                  </button>
+                ) : previewPlanLabel ? (
+                  <span style={styles.inlineBadge} data-testid="login-invite-perk-badge">
+                    {t('mobile.login.invitePerkBadge', { plan: previewPlanLabel, days: previewDays })}
+                  </span>
+                ) : null}
+              </div>
+              {errorField === 'invite' && error ? (
+                <p style={{ ...styles.errorLeft, marginTop: 6 }} role="alert">
+                  {error}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div>
+            <div className="login-ui-field" style={styles.inputRow}>
+              <span style={styles.phonePrefix} aria-hidden="true">+86</span>
               <input
-                id="login-invite"
-                type="text"
-                autoCapitalize="characters"
-                autoCorrect="off"
-                className="login-ui-input"
-                value={inviteCode}
+                id="login-phone"
+                data-testid="login-phone-input"
+                aria-label={t('mobile.login.phoneLabel')}
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel-national"
+                maxLength={11}
+                value={phone}
                 onChange={(event) => {
-                  setInviteCode(event.target.value);
+                  setPhone(event.target.value.replace(/\D/g, '').slice(0, 11));
                   clearError();
                 }}
-                placeholder={t('mobile.login.invitePlaceholder')}
-                style={styles.input}
-                aria-invalid={errorField === 'invite' && Boolean(error)}
+                placeholder={t('mobile.login.phonePlaceholder')}
+                style={styles.bareInput}
+                aria-invalid={errorField === 'phone' && Boolean(error)}
               />
-              {errorField === 'invite' && error ? <p style={styles.errorLeft} role="alert">{error}</p> : null}
             </div>
-          )}
-          {displayNameVisible && (
-            <div style={styles.field}>
-              <label htmlFor="login-display-name" style={styles.label}>{t('mobile.login.displayNameLabel')}</label>
+            {errorField === 'phone' && error ? (
+              <p style={{ ...styles.errorLeft, marginTop: 6 }} role="alert">
+                {error}
+              </p>
+            ) : null}
+          </div>
+
+          <div>
+            <div className="login-ui-field" style={styles.inputRow}>
               <input
-                id="login-display-name"
+                id="login-code"
+                data-testid="login-code-input"
+                aria-label={t('mobile.login.codeLabel')}
                 type="text"
-                autoComplete="nickname"
-                maxLength={DISPLAY_NAME_MAX}
-                className="login-ui-input"
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-                placeholder={t('mobile.login.displayNamePlaceholder')}
-                style={styles.input}
-                aria-invalid={!displayNameReady}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                value={code}
+                onChange={(event) => {
+                  setCode(event.target.value.replace(/\D/g, '').slice(0, 6));
+                  clearError();
+                }}
+                placeholder={t('mobile.login.codePlaceholder')}
+                style={styles.bareInput}
+                aria-invalid={errorField === 'code' && Boolean(error)}
               />
-              <p style={styles.note}>{t('mobile.login.displayNameNote')}</p>
-              {!displayNameReady && <p style={styles.errorLeft} role="alert">{t('mobile.login.displayNameInvalid')}</p>}
+              <button
+                type="button"
+                data-testid="login-send-code"
+                onClick={() => {
+                  void onSendCode();
+                }}
+                disabled={sendDisabled}
+                style={{
+                  ...styles.inlineAction,
+                  ...(sendDisabled ? styles.inlineActionDisabled : null),
+                }}
+              >
+                {sendingCode
+                  ? t('mobile.login.sendingShort')
+                  : countdown > 0
+                    ? t('mobile.login.countdownSec', { sec: countdown })
+                    : t('mobile.login.sendCode')}
+              </button>
             </div>
-          )}
-          <label style={styles.checkboxRow}>
-            <input
-              type="checkbox"
-              checked={agreeTerms}
-              onChange={(event) => setAgreeTerms(event.target.checked)}
-              style={styles.checkbox}
-            />
-            <span>
-              {t('mobile.login.termsPrefix')}{' '}
-              <a
-                href={mobileLegalUrl('terms')}
-                target="_blank"
-                rel="noreferrer"
-                style={styles.link}
-              >
-                {t('mobile.login.termsLink')}
-              </a>{' '}
-              {t('mobile.login.conjunction')}{' '}
-              <a
-                href={mobileLegalUrl('privacy')}
-                target="_blank"
-                rel="noreferrer"
-                style={styles.link}
-              >
-                {t('mobile.login.privacyLink')}
-              </a>
-            </span>
-          </label>
-          {/* Data-residency consent wording is pending legal review before launch. */}
-          <label style={styles.checkboxRow}>
-            <input
-              type="checkbox"
-              checked={hkConsent}
-              onChange={(event) => setHkConsent(event.target.checked)}
-              style={styles.checkbox}
-            />
-            <span>{t('mobile.login.hkDataConsent')}</span>
-          </label>
-          <button type="button" onClick={onVerify} disabled={!canSignIn} style={{ ...styles.button, ...(!canSignIn ? styles.buttonDisabled : null) }}>
-            {busy ? t('mobile.login.verifying') : t('mobile.login.verify')}
-          </button>
-        </>
-      )}
-      {errorField === 'general' && error ? <p style={styles.error} role="alert">{error}</p> : null}
-      <p style={styles.noteSmall}>{t('mobile.login.demoNote')}</p>
+            {errorField === 'code' && error ? (
+              <p style={{ ...styles.errorLeft, marginTop: 6 }} role="alert">
+                {error}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <label style={styles.agreeLine}>
+          <input
+            type="checkbox"
+            data-testid="login-agree-checkbox"
+            checked={agreed}
+            onChange={(event) => setAgreed(event.target.checked)}
+            style={styles.agreeCheckbox}
+          />
+          <span>
+            {t('mobile.login.agreePrefix')}{' '}
+            <a href={mobileLegalUrl('terms')} target="_blank" rel="noreferrer" style={styles.link}>
+              {t('mobile.login.termsLink')}
+            </a>
+            {t('mobile.login.agreeSep')}
+            <a href={mobileLegalUrl('privacy')} target="_blank" rel="noreferrer" style={styles.link}>
+              {t('mobile.login.privacyLink')}
+            </a>
+            {t('mobile.login.agreeHkSuffix')}
+          </span>
+        </label>
+
+        <button
+          type="button"
+          data-testid="login-submit"
+          onClick={() => {
+            void onVerify();
+          }}
+          disabled={!canSubmit}
+          style={{ ...styles.button, ...(!canSubmit ? styles.buttonDisabled : null) }}
+        >
+          {verifying
+            ? t('mobile.login.verifying')
+            : t(activeTab === 'signup' ? 'mobile.login.submitSignup' : 'mobile.login.verify')}
+        </button>
+
+        {errorField === 'general' && error ? (
+          <p style={styles.error} role="alert">
+            {error}
+          </p>
+        ) : null}
+        {demoNote ? <p style={styles.noteSmall}>{demoNote}</p> : null}
       </div>
     </div>
   );

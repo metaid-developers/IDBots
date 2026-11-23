@@ -354,6 +354,7 @@ export function BotEditorForm(props: {
   onDirtyChange?: (dirty: boolean) => void;
   automationActions?: BotAutomationActions;
   onOpenSession?: (sessionId: string) => Promise<boolean>;
+  onOpenSubscribe?: () => void;
   initialTab?: EditorTabKey;
   initialSurfRunId?: string;
 }): JSX.Element {
@@ -739,6 +740,7 @@ export function BotEditorForm(props: {
                 bot={bot}
                 actions={props.automationActions}
                 onOpenSession={props.onOpenSession}
+                onOpenSubscribe={props.onOpenSubscribe}
                 highlightRunId={props.initialSurfRunId}
               />
             ) : null}

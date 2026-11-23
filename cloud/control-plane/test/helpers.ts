@@ -60,9 +60,20 @@ export async function startTestApp(options: {
   asr?: import('../src/server.js').PublicServerOptions['asr'];
   /** CP_LOGIN_BUNDLE_DIR override. */
   loginBundleDir?: string;
+  /** CP_LEGAL_DIR override. */
+  legalDir?: string;
   /** CP_ADMIN_API_TOKEN override (credit routes; unset = surface disabled). */
   adminApiToken?: string;
   pushProvider?: 'disabled' | 'fake' | 'fcm';
+  /** Optional upstream ABS invite service configuration. */
+  inviteService?: {
+    baseUrl: string;
+    token: string;
+    hibernateAfterMs?: number;
+    wakeGraceMs?: number;
+  };
+  /** Optional custom SmsProvider (e.g. AliyunSmsProvider with stubbed fetch). */
+  smsProvider?: import('../src/sms.js').SmsProvider;
 }): Promise<TestApp> {
   const port = await freePort();
   const metricsPort = await freePort();
@@ -83,14 +94,27 @@ export async function startTestApp(options: {
       ? Object.fromEntries(Object.entries(options.tenantEnv).map(([k, v]) => [`CP_TENANT_ENV_${k}`, v]))
       : {}),
     ...(options.loginBundleDir ? { CP_LOGIN_BUNDLE_DIR: options.loginBundleDir } : {}),
+    ...(options.legalDir ? { CP_LEGAL_DIR: options.legalDir } : {}),
     ...(options.adminApiToken ? { CP_ADMIN_API_TOKEN: options.adminApiToken } : {}),
+    ...(options.inviteService
+      ? {
+          CP_INVITE_SERVICE_URL: options.inviteService.baseUrl,
+          CP_INVITE_API_TOKEN: options.inviteService.token,
+          ...(options.inviteService.hibernateAfterMs
+            ? { CP_INVITE_HIBERNATE_AFTER_MS: String(options.inviteService.hibernateAfterMs) }
+            : {}),
+          ...(options.inviteService.wakeGraceMs
+            ? { CP_INVITE_WAKE_GRACE_MS: String(options.inviteService.wakeGraceMs) }
+            : {}),
+        }
+      : {}),
   };
   const config = loadConfig(env);
   const app: AppContext = {
     config,
     db: options.db,
     docker: new DockerClient(options.dockerUrl),
-    sms: new FakeSmsProvider(config.fakeSmsNumbers),
+    sms: options.smsProvider ?? new FakeSmsProvider(config.fakeSmsNumbers),
     poller: null,
     metrics: new MetricsRegistry(),
     push: new PushDeliveryService(options.db, config),

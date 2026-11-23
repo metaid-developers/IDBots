@@ -335,6 +335,74 @@ interface MeSubscriptionInfo {
   raw: Record<string, unknown>;
 }
 
+interface MeInviteProgressInfo {
+  accountAgeDays: number;
+  requiredAgeDays: number;
+  totalSpentMilli: number;
+  requiredSpentMilli: number;
+  paidBypassEnabled: boolean;
+  hasPaidSubscription: boolean;
+  isTrialSubscription: boolean;
+}
+
+interface MeInviteInviteeBriefInfo {
+  status: number;
+  phoneMasked?: string;
+  reservedAt: number;
+  activatedAt?: number;
+  rewardGranted: boolean;
+}
+
+interface MeInviteCodeItemInfo {
+  code: string;
+  status: number;
+  maxUses: number;
+  usedCount: number;
+  activatedCount: number;
+  createdAt: number;
+  invitees: MeInviteInviteeBriefInfo[];
+}
+
+interface MeInviteDefaultGrantInfo {
+  planId: string;
+  planName: string;
+  planNameEn: string;
+  periodDays: number;
+}
+
+interface MeInviteRefillInfo {
+  availableCount: number;
+  earnedTotal: number;
+  usedTotal: number;
+  weeklyGrant?: MeBalanceInfo['weeklyGrant'];
+  planId?: string;
+  planName?: string;
+}
+
+interface MeInviteStatusInfo {
+  identityAddress: string;
+  issueEnabled: boolean;
+  eligible: boolean;
+  eligibleReason: string;
+  progress: MeInviteProgressInfo;
+  totalQuota: number;
+  usedQuota: number;
+  remainingQuota: number;
+  defaultGrant: MeInviteDefaultGrantInfo;
+  codes: MeInviteCodeItemInfo[];
+  refill: MeInviteRefillInfo;
+}
+
+interface MeInviteClaimRefillResultInfo {
+  applied: boolean;
+  claimId: string;
+  beforeRemainingMilli: number;
+  afterRemainingMilli: number;
+  refilledDeltaMilli: number;
+  availableRefillsLeft: number;
+  weeklyGrant?: MeBalanceInfo['weeklyGrant'];
+}
+
 interface MeHistoryEntryInfo {
   id: string;
   type: string;
@@ -1898,6 +1966,9 @@ interface IElectronAPI {
     /** Pick + stage a payment-voucher screenshot; voucherUrl is a signed gateway download URL when the gateway is running. */
     pickVoucher: (input?: Record<string, never>) => Promise<{ success: boolean; fileLabel?: string; voucherUrl?: string; signedUrlError?: string; error?: string }>;
     getPaymentInfo: () => Promise<{ success: boolean; payment?: { qrContent: string; payeeHint: string; qrImageDataUrl?: string }; error?: string }>;
+    getInviteStatus: () => Promise<{ success: boolean; inviteStatus?: MeInviteStatusInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
+    generateInviteCode: () => Promise<{ success: boolean; inviteStatus?: MeInviteStatusInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
+    claimInviteRefill: (input?: { idempotencyKey?: string }) => Promise<{ success: boolean; refillResult?: MeInviteClaimRefillResultInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
   };
   jevRelay: {
     resolveCredentials: () => Promise<{
@@ -3490,6 +3561,13 @@ export type {
   MeTopupPackageInfo,
   MeBalanceInfo,
   MeSubscriptionInfo,
+  MeInviteProgressInfo,
+  MeInviteInviteeBriefInfo,
+  MeInviteCodeItemInfo,
+  MeInviteDefaultGrantInfo,
+  MeInviteRefillInfo,
+  MeInviteStatusInfo,
+  MeInviteClaimRefillResultInfo,
   MeHistoryEntryInfo,
   MeHistoryPageInfo,
   MeTopupOrderInfo,

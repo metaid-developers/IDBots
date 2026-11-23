@@ -36,7 +36,9 @@ async function main(): Promise<void> {
 
   const docker = new DockerClient(config.dockerUrl);
   const sms: SmsProvider =
-    config.smsMode === 'fake' ? new FakeSmsProvider(config.fakeSmsNumbers) : new AliyunSmsProvider();
+    config.smsMode === 'fake'
+      ? new FakeSmsProvider(config.fakeSmsNumbers)
+      : new AliyunSmsProvider(config.sms);
 
   const app: AppContext = { config, db, docker, sms, poller: null, metrics: new MetricsRegistry(), push: new PushDeliveryService(db, config) };
   app.push.start();
