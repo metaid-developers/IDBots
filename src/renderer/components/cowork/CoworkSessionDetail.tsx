@@ -1,5 +1,27 @@
 import React, { useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo } from 'react';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { setNewTaskMetabotId } from '../../store/slices/coworkSlice';
+import {
+  buildTwinSteeringPrompt,
+  isProcessSession,
+  lastAssistantDigest,
+  lineageBucketOf,
+  PROCESS_KIND_LABEL_KEY,
+  PROCESS_STATE_DOT_COLOR,
+  PROCESS_TAG_CLASS,
+  PROCESS_ZONE_LABEL_KEY,
+  processKindOf,
+  processStateOf,
+  processTreeKeyOf,
+  processZoneOf,
+  resolveSourceTaskTitle,
+} from '../../utils/processCenter';
+import { useLineageOverrides } from '../../utils/processHubLineageStore';
+import { isInFollowUpSection } from '../../utils/sessionAutoGrouping';
+import { LockClosedIcon } from '@heroicons/react/24/outline';
+import ProcessDossierBody from './ProcessDossierBody';
+import { ProcessSparkPanel } from './ProcessSparkline';
+import { useProcessDossier } from './useProcessDossier';
 import { MessageExtensionContext } from './MessageExtensionContext';
 import { InlineMetaAppActorContext } from './InlineMetaAppActorContext';
 import type { InlineMetaAppActor } from './inlineMetaAppBridge';
@@ -100,6 +122,7 @@ import {
   XMarkIcon,
   PaperAirplaneIcon,
   SparklesIcon,
+  ArrowLeftIcon,
 } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { coworkService } from '../../services/cowork';
@@ -153,12 +176,17 @@ import {
   type ToolGroupItem,
 } from '../../services/coworkConversationProjection';
 import NftAvatarFrame from '../metabots/NftAvatarFrame';
+import { SessionAvatarCircle, formatRelativeTime as formatSessionRelativeTime } from './CoworkSessionItem';
 
 export { buildConversationTurns, buildDisplayItems } from '../../services/coworkConversationProjection';
 export type { ConversationTurn } from '../../services/coworkConversationProjection';
 
 interface CoworkSessionDetailProps {
   onManageSkills?: () => void;
+  /** True when this transcript was opened FROM 进程中心: show the return affordance. */
+  showBackToProcessHub?: boolean;
+  /** Return to the hub, which restores the zone/fold/scroll the owner left at. */
+  onBackToProcessHub?: () => void;
   onContinue: (
     prompt: string,
     skillPrompt?: string,
@@ -2681,6 +2709,8 @@ const A2AEpisodeDividerCard: React.FC<{
 
 const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   onManageSkills,
+  showBackToProcessHub = false,
+  onBackToProcessHub,
   onContinue,
   onStop,
   submitError,
@@ -2753,6 +2783,136 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   // mapping is the display source of truth, so an IM row never renders the
   // A2A panels (peer profile, episode history, A2A errors).
   const isA2ASession = currentSession?.sessionType === 'a2a' && !currentSession?.imChannel;
+  // Process sessions ([长期] / [编排任务] / [定时] runs) are READ-ONLY for the
+  // owner (owner ruling 2026-11-21, layout spec §②): the run is driven by an
+  // orchestrator and steered through the Twin Bot, so the transcript stays
+  // readable but the composer is not rendered at all — a disabled input would
+  // still read as "you could type here". Membership is the ONE rule the hub
+  // uses (utils/processCenter.isProcessSession), so a row can never sit in the
+  // hub and still offer a composer, or leave the hub and lose one.
+  const isProcessSessionReadOnly = useMemo(
+    () => (currentSession ? isProcessSession(currentSession) : false),
+    [currentSession],
+  );
+  /**
+   * 进程卷宗头 (design: process-detail-redesign, Friday 2026-11-21 22:4x).
+   * The detail header is a SECOND STRUCTURE for process sessions, not the
+   * session header with conditions: 「这是什么进程 · 谁在跑 · 挂在哪条任务上 ·
+   * 最近动过吗」. Values come from the same model the hub list uses, so a run
+   * cannot change its dot or its tag when the owner opens it.
+   */
+  const lineageOverrides = useLineageOverrides();
+  const processHeaderModel = useMemo(() => {
+    if (!currentSession) return null;
+    const kind = processKindOf(currentSession);
+    const zone = processZoneOf(currentSession);
+    const routedToOwner = lineageBucketOf(currentSession.id, lineageOverrides) === 'human';
+    const state = routedToOwner ? 'awaiting' as const : processStateOf(currentSession.updatedAt, Date.now());
+    return {
+      title: processTreeKeyOf(currentSession.title || '') || i18nService.t('coworkNewSession'),
+      // ONE shared map (processCenter.PROCESS_KIND_LABEL_KEY): the hand-rolled
+      // ternary here resolved to a key that does not exist and the header printed
+      // the literal `processKindOrchestration` — caught on the live app.
+      kindLabel: i18nService.t(PROCESS_KIND_LABEL_KEY[kind]),
+      zoneLabel: i18nService.t(PROCESS_ZONE_LABEL_KEY[zone]),
+      state,
+      awaiting: routedToOwner,
+      activity: formatSessionRelativeTime(Number(currentSession.updatedAt ?? Date.now())).full,
+      orchestrator: currentSession.metabotName?.trim() || '',
+    };
+  }, [currentSession, lineageOverrides]);
+
+  /**
+   * 档案层 (design: process-detail-body-redesign, Friday 2026-11-22; owner
+   * ruling 1A / 2A / 3A / 4A). The process transcript's body is TWO layers:
+   * the dossier is the default, the message stream is the second tab and stays
+   * byte-identical. The hook lives here (above every early return) so the tab
+   * switch never changes the hook count.
+   */
+  const [processDossierTab, setProcessDossierTab] = useState<'archive' | 'raw'>('archive');
+  const [processDossierReload, setProcessDossierReload] = useState(0);
+  useEffect(() => {
+    // A new process opens on the dossier; the previous process's tab must not
+    // leak onto it (the tab is a view of THIS transcript).
+    setProcessDossierTab('archive');
+  }, [currentSession?.id]);
+  const processDossier = useProcessDossier(
+    currentSession?.id,
+    currentSession?.autoOrigin,
+    isProcessSessionReadOnly,
+    processDossierReload,
+  );
+  const processRawMessageCount = currentSession?.messages?.length ?? 0;
+  /** The raw tab's scroll position survives the hide/show: a display:none
+   *  scroll container loses its offset, so it is captured BEFORE hiding and
+   *  restored after the box exists again (setTimeout, not rAF — rAF does not
+   *  run while the document is hidden). */
+  const rawScrollTopRef = useRef(0);
+  const switchProcessDossierTab = useCallback((next: 'archive' | 'raw') => {
+    if (next === 'archive') {
+      const element = scrollContainerRef.current;
+      if (element) rawScrollTopRef.current = element.scrollTop;
+    }
+    setProcessDossierTab(next);
+    if (next === 'raw') {
+      window.setTimeout(() => {
+        const element = scrollContainerRef.current;
+        if (element) element.scrollTop = rawScrollTopRef.current;
+      }, 0);
+    }
+  }, []);
+
+  const dispatch = useDispatch();
+  const longTermCards = useSelector((state: RootState) => state.longTermTask.board?.cards);  const decisionSessionIds = useMemo(
+    () => new Set((longTermCards ?? []).flatMap((card) => card.decisionSessionIds ?? [])),
+    [longTermCards],
+  );
+  /** 对 Twin 说 → : leave the read-only transcript and hand the Twin a CONTEXT
+   * prompt, not an empty composer (owner order 2026-11-21 17:45 — the same
+   * semantics as 长期任务 → 继续讨论). The draft rides the existing
+   * `cowork:newChatWithDraft` channel: App funnels it through handleNewChat,
+   * which writes the global draft, switches to the Co-Work view and focuses the
+   * input (with mount retries). The Twin is still the addressee, because only
+   * the Twin may steer a run. */
+  const handleJumpToTwin = useCallback(() => {
+    const session = currentSession;
+    const awaiting = Boolean(session && isInFollowUpSection(session, decisionSessionIds?.has(session.id) ?? false));
+    const draftText = buildTwinSteeringPrompt(i18nService.t('processJumpDraft'), {
+      task: session ? resolveSourceTaskTitle(session, longTermCards) : null,
+      process: session?.title ?? null,
+      state: i18nService.t(
+        awaiting ? 'processJumpStateAwaiting'
+          : session && processStateOf(session.updatedAt, Date.now()) === 'running' ? 'processJumpStateRunning'
+            : 'processJumpStateIdle',
+      ),
+      progress: lastAssistantDigest(session?.messages) ?? i18nService.t('processJumpProgressFallback'),
+      action: i18nService.t(awaiting ? 'processJumpActionAwaiting' : 'processJumpActionContinue'),
+    });
+    const openWithDraft = () => {
+      // handleNewChat (the draft channel's handler) clears the session and arms
+      // a local owner task; setting the metabotId BEFORE the dispatch keeps the
+      // addressed bot, and the channel supplies the prefill + focus.
+      window.dispatchEvent(new CustomEvent('cowork:newChatWithDraft', { detail: { text: draftText } }));
+    };
+    void window.electron?.idbots
+      ?.getMetaBots?.()
+      .then((result) => {
+        const roster = result?.success ? result.list ?? [] : [];
+        const twin = roster.find((bot) => bot.metabot_type === 'twin');
+        if (!twin) {
+          window.dispatchEvent(new CustomEvent('app:showToast', {
+            detail: i18nService.t('processReadOnlyJumpMissing'),
+          }));
+          return;
+        }
+        dispatch(setNewTaskMetabotId(twin.id));
+        openWithDraft();
+      })
+      .catch(() => {
+        // Roster unavailable: still hand over the context, default bot.
+        openWithDraft();
+      });
+  }, [decisionSessionIds, dispatch, longTermCards, currentSession]);
   const a2aApprovalPermissions = useMemo(() => {
     if (!isA2ASession || !currentSession) return [];
     return pendingPermissions.filter((permission) => (
@@ -4696,6 +4856,82 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     <InlineMetaAppActorContext.Provider value={inlineMetaAppActor}>
     <div ref={detailRootRef} className="relative flex-1 flex flex-col cowork-chat-surface h-full">
       {/* Header */}
+      {isProcessSessionReadOnly && processHeaderModel ? (
+        /* ── 进程卷宗头 (design 2026-11-21 22:4x) ────────────────────────────
+           「这是什么进程 · 谁在跑 · 挂在哪条任务上 · 最近动过吗」. Same 45px
+           band, same px, same 1px rule as the session header — a different
+           STRUCTURE, not the same header with conditions. Session-only elements
+           (search / cwd / ⋯ / session badges) do not render here: their actions
+           are session actions, and this is a process dossier. */
+        <div
+          data-slot="process-detail-header"
+          className="draggable flex h-12 shrink-0 items-center gap-3 border-b dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 px-4"
+        >
+          {showBackToProcessHub && onBackToProcessHub && (
+            <button
+              type="button"
+              data-testid="process-back-to-hub"
+              onClick={onBackToProcessHub}
+              // The family name lives HERE: it answers "where am I returning to",
+              // which is the return key's own business (design §5).
+              title={`${i18nService.t('processBackToHub')} · ${processHeaderModel.zoneLabel}`}
+              aria-label={i18nService.t('processBackToHub')}
+              className="non-draggable inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+            >
+              <ArrowLeftIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <div className="non-draggable flex min-w-0 items-center gap-2">
+            <span
+              aria-hidden
+              data-testid="process-detail-dot"
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{ backgroundColor: PROCESS_STATE_DOT_COLOR[processHeaderModel.state] }}
+            />
+            <h1
+              data-testid="process-detail-title"
+              className="min-w-0 max-w-[360px] truncate text-lg font-semibold dark:text-claude-darkText text-claude-text"
+            >
+              {processHeaderModel.title}
+            </h1>
+            <span data-testid="process-detail-kind" className={PROCESS_TAG_CLASS}>
+              {processHeaderModel.kindLabel}
+            </span>
+            {processHeaderModel.awaiting && (
+              <span
+                data-testid="process-detail-awaiting"
+                className="shrink-0 whitespace-nowrap rounded border px-1.5 py-0.5 text-[11px] font-semibold"
+                style={{ color: '#7a5f14', backgroundColor: '#fffbe8', borderColor: '#e6c93e' }}
+              >
+                {i18nService.t('processAwaitingStripLabel')}
+              </span>
+            )}
+            <LongTermTaskOriginChip sessionId={currentSession.id} variant="text" />
+          </div>
+          <div className="non-draggable ml-auto flex shrink-0 items-center gap-3">
+            <span
+              data-testid="process-detail-activity"
+              className="text-[11.5px] tabular-nums dark:text-claude-darkTextSecondary text-claude-textSecondary"
+              title={new Date(Number(currentSession.updatedAt ?? Date.now())).toLocaleString()}
+            >
+              {processHeaderModel.activity}
+            </span>
+            {processHeaderModel.orchestrator && (
+              <span
+                data-testid="process-detail-signature"
+                className="flex shrink-0 items-center gap-1.5 text-[11.5px] dark:text-claude-darkTextSecondary text-claude-textSecondary"
+                title={`${i18nService.t('processOrchestratorLabel')}: ${processHeaderModel.orchestrator}`}
+              >
+                <SessionAvatarCircle src={sessionMetabot?.avatar} name={processHeaderModel.orchestrator} sizeClass="h-4 w-4" />
+                <span className="max-w-[130px] truncate">
+                  {i18nService.t('processOrchestratorLabel')} · {processHeaderModel.orchestrator}
+                </span>
+              </span>
+            )}
+          </div>
+          <WindowTitleBar inline className="ml-1" />
+        </div>
+      ) : (
       <div className="draggable flex h-12 items-center justify-between px-4 border-b dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 shrink-0">
         {/* Left side: Toggle buttons (when collapsed) + Title + Sandbox badge */}
         <div className="flex h-full items-center gap-2 min-w-0">
@@ -4731,6 +4967,22 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 {sessionMetabot.name}
               </span>
             </div>
+          )}
+          {showBackToProcessHub && onBackToProcessHub && (
+            // 返回进程中心 (owner order 2026-11-21 17:45): the secondary view
+            // needs one explicit way back. Shape language: 1px border, 8px
+            // radius, the 28px tier the order pins — the smallest labelled
+            // button that still reads as a button next to the 16.875px title.
+            <button
+              type="button"
+              data-testid="process-back-to-hub"
+              onClick={onBackToProcessHub}
+              title={i18nService.t('processBackToHub')}
+              className="non-draggable flex h-[28px] shrink-0 items-center gap-1 rounded-[8px] border border-claude-border px-2 text-[11.5px] font-medium transition-colors hover:bg-claude-surfaceHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover"
+            >
+              <ArrowLeftIcon className="h-3.5 w-3.5" />
+              {i18nService.t('processBackToHub')}
+            </button>
           )}
           {isRenaming ? (
             <input
@@ -4875,6 +5127,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           <WindowTitleBar inline className="ml-1" />
         </div>
       </div>
+      )}
 
       {supportsConversationSearch && (
         <CoworkConversationSearch
@@ -4942,13 +5195,69 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       {/* Body row: chat column + optional markdown viewer sidebar */}
       <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
+      {/* 档案 / 原始记录 分段页签 (design §07 #2: 32px · r10 · two equal cells,
+          the SAME segmented template as HomeSidebar's scope switcher). */}
+      {isProcessSessionReadOnly && (
+        <div className="shrink-0 px-4 pt-3">
+          {/* 火花线 (取数面, 2026-11-23): this process's 24 message-timestamp
+              buckets. Empty sessions say so in words instead of drawing bars. */}
+          <ProcessSparkPanel
+            sessionId={currentSession.id}
+            refreshKey={isStreaming ? 'live' : 'idle'}
+            className="mb-2"
+          />
+          <div
+            data-testid="process-dossier-tabs"
+            role="tablist"
+            aria-label={i18nService.t('processDossierTabArchive')}
+            className="mx-auto grid h-[32px] w-full max-w-[clamp(680px,64%,920px)] grid-cols-2 gap-0 overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80"
+          >
+            {([
+              { id: 'archive' as const, label: i18nService.t('processDossierTabArchive'), count: null },
+              { id: 'raw' as const, label: i18nService.t('processDossierTabRaw'), count: processRawMessageCount },
+            ]).map((tab) => {
+              const active = processDossierTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  data-testid={`process-dossier-tab-${tab.id}`}
+                  onClick={() => switchProcessDossierTab(tab.id)}
+                  className={`non-draggable inline-flex h-full min-w-0 items-center justify-center gap-1.5 px-1 text-xs font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+                    active
+                      ? 'bg-claude-accent/90 font-semibold text-claude-accentInk'
+                      : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
+                  }`}
+                >
+                  <span className="truncate">{tab.label}</span>
+                  {tab.count != null && tab.count > 0 && (
+                    <span className="font-mono text-[10px] font-semibold tabular-nums opacity-70">{tab.count}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {/* 档案层：默认层 (owner ruling 1A). Stays mounted while the raw tab is
+          open — a tab switch must never refetch or lose the read. */}
+      {isProcessSessionReadOnly && (
+        <div className={processDossierTab === 'archive' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+          <ProcessDossierBody
+            view={processDossier}
+            onRetry={() => setProcessDossierReload((current) => current + 1)}
+          />
+        </div>
+      )}
       {/* Messages */}
       <div
         ref={scrollContainerRef}
         onScroll={handleMessagesScroll}
         onMouseUp={handleTranscriptSelectionEnd}
         onKeyUp={handleTranscriptSelectionKeyUp}
-        className="flex-1 overflow-y-auto overflow-anchor-none min-h-0 pt-3"
+        className={`flex-1 overflow-y-auto overflow-anchor-none min-h-0 pt-3 ${isProcessSessionReadOnly && processDossierTab === 'archive' ? 'hidden' : ''}`}
       >
         {isLoadingEarlierMessages && (
           <div className="flex items-center justify-center gap-2 px-4 py-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
@@ -5238,6 +5547,29 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               />
             )}
           </div>
+        </div>
+      ) : isProcessSessionReadOnly ? (
+        /* 系统栏底条 (spec §②): the process bottom bar is a SYSTEM notice, not
+         * an input area — same slot, different semantics, so the two can never
+         * be confused. Lock + the read-only contract + the one allowed door:
+         * a jump to the Twin's composer, the only surface that can steer a run. */
+        <div
+          data-testid="process-read-only-bar"
+          className="flex shrink-0 items-center gap-2 border-t border-claude-border bg-claude-surfaceMuted px-4 py-2.5 dark:border-claude-darkBorder dark:bg-claude-darkSurfaceMuted"
+        >
+          <LockClosedIcon className="h-4 w-4 shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+          <span className="min-w-0 truncate text-[12px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {i18nService.t('processReadOnlyBar')}
+          </span>
+          <button
+            type="button"
+            data-testid="process-jump-to-twin"
+            onClick={handleJumpToTwin}
+            title={i18nService.t('processReadOnlyJumpTitle')}
+            className="ml-auto shrink-0 text-[11.5px] font-semibold text-claude-accent transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+          >
+            {i18nService.t('processReadOnlyJump')}
+          </button>
         </div>
       ) : (
         // Assistant mode halves the composer area's top padding — together

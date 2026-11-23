@@ -32,6 +32,7 @@
  */
 export const INTERNET_PANE_RENDERERS = Object.freeze({
   browser: 'botBrowserSurface',
+  processes: 'processCenterView',
   tasks: 'studioTasksView',
   gigSquare: 'gigSquareView',
   metaapps: 'metaAppsView',
@@ -49,6 +50,10 @@ export const INTERNET_PANE_RENDERERS = Object.freeze({
  */
 export const HOME_RAIL_RENDERERS = Object.freeze({
   newTask: 'coworkView',
+  // 进程中心 is a destination on BOTH faces (owner ruling 22:17): the entry is
+  // kept on each side and the hub renders in whichever content column the owner
+  // opened it from. No path may force a side switch.
+  processes: 'processCenterView',
   longTerm: 'scheduledTasksView',
   groupTasks: 'groupTasksView',
   records: 'coworkView',
@@ -56,6 +61,7 @@ export const HOME_RAIL_RENDERERS = Object.freeze({
 
 /** App mainView → right-column renderer key (the pane a Bot Home entry lands on). */
 export const HOME_MAIN_VIEW_RENDERERS = Object.freeze({
+  processes: 'processCenterView',
   scheduledTasks: 'scheduledTasksView',
   groupTasks: 'groupTasksView',
   metabots: 'metabotsView',
@@ -71,6 +77,7 @@ export const HOME_MAIN_VIEW_RENDERERS = Object.freeze({
  */
 export const PANE_RENDERER_KEYS = Object.freeze([
   'botBrowserSurface',
+  'processCenterView',
   'studioTasksView',
   'gigSquareView',
   'metaAppsView',

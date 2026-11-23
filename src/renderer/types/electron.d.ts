@@ -3,6 +3,7 @@ import type { ProjectFormData, ProjectRecord } from './project';
 import type { GroupChatTranscriptMessage, GroupTaskMemberSummary } from './groupTask';
 import type {
   LongTermBoard,
+  LongTermEvent,
   LongTermEvidence,
   LongTermResult,
   LongTermSubtask,
@@ -19,6 +20,8 @@ import type {
   AgentNotificationListOptions,
 } from './notification';
 import type { OpenTeamCollabSummary, OpenTeamGuestInvite } from './openTeamCollab';
+import type { MetawebPinInfoResult, ProcessDossierResult } from './processDossier';
+import type { ProcessSparkReading } from './processSpark';
 import type {
   BrowserCommandResult as CoreBrowserCommandResult,
   MetaAppGalleryRecord,
@@ -1453,6 +1456,8 @@ interface IElectronAPI {
     archiveSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     unarchiveSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     listArchivedSessions: (options?: { metabotId?: number | null; query?: string; searchContent?: boolean; sessionType?: 'standard' | 'a2a' | 'browser' | 'group_task'; limit?: number; offset?: number }) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; total?: number; error?: string }>;
+    /** 火花线取数面: 24 message-timestamp buckets per session (empty reading when a session has no messages). */
+    activitySpark: (options: { sessionIds: string[] }) => Promise<{ success: boolean; sparks?: Record<string, ProcessSparkReading>; error?: string }>;
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) => Promise<{ success: boolean; error?: string }>;
     setSessionFoldOverride: (options: { sessionId: string; override: 'in' | 'out' | null }) => Promise<{ success: boolean; error?: string }>;
     /** Move a session in or out of the "Follow-Up Tasks" section (manual lane; false clears any pending source). */
@@ -2035,7 +2040,22 @@ interface IElectronAPI {
         question: string;
         recommendation: string;
         reportHtmlPath: string | null;
+        /** L3 决策卡 (fork 3A): the fields the hub card renders beyond the title. */
+        backgroundSummary?: string;
+        progressSummary?: string;
+        nextStep?: string;
+        longtermTaskId?: string | null;
+        longtermSubtaskId?: string | null;
+        options?: Array<{ label: string; description?: string; recommended?: boolean }>;
+        evidence?: Array<{ kind: string; uri: string; note?: string }>;
       }>;
+      error?: string;
+    }>;
+    /** N1 (fork 3A): record an owner ruling on a Studio decision-queue item —
+     *  the same resolve + sibling-cancel + waiting_owner path as the Twin tool. */
+    decisionResolve: (input: { queueItemId: string; resolutionNote: string; activeSessionId?: string | null }) => Promise<{
+      success: boolean;
+      item?: { id: string; status: string; resolutionNote: string | null };
       error?: string;
     }>;
     get: (input: { taskId: string }) => Promise<{ success: boolean; detail?: LongTermTaskDetail; error?: string }>;
@@ -2057,9 +2077,26 @@ interface IElectronAPI {
       hit?: { taskId: string; taskTitle: string; subtaskId: string | null; subtaskTitle: string | null } | null;
       error?: string;
     }>;
+    /** N3 (process dossier): the event timeline beyond the 200-row detail cap (≤500). */
+    events: (input: { taskId: string; limit?: number }) => Promise<{ success: boolean; events?: LongTermEvent[]; error?: string }>;
     moveSubtask: (input: { subtaskId: string; direction: 'up' | 'down' }) => Promise<LongTermResult<LongTermSubtask>>;
     /** seq is monotonic per process: drop frames with seq <= lastSeenSeq and refetch. */
     onUpdate: (callback: (data: { seq: number; taskIds: string[]; reason: string }) => void) => () => void;
+  };
+  /**
+   * 进程详情 · 档案层 (N2, 2026-11-22): one read for one process session —
+   * owning task/sub-project + event timeline + orchestration attempts +
+   * scheduled runs. Read-only, zero migration.
+   */
+  processDossier: {
+    get: (input: { sessionId: string; eventLimit?: number }) => Promise<ProcessDossierResult>;
+  };
+  /**
+   * N1 (2026-11-22): name one on-chain pin for the dossier's evidence block.
+   * Read-only wrapper over the main-process `readMetawebPin` service.
+   */
+  metaweb: {
+    pinInfo: (input: { pinId: string }) => Promise<MetawebPinInfoResult>;
   };
   /**
    * MetaTask (chain-side multi-bot collaboration, read path P1). Local

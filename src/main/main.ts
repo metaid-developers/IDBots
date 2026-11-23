@@ -145,7 +145,7 @@ import { GroupTaskStore, setGroupTaskStoreStatusBroadcaster, type GroupTaskStatu
 import { OpenTeamMembershipStore } from './openTeamMembershipStore';
 import { DialogueCognitionStore } from './dialogueCognitionStore';
 import { OrchestrationStore } from './orchestrationStore';
-import { StudioDecisionQueueStore } from './studioDecisionQueueStore';
+import { StudioDecisionQueueStore, type StudioDecisionQueueItem } from './studioDecisionQueueStore';
 import { ProactiveFollowUpStore } from './proactiveFollowUpStore';
 import { ProactiveWorldPerceptionService } from './services/proactiveWorldPerceptionService';
 import { TwinTodoStore } from './twinTodoStore';
@@ -676,7 +676,7 @@ import {
   initBotBrowserProjectionService,
 } from './services/botBrowserProjectionService';
 import { createStudioLiveStageService, type StudioLiveStageService } from './services/studioLiveStageService';
-import { buildStudioLiveTaskHud, type LiveStageGroupMember, type LiveStageGroupThread, type LiveStagePeerThread } from './services/studioLiveStageModel';
+import { buildLiveStageDecisionCard, buildStudioLiveTaskHud, type LiveStageGroupMember, type LiveStageGroupThread, type LiveStagePeerThread } from './services/studioLiveStageModel';
 import { deriveGroupThreadStatus, derivePrivateChatStatus, groupThreadTitle, privateChatPreview, GROUP_THREAD_ACTIVE_WINDOW_MS, MAX_ACTIVE_GROUPS, MAX_ACTIVE_PEERS, MAX_GROUP_MEMBERS, PRIVATE_CHAT_ACTIVE_WINDOW_MS } from './services/studioLiveStageCompanions';
 import { listStudioOpenDelegations } from './services/studioOpenDelegations';
 import { describeStudioProjectionBlock } from './services/studioProjectionGate';
@@ -8778,41 +8778,10 @@ const getCoworkRunner = () => {
           return getStudioDecisionQueueStore().listOpen(twin.id);
         },
         resolveDecision: (sid, queueItemId, resolutionNote) => {
-          const resolved = getStudioDecisionQueueStore().resolve(queueItemId, resolutionNote);
-          if (!resolved) return { ok: false, error: 'QUEUE_ITEM_NOT_FOUND' };
-          if (resolved.longtermTaskId) {
-            const rootParent = getLongTermTaskStore().resolveRootParentTaskId(resolved.longtermTaskId);
-            if (rootParent) {
-              getStudioChiefOfStaffService().recordRecentDecisionTask(sid, rootParent);
-              if (resolved.originStudioSessionId && resolved.originStudioSessionId !== sid) {
-                getStudioChiefOfStaffService().recordRecentDecisionTask(resolved.originStudioSessionId, rootParent);
-              }
-            }
-          }
-          getStudioDecisionQueueStore().cancelSiblingQueuedForTask(
-            resolved.twinMetabotId,
-            resolved.longtermTaskId,
-            resolved.id,
-            `superseded by resolution of ${resolved.id}`,
-          );
-          try {
-            if (resolved.longtermTaskId && resolved.longtermSubtaskId) {
-              const ltDetail = getLongTermTaskStore().getTask(resolved.longtermTaskId);
-              const ltSub = ltDetail?.subtasks.find((s) => s.id === resolved.longtermSubtaskId);
-              if (ltSub?.status === 'waiting_owner') {
-                const noteText = String(resolutionNote ?? '').trim();
-                const isRejection = /不验收|退回|否掉|重做|重画|修改|reject|rework/i.test(noteText);
-                if (resolved.kind === 'acceptance' && !isRejection) {
-                  getLongTermTaskStore().acceptSubtask(ltSub.id, 'owner', noteText || 'accepted via Studio ruling');
-                } else {
-                  getLongTermTaskStore().unblockSubtask(ltSub.id, 'owner', noteText || 'ruling received in Studio');
-                }
-              }
-            }
-          } catch {
-            // Best-effort task-tree convergence.
-          }
-          return { ok: true, item: resolved };
+          // N1 (fork 3A): delegates to the shared `resolveOwnerDecision` — the
+          // renderer IPC `longtermTask:decisionResolve` calls the SAME function,
+          // so the agent tool and the hub's decision card can never drift.
+          return resolveOwnerDecision(sid ?? null, queueItemId, resolutionNote);
         },
         deferDecision: (_sid, queueItemId) => {
           const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
@@ -11215,7 +11184,8 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
             || getStudioChiefOfStaffService().isSupervisionBusy()
           ),
         );
-        const rawQueuedDecisions = twin ? getStudioDecisionQueueStore().listOpen(twin.id).length : 0;
+        const openDecisionItems = twin ? getStudioDecisionQueueStore().listOpen(twin.id) : [];
+        const rawQueuedDecisions = openDecisionItems.length;
         const openCards = board.cards.filter(
           (card) => card.stage !== 'done' && card.stage !== 'cancelled' && card.managedState != null,
         );
@@ -11284,12 +11254,23 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           }
         }
 
+        // P0-3 (批 B, owner 22:23): the decision's FIRST landing is this stage.
+        // The card is built from the SAME `listOpen()` rows `longtermTask:studioStatus`
+        // hands the Process Hub, and it resolves through the same
+        // `longtermTask:decisionResolve` IPC — one source, one channel, two seats.
+        const decision = buildLiveStageDecisionCard({
+          items: openDecisionItems,
+          sessionId: sessionId ?? '',
+          sessionOwnedTaskIds: sessionOwnedIds,
+        });
+
         return buildStudioLiveTaskHud({
           cards: openCards,
           sessionOwnedTaskIds: sessionOwnedIds,
           synthesizedCurrent,
           studioBusy,
           rawQueuedDecisions,
+          decision,
         });
       },
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
@@ -12625,6 +12606,68 @@ const getMetabotStore = () => {
     metabotStore = new MetabotStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
   }
   return metabotStore;
+};
+
+/**
+ * N1 (fork 3A, Friday 稿 Mon-decision ③) — THE one owner-decision resolution
+ * path: resolve the queue item, cancel its redundant queued siblings, and
+ * converge the linked subtask's `waiting_owner` hold. Extracted verbatim from
+ * the `studioChiefOfStaffTools.resolveDecision` provider (below) so the Twin's
+ * agent tool and the new renderer IPC `longtermTask:decisionResolve` are the
+ * SAME source — two call sites that must never drift.
+ *
+ * `sid` feeds only the chief-of-staff "recent decision tasks" bookkeeping; the
+ * IPC caller has no studio session, so it may pass null (accepted) or its own
+ * active session id.
+ */
+// Same shape as the studioChiefOfStaffTools control interface (ok:true/false).
+// Callers narrow with `'error' in result` — NOT `!result.ok`: electron-tsconfig
+// compiles without strictNullChecks, which widens boolean literals and breaks
+// boolean-discriminant narrowing.
+type ResolveOwnerDecisionResult =
+  | { ok: true; item: StudioDecisionQueueItem }
+  | { ok: false; error: string };
+
+const resolveOwnerDecision = (
+  sid: string | null,
+  queueItemId: string,
+  resolutionNote: string,
+): ResolveOwnerDecisionResult => {
+  const resolved = getStudioDecisionQueueStore().resolve(queueItemId, resolutionNote);
+  if (!resolved) return { ok: false, error: 'QUEUE_ITEM_NOT_FOUND' };
+  if (resolved.longtermTaskId) {
+    const rootParent = getLongTermTaskStore().resolveRootParentTaskId(resolved.longtermTaskId);
+    if (rootParent) {
+      getStudioChiefOfStaffService().recordRecentDecisionTask(sid, rootParent);
+      if (resolved.originStudioSessionId && resolved.originStudioSessionId !== sid) {
+        getStudioChiefOfStaffService().recordRecentDecisionTask(resolved.originStudioSessionId, rootParent);
+      }
+    }
+  }
+  getStudioDecisionQueueStore().cancelSiblingQueuedForTask(
+    resolved.twinMetabotId,
+    resolved.longtermTaskId,
+    resolved.id,
+    `superseded by resolution of ${resolved.id}`,
+  );
+  try {
+    if (resolved.longtermTaskId && resolved.longtermSubtaskId) {
+      const ltDetail = getLongTermTaskStore().getTask(resolved.longtermTaskId);
+      const ltSub = ltDetail?.subtasks.find((s) => s.id === resolved.longtermSubtaskId);
+      if (ltSub?.status === 'waiting_owner') {
+        const noteText = String(resolutionNote ?? '').trim();
+        const isRejection = /不验收|退回|否掉|重做|重画|修改|reject|rework/i.test(noteText);
+        if (resolved.kind === 'acceptance' && !isRejection) {
+          getLongTermTaskStore().acceptSubtask(ltSub.id, 'owner', noteText || 'accepted via Studio ruling');
+        } else {
+          getLongTermTaskStore().unblockSubtask(ltSub.id, 'owner', noteText || 'ruling received in Studio');
+        }
+      }
+    }
+  } catch {
+    // Best-effort task-tree convergence.
+  }
+  return { ok: true, item: resolved };
 };
 
 /**
@@ -17212,6 +17255,28 @@ if (!gotTheLock) {
     });
   });
 
+  // 火花线取数面: message timestamps → 24 buckets for the given sessions. Read
+  // only, one round trip, through the shared read worker. Sessions with no
+  // message rows come back as the zero reading (the UI's explicit empty state).
+  registerIpcHandler('cowork:session:activitySpark', async (_event, options?: { sessionIds?: unknown }) => {
+    return withSqliteRecovery('cowork:session:activitySpark', async () => {
+      try {
+        const coworkStoreInstance = getCoworkStore();
+        const sparks = await coworkStoreInstance.listSessionActivitySpark(
+          options?.sessionIds,
+          getStore().getReadWorker(),
+        );
+        return { success: true, sparks };
+      } catch (error) {
+        if (isSqliteWasmBoundsError(error)) throw error;
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to read session activity spark',
+        };
+      }
+    });
+  });
+
   registerIpcHandler('cowork:session:pin', async (_event, options: { sessionId: string; pinned: boolean }) => {
     return withSqliteRecovery('cowork:session:pin', async () => {
       try {
@@ -19010,6 +19075,39 @@ if (!gotTheLock) {
     }
   });
 
+  // N1 (fork 3A, L3 决策卡 write channel): the hub's decision card resolves an
+  // owner ruling through the SAME shared path the Twin's studio_decision_resolve
+  // tool uses — `resolveOwnerDecision` does the store resolve + redundant
+  // sibling cancellation + waiting_owner convergence in ONE place. The note is
+  // required: a ruling without a recorded reason is not a ruling.
+  registerIpcHandler('longtermTask:decisionResolve', async (_event, input?: {
+    queueItemId?: string; resolutionNote?: string; activeSessionId?: string | null;
+  }) => {
+    try {
+      const queueItemId = typeof input?.queueItemId === 'string' ? input.queueItemId.trim() : '';
+      if (!queueItemId) return { success: false, error: 'QUEUE_ITEM_REQUIRED' };
+      const resolutionNote = typeof input?.resolutionNote === 'string' ? input.resolutionNote.trim() : '';
+      if (!resolutionNote) return { success: false, error: 'RESOLUTION_NOTE_REQUIRED' };
+      let sid: string | null = typeof input?.activeSessionId === 'string' && input.activeSessionId.trim()
+        ? input.activeSessionId.trim()
+        : null;
+      if (!sid) {
+        const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+        sid = twin ? getStudioChiefOfStaffService().resolveActiveStudioSessionId(twin.id) : null;
+      }
+      const result = resolveOwnerDecision(sid, queueItemId, resolutionNote);
+      // 'error' in result (not !result.ok): narrowing under the electron tsconfig's
+      // non-strict flags — same trick the agent tool's own call site uses.
+      if ('error' in result) return { success: false, error: result.error };
+      return { success: true, item: result.item };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to resolve the decision',
+      };
+    }
+  });
+
   registerIpcHandler('longtermTask:get', async (_event, input: { taskId: string }) => {
     try {
       const detail = getLongTermTaskStore().getTask(input?.taskId);
@@ -19163,6 +19261,148 @@ if (!gotTheLock) {
       };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to resolve the task for this session' };
+    }
+  });
+
+  /** N3 (进程档案): the event timeline beyond the detail projection's fixed
+   *  200-row cap. `listEvents` already clamps to ≤500 — this only exposes it. */
+  registerIpcHandler('longtermTask:events', async (_event, input: { taskId: string; limit?: number }) => {
+    try {
+      const taskId = String(input?.taskId ?? '').trim();
+      if (!taskId) return { success: false, error: 'taskId is required' };
+      const raw = Number(input?.limit);
+      const limit = Number.isFinite(raw) && raw > 0 ? Math.min(500, Math.trunc(raw)) : 200;
+      return { success: true, events: getLongTermTaskStore().listEvents(taskId, limit) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to read the task events' };
+    }
+  });
+
+  /**
+   * N2 (进程档案): ONE read for one process session — the owning long-term
+   * task/sub-project, the event timeline, the orchestration attempts that ran
+   * for this session, and the scheduled runs whose session_id is this one.
+   *
+   * Read-only, zero migration. A session with no long-term task answers
+   * `task: null` (T2/T3/T4) — the renderer then states the tier instead of
+   * drawing an empty checklist. Attempt/run reads degrade to [] independently:
+   * an unreadable secondary source must not blank the task half.
+   */
+  registerIpcHandler('processDossier:get', async (_event, input: { sessionId: string; eventLimit?: number }) => {
+    try {
+      const sessionId = String(input?.sessionId ?? '').trim();
+      if (!sessionId) return { success: false, error: 'sessionId is required' };
+      const rawLimit = Number(input?.eventLimit);
+      const eventLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(500, Math.trunc(rawLimit)) : 200;
+      const longTerm = getLongTermTaskStore();
+      const hit = longTerm.findBySessionId(sessionId);
+      const task = hit ? longTerm.getTask(hit.task.id) : null;
+      const events = task ? longTerm.listEvents(task.id, eventLimit) : [];
+
+      let attempts: Array<{
+        id: string; stepId: string; stepTitle: string | null; taskTitle: string | null;
+        workerMetabotId: number; workerName: string | null;
+        status: string; queuedAt: string; startedAt: string | null; finishedAt: string | null; error: string | null;
+      }> = [];
+      try {
+        const orchestration = getOrchestrationStore();
+        attempts = orchestration.listAttemptsForStudioSessions([sessionId]).slice(0, 20).map((attempt) => {
+          const step = orchestration.getStep(attempt.stepId);
+          const orchestrationTask = orchestration.getTaskForStep(attempt.stepId);
+          return {
+            id: attempt.id,
+            stepId: attempt.stepId,
+            stepTitle: step?.title ?? null,
+            taskTitle: orchestrationTask ? (orchestrationTask.enrichedGoal ?? orchestrationTask.ownerIntent) : null,
+            workerMetabotId: attempt.workerMetabotId,
+            workerName: getMetabotStore().getMetabotById(attempt.workerMetabotId)?.name ?? null,
+            status: attempt.status,
+            queuedAt: attempt.queuedAt,
+            startedAt: attempt.startedAt,
+            finishedAt: attempt.finishedAt,
+            error: attempt.error,
+          };
+        });
+      } catch (error) {
+        console.warn('[ProcessDossier] orchestration read failed:', error instanceof Error ? error.message : String(error));
+        attempts = [];
+      }
+
+      let runs: Array<{
+        id: string; taskId: string; taskName: string | null; status: string;
+        startedAt: string; finishedAt: string | null; durationMs: number | null; trigger: string; error: string | null;
+      }> = [];
+      try {
+        runs = getScheduledTaskStore().listAllRuns(200, 0)
+          .filter((run) => run.sessionId === sessionId)
+          .slice(0, 20)
+          .map((run) => ({
+            id: run.id,
+            taskId: run.taskId,
+            taskName: run.taskName ?? null,
+            status: run.status,
+            startedAt: run.startedAt,
+            finishedAt: run.finishedAt,
+            durationMs: run.durationMs,
+            trigger: run.trigger,
+            error: run.error,
+          }));
+      } catch (error) {
+        console.warn('[ProcessDossier] scheduled-run read failed:', error instanceof Error ? error.message : String(error));
+        runs = [];
+      }
+
+      return {
+        success: true,
+        dossier: {
+          sessionId,
+          task,
+          subtaskId: hit?.subtask?.id ?? null,
+          events,
+          eventLimit,
+          attempts,
+          runs,
+        },
+      };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to read the process dossier' };
+    }
+  });
+
+  /**
+   * N1 (进程档案): name ONE on-chain pin for the evidence block. A thin wrapper
+   * over the existing `readMetawebPin` service — no wallet, no write, no local
+   * cache (the renderer caches per open). Errors carry a machine-readable code
+   * so the view can say 未点名 (not found) vs 不可达 (backend down) instead of
+   * blurring both into "unknown".
+   */
+  registerIpcHandler('metaweb:pinInfo', async (_event, input: { pinId: string }) => {
+    const pinId = String(input?.pinId ?? '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}i\d+$/.test(pinId)) {
+      return { success: false, code: 'bad_pin_id', error: 'a 66-character pinId (64 hex + iN) is required' };
+    }
+    try {
+      const baseUrl = process.env.IDBOTS_METAWEB_API_BASE_URL?.trim();
+      const pin = await readMetawebPinRemote(pinId, baseUrl ? { baseUrl } : undefined);
+      return {
+        success: true,
+        info: {
+          pinId: pin.pinId,
+          currentPinId: pin.currentPinId,
+          protocol: pin.protocol,
+          path: pin.path,
+          chainName: pin.chainName,
+          title: pin.meta?.title ?? '',
+          summary: pin.meta?.summary ?? '',
+          creatorName: pin.creator?.name ?? '',
+          createdAt: pin.createdAt,
+        },
+      };
+    } catch (error) {
+      if (error instanceof MetawebPinNotFoundError) {
+        return { success: false, code: 'not_found', error: error.message };
+      }
+      return { success: false, code: 'unavailable', error: error instanceof Error ? error.message : 'Failed to read the pin' };
     }
   });
 

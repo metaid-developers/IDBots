@@ -25,7 +25,8 @@ import type {
   SessionSortMode,
   SessionViewMode,
 } from '../utils/sessionViewGrouping';
-import { shouldFoldIntoAutonomousTasks, splitSessionsWithFollowUp } from '../utils/sessionAutoGrouping';
+import { shouldFoldIntoAutonomousTasks } from '../utils/sessionAutoGrouping';
+import { splitProcessHub } from '../utils/processCenter';
 import type { SessionSidebarSection } from '../utils/sessionAutoGrouping';
 import { loadSessionViewMode, saveSessionViewMode } from '../utils/sessionGroupStorage';
 import { useStableCallback } from '../utils/useStableCallback';
@@ -257,8 +258,11 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
     () => new Set((longTermBoard?.cards ?? []).flatMap((card) => card.decisionSessionIds ?? [])),
     [longTermBoard],
   );
-  const { humanSessions: localHumanSessions, followUpSessions: localFollowUpSessions, autoSessions: localAutoSessions } = useMemo(
-    () => splitSessionsWithFollowUp(sessionGroups.local, decisionSessionIds),
+  // The local list renders HUMAN rows only, and the split that decides which
+  // rows those are is the panel's own model (one source of truth: the process
+  // rows left for 进程中心, owner ruling 2026-11-21). No second policy here.
+  const { humanSessions: localHumanSessions } = useMemo(
+    () => splitProcessHub(sessionGroups.local, decisionSessionIds, Date.now()),
     [sessionGroups.local, decisionSessionIds],
   );
   const localListSessions = taskRecordTab === 'local' ? localHumanSessions : sessionGroups[taskRecordTab];
@@ -269,12 +273,12 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
     const unreadOf = (list: CoworkSessionSummary[]) => list.filter((session) => unreadSet.has(session.id)).length;
     return {
       local: {
-        count: localHumanSessions.length + localFollowUpSessions.length,
-        unread: unreadOf(localHumanSessions) + unreadOf(localFollowUpSessions),
+        count: localHumanSessions.length,
+        unread: unreadOf(localHumanSessions),
       },
       a2a: { count: sessionGroups.a2a.length, unread: unreadOf(sessionGroups.a2a) },
     };
-  }, [sessionGroups, localHumanSessions, localFollowUpSessions, unreadSessionIds]);
+  }, [sessionGroups, localHumanSessions, unreadSessionIds]);
 
   // The view mode of the face currently on screen, and its setter. Both faces
   // render the same grouped component; only the remembered choice differs.
@@ -633,12 +637,8 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
              * face has none — its by-Bot groups are the bot reading. */
             botSelector={taskRecordTab === 'a2a'}
             language={language}
-            /** Local chats: machine-started runs fold into one collapsed
-             * "Autonomous Tasks" folder below the Follow-Up section. */
-            autoSessions={taskRecordTab === 'local' ? localAutoSessions : undefined}
-            /** Local chats: sessions awaiting a human decision or reply
-             * render in the Follow-Up section above the fold. */
-            followUpSessions={taskRecordTab === 'local' ? localFollowUpSessions : undefined}
+            /** This list carries human↔bot chats only: the machine-started
+             * runs (and their pending verdicts) render in 进程中心. */
             decisionSessionIds={taskRecordTab === 'local' ? decisionSessionIds : undefined}
             /** The trailing + on a bot group header starts a new task with
              * that bot. Same action and same handler on BOTH faces. */

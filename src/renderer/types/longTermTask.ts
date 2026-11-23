@@ -171,6 +171,12 @@ export interface LongTermEvidence {
   kind: string;
   uri: string;
   note?: string;
+  /**
+   * N4 (2026-11-22): the 0-based acceptance criterion this evidence proves.
+   * Optional and JSON-only — zero migration. Absent = the dossier derives the
+   * per-row state from the whole sub-project and marks it ≈.
+   */
+  criterionIndex?: number;
 }
 
 export interface LongTermSubtask {

@@ -402,8 +402,11 @@ test('the rail models are the single source of both surfaces’ entries', () => 
 
 test('the Co-Work face is the Internet default branch, not a rail pane', () => {
   const typesSource = read('src/renderer/features/botBrowser/types.ts');
-  assert.match(typesSource, /export type BotInternetPane = 'browser' \| 'tasks' \| 'gigSquare' \| 'metaapps' \| 'myBots';/);
-  assert.match(typesSource, /export type BotHomeSection = 'longTerm' \| 'groupTasks' \| 'records';/);
+  // `processes` joined the destination list (Process Hub, owner ruling
+  // 2026-11-21). The DEFAULT branch of the surface is still the Co-Work face —
+  // the hub is a pane like the catalogs, not a new default.
+  assert.match(typesSource, /export type BotInternetPane = 'browser' \| 'processes' \| 'tasks' \| 'gigSquare' \| 'metaapps' \| 'myBots';/);
+  assert.match(typesSource, /export type BotHomeSection = 'processes' \| 'longTerm' \| 'groupTasks' \| 'records';/);
   // Slice-1 fix: the destination is resolved through the shared table instead
   // of an inline pane literal, so the completeness guard can see every branch.
   assert.match(appSource, /const internetPaneKey = resolveInternetPaneRenderer\(botBrowserShell\.internetPane\);/);

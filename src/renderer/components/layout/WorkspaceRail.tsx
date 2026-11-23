@@ -8,11 +8,14 @@ import {
   ShoppingBagIcon,
 } from '@heroicons/react/24/outline';
 import Tooltip from '../ui/Tooltip';
+import NotificationCenter from '../notifications/NotificationCenter';
 import ComposeIcon from '../icons/ComposeIcon';
 import { UserProfileAvatarButton } from '../../features/userProfile';
 import { i18nService } from '../../services/i18n';
 import { getRailHomeNavModel, getRailInternetNavModel } from '../sidebar/sidebarNavigation.js';
 import { selectTrackedTasksNeedingAttention } from '../../utils/trackedTaskAttention';
+import { countAwaitingProcesses, splitProcessHub } from '../../utils/processCenter';
+import { useLineageOverrides } from '../../utils/processHubLineageStore';
 import type { RootState } from '../../store';
 import type {
   BotBrowserSurfaceMode,
@@ -31,6 +34,8 @@ interface RailNavItem {
   hasIndicator?: boolean;
   indicatorKind?: 'running' | 'decision';
   indicatorLabel?: string;
+  /** Numeric red badge (进程 count): rendered inside the dot, per spec ①. */
+  badgeCount?: number;
 }
 
 /**
@@ -113,6 +118,33 @@ const renderRailIcon = (icon: string): React.ReactNode => {
         </svg>
       );
     }
+    case 'processQueue': {
+      // 进程 (spec §③ candidate A): a queue window — a framed pane with a title
+      // bar and three rows, the Windows-task-manager reading. Drawn in-file
+      // (same pattern as squares2x2/userGroup); strokeWidth 1.5 to match the
+      // rail's stroke family.
+      return (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className="h-6 w-6"
+        >
+          <rect x="3" y="4.5" width="18" height="15" rx="2.2" />
+          <line x1="3" y1="8.2" x2="21" y2="8.2" />
+          <line x1="6.4" y1="11.6" x2="17.6" y2="11.6" />
+          <line x1="6.4" y1="14.6" x2="17.6" y2="14.6" />
+          <line x1="6.4" y1="17.6" x2="12.4" y2="17.6" />
+        </svg>
+      );
+    }
     case 'squares2x2':
       return (
         <svg
@@ -173,8 +205,9 @@ const RailButton: React.FC<{
   hasIndicator?: boolean;
   indicatorKind?: 'running' | 'decision';
   indicatorLabel?: string;
+  badgeCount?: number;
   children: React.ReactNode;
-}> = ({ label, active, onClick, itemId, hasIndicator, indicatorKind, indicatorLabel, children }) => (
+}> = ({ label, active, onClick, itemId, hasIndicator, indicatorKind, indicatorLabel, badgeCount, children }) => (
   <Tooltip content={label} position="right" delay={200}>
     <button
       type="button"
@@ -198,15 +231,34 @@ const RailButton: React.FC<{
       )}
       {hasIndicator ? (
         indicatorKind === 'decision' ? (
-          // A parked owner decision: same amber family as the running dot, but
-          // its own class so the two meanings stay distinguishable in the
-          // DOM/CSS, and labelled — this dot means "you are the blocker".
-          <span
-            role="img"
-            aria-label={indicatorLabel}
-            title={indicatorLabel}
-            className="tracked-task-decision-indicator absolute right-1 top-1 shrink-0"
-          />
+          typeof badgeCount === 'number' ? (
+            // The COUNT badge (进程中心's 待你拍板 number): red, top-right,
+            // min 14px. It deliberately does NOT carry
+            // `.tracked-task-decision-indicator` — that class is a 0.375rem
+            // amber dot with its own background and glow, and it WINS over the
+            // utilities (same specificity, later source order), which rendered
+            // this badge as a 5.63px amber dot with the number spilling out.
+            // Measured, not assumed: see the v2 alignment probe.
+            <span
+              role="img"
+              aria-label={indicatorLabel}
+              title={indicatorLabel}
+              data-rail-badge-count={badgeCount}
+              data-count-unit="runs"
+              className="absolute -right-[3px] -top-[3px] flex h-[14px] min-w-[14px] shrink-0 items-center justify-center rounded-full bg-red-500 px-[3px] text-[9.5px] font-bold leading-none text-white"
+            >
+              {badgeCount}
+            </span>
+          ) : (
+            // The plain decision dot: the amber glow that means "you are the
+            // blocker", unchanged.
+            <span
+              role="img"
+              aria-label={indicatorLabel}
+              title={indicatorLabel}
+              className="tracked-task-decision-indicator absolute -right-[3px] -top-[3px] shrink-0"
+            />
+          )
         ) : (
           <span aria-hidden className="scheduled-task-running-indicator absolute right-1.5 top-1.5 shrink-0" />
         )
@@ -231,6 +283,9 @@ interface WorkspaceRailProps {
    * of their own. The prop stays for a surface that would genuinely need
    * the entry hidden. */
   showSettings?: boolean;
+  /** 进程中心 is a PANEL destination on both faces (owner ruling 22:17); the
+   * active state reads this, the entry itself is always mounted. */
+  processCenterActive?: boolean;
   /**
    * The bottom-left version/update block (owner order 2026-11-21 17:46 — the
    * ONE update control surface: version, red dot, status, check action and the
@@ -265,6 +320,7 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
   onNewChat,
   onShowSettings,
   showSettings = true,
+  processCenterActive = false,
   updateModule,
 }) => {
   // Row-1 top band is platform+face aware (owner alignment ruling
@@ -280,6 +336,21 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
 
   const scheduledTasks = useSelector((state: RootState) => state.scheduledTask.tasks);
   const longTermBoard = useSelector((state: RootState) => state.longTermTask.board);
+  // The 进程 entry's badge: the SAME model the panel renders (one source of
+  // truth), so the rail count and the 待你拍板 tab can never disagree. The
+  // decision set comes from the board, exactly like the panel's.
+  const coworkSessions = useSelector((state: RootState) => state.cowork.sessions);
+  // Same override map the hub reads — the rail badge and the strip must agree
+  // on the very same tick (三源同步), so both subscribe to the one store.
+  const lineageOverrides = useLineageOverrides();
+  const awaitingProcessCount = useMemo(() => {
+    const decisionSessionIds = new Set(
+      (longTermBoard?.cards ?? []).flatMap((card) => card.decisionSessionIds ?? []),
+    );
+    return countAwaitingProcesses(
+      splitProcessHub(coworkSessions, decisionSessionIds, Date.now(), undefined, lineageOverrides),
+    );
+  }, [coworkSessions, longTermBoard, lineageOverrides]);
   const hasRunningScheduledTask = scheduledTasks.some(
     (task) => task.enabled && task.state.runningAtMs !== null && task.state.lastStatus === 'running',
   );
@@ -293,16 +364,30 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
       getRailInternetNavModel({
         t: (key: string) => i18nService.t(key),
         needsDecisionCount: trackedTaskAttention.total,
+        awaitingProcessCount,
       }).filter((item: RailNavItem) => !item.hidden),
-    [trackedTaskAttention.total, language],
+    [trackedTaskAttention.total, awaitingProcessCount, language],
   );
   const homeItems: RailNavItem[] = useMemo(
     () =>
       getRailHomeNavModel({
         t: (key: string) => i18nService.t(key),
         hasRunningScheduledTask,
+        awaitingProcessCount,
       }).filter((item: RailNavItem) => !item.hidden),
-    [hasRunningScheduledTask, language],
+    [hasRunningScheduledTask, awaitingProcessCount, language],
+  );
+
+  // 进程中心 is a SYSTEM entry (owner order 2026-11-21 17:00): it renders in the
+  // rail's bottom group — directly above Settings, inside the group the rail
+  // already reserves for system controls (the `mt-auto` container below) — not
+  // beside the common buttons. Same model object, same badge, same icon; only
+  // the mount point moved, so all four properties stay single-sourced.
+  const processesItem = useMemo(
+    () => (mode === 'browser'
+      ? internetItems.find((item: RailNavItem) => item.id === 'processes')
+      : homeItems.find((item: RailNavItem) => item.id === 'processes')) as RailNavItem | undefined,
+    [mode, internetItems, homeItems],
   );
 
   const handleHomeItem = (id: string) => {
@@ -371,12 +456,16 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
           aria-label={i18nService.t('botInternet')}
           className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto px-1.5 pb-2"
         >
-          {internetItems.map((item) => (
+          {internetItems.filter((item: RailNavItem) => item.id !== 'processes').map((item) => (
             <RailButton
               key={item.id}
               itemId={item.id}
               label={item.label}
               active={internetPane === item.id}
+              hasIndicator={item.hasIndicator}
+              indicatorKind={item.indicatorKind}
+              indicatorLabel={item.indicatorLabel}
+              badgeCount={item.badgeCount}
               onClick={() => onSelectInternetPane(item.id as BotInternetPane)}
             >
               {renderRailIcon(item.icon)}
@@ -394,15 +483,20 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
               The records archive selector stays out: on this surface the
               records body is always on screen below, so a fourth icon would
               add a door the face never had. */}
-          {homeItems.filter((item) => item.id !== 'records').map((item) => (
+          {homeItems.filter((item) => item.id !== 'records' && item.id !== 'processes').map((item) => (
             <RailButton
               key={item.id}
               itemId={item.id}
               label={item.label}
-              active={item.id === 'newTask' ? false : homeSection === item.id}
+              active={item.id === 'newTask'
+                ? false
+                : item.id === 'processes'
+                  ? processCenterActive
+                  : homeSection === item.id}
               hasIndicator={item.hasIndicator}
               indicatorKind={item.indicatorKind}
               indicatorLabel={item.indicatorLabel}
+              badgeCount={item.badgeCount}
               onClick={() => handleHomeItem(item.id)}
             >
               {renderRailIcon(item.icon)}
@@ -411,6 +505,34 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
         </nav>
       )}
       <div className="mt-auto flex w-full flex-col items-center gap-1.5 px-1.5 pb-3 pt-1">
+        {/* 通知中心 (批 B · P0-4): the faucet for the notification pipeline the
+            host already writes. Rail-bottom bell + unread badge; its panel
+            groups 完成 / 失败 / 待拍板 and jumps by target. */}
+        <NotificationCenter
+          onOpenProcesses={() => {
+            if (mode === 'browser') onSelectInternetPane('processes' as BotInternetPane);
+            else handleHomeItem('processes');
+          }}
+        />
+        {/* System zone (the rail's existing `mt-auto` group): 进程中心 sits
+            directly above Settings and outside the common button group. */}
+        {processesItem ? (
+          <RailButton
+            itemId={processesItem.id}
+            label={processesItem.label}
+            active={mode === 'browser' ? internetPane === 'processes' : processCenterActive}
+            hasIndicator={processesItem.hasIndicator}
+            indicatorKind={processesItem.indicatorKind}
+            indicatorLabel={processesItem.indicatorLabel}
+            badgeCount={processesItem.badgeCount}
+            onClick={() => {
+              if (mode === 'browser') onSelectInternetPane('processes' as BotInternetPane);
+              else handleHomeItem('processes');
+            }}
+          >
+            {renderRailIcon(processesItem.icon)}
+          </RailButton>
+        ) : null}
         {/* The update badge does NOT ride the rail (it squeezed into the 64px
             column on the browser face): BOTH faces render it in their mid
             column's header instead — HomeSidebar's actions row on the home

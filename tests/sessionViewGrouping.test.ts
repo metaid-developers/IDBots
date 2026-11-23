@@ -364,8 +364,10 @@ test('the two faces share one list template; the differences are the declared on
   for (const name of ['HomeSidebar', 'Sidebar'] as const) {
     const src = readSidebar(name);
     // Deliberately kept differences (both faces render the same component,
-    // but the machine-run buckets and the move-to-section menu are local-only).
-    for (const prop of ['autoSessions', 'followUpSessions', 'decisionSessionIds', 'onMoveSessionToSection']) {
+    // but the decision set and the move-to-section menu are local-only). The
+    // machine-run buckets are NO LONGER list props at all — they moved into the
+    // Process Hub (owner ruling 2026-11-21), so they are not on this list.
+    for (const prop of ['decisionSessionIds', 'onMoveSessionToSection']) {
       assert.ok(
         src.includes(`${prop}={taskRecordTab === 'local' ?`),
         `${name}: ${prop} stays local-only`,

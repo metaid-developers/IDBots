@@ -21,7 +21,7 @@ export type BotBrowserSurfaceMode = 'home' | 'browser';
  * stale `cowork` id therefore resolves to that default, not to a pane of its
  * own.
  */
-export type BotInternetPane = 'browser' | 'tasks' | 'gigSquare' | 'metaapps' | 'myBots';
+export type BotInternetPane = 'browser' | 'processes' | 'tasks' | 'gigSquare' | 'metaapps' | 'myBots';
 
 /**
  * The Bot Home middle column's list destinations. One is expanded at a time;
@@ -29,7 +29,7 @@ export type BotInternetPane = 'browser' | 'tasks' | 'gigSquare' | 'metaapps' | '
  * Derived from the main view in App: scheduledTasks → longTerm, groupTasks →
  * groupTasks, everything else → records.
  */
-export type BotHomeSection = 'longTerm' | 'groupTasks' | 'records';
+export type BotHomeSection = 'processes' | 'longTerm' | 'groupTasks' | 'records';
 
 export type BotBrowserIntent =
   | { type: 'openBrowserHome' }

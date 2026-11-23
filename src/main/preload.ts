@@ -474,6 +474,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:unarchive', sessionId),
     listArchivedSessions: (options?: { metabotId?: number | null; query?: string; searchContent?: boolean; sessionType?: 'standard' | 'a2a' | 'browser' | 'group_task'; limit?: number; offset?: number }) =>
       ipcRenderer.invoke('cowork:session:listArchived', options),
+    activitySpark: (options: { sessionIds: string[] }) =>
+      ipcRenderer.invoke('cowork:session:activitySpark', options),
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) =>
       ipcRenderer.invoke('cowork:session:pin', options),
     setSessionFoldOverride: (options: { sessionId: string; override: 'in' | 'out' | null }) =>
@@ -1088,6 +1090,11 @@ contextBridge.exposeInMainWorld('electron', {
     board: () => ipcRenderer.invoke('longtermTask:board'),
     studioStatus: (input?: { activeSessionId?: string | null }) =>
       ipcRenderer.invoke('longtermTask:studioStatus', input),
+    // N1 (fork 3A): the hub's decision card records an owner ruling — the same
+    // resolve + redundant-sibling-cancel + waiting_owner convergence path the
+    // Twin's studio_decision_resolve tool takes (shared `resolveOwnerDecision`).
+    decisionResolve: (input: { queueItemId: string; resolutionNote: string; activeSessionId?: string | null }) =>
+      ipcRenderer.invoke('longtermTask:decisionResolve', input),
     get: (input: { taskId: string }) => ipcRenderer.invoke('longtermTask:get', input),
     update: (input: { taskId: string; title?: string; goal?: string; acceptanceDelegate?: boolean }) =>
       ipcRenderer.invoke('longtermTask:update', input),
@@ -1125,6 +1132,9 @@ contextBridge.exposeInMainWorld('electron', {
     note: (input: { taskId: string; subtaskId?: string; text: string }) => ipcRenderer.invoke('longtermTask:note', input),
     /** Reverse lookup for the session-side origin chip. */
     forSession: (input: { sessionId: string }) => ipcRenderer.invoke('longtermTask:forSession', input),
+    /** N3 (process dossier): the event timeline beyond the detail projection's
+     *  200-row cap. Read-only; `listEvents` already clamps to ≤500. */
+    events: (input: { taskId: string; limit?: number }) => ipcRenderer.invoke('longtermTask:events', input),
     moveSubtask: (input: { subtaskId: string; direction: 'up' | 'down' }) => ipcRenderer.invoke('longtermTask:moveSubtask', input),
     /** Monotonic seq per process: drop frames with seq <= lastSeenSeq. */
     onUpdate: (callback: (data: { seq: number; taskIds: string[]; reason: string }) => void) => {
@@ -1132,6 +1142,15 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('longtermTask:update', handler);
       return () => ipcRenderer.removeListener('longtermTask:update', handler);
     },
+  },
+  /**
+   * 进程详情 · 档案层 (N2): ONE read for one process session — the owning
+   * long-term task/sub-project, the event timeline, orchestration attempts and
+   * scheduled runs. Read-only; a session with no task returns `task: null` and
+   * the view says so instead of drawing an empty dossier.
+   */
+  processDossier: {
+    get: (input: { sessionId: string; eventLimit?: number }) => ipcRenderer.invoke('processDossier:get', input),
   },
   metatask: {
     // MetaTask (chain-side, read path P1): local projection of on-chain tasks.
@@ -1514,6 +1533,11 @@ contextBridge.exposeInMainWorld('electron', {
   },
   metawebStudy: {
     list: (metabotId: number) => ipcRenderer.invoke('metawebStudy:list', metabotId),
+  },
+  /** N1 (process dossier): name one on-chain pin — thin wrapper over the
+   *  existing main-process `readMetawebPin`; never writes, never signs. */
+  metaweb: {
+    pinInfo: (input: { pinId: string }) => ipcRenderer.invoke('metaweb:pinInfo', input),
   },
   surf: {
     listRuns: (metabotId: number, limit?: number) =>

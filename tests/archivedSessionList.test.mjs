@@ -183,3 +183,52 @@ test('listArchivedSessions searchContent matches message bodies only when enable
     cleanup();
   }
 });
+
+test('listArchivedSessions carries the orchestrator name, so an archived process row is not blank', async () => {
+  // Regression pinned 2026-11-21 (1121-b 进程中心): the 已归档 tab renders the
+  // same row anatomy as the live tabs — status dot + name + kind tag +
+  // ORCHESTRATOR + latest activity. The archived reader used to select neither
+  // `metabots` nor `mb.name`, so `metabotName` came back null for every
+  // archived row and the orchestrator column rendered silently empty: no
+  // error, no test failure, just a column that never filled in.
+  const { db, cleanup, store } = await seed();
+  try {
+    // `createSqliteStore` seeds NO metabots (that INSERT lives only in
+    // createLegacyMemoryDb), so this test owns its roster: id 1 gets a name the
+    // join can resolve, id 5 deliberately has no row at all — the positive and
+    // the negative control in one fixture. The real `metabots` table carries
+    // NOT NULL columns without defaults, so the row states all of them.
+    db.run(
+      `INSERT INTO metabots
+        (id, wallet_id, mvc_address, btc_address, doge_address, public_key, chat_public_key,
+         name, metaid, metabot_type, created_by, role, soul, created_at, updated_at)
+       VALUES (1, 1, 'mvc-addr-1', 'btc-addr-1', 'doge-addr-1', 'pub-1', 'chat-pub-1',
+         'Twin', 'metaid-1', 'twin', 'owner', 'twin', 'twin-soul', 0, 0)`,
+    );
+    const withBot = store.createSession('归档的进程会话', '/tmp/x', '', 'local', [], 1);
+    const withoutBot = store.createSession('归档的孤儿会话', '/tmp/y', '', 'local', [], 5);
+    for (const id of [withBot.id, withoutBot.id]) store.archiveSession(id);
+
+    const rows = store.listArchivedSessions();
+    const named = rows.find((row) => row.id === withBot.id);
+    const orphan = rows.find((row) => row.id === withoutBot.id);
+
+    assert.equal(named?.metabotName, 'Twin', 'the archived row carries its orchestrator name');
+    assert.equal(named?.metabotId, 1, 'and keeps the id it resolves from');
+    assert.equal(orphan?.metabotName, null, 'a session whose metabot row is gone degrades to null, not a crash');
+
+    // The live list already promised this; the archived reader must agree, or
+    // the two tabs describe the same session differently.
+    const liveName = store.getSession(withBot.id)?.metabotName;
+    assert.equal(liveName, 'Twin', 'live read agrees with the archived read');
+
+    // The worker-backed page path runs its own SQL copy — it must carry the
+    // join too, so the 已归档 tab does not lose the column on a big database.
+    const page = await store.listArchivedSessionsPageAsync({ limit: 50 });
+    const pagedNamed = page.sessions.find((row) => row.id === withBot.id);
+    assert.equal(pagedNamed?.metabotName, 'Twin', 'the paginated SQL copy carries the name as well');
+    assert.equal(page.total >= 2, true);
+  } finally {
+    cleanup();
+  }
+});

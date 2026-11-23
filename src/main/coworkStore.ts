@@ -28,6 +28,15 @@ import {
 } from './libs/coworkSessionGoal';
 import { normalizePracticeComponent, type PracticeComponent } from './libs/evolutionExploration';
 import { normalizeCapabilityScope, type CapabilityScope } from './libs/capabilitySpecificity';
+import {
+  assembleSparkReadings,
+  buildSparkBoundsQuery,
+  buildSparkBucketQuery,
+  normalizeSparkSessionIds,
+  type ProcessSparkReadingRow,
+  type SparkBoundRow,
+  type SparkBucketRow,
+} from './services/processSparkBuckets';
 import type {
   MemoryBackend,
   MemoryCreateUserMemoryInput,
@@ -5684,6 +5693,7 @@ export class CoworkStore implements MemoryBackend {
     status: string;
     pinned: number | null;
     metabot_id?: number | null;
+    metabot_name?: string | null;
     session_type?: string | null;
     peer_name?: string | null;
     browser_uri?: string | null;
@@ -5711,6 +5721,11 @@ export class CoworkStore implements MemoryBackend {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       metabotId: parseIdNumber(row.metabot_id),
+      // 编排者 for the 已归档 tab: the live list query already joins metabots for
+      // `metabot_name`; the archived reader must do the same or every archived
+      // process row would render without an orchestrator (silently blank, no
+      // error anywhere). Same LEFT JOIN shape as the live list.
+      metabotName: row.metabot_name ?? null,
       archivedAt: Number(row.archived_at),
       sessionType: (row.session_type === 'agent_agent' ? 'a2a' : row.session_type as CoworkSessionType) || 'standard',
       peerName: row.peer_name ?? null,
@@ -5746,8 +5761,10 @@ export class CoworkStore implements MemoryBackend {
       SELECT
         s.id, s.title, s.status, s.pinned, s.metabot_id, s.session_type, s.peer_name,
         s.browser_uri, s.browser_title, s.hidden_from_session_list, s.auto_origin, s.fold_override, s.follow_up_state, s.follow_up_source, s.follow_up_at, s.model, s.model_provider, s.effort, s.project_id, s.assistant_mode,
+        mb.name AS metabot_name,
         s.archived_at, s.created_at, s.updated_at
       FROM cowork_sessions s
+      LEFT JOIN metabots mb ON mb.id = s.metabot_id
       WHERE ${clauses.join(' AND ')}
       ORDER BY s.archived_at DESC
       LIMIT ? OFFSET ?
@@ -5784,8 +5801,10 @@ export class CoworkStore implements MemoryBackend {
             SELECT
               s.id, s.title, s.status, s.pinned, s.metabot_id, s.session_type, s.peer_name,
               s.browser_uri, s.browser_title, s.hidden_from_session_list, s.auto_origin, s.fold_override, s.follow_up_state, s.follow_up_source, s.follow_up_at, s.model, s.model_provider, s.effort, s.project_id, s.assistant_mode,
+              mb.name AS metabot_name,
               s.archived_at, s.created_at, s.updated_at
             FROM cowork_sessions s
+            LEFT JOIN metabots mb ON mb.id = s.metabot_id
             WHERE ${whereSql}
             ORDER BY s.archived_at DESC
             LIMIT ? OFFSET ?
@@ -5812,6 +5831,52 @@ export class CoworkStore implements MemoryBackend {
         total: this.countArchivedSessions(options),
       };
     }
+  }
+
+  /**
+   * 火花线取数面: per-session message activity, bucketed from
+   * `cowork_messages.created_at` into PROCESS_SPARK_BUCKET_COUNT slots.
+   *
+   * Thin by design — the SQL and the fold live in
+   * `services/processSparkBuckets.ts` so the tests exercise the same text the
+   * app runs. A session with no message rows comes back as the ZERO reading
+   * (total 0, every bucket 0); the UI renders that as its empty state rather
+   * than drawing placeholder bars.
+   *
+   * Reads through the shared sqlite read worker when the native backend is up
+   * (same path as listArchivedSessionsPageAsync), and falls back to the
+   * in-process handle otherwise.
+   */
+  async listSessionActivitySpark(
+    rawSessionIds: unknown,
+    readWorker?: SqliteReadWorkerLike | null,
+  ): Promise<Record<string, ProcessSparkReadingRow>> {
+    const sessionIds = normalizeSparkSessionIds(rawSessionIds);
+    if (sessionIds.length === 0) return {};
+
+    const bounds = buildSparkBoundsQuery(sessionIds);
+    const buckets = buildSparkBucketQuery(sessionIds);
+
+    let boundRows: SparkBoundRow[];
+    let bucketRows: SparkBucketRow[];
+    if (readWorker) {
+      try {
+        const [boundResult, bucketResult] = await readWorker.batchQueryAll([
+          { sql: bounds.sql, params: bounds.params },
+          { sql: buckets.sql, params: buckets.params },
+        ]);
+        boundRows = (boundResult ?? []) as unknown as SparkBoundRow[];
+        bucketRows = (bucketResult ?? []) as unknown as SparkBucketRow[];
+      } catch {
+        boundRows = this.getAll<SparkBoundRow>(bounds.sql, bounds.params);
+        bucketRows = this.getAll<SparkBucketRow>(buckets.sql, buckets.params);
+      }
+    } else {
+      boundRows = this.getAll<SparkBoundRow>(bounds.sql, bounds.params);
+      bucketRows = this.getAll<SparkBucketRow>(buckets.sql, buckets.params);
+    }
+
+    return assembleSparkReadings(boundRows, bucketRows, sessionIds);
   }
 
   resetRunningSessions(): number {

@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { RootState } from '../../store';
 import type { CoworkSessionSummary } from '../../types/cowork';
-import CoworkSessionItem, { SessionAvatarCircle, formatRelativeTime } from './CoworkSessionItem';
+import CoworkSessionItem, { SessionAvatarCircle } from './CoworkSessionItem';
 import MetaBotSelector, {
   ALL_METABOTS_SELECTOR_ID,
   type MetaBotForSelector,
@@ -18,7 +18,6 @@ import {
   buildBotUnreadCounts,
   groupSessionsByBot,
   groupSessionsByTimeline,
-  sortSessionsByMode,
   type BotViewBot,
   type SessionSortMode,
   type SessionViewMode,
@@ -28,16 +27,8 @@ import {
   saveCollapsedSessionGroups,
   type SessionGroupFace,
 } from '../../utils/sessionGroupStorage';
-import {
-  AUTO_TASKS_EXPANDED_STORAGE_KEY,
-  FOLLOW_UP_EXPANDED_STORAGE_KEY,
-  parseAutoTasksExpandedPreference,
-  parseFollowUpExpandedPreference,
-  serializeAutoTasksExpandedPreference,
-  serializeFollowUpExpandedPreference,
-} from '../../utils/sessionAutoGrouping';
 import type { SessionSidebarSection } from '../../utils/sessionAutoGrouping';
-import { ChevronDownIcon, Cog6ToothIcon, FolderIcon, HandRaisedIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, FolderIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { a2aApprovalOf } from './permissionPromptLayout';
 
 interface CoworkSessionListProps {
@@ -73,39 +64,21 @@ interface CoworkSessionListProps {
    */
   botSelector?: boolean;
   /**
-   * Auto-folded sessions (long-term task runs, orchestration/delegation runs,
-   * scheduled-task runs — every machine-started run kind) for the local-chats
-   * list. Folded rows are NEVER mixed into the main list: they render as one
-   * collapsed "Autonomous Tasks" folder directly under the pinned section and
-   * below the Follow-Up section, independent of the view mode — tucked out of
-   * the human conversations, but visible at a glance instead of buried at the
-   * bottom. Only the local tab passes this; every other caller leaves it off
-   * and its output is unchanged.
-   */
-  autoSessions?: CoworkSessionSummary[];
-  /**
-   * Follow-up sessions (followUpState 'pending' or a live board decision owed)
-   * for the local-chats list: auto-created rows that currently need a human
-   * decision or reply. They render as one collapsed "Follow-Up Tasks" section
-   * directly under the pinned block and ABOVE the Autonomous fold — the
-   * decision surface must be seen, not buried. Only the local tab passes this;
-   * every other caller leaves it off and its output is unchanged.
-   */
-  followUpSessions?: CoworkSessionSummary[];
-  /**
    * Sessions owed an owner verdict right now (long-term sub-projects parked in
-   * waiting_owner, board-derived): each matching row carries
-   * decisionPending so its fold menu reflects where it actually renders (the
-   * main list). Only the local tab passes this, mirroring autoSessions.
+   * waiting_owner, board-derived). The verdict itself now renders in the PROCESS
+   * HUB, not here (owner ruling 2026-11-21: this list is human↔bot chats only),
+   * so the flag no longer has a section to place a row in — the row menu's
+   * "current section" resolver is what still reads it, keeping the move-out
+   * override honest for a decision-owed row.
    */
   decisionSessionIds?: ReadonlySet<string>;
   /**
-   * Move one session to one of the three sidebar sections (the row menu's
-   * "Move to…" submenu: Autonomous Tasks, Follow-Up Tasks, or the normal
-   * list). Optional: callers that do not offer the move (and every non-local
-   * list) simply leave it off, and the row then hides the menu entry. The row
-   * disables the section it already sits in, so the caller never receives a
-   * same-section move.
+   * Move one session to one of the three placement lanes the row menu's
+   * "Move to…" submenu names: the process hub, the hub's awaiting layer, or the
+   * normal list. Optional: callers that do not offer the move (and every
+   * non-local list) simply leave it off, and the row then hides the menu entry.
+   * The row disables the lane it already sits in, so the caller never receives
+   * a same-lane move.
    */
   onMoveSessionToSection?: (sessionId: string, target: SessionSidebarSection) => void;
   /**
@@ -201,9 +174,7 @@ const sameSessionSummary = (a: CoworkSessionSummary, b: CoworkSessionSummary): b
  */
 const useStableSessionSummaries = (
   sessions: CoworkSessionSummary[],
-  autoSessions?: CoworkSessionSummary[],
-  followUpSessions?: CoworkSessionSummary[],
-): [CoworkSessionSummary[], CoworkSessionSummary[] | undefined, CoworkSessionSummary[] | undefined] => {
+): [CoworkSessionSummary[]] => {
   const cacheRef = useRef<Map<string, CoworkSessionSummary>>(new Map());
   return useMemo(() => {
     const nextCache = new Map<string, CoworkSessionSummary>();
@@ -214,35 +185,18 @@ const useStableSessionSummaries = (
         nextCache.set(session.id, kept);
         return kept;
       });
-    const result: [CoworkSessionSummary[], CoworkSessionSummary[] | undefined, CoworkSessionSummary[] | undefined] = [
-      stabilize(sessions),
-      autoSessions ? stabilize(autoSessions) : undefined,
-      followUpSessions ? stabilize(followUpSessions) : undefined,
-    ];
+    const result: [CoworkSessionSummary[]] = [stabilize(sessions)];
     cacheRef.current = nextCache;
     return result;
-  }, [sessions, autoSessions, followUpSessions]);
+  }, [sessions]);
 };
 
-/** Remembered open/closed state of the Autonomous Tasks fold, read once on mount. */
-const loadAutoTasksExpanded = (): boolean => {
-  try {
-    return parseAutoTasksExpandedPreference(window.localStorage.getItem(AUTO_TASKS_EXPANDED_STORAGE_KEY));
-  } catch {
-    // localStorage unavailable; fall through to the collapsed default.
-  }
-  return false;
-};
-
-/** Remembered open/closed state of the Follow-Up Tasks section, read once on mount. */
-const loadFollowUpExpanded = (): boolean => {
-  try {
-    return parseFollowUpExpandedPreference(window.localStorage.getItem(FOLLOW_UP_EXPANDED_STORAGE_KEY));
-  } catch {
-    // localStorage unavailable; fall through to the collapsed default.
-  }
-  return false;
-};
+// The old "Autonomous Tasks" fold and "Follow-Up Tasks" section are RETIRED
+// (owner ruling 2026-11-21): both moved into the Process Hub panel
+// (components/cowork/ProcessCenterPanel.tsx), and their two persisted
+// preferences are no longer read. The localStorage keys stay frozen in
+// utils/sessionAutoGrouping.ts — deployed user state is never renamed — they
+// simply have no reader left on this list.
 
 const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   sessions: incomingSessions,
@@ -258,8 +212,6 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   viewMode,
   sortMode = 'updatedAt',
   botSelector = false,
-  autoSessions: incomingAutoSessions,
-  followUpSessions: incomingFollowUpSessions,
   decisionSessionIds,
   onMoveSessionToSection,
   language: languageProp,
@@ -269,11 +221,7 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
 }) => {
   // Same summary objects for the rows whose fields did not change (see the
   // hook); everything below reads these instead of the raw props.
-  const [sessions, autoSessions, followUpSessions] = useStableSessionSummaries(
-    incomingSessions,
-    incomingAutoSessions,
-    incomingFollowUpSessions,
-  );
+  const [sessions] = useStableSessionSummaries(incomingSessions);
   // One shared clock for the rows' relative-time stamps, ticked once a minute.
   // Rows are memoized, so a row that recomputed Date.now() itself would freeze
   // its label until its data changed; the tick is what keeps "5m" turning into
@@ -323,41 +271,6 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   useEffect(() => {
     setCollapsedGroupKeys(loadCollapsedSessionGroups((key) => window.localStorage.getItem(key), groupFace));
   }, [groupFace]);
-  // The Autonomous Tasks fold, unlike the project groups, remembers its state
-  // across restarts: it holds background runs, so it opens collapsed every
-  // launch.
-  const [isAutoTasksExpanded, setIsAutoTasksExpanded] = useState<boolean>(loadAutoTasksExpanded);
-  const toggleAutoTasksExpanded = () => {
-    setIsAutoTasksExpanded((prev) => {
-      const next = !prev;
-      try {
-        window.localStorage.setItem(
-          AUTO_TASKS_EXPANDED_STORAGE_KEY,
-          serializeAutoTasksExpandedPreference(next),
-        );
-      } catch {
-        // localStorage unavailable; the fold still toggles for this session.
-      }
-      return next;
-    });
-  };
-  // The Follow-Up section holds the decision surface; it also opens collapsed
-  // every launch (user decision #1 — revisit after usage).
-  const [isFollowUpExpanded, setIsFollowUpExpanded] = useState<boolean>(loadFollowUpExpanded);
-  const toggleFollowUpExpanded = () => {
-    setIsFollowUpExpanded((prev) => {
-      const next = !prev;
-      try {
-        window.localStorage.setItem(
-          FOLLOW_UP_EXPANDED_STORAGE_KEY,
-          serializeFollowUpExpandedPreference(next),
-        );
-      } catch {
-        // localStorage unavailable; the section still toggles for this session.
-      }
-      return next;
-    });
-  };
   const [rosterBots, setRosterBots] = useState<MetaBotForSelector[] | null>(null);
   // null = the live bot roster has not settled yet; the by-Bot groups simply
   // wait for it (an empty roster degrades to session-derived groups).
@@ -484,59 +397,10 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
     [visibleSessions, viewMode, sortMode, viewBots, groupFace],
   );
 
-  // The Follow-Up section: sessions awaiting a human decision, ordered like the
-  // main list (pinned first, then the active sort mode) inside ONE flat section
-  // that always sits directly under the pinned block and above the Autonomous
-  // fold, whatever the view mode. A pin keeps its place inside the section —
-  // it never rescues a follow-up row back into the human list.
-  const sortedFollowUpSessions = useMemo(() => {
-    const list = followUpSessions ?? [];
-    if (list.length === 0) return [];
-    return [
-      ...sortSessionsByMode(list.filter((session) => session.pinned), sortMode),
-      ...sortSessionsByMode(list.filter((session) => !session.pinned), sortMode),
-    ];
-  }, [followUpSessions, sortMode]);
-  // Newest activity in the section (updatedAt is the session's last-activity
-  // anchor, the same value the row's own timestamp shows).
-  const followUpLatestActivityAt = useMemo(
-    () => sortedFollowUpSessions.reduce((latest, session) => Math.max(latest, session.updatedAt), 0),
-    [sortedFollowUpSessions],
-  );
-  // Unread sessions inside the Follow-Up section. Pending rows are the
-  // decision surface, so — unlike the Autonomous fold — they also light the
-  // local tab's badge through the sidebar's tabStats (user decision #5).
-  const followUpUnreadCount = useMemo(
-    () => sortedFollowUpSessions.filter((session) => unreadSessionIdSet.has(session.id)).length,
-    [sortedFollowUpSessions, unreadSessionIdSet],
-  );
-
-  // The Autonomous Tasks fold: machine-started runs, ordered like the main list
-  // (pinned first, then the active sort mode) inside ONE flat section that
-  // always sits directly under the pinned block, whatever the view mode. A pin
-  // keeps its place inside the fold — it never rescues an autonomous run back
-  // into the human list.
-  const sortedAutoSessions = useMemo(() => {
-    const list = autoSessions ?? [];
-    if (list.length === 0) return [];
-    return [
-      ...sortSessionsByMode(list.filter((session) => session.pinned), sortMode),
-      ...sortSessionsByMode(list.filter((session) => !session.pinned), sortMode),
-    ];
-  }, [autoSessions, sortMode]);
-  // Newest activity in the fold (updatedAt is the session's last-activity
-  // anchor, the same value the row's own timestamp shows).
-  const autoLatestActivityAt = useMemo(
-    () => sortedAutoSessions.reduce((latest, session) => Math.max(latest, session.updatedAt), 0),
-    [sortedAutoSessions],
-  );
-  // Unread sessions inside the fold. This — not the total — is the header's
-  // number: the user watches for background runs with news, and the local
-  // tab's red dot lights from the same unread set in the sidebar's tabStats.
-  const autoUnreadCount = useMemo(
-    () => sortedAutoSessions.filter((session) => unreadSessionIdSet.has(session.id)).length,
-    [sortedAutoSessions, unreadSessionIdSet],
-  );
+  // The Follow-Up section and the Autonomous fold that used to be derived here
+  // are GONE from this list (owner ruling 2026-11-21): both live in the Process
+  // Hub panel now, and the local list renders human↔bot chats only. What stayed
+  // is the ROW-level verdict the move menu still needs (see decisionSessionIds).
 
   const toggleGroupCollapsed = (key: string) => {
     const next = new Set(collapsedGroupKeys);
@@ -553,12 +417,10 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
     }
   };
 
-  // Double-click on blank space collapses every expanded folder at once:
-  // all bot groups plus the Autonomous and Follow-Up folds. Each piece is
-  // persisted through its own existing single-toggle write (same try/catch
-  // posture: a localStorage failure only loses the memory, the collapse
-  // still applies for this session). This is an explicit collapse, not a
-  // toggle, so a stray second double-click cannot re-open anything.
+  // Double-click on blank space collapses every expanded bot group at once —
+  // the only folders this list still has (the process folds left for the hub).
+  // The collapse is explicit, not a toggle, so a stray second double-click
+  // cannot re-open anything.
   //
   // Two triggers answer the owner's red-box spot (2026-11-10): the icon
   // rail's blank stretches — a sibling component with no list state, so
@@ -580,24 +442,6 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
       saveCollapsedSessionGroups((storageKey, value) => window.localStorage.setItem(storageKey, value), groupFace, next);
     } catch {
       // localStorage unavailable; the groups still collapse for this session.
-    }
-    setIsAutoTasksExpanded(false);
-    try {
-      window.localStorage.setItem(
-        AUTO_TASKS_EXPANDED_STORAGE_KEY,
-        serializeAutoTasksExpandedPreference(false),
-      );
-    } catch {
-      // localStorage unavailable; the fold still collapses for this session.
-    }
-    setIsFollowUpExpanded(false);
-    try {
-      window.localStorage.setItem(
-        FOLLOW_UP_EXPANDED_STORAGE_KEY,
-        serializeFollowUpExpandedPreference(false),
-      );
-    } catch {
-      // localStorage unavailable; the section still collapses for this session.
     }
   };
 
@@ -679,110 +523,12 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
       </section>
     );
 
-  /**
-   * The Follow-Up Tasks section (待跟进任务). Rendered in every view mode
-   * directly under the Autonomous fold, and only when something is pending —
-   * an empty section would be noise of its own.
-   *
-   * Membership = followUpState 'pending' on the row (persisted by main: the
-   * cerebellum turn-end gate, the AskUserQuestion bridge, manual owner moves)
-   * or a live board decision owed on the session (see Sidebar's
-   * decisionSessionIds) — the decision surface must be seen, not buried in the
-   * collapsed fold it used to be force-lifted out of.
-   *
-   * The header mirrors the Autonomous fold's: subdued secondary text + a
-   * raised-hand glyph (these sessions need a human decision, not an
-   * unattended gear), a red dot at the left + the section's UNREAD session
-   * count in red
-   * (both only when > 0; the total survives only in the hover tooltip) + the
-   * section's newest activity time. Per-row dots inside the EXPANDED section
-   * stay — that is where "which decision is still open" is traceable.
-   */
-  const renderFollowUpSection = () =>
-    revealBudgetLeft() && sortedFollowUpSessions.length > 0 && (
-      <section data-testid="follow-up-tasks-section">
-        <button
-          type="button"
-          aria-expanded={isFollowUpExpanded}
-          onClick={toggleFollowUpExpanded}
-          title={(followUpUnreadCount > 0
-            ? i18nService.t('coworkFollowUpTasksUnread').replace('{count}', String(followUpUnreadCount))
-            : i18nService.t('coworkFollowUpTasksCount').replace('{count}', String(sortedFollowUpSessions.length)))}
-          className={`flex w-full items-center gap-1.5 px-2.5 pb-1 pt-2.5 text-left transition-colors hover:text-claude-text dark:hover:text-claude-darkText ${groupHeaderLabelClass}`}
-        >
-          {followUpUnreadCount > 0 && (
-            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-red-500" aria-hidden />
-          )}
-          <ChevronDownIcon
-            className={`h-3 w-3 flex-shrink-0 transition-transform duration-150 ${isFollowUpExpanded ? '' : '-rotate-90'}`}
-          />
-          <HandRaisedIcon className="h-3.5 w-3.5 flex-shrink-0" />
-          <span className="truncate">{i18nService.t('coworkFollowUpTasks')}</span>
-          {followUpUnreadCount > 0 && (
-            <span className="flex-shrink-0 font-medium tabular-nums text-red-500">{followUpUnreadCount}</span>
-          )}
-          {followUpLatestActivityAt > 0 && (
-            <span className="ml-auto flex-shrink-0 font-normal tabular-nums" title={formatRelativeTime(followUpLatestActivityAt).full}>
-              {formatRelativeTime(followUpLatestActivityAt).compact}
-            </span>
-          )}
-        </button>
-        {isFollowUpExpanded && sortedFollowUpSessions.map(renderItem)}
-      </section>
-    );
-
-  /**
-   * The Autonomous Tasks fold. Rendered in every view mode directly under the
-   * pinned block (above the Follow-Up section and the timeline/project groups,
-   * where it is seen without scrolling), and only when there is something to
-   * fold — an empty folder would be noise of its own.
-   *
-   * Membership = the auto-origin policy (long-term task runs, orchestration
-   * delegations) with the row's manual placement winning over it ('in' parks a
-   * human row here, 'out' keeps an autonomous run in the main list) — see
-   * isInAutonomousFold. Rows leave the fold by being archived, and the whole
-   * section disappears once nothing is left in it.
-   *
-   * The header shares the project groups' subdued secondary text, with a gear
-   * glyph (these runs drive themselves, no human in the loop), a red dot at
-   * the row's left + the fold's UNREAD session count in red (both only when
-   * > 0 — the signal the user actually watches; the total survives only in the
-   * hover tooltip) + the fold's newest activity time.
-   * Per-row dots inside the EXPANDED fold stay — that is where "which run has
-   * news" is actually traceable.
-   */
-  const renderAutoTasksSection = () =>
-    revealBudgetLeft() && sortedAutoSessions.length > 0 && (
-      <section data-testid="autonomous-tasks-section">
-        <button
-          type="button"
-          aria-expanded={isAutoTasksExpanded}
-          onClick={toggleAutoTasksExpanded}
-          title={(autoUnreadCount > 0
-            ? i18nService.t('coworkAutonomousTasksUnread').replace('{count}', String(autoUnreadCount))
-            : i18nService.t('coworkAutonomousTasksCount').replace('{count}', String(sortedAutoSessions.length)))}
-          className={`flex w-full items-center gap-1.5 px-2.5 pb-1 pt-2.5 text-left transition-colors hover:text-claude-text dark:hover:text-claude-darkText ${groupHeaderLabelClass}`}
-        >
-          {autoUnreadCount > 0 && (
-            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-red-500" aria-hidden />
-          )}
-          <ChevronDownIcon
-            className={`h-3 w-3 flex-shrink-0 transition-transform duration-150 ${isAutoTasksExpanded ? '' : '-rotate-90'}`}
-          />
-          <Cog6ToothIcon className="h-3.5 w-3.5 flex-shrink-0" />
-          <span className="truncate">{i18nService.t('coworkAutonomousTasks')}</span>
-          {autoUnreadCount > 0 && (
-            <span className="flex-shrink-0 font-medium tabular-nums text-red-500">{autoUnreadCount}</span>
-          )}
-          {autoLatestActivityAt > 0 && (
-            <span className="ml-auto flex-shrink-0 font-normal tabular-nums" title={formatRelativeTime(autoLatestActivityAt).full}>
-              {formatRelativeTime(autoLatestActivityAt).compact}
-            </span>
-          )}
-        </button>
-        {isAutoTasksExpanded && sortedAutoSessions.map(renderItem)}
-      </section>
-    );
+  // 待跟进任务 + 自主任务 are GONE from this list (owner ruling 2026-11-21).
+  // Both sections moved into the Process Hub panel — an independent surface
+  // reached from the function rail — so the local conversation list is purely
+  // human↔bot chats again: pinned block, bot groups, nothing else. Their
+  // membership rule (followUpState / autoOrigin / manual placement) is still
+  // shared with the hub through utils/processCenter.ts; only the RENDERING left.
 
   // The online list's only selector: the SAME MetaBotSelector the composers
   // use (cowork home, Bot Internet panel), so the two surfaces can never drift
@@ -843,14 +589,9 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
     </>
   ) : null;
 
-  // An empty human list still renders the Follow-Up section and the fold when
-  // background runs exist: showing "no chats yet" above sections full of them
-  // would be a lie. Every caller that passes neither bucket (A2A tab, search
-  // modal) keeps the old empty state exactly — both sections belong to the
-  // local list only, so the selector path never counts them either.
-  const hasFollowUpTasks = sortedFollowUpSessions.length > 0 && !showBotSelector;
-  const hasAutoTasks = sortedAutoSessions.length > 0 && !showBotSelector;
-  if (visibleSessions.length === 0 && !hasAutoTasks && !hasFollowUpTasks) {
+  // An empty list is simply empty now: the background runs that used to keep
+  // this state from showing live in the Process Hub, not here.
+  if (visibleSessions.length === 0) {
     return (
       // Same landing recipe as the Co-Work panel's empty state (aesthetic pass
       // 2026-11-08): one quiet mark over one sentence, centred in the list's
@@ -873,8 +614,6 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
       <div ref={rootRef}>
         {selectorBlock}
         {renderPinnedSection(timelineGrouped.pinned)}
-        {renderAutoTasksSection()}
-        {renderFollowUpSection()}
         {timelineGrouped.groups.map((group) => {
           if (!revealBudgetLeft()) return null;
           return (
@@ -902,8 +641,6 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
       <div ref={rootRef}>
         {selectorBlock}
         {renderPinnedSection(botGrouped.pinned)}
-        {renderAutoTasksSection()}
-        {renderFollowUpSection()}
         {botGrouped.groups.map((group) => {
           if (!revealBudgetLeft()) return null;
           const collapsed = collapsedGroupKeys.has(group.key);
@@ -979,13 +716,7 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   return (
     <div ref={rootRef} className="space-y-1">
       {selectorBlock}
-      {/* Flat mode has no group headers, so the sections' anchor is the pinned
-       * block itself: pinned rows first, then the fold, then the Follow-Up
-       * section, then the rest — the same "under pinned, above everything else"
-       * spot the grouped views give them. */}
       {sortedSessions.filter((session) => session.pinned).map(renderItem)}
-      {renderAutoTasksSection()}
-      {renderFollowUpSection()}
       {sortedSessions.filter((session) => !session.pinned).map(renderItem)}
     </div>
   );

@@ -903,3 +903,19 @@ html[data-glass="reduce"] body > [role="tooltip"].z-\[100\],
 /* Reduced motion: the material is static by design (no sheen animation), so
    there is nothing to switch off. A future animated sheen MUST add its own
    prefers-reduced-motion guard here. */
+
+/* ── Process Center · 状态语言 v2.1 (owner ruling 2026-11-22 00:41) ─────────
+   活：点呼吸（1.5s，scale 1→1.18 与描边亮度 .32→1），不发光不加阴影 —— 形状
+   语言 v2 里深度只由 1px 边＋平涂承担。待激活：琥珀静态（不呼吸）。
+   死：文字 70% 不透明（变体 A；60% 实测 ≈3.6:1 不过 AA，70% ≈4.6:1）。 */
+@keyframes process-dot-breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 1px rgba(34, 160, 107, .32); }
+  50% { transform: scale(1.18); box-shadow: 0 0 0 1px rgba(34, 160, 107, 1); }
+}
+
+.process-dot-live { animation: process-dot-breathe 1.5s ease-in-out infinite; }
+.process-row-pending { background-color: var(--claude-bg, #ffffff); }
+.process-row-dead { background-color: #f1f5f9; }
+.dark .process-row-dead { background-color: rgba(30, 33, 38, .6); }
+.process-row-dead-text { opacity: .7; }
+@media (prefers-reduced-motion: reduce) { .process-dot-live { animation: none; } }

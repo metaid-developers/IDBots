@@ -1993,6 +1993,16 @@ export class LongTermTaskStore {
     if (unknownKind) {
       return `unknown evidence kind "${asText(unknownKind.kind)}" — allowed: ${EVIDENCE_KINDS.join(' | ')}`;
     }
+    // N4: criterionIndex is optional, but when present it must be a real
+    // 0-based criterion index — a half-typed binding would silently mis-name a
+    // row in the dossier. Zero migration: the value lives inside evidence_json.
+    const badIndex = evidence.find((entry) => {
+      const raw = (entry as { criterionIndex?: unknown }).criterionIndex;
+      return raw != null && (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 0);
+    });
+    if (badIndex) {
+      return 'criterionIndex must be a non-negative integer when present';
+    }
     const malformed = evidence.filter((entry) => {
       const uri = asText(entry.uri).trim();
       const kind = asText(entry.kind).trim();

@@ -294,135 +294,70 @@ test('the Follow-Up section opens only on an explicit stored preference, under i
     'its own key — the auto-tasks key is frozen deployed state and must stay untouched');
 });
 
-test('sidebar feeds the list with the three-way split and counts Follow-Up rows in the local tab badge', () => {
-  const src = readSource('src/renderer/components/Sidebar.tsx');
+test("both sidebars feed the local list from the hub's model and render HUMAN rows only", () => {
+  for (const face of ['Sidebar', 'HomeSidebar'] as const) {
+    const src = readSource(`src/renderer/components/${face}.tsx`);
 
-  // The visible local list gets the human half; the follow-up and auto halves
-  // ride alongside. The split takes the decision set (waiting_owner sessions
-  // land in the Follow-Up section, not the main list).
-  assert.match(src, /sessions=\{localListSessions\}/);
-  assert.match(src, /autoSessions=\{taskRecordTab === 'local' \? localAutoSessions : undefined\}/);
-  assert.match(src, /followUpSessions=\{taskRecordTab === 'local' \? localFollowUpSessions : undefined\}/);
-  assert.match(src, /decisionSessionIds=\{taskRecordTab === 'local' \? decisionSessionIds : undefined\}/);
-  assert.match(src, /splitSessionsWithFollowUp\(sessionGroups\.local, decisionSessionIds\)/);
-  // The local tab's count + red unread dot include the Follow-Up section — the
-  // decision surface is the point of the feature (user decision #5) — while
-  // the Autonomous fold stays excluded (its header carries its own unread).
-  assert.match(
-    src,
-    /local: \{\s*count: localHumanSessions\.length \+ localFollowUpSessions\.length,\s*unread: unreadOf\(localHumanSessions\) \+ unreadOf\(localFollowUpSessions\),\s*\}/,
-  );
-  // Search still receives the complete list, folded sessions included.
-  assert.match(src, /<CoworkSearchModal[\s\S]*?sessions=\{homeSessions\}/);
+    // ONE source of truth for placement: the list's human half comes out of
+    // the panel's own model, not a second split. The decision set still rides
+    // along (waiting_owner sessions are what the move menu must respect).
+    assert.match(
+      src,
+      /const \{ humanSessions: localHumanSessions \} = useMemo\(\s*\(\) => splitProcessHub\(sessionGroups\.local, decisionSessionIds, Date\.now\(\)\),/,
+      `${face}: the human half is the hub model's`,
+    );
+    assert.match(src, /decisionSessionIds=\{taskRecordTab === 'local' \? decisionSessionIds : undefined\}/);
+    assert.match(src, /sessions=\{localListSessions\}/);
+    // The retired buckets are gone from the LIST props (they are the hub's now).
+    assert.doesNotMatch(src, /autoSessions=\{/, `${face}: no autonomous bucket prop`);
+    assert.doesNotMatch(src, /followUpSessions=\{/, `${face}: no follow-up bucket prop`);
+    // The local tab counts HUMAN rows only — a process row can no longer light
+    // the conversation tab's badge (the rail's process badge is the one that
+    // counts processes now).
+    assert.match(
+      src,
+      /local: \{\s*count: localHumanSessions\.length,\s*unread: unreadOf\(localHumanSessions\),\s*\}/,
+      `${face}: the local tab counts conversations only`,
+    );
+    // Search still receives the complete list, process rows included.
+    assert.match(src, /<CoworkSearchModal[\s\S]*?sessions=\{homeSessions\}/);
+  }
 });
 
-test('the list renders one Autonomous Tasks fold, collapsed by default, directly under the pinned block in every view mode', () => {
+test('the local list has NO process rows left: both retired sections and their gates are gone', () => {
   const src = readSource('src/renderer/components/cowork/CoworkSessionList.tsx');
 
-  assert.match(src, /data-testid="autonomous-tasks-section"/);
-  assert.match(src, /const \[isAutoTasksExpanded, setIsAutoTasksExpanded\] = useState<boolean>\(loadAutoTasksExpanded\)/);
-  assert.match(src, /parseAutoTasksExpandedPreference\(window\.localStorage\.getItem\(AUTO_TASKS_EXPANDED_STORAGE_KEY\)\)/);
-  // Timeline, by-Bot and flat branches all render the same fold.
-  assert.equal((src.match(/\{renderAutoTasksSection\(\)\}/g) ?? []).length, 3);
-  // Position: directly under the pinned block, above the Follow-Up section and
-  // the content groups, so the folders are visible without scrolling — sitting
-  // last made the fold read as if the feature did not exist.
-  assert.match(src, /\{renderPinnedSection\(timelineGrouped\.pinned\)\}\s*\{renderAutoTasksSection\(\)\}\s*\{renderFollowUpSection\(\)\}\s*\{timelineGrouped\.groups\.map/);
-  assert.match(src, /\{renderPinnedSection\(botGrouped\.pinned\)\}\s*\{renderAutoTasksSection\(\)\}\s*\{renderFollowUpSection\(\)\}\s*\{botGrouped\.groups\.map/);
+  // Owner ruling 2026-11-21: 待跟进任务 + 自主任务 moved into 进程中心. Nothing
+  // of either section survives here — not the render helpers, not the call
+  // sites, not the expand state, not the persisted-preference readers.
+  for (const gone of [
+    'renderAutoTasksSection',
+    'renderFollowUpSection',
+    'autonomous-tasks-section',
+    'follow-up-tasks-section',
+    'isAutoTasksExpanded',
+    'isFollowUpExpanded',
+    'loadAutoTasksExpanded',
+    'loadFollowUpExpanded',
+    'AUTO_TASKS_EXPANDED_STORAGE_KEY',
+    'FOLLOW_UP_EXPANDED_STORAGE_KEY',
+  ]) {
+    assert.equal(src.includes(gone), false, `the local list still references ${gone}`);
+  }
+  // No bucket props either: the list cannot be told to render process rows.
+  assert.doesNotMatch(src, /^\s*autoSessions\??:/m);
+  assert.doesNotMatch(src, /^\s*followUpSessions\??:/m);
+  // What IS left is exactly the human list: the pinned block, then the groups
+  // (pinned row first in the flat branch as well).
+  assert.equal((src.match(/\{renderPinnedSection\(/g) ?? []).length, 2);
   const flatPinned = src.indexOf('sortedSessions.filter((session) => session.pinned).map(renderItem)');
-  const flatFollowUp = src.indexOf('{renderFollowUpSection()}', flatPinned);
-  const flatFold = src.indexOf('{renderAutoTasksSection()}', flatPinned);
   const flatRest = src.indexOf('sortedSessions.filter((session) => !session.pinned).map(renderItem)');
-  assert.ok(flatPinned !== -1 && flatPinned < flatFold && flatFold < flatFollowUp && flatFollowUp < flatRest,
-    'flat branch: pinned rows, then the fold, then the Follow-Up section, then the rest');
-  // Nothing is rendered when there is nothing to fold.
-  assert.match(src, /sortedAutoSessions\.length > 0 && \(/);
-});
-
-test('the list renders one Follow-Up section below the fold, collapsed by default, in every view mode', () => {
-  const src = readSource('src/renderer/components/cowork/CoworkSessionList.tsx');
-
-  assert.match(src, /data-testid="follow-up-tasks-section"/);
-  assert.match(src, /const \[isFollowUpExpanded, setIsFollowUpExpanded\] = useState<boolean>\(loadFollowUpExpanded\)/);
-  assert.match(src, /parseFollowUpExpandedPreference\(window\.localStorage\.getItem\(FOLLOW_UP_EXPANDED_STORAGE_KEY\)\)/);
-  // Timeline, by-Bot and flat branches all render the same section, exactly
-  // once each.
-  assert.equal((src.match(/\{renderFollowUpSection\(\)\}/g) ?? []).length, 3);
-  // Position: directly under the Autonomous fold, which sits under the pinned
-  // block (owner 2026-10-23: auto first, follow-up second).
-  assert.match(src, /\{renderPinnedSection\(timelineGrouped\.pinned\)\}\s*\{renderAutoTasksSection\(\)\}\s*\{renderFollowUpSection\(\)\}/);
-  assert.match(src, /\{renderPinnedSection\(botGrouped\.pinned\)\}\s*\{renderAutoTasksSection\(\)\}\s*\{renderFollowUpSection\(\)\}/);
-  // Nothing is rendered when nothing is pending.
-  assert.match(src, /sortedFollowUpSessions\.length > 0 && \(/);
-  // An empty human list still renders the section (decisions must not hide
-  // behind an empty state). The section is gated on the caller-supplied
-  // bucket, with the online face's restored bot filter (owner request
-  // 2026-11-13) keeping both folds off while its selector control shows — a
-  // filtered list must not report sections an empty state would hide anyway.
-  assert.match(src, /hasFollowUpTasks = sortedFollowUpSessions\.length > 0 && !showBotSelector;/);
-});
-
-test('the follow-up header carries label + unread count + latest activity, and no total count', () => {
-  const src = readSource('src/renderer/components/cowork/CoworkSessionList.tsx');
-  const header = src.slice(
-    src.indexOf('const renderFollowUpSection'),
-    src.indexOf('{isFollowUpExpanded && sortedFollowUpSessions.map(renderItem)}'),
-  );
-
-  assert.match(header, /coworkFollowUpTasks'/);
-  // Raised hand, not a folder: these sessions wait on a HUMAN decision.
-  assert.match(header, /<HandRaisedIcon className="h-3\.5 w-3\.5 flex-shrink-0" \/>/);
-  assert.match(header, /formatRelativeTime\(followUpLatestActivityAt\)/, 'the newest-activity stamp stays');
-  // The header signals unread the way the fold's does: a red dot at the row's
-  // left plus the section's unread session count in red, both only when > 0.
-  assert.match(header, /followUpUnreadCount > 0 && \(/);
-  assert.match(header, /rounded-full bg-red-500/);
-  assert.match(header, /\{followUpUnreadCount\}/);
-  assert.match(header, /text-red-500/);
-  assert.match(header, /coworkFollowUpTasksUnread/);
-  // The total is no more a header number than the fold's (tooltip only).
-  assert.doesNotMatch(header, /<span className="flex-shrink-0 font-normal tabular-nums">\{sortedFollowUpSessions\.length\}<\/span>/);
-  // The derivation feeds from the same unread set the rows use.
-  assert.match(src, /const followUpUnreadCount = useMemo\(\s*\(\) => sortedFollowUpSessions\.filter\(\(session\) => unreadSessionIdSet\.has\(session\.id\)\)\.length,/);
-
-  // Both label keys exist once per locale, keeping coverage symmetric.
-  const i18n = readSource('src/renderer/services/i18n.ts');
-  assert.equal((i18n.match(/coworkFollowUpTasksUnread:/g) ?? []).length, 2, 'one per locale');
-  assert.equal((i18n.match(/coworkFollowUpTasksCount:/g) ?? []).length, 2, 'one per locale');
-  assert.equal((i18n.match(/coworkFollowUpTasks:/g) ?? []).length, 2, 'one per locale');
-});
-
-test('the fold header carries label + unread count + latest activity, and no total count', () => {
-  const src = readSource('src/renderer/components/cowork/CoworkSessionList.tsx');
-  const header = src.slice(
-    src.indexOf('const renderAutoTasksSection'),
-    src.indexOf('{isAutoTasksExpanded && sortedAutoSessions.map(renderItem)}'),
-  );
-
-  assert.match(header, /coworkAutonomousTasks'/);
-  // Gear, not a folder: these runs drive themselves with no human in the loop.
-  assert.match(header, /<Cog6ToothIcon className="h-3\.5 w-3\.5 flex-shrink-0" \/>/);
-  assert.match(header, /formatRelativeTime\(autoLatestActivityAt\)/, 'the newest-activity stamp stays');
-  // The header signals unread the way the user asked for it: a red dot at the
-  // row's left (same dot the tabs use) plus the fold's unread session count in
-  // red, both only when > 0.
-  assert.match(header, /autoUnreadCount > 0 && \(/);
-  assert.match(header, /rounded-full bg-red-500/);
-  assert.match(header, /\{autoUnreadCount\}/);
-  assert.match(header, /text-red-500/);
-  assert.match(header, /coworkAutonomousTasksUnread/);
-  // The total is no longer rendered as a header number (it survives only in
-  // the hover tooltip).
-  assert.doesNotMatch(header, /<span className="flex-shrink-0 font-normal tabular-nums">\{sortedAutoSessions\.length\}<\/span>/);
-  // Per-row dots inside the expanded fold are untouched.
-  assert.match(src, /hasUnread=\{unreadSessionIdSet\.has\(session\.id\)\}/);
-  // The derivation feeds from the same unread set the rows use.
-  assert.match(src, /const autoUnreadCount = useMemo\(\s*\(\) => sortedAutoSessions\.filter\(\(session\) => unreadSessionIdSet\.has\(session\.id\)\)\.length,/);
-
-  // Both label keys exist once per locale, keeping coverage symmetric.
-  const i18n = readSource('src/renderer/services/i18n.ts');
-  assert.equal((i18n.match(/coworkAutonomousTasksUnread:/g) ?? []).length, 2, 'one per locale');
-  assert.equal((i18n.match(/coworkAutonomousTasksCount:/g) ?? []).length, 2, 'still one per locale');
+  assert.ok(flatPinned !== -1 && flatPinned < flatRest, 'flat branch: pinned rows, then the rest');
+  // An empty list is simply empty — no section can keep it from rendering.
+  assert.match(src, /if \(visibleSessions\.length === 0\) \{/);
+  // The pure logic module keeps its (still-tested) expand helpers: frozen
+  // deployed keys are never renamed even when their reader is gone.
+  assert.match(readSource('src/renderer/utils/sessionAutoGrouping.ts'), /AUTO_TASKS_EXPANDED_STORAGE_KEY = 'coworkAutoTasksExpanded'/);
 });
 
 test('the row menu offers one unified "Move to…" submenu, current section disabled, only when wired', () => {

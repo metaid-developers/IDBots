@@ -133,11 +133,14 @@ export function getSurfaceMenuModel({ t }) {
  * (`INTERNET_PANE_FALLBACK_RENDERER` in components/layout/workspaceDestinations.js),
  * which is also where a stale `cowork` pane id degrades to.
  */
-export function getRailInternetNavModel({ t, needsDecisionCount = 0 }) {
+export function getRailInternetNavModel({ t, needsDecisionCount = 0, awaitingProcessCount = 0 }) {
   const decisionCount = Number.isFinite(needsDecisionCount) && needsDecisionCount > 0
     ? Math.floor(needsDecisionCount)
     : 0;
   const hasDecision = decisionCount > 0;
+  const awaitingProcesses = Number.isFinite(awaitingProcessCount) && awaitingProcessCount > 0
+    ? Math.floor(awaitingProcessCount)
+    : 0;
   return [
     {
       id: 'browser',
@@ -173,6 +176,21 @@ export function getRailInternetNavModel({ t, needsDecisionCount = 0 }) {
       label: t('metabots'),
       icon: 'cpuChip',
     },
+    {
+      // 进程中心 is a SYSTEM entry (OS task-manager semantics, owner order
+      // 2026-11-21 17:00): it sits LAST in the model — i.e. directly above the
+      // rail's Settings button and outside the common button group — on BOTH
+      // faces. Badge/icon unchanged; only the position moved.
+      id: 'processes',
+      label: t('processCenter'),
+      icon: 'processQueue',
+      hasIndicator: awaitingProcesses > 0,
+      indicatorKind: awaitingProcesses > 0 ? 'decision' : undefined,
+      indicatorLabel: awaitingProcesses > 0
+        ? t('processCenterAwaitingBadge').replace('{count}', String(awaitingProcesses))
+        : undefined,
+      badgeCount: awaitingProcesses > 0 ? awaitingProcesses : undefined,
+    },
   ];
 }
 
@@ -182,7 +200,13 @@ export function getRailInternetNavModel({ t, needsDecisionCount = 0 }) {
  * Studio (`tasks`), leaving BotWorks focused on Worker execution inspection
  * and scheduled cron automation.
  */
-export function getRailHomeNavModel({ t, hasRunningScheduledTask }) {
+export function getRailHomeNavModel({ t, hasRunningScheduledTask, awaitingProcessCount = 0 }) {
+  // A parked process verdict outranks "a task is running": a running cron needs
+  // nobody, while a waiting process needs the OWNER. The same precedence rule
+  // still applies — only the entry's POSITION moved to the system zone.
+  const awaitingCount = Number.isFinite(awaitingProcessCount) && awaitingProcessCount > 0
+    ? Math.floor(awaitingProcessCount)
+    : 0;
   return [
     {
       id: 'newTask',
@@ -206,6 +230,23 @@ export function getRailHomeNavModel({ t, hasRunningScheduledTask }) {
       id: 'records',
       label: t('railTaskRecords'),
       icon: 'archive',
+    },
+    {
+      // 进程中心 is a SYSTEM entry (owner order 2026-11-21 17:00; kept on both
+      // faces by the 22:17 ruling): LAST, above the rail's Settings button.
+      // The 待你拍板 badge rides here too (batch-A P1-4): same unit as the
+      // internet face and as the hub's own tab badges — RUNS waiting on the
+      // owner. Before this, `awaitingCount` above was computed and dropped, so
+      // the home face showed no number at all and the two faces disagreed.
+      id: 'processes',
+      label: t('processCenter'),
+      icon: 'processQueue',
+      hasIndicator: awaitingCount > 0,
+      indicatorKind: awaitingCount > 0 ? 'decision' : undefined,
+      indicatorLabel: awaitingCount > 0
+        ? t('processCenterAwaitingBadge').replace('{count}', String(awaitingCount))
+        : undefined,
+      badgeCount: awaitingCount > 0 ? awaitingCount : undefined,
     },
   ];
 }

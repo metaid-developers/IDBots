@@ -20,6 +20,8 @@ import {
 import WindowTitleBar from './components/window/WindowTitleBar';
 import { CoworkView } from './components/cowork';
 import CoworkPermissionOverlay from './components/cowork/CoworkPermissionOverlay';
+import ProcessCenterPanel from './components/cowork/ProcessCenterPanel';
+import { DEFAULT_PROCESS_HUB_VIEW_STATE, type ProcessHubViewState } from './utils/processCenter';
 import AgentGameConsentCard from './components/agentGame/AgentGameConsentCard';
 import { configService } from './services/config';
 import { localStore } from './services/store';
@@ -225,7 +227,7 @@ const App: React.FC = () => {
   // Restored from the persisted view state so a renderer reload (dev HMR,
   // crash recovery, auto-update) does not bounce the user back to the New Task
   // home; the boot effect restores this view's conversation too.
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'groupTasks' | 'metabots'>(
+  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'processes' | 'scheduledTasks' | 'groupTasks' | 'metabots'>(
     () => loadPersistedViewState()?.mainView ?? 'cowork',
   );
   const [isInitialized, setIsInitialized] = useState(false);
@@ -865,11 +867,17 @@ const App: React.FC = () => {
   // listeners are attached before the mousedown returns, and every termination
   // path funnels through one finish() that clears the ref + state.
 
-  const handleNewChat = useCallback((preselectSkillId?: unknown, draftText?: string) => {
+  const handleNewChat = useCallback((preselectSkillId?: unknown, draftText?: string, options?: { keepSide?: boolean }) => {
     const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
     const normalizedPreselectSkillId = normalizePreselectedSkillId(preselectSkillId);
-    coworkService.clearSession();
-    dispatch(clearSelection());
+    // A DRAFT HANDOFF keeps the session too (owner ruling 20:17): clearing it
+    // unmounts the very composer the draft is meant for, so the already-mounted
+    // textarea never received the text (measured: draft sat in the store while
+    // the visible composer stayed empty). Only explicit new-chat entries clear.
+    if (!options?.keepSide) {
+      coworkService.clearSession();
+      dispatch(clearSelection());
+    }
     // Every generic new-chat entry (rail 新建, the blank-new-chat buttons, a
     // draft handoff) is an OWNER-task composer: reset the wording origin so an
     // a2a composer armed earlier by a 线上对话 + never leaks its Bot-to-Bot copy
@@ -883,7 +891,11 @@ const App: React.FC = () => {
     if (draftText) {
       dispatch(setDraftPrompt(draftText));
     }
-    setMainView('cowork');
+    // Owner ruling 2026-11-21 20:17: a DRAFT HANDOFF must not move the user.
+    // `keepSide` is set by the draft channel (对 Twin 说 →, 继续讨论) so the
+    // click never changes mainView or the surface — the user stays exactly where
+    // they were, and the draft waits in the store for the Twin composer.
+    if (!options?.keepSide) setMainView('cowork');
     window.setTimeout(() => {
       const dispatchFocus = () => {
         window.dispatchEvent(new CustomEvent('cowork:focus-input', {
@@ -1070,7 +1082,9 @@ const App: React.FC = () => {
   // live in the removed type drawer and moved here with the single entry point.
   const handleSelectHomeSection = useCallback((section: BotHomeSection) => {
     botBrowserShell.switchToHome();
-    if (section === 'longTerm') {
+    if (section === 'processes') {
+      setMainView('processes');
+    } else if (section === 'longTerm') {
       setMainView('scheduledTasks');
     } else if (section === 'groupTasks') {
       dispatch(selectGroupTask(null));
@@ -1300,7 +1314,15 @@ const App: React.FC = () => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ text?: unknown }>).detail;
       const text = typeof detail?.text === 'string' && detail.text.trim() ? detail.text : undefined;
-      handleNewChat(undefined, text);
+      // keepSide: the handoff writes the draft and focuses the composer IF one is
+      // mounted on this side — it never yanks the user to the other surface.
+      // Studio has no session composer by default, so the handoff mounts the Twin
+      // window right here (same side); BotWorks keeps its existing composer.
+      if (botBrowserShell.surfaceMode === 'browser') {
+        setHubOpenedSessionId(null);
+        setStudioTwinOpen(true);
+      }
+      handleNewChat(undefined, text, { keepSide: true });
     };
     window.addEventListener('cowork:newChatWithDraft', handler);
     return () => window.removeEventListener('cowork:newChatWithDraft', handler);
@@ -1853,6 +1875,50 @@ const App: React.FC = () => {
     [runUpdateCheck],
   );
 
+  // 进程中心 row → read-only transcript. This MUST stay above the
+  // `if (!isInitialized) return …` guard below: a hook declared after an early
+  // return makes the first (uninitialized) render call one hook fewer than the
+  // initialized one, and React throws "Rendered more hooks than during the
+  // previous render" on the very render that finishes bootstrapping.
+  // 进程中心 remembers where the owner was (zone / fold / scroll) so the 返回
+  // affordance lands there instead of the default page (owner order 17:45).
+  // A ref, not state: scroll moves must not re-render the shell.
+  const processHubViewRef = useRef<ProcessHubViewState>({ ...DEFAULT_PROCESS_HUB_VIEW_STATE });
+  // Which process session was opened FROM the hub — the back chip only shows on
+  // that transcript, not on every process session the owner reaches otherwise.
+  const [hubOpenedSessionId, setHubOpenedSessionId] = useState<string | null>(null);
+  /** Studio-side Twin window (owner ruling 23:41): the handoff opens a REAL
+   * composer on the side the owner is already on, instead of leaving the draft
+   * behind a landing card. Cleared whenever the hub or another pane takes over. */
+  const [studioTwinOpen, setStudioTwinOpen] = useState(false);
+  const openProcessReadOnly = useCallback(async (sessionId: string) => {
+    // A process row opens the SAME transcript component, read-only (the
+    // composer is gated inside CoworkSessionDetail by the shared membership
+    // rule), so the owner reads it exactly where they read a chat.
+    // NO SIDE SWITCH (owner ruling 22:17): the transcript renders in the content
+    // column of whichever side the owner opened it from — the Studio face mounts
+    // the same Co-Work pane while a hub session is open (see the
+    // `hubOpenedSessionId` branch in `internetCatalogContent`). `mainView` is a
+    // BotWorks-only concept, so it is written only on that face.
+    if (botBrowserShell.surfaceMode === 'home') setMainView('cowork');
+    setHubOpenedSessionId(sessionId);
+    await coworkService.loadSession(sessionId);
+  }, [botBrowserShell.surfaceMode]);
+
+  /** ← 返回进程中心: return lands on the hub of the side the owner is ON
+   * (owner ruling 22:17 — no path may force a side switch). Studio addresses it
+   * as an Internet pane; BotWorks addresses it as a mainView. */
+  const handleBackToProcessHub = useCallback(() => {
+    setHubOpenedSessionId(null);
+    setStudioTwinOpen(false);
+    if (botBrowserShell.surfaceMode === 'home') {
+      setMainView('processes');
+    } else {
+      botBrowserShell.selectInternetPane('processes');
+    }
+  }, [botBrowserShell.surfaceMode, botBrowserShell.selectInternetPane]);
+  const showBackToProcessHub = hubOpenedSessionId != null && hubOpenedSessionId === currentSessionId;
+
   const isOverlayActive = showSettings || showUpdateModal || pendingConsents.length > 0;
   // 按当前 UI 语言解析更新说明（该语言无内容时回退到另一种语言），用于悬停徽章时展示
   const isEmptyChangeLog = (log?: ChangeLogEntry): boolean => !log?.title && !(log?.content?.length > 0);
@@ -1990,7 +2056,9 @@ const App: React.FC = () => {
     ? 'longTerm'
     : mainView === 'groupTasks'
       ? 'groupTasks'
-      : 'records';
+      : mainView === 'processes'
+        ? 'processes'
+        : 'records';
 
   // ---- Right column: exhaustive destination switches ----------------------
   // The rail only names a destination; these two switches are the ONLY place
@@ -2011,8 +2079,33 @@ const App: React.FC = () => {
     />
   );
 
+  const processCenterPane = (
+    <ProcessCenterPanel onOpenProcess={openProcessReadOnly} viewStateRef={processHubViewRef} />
+  );
+
   const homePaneKey = resolveHomeViewRenderer(mainView);
-  const homeContent = homePaneKey === 'scheduledTasksView' ? (
+  /** The Co-Work transcript pane — ONE node, mounted by the BotWorks content
+   * switch and (while a hub session is open) by the Studio content switch too.
+   * Owner ruling 22:17: the process detail renders on whichever side it was
+   * opened from, so both columns must be able to show this. */
+  const coworkPane = (
+    <CoworkView
+      onRequestAppSettings={handleShowSettings}
+      onShowSkills={handleShowSkills}
+      isSidebarCollapsed={isSidebarCollapsed}
+      onNewChat={handleBlankNewChat}
+      updateBadge={isSidebarCollapsed ? updateBadge : null}
+      focusedOrderTxid={focusedOrderTxid}
+      onFocusedOrderConsumed={handleFocusedOrderConsumed}
+      onOpenBotInBrowser={botBrowserShell.openRemoteBot}
+      showBackToProcessHub={showBackToProcessHub}
+      onBackToProcessHub={handleBackToProcessHub}
+    />
+  );
+
+  const homeContent = homePaneKey === 'processCenterView' ? (
+    processCenterPane
+  ) : homePaneKey === 'scheduledTasksView' ? (
     <ScheduledTasksView
       isSidebarCollapsed={isSidebarCollapsed}
       onNewChat={handleBlankNewChat}
@@ -2028,16 +2121,7 @@ const App: React.FC = () => {
   ) : homePaneKey === 'metabotsView' ? (
     metabotsPane
   ) : (
-    <CoworkView
-      onRequestAppSettings={handleShowSettings}
-      onShowSkills={handleShowSkills}
-      isSidebarCollapsed={isSidebarCollapsed}
-      onNewChat={handleBlankNewChat}
-      updateBadge={isSidebarCollapsed ? updateBadge : null}
-      focusedOrderTxid={focusedOrderTxid}
-      onFocusedOrderConsumed={handleFocusedOrderConsumed}
-      onOpenBotInBrowser={botBrowserShell.openRemoteBot}
-    />
+    coworkPane
   );
 
   // The Co-Work face's right pane — the Bot Internet DEFAULT branch now
@@ -2057,7 +2141,15 @@ const App: React.FC = () => {
   );
 
   const internetPaneKey = resolveInternetPaneRenderer(botBrowserShell.internetPane);
-  const internetCatalogContent = internetPaneKey === 'studioTasksView' ? (
+  const internetCatalogContent = (studioTwinOpen || hubOpenedSessionId != null) ? (
+    // A hub row opened FROM THE STUDIO FACE: the transcript renders HERE, in this
+    // side's content column (owner ruling 22:17). This test comes FIRST on
+    // purpose — when the pane is already 'processCenterView', ordering the pane
+    // branch first kept showing the list and the row click looked dead (measured).
+    coworkPane
+  ) : internetPaneKey === 'processCenterView' ? (
+    processCenterPane
+  ) : internetPaneKey === 'studioTasksView' ? (
     <div className="flex h-full flex-col">
       <div className="draggable flex h-12 shrink-0 items-center justify-between border-b border-claude-border px-4 dark:border-claude-darkBorder">
         <h1 className="text-lg font-semibold text-claude-text dark:text-claude-darkText">
@@ -2190,12 +2282,20 @@ const App: React.FC = () => {
               internetPane={botBrowserShell.internetPane}
               homeSection={homeSection}
               onSelectInternetPane={(pane) => {
+                setStudioTwinOpen(false);
                 revealMiddleColumn();
                 botBrowserShell.selectInternetPane(pane);
               }}
+              processCenterActive={mainView === 'processes'}
               onSelectHomeSection={(section) => {
                 revealMiddleColumn();
-                if (section === 'longTerm') {
+                // 进程中心 is a mainView-backed pane (it lives in the same
+                // right column as the Co-Work view), so it must set the view
+                // here exactly like the Studio-face rail does. Without this
+                // branch the click was silently swallowed on the BotWorks face.
+                if (section === 'processes') {
+                  setMainView('processes');
+                } else if (section === 'longTerm') {
                   handleShowScheduledTasks();
                 } else if (section === 'groupTasks') {
                   handleShowGroupTasks();

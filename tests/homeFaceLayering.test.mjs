@@ -102,8 +102,8 @@ test('the Home destinations are the rail icon entries — 新建任务/定时任
     .filter((item) => item.id !== 'records');
   assert.deepEqual(
     railRows.map((item) => item.id),
-    ['newTask', 'longTerm', 'groupTasks'],
-    'the three entries, in rail order',
+    ['newTask', 'longTerm', 'groupTasks', 'processes'],
+    'the three original entries, then the Process Hub last (system zone)',
   );
 
   // The roster did not lose its only door: the Bot Internet rail keeps myBots,
@@ -122,7 +122,7 @@ test('the Home destinations are the rail icon entries — 新建任务/定时任
   assert.match(homeBranch, /handleShowScheduledTasks\(\)/);
   assert.match(homeBranch, /handleShowGroupTasks\(\)/);
   assert.doesNotMatch(homeBranch, /onShowMetabots/);
-  assert.match(railSource, /homeItems\.filter\(\(item\) => item\.id !== 'records'\)/);
+  assert.match(railSource, /homeItems\.filter\(\(item\) => item\.id !== 'records' && item\.id !== 'processes'\)/);
   assert.match(railSource, /if \(id === 'newTask'\) \{/);
   assert.match(railSource, /const handleHomeItem = \(id: string\) => \{/);
   // The records column renders no task rows and no rail machinery.
@@ -320,9 +320,10 @@ test('the rail keeps its model unchanged for the Internet surface', () => {
     .filter((item) => !item.hidden);
   assert.deepEqual(
     railModel.map((item) => item.id),
-    ['newTask', 'longTerm', 'groupTasks', 'records'],
+    ['newTask', 'longTerm', 'groupTasks', 'records', 'processes'],
   );
-  assert.match(railSource, /active=\{item\.id === 'newTask' \? false : homeSection === item\.id\}/);
+  assert.equal(railModel[railModel.length - 1].id, 'processes');
+  assert.match(railSource, /active=\{item\.id === 'newTask'[\s\S]{0,160}processCenterActive[\s\S]{0,120}homeSection === item\.id\}/);
   assert.match(railSource, /onSelectHomeSection\(id as BotHomeSection\)/);
 
   // The baseline three-type contract list is retained (the mid-column bodies

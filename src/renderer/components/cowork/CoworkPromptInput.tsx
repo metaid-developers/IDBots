@@ -739,7 +739,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       // 才派发本事件），经版本化草稿字段写入并落回全局 setDraftPrompt；
       // 聚焦后光标落在 textarea 末尾。
       const text = (event as CustomEvent<{ text?: unknown }>).detail?.text;
-      requestAnimationFrame(() => {
+      // rAF never runs while the window is hidden (behind another app), which
+      // would silently DROP a draft handoff. Fall back to a timeout there so the
+      // text still lands; when visible the frame callback is unchanged.
+      const schedule = typeof document !== 'undefined' && document.hidden
+        ? (run: () => void) => window.setTimeout(run, 0)
+        : (run: () => void) => requestAnimationFrame(run);
+      schedule(() => {
         if (typeof text === 'string' && text) {
           draftFieldRef.current?.set(text);
         }

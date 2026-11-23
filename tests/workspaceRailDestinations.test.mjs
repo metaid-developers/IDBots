@@ -42,11 +42,13 @@ const internetItems = getRailInternetNavModel({ t });
 const homeItems = getRailHomeNavModel({ t, hasRunningScheduledTask: false, needsDecisionCount: 0 });
 
 test('every Bot Internet rail entry has an explicit destination row (hidden entries included)', () => {
-  // Four VISIBLE destinations in Studio (browser, tasks, metaapps, myBots) +
-  // the hidden Bot Hub slot.
+  // Five VISIBLE destinations in Studio + the hidden Bot Hub slot. `processes`
+  // is the Process Hub panel: a SYSTEM entry (owner order 2026-11-21 17:00), so
+  // it is the LAST model entry — rendering directly above the rail's Settings
+  // button — not a member of the common button group.
   assert.deepEqual(
     internetItems.filter((item) => !item.hidden).map((item) => item.id),
-    ['browser', 'tasks', 'metaapps', 'myBots'],
+    ['browser', 'tasks', 'metaapps', 'myBots', 'processes'],
   );
   assert.ok(internetItems.length >= 5, 'the hidden Bot Hub slot keeps its row too');
   for (const item of internetItems) {
@@ -84,10 +86,14 @@ test('the retired Co-Work id degrades to the default face instead of owning a pa
 });
 
 test('every Bot Home rail entry has an explicit destination row', () => {
+  // The Home rail also carries the Process Hub (its first page by ruling), so
+  // the creation action leads and the hub follows it.
   assert.deepEqual(
     homeItems.filter((item) => !item.hidden).map((item) => item.id),
-    ['newTask', 'longTerm', 'groupTasks', 'records'],
+    ['newTask', 'longTerm', 'groupTasks', 'records', 'processes'],
   );
+  assert.equal(internetItems[internetItems.length - 1].id, 'processes');
+  assert.equal(homeItems[homeItems.length - 1].id, 'processes');
   for (const item of homeItems) {
     assert.ok(
       Object.hasOwn(HOME_RAIL_RENDERERS, item.id),
@@ -163,7 +169,7 @@ test('the right column never ends on null — both destination chains close on a
   assert.ok(catalogStart > -1 && catalogEnd > catalogStart);
   assert.doesNotMatch(catalogBlock, /\)\s*:\s*null\s*;/, 'the Bot Internet chain can still resolve to null');
   // ... and each chain names its non-blank fallback explicitly.
-  assert.match(homeBlock, /\) : \(\n    <CoworkView/);
+  assert.match(homeBlock, /\) : \(\n    coworkPane/);
   assert.match(catalogBlock, /\) : \(\n    coworkLandingCard\n  \);/);
 });
 

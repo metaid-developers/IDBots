@@ -61,7 +61,9 @@ test('the row stamp takes the list clock, and the row carries the i18n generatio
 });
 
 test('the list stabilizes the summary objects it renders before anything reads them', () => {
-  assert.match(listSource, /const \[sessions, autoSessions, followUpSessions\] = useStableSessionSummaries\(\s*incomingSessions,\s*incomingAutoSessions,\s*incomingFollowUpSessions,\s*\);/);
+  // One bucket only: the process halves left for the hub, so the stabilizer
+  // guards the human list alone.
+  assert.match(listSource, /const \[sessions\] = useStableSessionSummaries\(incomingSessions\);/);
   assert.match(listSource, /const useStableSessionSummaries = \(/);
   // Shallow, one level deep into nested objects, and conservative: anything that
   // differs keeps the fresh object.
@@ -96,7 +98,10 @@ test('only a bounded prefix of rows mounts, and scrolling toward the end reveals
   assert.match(listSource, /const revealBudgetLeft = \(\) => remainingRows > 0;/);
   assert.match(listSource, /if \(remainingRows <= 0\) return null;\s*\n\s*remainingRows -= 1;/);
   assert.match(listSource, /pinned\.length > 0 && revealBudgetLeft\(\) && \(/);
-  assert.match(listSource, /revealBudgetLeft\(\) && sortedAutoSessions\.length > 0 && \(/);
+  // The two process sections that used to gate on the budget are retired (they
+  // moved into the hub); the other four branches keep theirs.
+  assert.doesNotMatch(listSource, /sortedAutoSessions\.length > 0/);
+  assert.doesNotMatch(listSource, /sortedFollowUpSessions\.length > 0/);
   assert.match(listSource, /if \(!revealBudgetLeft\(\)\) return null;/);
   // Every branch roots at the element the reveal measures from. The selector
   // no longer owns a branch of its own (it rides above the grouped body), so
@@ -118,11 +123,10 @@ test('only a bounded prefix of rows mounts, and scrolling toward the end reveals
 
 test('the reveal budget applies to every branch that renders rows', () => {
   // Every row list ends in renderItem, which is what spends the budget: the
-  // pinned block, the expanded Follow-Up section, the expanded Autonomous
-  // Tasks fold, the timeline groups, the by-Bot groups, and the flat branch's
-  // pinned and unpinned halves. (The old selector branch was removed when the
-  // online face moved onto the same grouped body, so its list is the by-Bot
-  // groups' `.map(renderItem)` — one list, not two.)
-  assert.equal((listSource.match(/\.map\(renderItem\)/g) ?? []).length, 7);
+  // pinned block, the timeline groups, the by-Bot groups, and the flat branch's
+  // pinned and unpinned halves — five lists. The Follow-Up section and the
+  // Autonomous fold that used to contribute the other two left this component
+  // for the Process Hub (owner ruling 2026-11-21), so the count dropped by two.
+  assert.equal((listSource.match(/\.map\(renderItem\)/g) ?? []).length, 5);
   assert.equal((listSource.match(/renderItem = \(session: CoworkSessionSummary\)/g) ?? []).length, 1);
 });

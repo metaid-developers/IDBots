@@ -40,6 +40,9 @@ export interface CoworkViewProps {
   isSidebarCollapsed?: boolean;
   onNewChat?: () => void;
   updateBadge?: React.ReactNode;
+  /** Set when the open transcript came FROM 进程中心 (its return affordance). */
+  showBackToProcessHub?: boolean;
+  onBackToProcessHub?: () => void;
 }
 
 /**
@@ -68,6 +71,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   isSidebarCollapsed,
   onNewChat,
   updateBadge,
+  showBackToProcessHub = false,
+  onBackToProcessHub,
 }) => {
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
@@ -807,6 +812,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           onOpenBotInBrowser={onOpenBotInBrowser}
           onRequestAppSettings={onRequestAppSettings}
           updateBadge={updateBadge}
+          showBackToProcessHub={showBackToProcessHub}
+          onBackToProcessHub={onBackToProcessHub}
         />
       </>
     );

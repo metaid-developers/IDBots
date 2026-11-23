@@ -36,7 +36,8 @@ import type {
   SessionSortMode,
   SessionViewMode,
 } from '../utils/sessionViewGrouping';
-import { shouldFoldIntoAutonomousTasks, splitSessionsWithFollowUp } from '../utils/sessionAutoGrouping';
+import { shouldFoldIntoAutonomousTasks } from '../utils/sessionAutoGrouping';
+import { splitProcessHub } from '../utils/processCenter';
 import { loadSessionViewMode, saveSessionViewMode } from '../utils/sessionGroupStorage';
 import type { SessionSidebarSection } from '../utils/sessionAutoGrouping';
 import { useStableCallback } from '../utils/useStableCallback';
@@ -410,8 +411,11 @@ const Sidebar: React.FC<SidebarProps> = ({
   // go to the "Follow-Up Tasks" section; the remaining machine-started runs
   // fold into the collapsed "Autonomous Tasks" section. A manual fold
   // placement always wins over both buckets. Search still sees every session.
-  const { humanSessions: localHumanSessions, followUpSessions: localFollowUpSessions, autoSessions: localAutoSessions } = useMemo(
-    () => splitSessionsWithFollowUp(sessionGroups.local, decisionSessionIds),
+  // The local list renders HUMAN rows only, and the split that decides which
+  // rows those are is the panel's own model (one source of truth: the process
+  // rows left for 进程中心, owner ruling 2026-11-21). No second policy here.
+  const { humanSessions: localHumanSessions } = useMemo(
+    () => splitProcessHub(sessionGroups.local, decisionSessionIds, Date.now()),
     [sessionGroups.local, decisionSessionIds],
   );
   const localListSessions = taskRecordTab === 'local' ? localHumanSessions : sessionGroups[taskRecordTab];
@@ -450,12 +454,12 @@ const Sidebar: React.FC<SidebarProps> = ({
     const unreadOf = (list: CoworkSessionSummary[]) => list.filter((session) => unreadSet.has(session.id)).length;
     return {
       local: {
-        count: localHumanSessions.length + localFollowUpSessions.length,
-        unread: unreadOf(localHumanSessions) + unreadOf(localFollowUpSessions),
+        count: localHumanSessions.length,
+        unread: unreadOf(localHumanSessions),
       },
       a2a: { count: sessionGroups.a2a.length, unread: unreadOf(sessionGroups.a2a) },
     };
-  }, [sessionGroups, localHumanSessions, localFollowUpSessions, unreadSessionIds]);
+  }, [sessionGroups, localHumanSessions, unreadSessionIds]);
   // The view mode of the face currently on screen, and its setter. Both faces
   // render the same grouped component; only the remembered choice differs.
   const faceViewMode = taskRecordTab === 'local' ? sessionViewMode : a2aViewMode;
@@ -833,15 +837,27 @@ const Sidebar: React.FC<SidebarProps> = ({
       <div className="absolute right-0 top-0 flex h-9 items-center gap-0.5">
         {updateBadge}
         {studioDecisionQueueSummary.showBadge ? (
-          <span
+          // P0-3 (批 B, owner 22:23): the Studio badge is an ENTRY, not a
+          // label — one click brings the session's Live Stage forward, where
+          // the decision card hosts the ruling inline. The Process Hub keeps
+          // the summary list; this is the cross-surface shortcut to the seat.
+          <button
+            type="button"
             data-slot="studio-decision-queue-badge"
-            className="mr-1 inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
+            data-testid="studio-decision-badge-jump"
+            onClick={() => {
+              const sessionId = browserOpenSessionId;
+              if (!sessionId) return;
+              void sessionTabBinding.revealSessionTab(sessionId);
+            }}
+            title={i18nService.t('studioDecisionBadgeJumpTitle')}
+            className="mr-1 inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-700 transition-colors hover:bg-amber-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 dark:text-amber-300"
           >
             <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
             {studioDecisionQueueSummary.presenting
               ? i18nService.t('studioDecisionPresentingBadge')
               : i18nService.t('studioDecisionQueueBadge').replace('{count}', String(studioDecisionQueueSummary.queuedCount))}
-          </span>
+          </button>
         ) : null}
         <button
           type="button"
@@ -1142,15 +1158,10 @@ const Sidebar: React.FC<SidebarProps> = ({
                    * face has none — its by-Bot groups are the bot reading. */
                   botSelector={taskRecordTab === 'a2a'}
                   language={language}
-                  /** Local chats: the machine-started runs (long-term task,
-                   * orchestration, scheduled) that need no human follow-up fold
-                   * into one collapsed folder below the Follow-Up section
-                   * instead of mixing into the human list. */
-                  autoSessions={taskRecordTab === 'local' ? localAutoSessions : undefined}
-                  /** Local chats: sessions awaiting a human decision or reply
-                   * (persisted pending marker or a live board decision owed)
-                   * render in the Follow-Up section above the fold. */
-                  followUpSessions={taskRecordTab === 'local' ? localFollowUpSessions : undefined}
+                  /** The local list carries human↔bot chats only now: the
+                   * machine-started runs (and their pending verdicts) render in
+                   * 进程中心, not here (owner ruling 2026-11-21). The decision set
+                   * still rides along for the row menu's placement verdict. */
                   decisionSessionIds={taskRecordTab === 'local' ? decisionSessionIds : undefined}
                   /** The trailing + on a bot group header starts a new task with
                    * that bot. Same action and same handler on BOTH faces — the

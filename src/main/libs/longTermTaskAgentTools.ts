@@ -446,7 +446,7 @@ export function buildLongTermTaskAgentTools(deps: {
     {
       taskId: z.string().min(1),
       summary: z.string().min(1).describe('Goal-level closure verdict in the owner\'s language: how the goal is met (quote it), which evidence proves it, and why the remaining open sub-projects are moot.'),
-      evidence: z.array(z.object({ kind: z.enum(['dir', 'file', 'metaapp', 'pin', 'url', 'other']), uri: z.string().min(1), note: z.string().optional() })).min(1).describe('Goal-level proof: local dir or file, metaapp:// URI, pin:// id, or URL.'),
+      evidence: z.array(z.object({ kind: z.enum(['dir', 'file', 'metaapp', 'pin', 'url', 'other']), uri: z.string().min(1), note: z.string().optional(), criterionIndex: z.number().int().min(0).optional() })).min(1).describe('Goal-level proof: local dir or file, metaapp:// URI, pin:// id, or URL.'),
     },
     async (args: { taskId?: string; summary?: string; evidence?: unknown[] }) => {
       try {
@@ -582,7 +582,7 @@ export function buildLongTermTaskAgentTools(deps: {
     `Propose acceptance for a sub-project: attach verifiable evidence (local dir or file, metaapp:// URI, pin:// id, URL) and a summary of how each acceptance criterion is met. Moves the card to waiting-owner; the owner accepts or rejects with feedback. The summary is also the owner's decision brief (criterion-by-criterion evidence recap inside section 1/2): ${ownerBriefRule}`,
     {
       subtaskId: z.string().min(1),
-      evidence: z.array(z.object({ kind: z.enum(['dir', 'file', 'metaapp', 'pin', 'url', 'other']), uri: z.string().min(1), note: z.string().optional() })).min(1),
+      evidence: z.array(z.object({ kind: z.enum(['dir', 'file', 'metaapp', 'pin', 'url', 'other']), uri: z.string().min(1), note: z.string().optional(), criterionIndex: z.number().int().min(0).optional() })).min(1),
       summary: z.string().min(1).describe('Evidence recap per acceptance criterion AND the six-section decision brief described in the tool description (multi-line, owner\'s language).'),
     },
     async (args: { subtaskId?: string; evidence?: unknown[]; summary?: string }) => {
@@ -983,6 +983,8 @@ export function buildLongTermTaskAgentTools(deps: {
             kind: z.enum(EVIDENCE_KIND_ENUM),
             uri: z.string().min(1),
             note: z.string().optional(),
+            /** N4: which acceptance criterion this evidence proves (0-based). */
+            criterionIndex: z.number().int().min(0).optional(),
           }),
         )
         .optional(),
@@ -993,7 +995,7 @@ export function buildLongTermTaskAgentTools(deps: {
       outcome?: TaskWorkerSubmissionOutcome;
       summary?: string;
       artifacts?: Array<{ kind: string; uri: string; label?: string; sha256?: string }>;
-      evidence?: Array<{ kind: string; uri: string; note?: string }>;
+      evidence?: Array<{ kind: string; uri: string; note?: string; criterionIndex?: number }>;
       blockers?: string[];
     }) => {
       try {
@@ -1030,6 +1032,8 @@ export function buildLongTermTaskAgentTools(deps: {
             kind: z.enum(EVIDENCE_KIND_ENUM),
             uri: z.string().min(1),
             note: z.string().optional(),
+            /** N4: which acceptance criterion this evidence proves (0-based). */
+            criterionIndex: z.number().int().min(0).optional(),
           }),
         )
         .min(1),

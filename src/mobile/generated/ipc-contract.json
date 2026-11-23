@@ -411,6 +411,14 @@
       "args": []
     },
     {
+      "path": "cowork.activitySpark",
+      "kind": "invoke",
+      "channel": "cowork:session:activitySpark",
+      "args": [
+        "options"
+      ]
+    },
+    {
       "path": "cowork.addAutoApproveTool",
       "kind": "invoke",
       "channel": "cowork:session:addAutoApproveTool",
@@ -2292,6 +2300,22 @@
       ]
     },
     {
+      "path": "longtermTask.decisionResolve",
+      "kind": "invoke",
+      "channel": "longtermTask:decisionResolve",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "longtermTask.events",
+      "kind": "invoke",
+      "channel": "longtermTask:events",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "longtermTask.forSession",
       "kind": "invoke",
       "channel": "longtermTask:forSession",
@@ -2748,6 +2772,14 @@
       "args": []
     },
     {
+      "path": "metaweb.pinInfo",
+      "kind": "invoke",
+      "channel": "metaweb:pinInfo",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "metawebStudy.list",
       "kind": "invoke",
       "channel": "metawebStudy:list",
@@ -3032,6 +3064,14 @@
       "path": "preference.telemetry",
       "kind": "invoke",
       "channel": "preference:telemetry",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "processDossier.get",
+      "kind": "invoke",
+      "channel": "processDossier:get",
       "args": [
         "input"
       ]

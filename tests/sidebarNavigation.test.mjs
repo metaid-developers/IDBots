@@ -19,17 +19,20 @@ const t = (key) => key;
 const longTermItem = (params) =>
   getRailHomeNavModel({ t, ...params }).find((item) => item.id === 'longTerm');
 
-test('Bot Home rail keeps the four destinations in order: new task, long-term, group tasks, records', () => {
+test('Bot Home rail keeps the destinations in order: new task, long-term, group tasks, records, processes (last)', () => {
   const ids = getRailHomeNavModel({ t, hasRunningScheduledTask: false })
     .filter((item) => !item.hidden)
     .map((item) => item.id);
 
-  assert.deepEqual(ids, ['newTask', 'longTerm', 'groupTasks', 'records']);
+  // 进程中心 is a SYSTEM entry (owner order 2026-11-21 17:00): LAST, so it
+  // renders directly above the rail's Settings button.
+  assert.deepEqual(ids, ['newTask', 'longTerm', 'groupTasks', 'records', 'processes']);
   const items = getRailHomeNavModel({ t, hasRunningScheduledTask: false });
   assert.equal(items[0].icon, 'compose');
   assert.equal(items[1].icon, 'bell');
   assert.equal(items[2].icon, 'userGroup');
   assert.equal(items[3].icon, 'archive');
+  assert.equal(items[4].icon, 'processQueue');
   // Every rail entry is an icon + a tooltip label — no text row survives.
   for (const item of items) {
     assert.equal(typeof item.label, 'string');
@@ -77,10 +80,12 @@ test('the decision dot rides the Studio tasks entry with its own count label; th
   assert.equal(botWorks.indicatorKind, undefined);
 });
 
-test('Bot Internet rail lists browser, the Studio tasks entry, hidden Bot Hub, Meta Apps and My Bots — the Co-Work entry is retired', () => {
+test('Bot Internet rail lists browser, processes, the Studio tasks entry, hidden Bot Hub, Meta Apps and My Bots — the Co-Work entry is retired', () => {
   const items = getRailInternetNavModel({ t });
 
-  assert.deepEqual(items.map((item) => item.id), ['browser', 'tasks', 'gigSquare', 'metaapps', 'myBots']);
+  // 进程中心 is a SYSTEM entry (owner order 2026-11-21 17:00): the LAST model
+  // entry on this face too, i.e. directly above the rail's Settings button.
+  assert.deepEqual(items.map((item) => item.id), ['browser', 'tasks', 'gigSquare', 'metaapps', 'myBots', 'processes']);
   assert.equal(items[0].icon, 'globe');
   // Studio tasks = the long-term task board: the roadmap (clock token → Map),
   // NOT the scheduled-tasks bell that lives on the BotWorks rail.
@@ -91,13 +96,16 @@ test('Bot Internet rail lists browser, the Studio tasks entry, hidden Bot Hub, M
   assert.equal(items[3].icon, 'squares2x2');
   assert.equal(items[4].label, 'metabots');
   assert.equal(items[4].icon, 'cpuChip');
+  assert.equal(items[5].icon, 'processQueue');
+  assert.equal(items[5].label, 'processCenter');
 
   // Bot Hub is not a promoted column for now: its entry stays implemented but
-  // hidden, so the rail lists exactly FOUR visible destinations.
-  assert.equal(items[2].hidden, true);
+  // hidden, so the rail lists exactly FIVE visible destinations. Addressed by
+  // id, not by index — the system-zone move shifted every index after it.
+  assert.equal(items.find((item) => item.id === 'gigSquare').hidden, true);
   assert.deepEqual(
     items.filter((item) => !item.hidden).map((item) => item.id),
-    ['browser', 'tasks', 'metaapps', 'myBots'],
+    ['browser', 'tasks', 'metaapps', 'myBots', 'processes'],
   );
   // Owner ruling 2026-11-08 20:18: the bubble icon is retired. The Co-Work
   // face is this surface's default (the session list IS the mid column), so it

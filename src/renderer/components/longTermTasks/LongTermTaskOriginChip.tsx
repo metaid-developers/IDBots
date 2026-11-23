@@ -17,7 +17,16 @@ interface LongTermTaskOriginHit {
  * belonging is a fact, never a guess. Click dispatches `longtermTask:viewTask`
  * which App.tsx routes to the tracking page with the task open.
  */
-const LongTermTaskOriginChip: React.FC<{ sessionId: string | null | undefined }> = ({ sessionId }) => {
+const LongTermTaskOriginChip: React.FC<{
+  sessionId: string | null | undefined;
+  /**
+   * 'chip' (default) = the session header's badge.
+   * 'text' = the process detail header's plain pointer (design: 纯文本指针,
+   * no fill, no border, ≤220, underline only on hover). Same fetch, one look
+   * per surface — no second IPC path.
+   */
+  variant?: 'chip' | 'text';
+}> = ({ sessionId, variant = 'chip' }) => {
   const [hit, setHit] = useState<LongTermTaskOriginHit | null>(null);
 
   useEffect(() => {
@@ -44,6 +53,24 @@ const LongTermTaskOriginChip: React.FC<{ sessionId: string | null | undefined }>
   }, [sessionId]);
 
   if (!hit) return null;
+
+  if (variant === 'text') {
+    return (
+      <button
+        type="button"
+        data-testid="process-detail-task"
+        onClick={() => window.dispatchEvent(new CustomEvent('longtermTask:viewTask', { detail: { taskId: hit.taskId } }))}
+        title={i18nService.t('longTermTask.origin.open')}
+        className="non-draggable inline-flex min-w-0 max-w-[220px] items-center gap-1 text-[11.5px] dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors hover:underline"
+      >
+        <Squares2X2Icon className="h-3 w-3 shrink-0" />
+        <span className="min-w-0 truncate">
+          {i18nService.t('longTermTask.origin.label')} · {hit.taskTitle}
+          {hit.subtaskTitle ? ` · ${hit.subtaskTitle}` : ''}
+        </span>
+      </button>
+    );
+  }
 
   return (
     <button

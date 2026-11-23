@@ -17,7 +17,7 @@
  * uses): a missing or unparsable value simply restores nothing.
  */
 
-export type PersistedMainView = 'cowork' | 'scheduledTasks' | 'groupTasks' | 'metabots';
+export type PersistedMainView = 'cowork' | 'processes' | 'scheduledTasks' | 'groupTasks' | 'metabots';
 
 export interface PersistedViewState {
   mainView: PersistedMainView;
@@ -27,7 +27,7 @@ export interface PersistedViewState {
 const STORAGE_KEY = 'idbots.viewState';
 const ONBOARDING_ENTER_KEY = 'idbots.onboardingEnterPending';
 
-const MAIN_VIEWS: PersistedMainView[] = ['cowork', 'scheduledTasks', 'groupTasks', 'metabots'];
+const MAIN_VIEWS: PersistedMainView[] = ['cowork', 'processes', 'scheduledTasks', 'groupTasks', 'metabots'];
 
 const isPersistedMainView = (value: unknown): value is PersistedMainView =>
   typeof value === 'string' && (MAIN_VIEWS as string[]).includes(value);
