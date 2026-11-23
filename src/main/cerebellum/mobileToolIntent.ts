@@ -72,9 +72,10 @@ export const CEREBELLUM_MOBILE_EXPANSION_INSTRUCTIONS: Record<MobileToolExpansio
     'Metaprotocol definitions, or prediction ledger records? False for casual talk or ordinary ' +
     'work/coding tasks.',
   financial:
-    'Does the user message at `current_message` explicitly ask to check wallet balances, transfer ' +
-    'tokens/BTC/NFTs, trade goods/MRC-721/MRC-20/NFTs, handle payments/ME charges/multisig PSBTs, ' +
-    'or inspect on-chain financial assets? False for general price discussion or unrelated chat.',
+    'Does the user message at `current_message` explicitly ask to check wallet balances, look up ' +
+    'token/coin prices or market overviews ($TICKER, MRC-20, ID-Coin, MVC FT, BTC, SPACE, DOGE), ' +
+    'transfer tokens/BTC/NFTs, trade goods/MRC-721/MRC-20/NFTs, handle payments/ME charges/multisig PSBTs, ' +
+    'or inspect on-chain financial assets? False for unrelated casual chat.',
   social:
     'Does the user message at `current_message` explicitly ask to publish or send an on-chain ' +
     'social post (buzz, note, Q&A, log, omni cast), like/comment on a pin, or send a private/group ' +

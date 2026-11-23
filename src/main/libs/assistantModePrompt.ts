@@ -203,7 +203,7 @@ export function buildProjectorModePrompt(): string {
       '',
       '**本地文件与链上凭证。** 创建/修改的本地文件用 `[文件名](preview-file://localhost/<绝对路径>)`（HTML/应用目录用 `preview-metaapp://localhost/<绝对路径>`），勿用 `file://` 或裸路径；要主动上屏就调 `bot_browser_preview_local`。凡本轮有链上发布，**聊天回复与投影页均须明文列出** ① **发布账号**（Bot 名及链上地址/GlobalMetaID）和 ② **完整明文 Pin ID**（`pin://<txid>i0` 或 `metaapp://<txid>i0`）。主人明确要求「只看文稿/暂不动代码」时，勿塞入代码改造拍板项。',
       '',
-      '**聊天保持干净（硬规则）。** 聊天气泡禁止内嵌普通媒体或应用预览（不用 `![名字](metaapp://…)` 或 `[报告](file:///…)`）；应用用普通链接 `[名字](metaapp://pinId)`。仅宿主工具要求原样附带的结构化协议卡片代码块（```nft-card、```nft-collection-card、```pay-card、```escrow-card、```ft-quote-card、```ft-order-card、```ft-fill-card、```paybuzz-card）须原样保留在聊天气泡内。',
+      '**聊天保持干净（硬规则）。** 聊天气泡禁止内嵌普通媒体或应用预览（不用 `![名字](metaapp://…)` 或 `[报告](file:///…)`）；应用用普通链接 `[名字](metaapp://pinId)`。仅宿主工具要求原样附带的结构化协议卡片代码块（```token-card、```nft-card、```nft-collection-card、```pay-card、```escrow-card、```ft-quote-card、```ft-order-card、```ft-fill-card、```paybuzz-card）须原样保留在聊天气泡内。',
     ].join('\n'),
     [
       '## Projector Mode — the Bot Internet meeting room',
@@ -230,7 +230,7 @@ export function buildProjectorModePrompt(): string {
       '',
       '**Local files & on-chain receipts.** Link local artifacts as `[file name](preview-file://localhost/<absolute path>)` (use `preview-metaapp://localhost/<absolute path>` for HTML/app directories), never `file://` or bare paths; call `bot_browser_preview_local` to display proactively. For any on-chain publication, **BOTH chat and projection MUST visibly show** (1) **Published by** (Bot name/role + MetaID/address) and (2) **Full verbatim Pin ID** (`pin://<txid>i0` or `metaapp://<txid>i0` in plain/code text alongside the link). Never inject unrequested code-change decisions when the owner asked for drafts only.',
       '',
-      '**Chat stays clean (hard rule).** Never embed media or app previews in chat bubbles (`![name](metaapp://…)` or `[report](file:///…)`): use plain links `[name](metaapp://pinId)` for apps. Only host-emitted structured protocol card fences (```nft-card, ```nft-collection-card, ```pay-card, ```escrow-card, ```ft-quote-card, ```ft-order-card, ```ft-fill-card, ```paybuzz-card) MUST be preserved verbatim in the chat bubble when instructed by a tool result.',
+      '**Chat stays clean (hard rule).** Never embed media or app previews in chat bubbles (`![name](metaapp://…)` or `[report](file:///…)`): use plain links `[name](metaapp://pinId)` for apps. Only host-emitted structured protocol card fences (```token-card, ```nft-card, ```nft-collection-card, ```pay-card, ```escrow-card, ```ft-quote-card, ```ft-order-card, ```ft-fill-card, ```paybuzz-card) MUST be preserved verbatim in the chat bubble when instructed by a tool result.',
     ].join('\n'),
   );
 }

@@ -86,6 +86,8 @@ import MobilePageCard from './chat/MobilePageCard';
 import { isMobilePageCardFenceLanguage, parseMobilePageCardFence } from './chat/mobilePageCardSyntax';
 import PaybuzzCard from './chat/PaybuzzCard';
 import { isPaybuzzCardFenceLanguage, parsePaybuzzCardFence } from '../utils/paybuzzCardSyntax';
+import TokenCard from './chat/TokenCard';
+import { isTokenCardFenceLanguage, parseTokenCardFence } from './chat/tokenCardSyntax';
 import { splitStreamingMarkdownBlocks } from './streamingMarkdownSplit';
 
 /**
@@ -589,6 +591,14 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
       const paybuzzData = parsePaybuzzCardFence(trimmedCodeText);
       if (paybuzzData) {
         return <PaybuzzCard data={paybuzzData} />;
+      }
+    }
+
+    // Native Token Visualization Card (`token-card` / `tokencard`).
+    if (isTokenCardFenceLanguage(fenceLanguage)) {
+      const tokenData = parseTokenCardFence(trimmedCodeText);
+      if (tokenData) {
+        return <TokenCard data={tokenData} />;
       }
     }
 

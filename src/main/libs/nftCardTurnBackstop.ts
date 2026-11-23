@@ -1,29 +1,30 @@
 /**
- * Deterministic turn-end backstop for host-emitted chat NFT protocol cards.
+ * Deterministic turn-end backstop for host-emitted chat NFT & Token protocol cards.
  *
  * Why this exists:
  * Mutating NFT / collection host tools (`mrc721_sell_intent`, `mrc721_mint`,
  * `mrc721_sell`, `mrc721_buy`, `mrc721_transfer`, `mrc721_offer`,
  * `mrc721_take_offer`, `mrc721_collection_create`, `mrc721_collection_update`,
- * `wallet_nft_*`) append a signed ```nft-card / ```nft-collection-card fence
- * to their tool result and ask the agent to include it verbatim in its reply.
+ * `wallet_nft_*`) and `wallet_token_card` append a ```nft-card /
+ * ```nft-collection-card / ```token-card fence to their tool result and ask
+ * the agent to include it verbatim in its reply.
  * In Studio / Projector Mode (or when a model summarizes prose + projects an
  * HTML report), the model sometimes omits the fenced block from the chat
- * bubble, leaving the user with no visual product card in the chat stream.
+ * bubble, leaving the user with no visual card in the chat stream.
  *
- * The runner captures fences emitted by announcing/mutating NFT tools during a
- * turn and, if any card identity was omitted from all visible assistant
- * messages of that turn, appends the missing fence(s) onto the turn's final
- * visible assistant reply after flushing stream overlays.
+ * The runner captures fences emitted by announcing tools during a turn and, if
+ * any card identity was omitted from all visible assistant messages of that
+ * turn, appends the missing fence(s) onto the turn's final visible assistant
+ * reply after flushing stream overlays.
  */
 
-export type NftCardBackstopTag = 'nft-card' | 'nft-collection-card';
+export type NftCardBackstopTag = 'nft-card' | 'nft-collection-card' | 'token-card';
 
 export interface CapturedNftCardFence {
-  /** Canonical deduplication key (`nft:pin:...`, `nft:mc:...`, or `col:...`). */
+  /** Canonical deduplication key (`nft:pin:...`, `nft:mc:...`, `col:...`, or `token:...`). */
   key: string;
   tag: NftCardBackstopTag;
-  /** Full fenced markdown block (` ```nft-card\n{...}\n``` `). */
+  /** Full fenced markdown block (` ```nft-card\n{...}\n``` ` or ` ```token-card\n{...}\n``` `). */
   fence: string;
 }
 
@@ -42,9 +43,10 @@ const ANNOUNCING_NFT_CARD_TOOLS = new Set<string>([
   'wallet_nft_sell',
   'wallet_nft_cancel_sell',
   'wallet_nft_buy',
+  'wallet_token_card',
 ]);
 
-const NFT_CARD_FENCE_RE = /```(nft-card|nft-collection-card)[ \t]*\r?\n([\s\S]*?)\r?\n```/g;
+const NFT_CARD_FENCE_RE = /```(nft-card|nft-collection-card|token-card|tokencard)[ \t]*\r?\n([\s\S]*?)\r?\n```/gi;
 
 export function normalizeHostToolBaseName(toolName: string): string {
   const trimmed = String(toolName ?? '').trim();
@@ -58,6 +60,14 @@ export function isNftCardBackstopTool(toolName: string): boolean {
 }
 
 function deriveCardIdentityKey(tag: NftCardBackstopTag, parsed: Record<string, unknown>): string | null {
+  if (tag === 'token-card') {
+    const assetKey = typeof parsed.assetKey === 'string' ? parsed.assetKey.trim().toLowerCase() : '';
+    if (assetKey) return `token:key:${assetKey}`;
+    const symbol = typeof parsed.symbol === 'string' ? parsed.symbol.trim().toLowerCase() : '';
+    if (symbol) return `token:sym:${symbol}`;
+    return null;
+  }
+
   if (tag === 'nft-collection-card') {
     const colId = typeof parsed.collectionId === 'string' ? parsed.collectionId.trim().toLowerCase() : '';
     if (colId) return `col:id:${colId}`;
@@ -84,14 +94,24 @@ function deriveCardIdentityKey(tag: NftCardBackstopTag, parsed: Record<string, u
 }
 
 export function parseNftCardFencesFromMarkdown(markdown: string): CapturedNftCardFence[] {
-  if (!markdown || (!markdown.includes('```nft-card') && !markdown.includes('```nft-collection-card'))) {
+  if (
+    !markdown
+    || (
+      !markdown.includes('```nft-card')
+      && !markdown.includes('```nft-collection-card')
+      && !markdown.includes('```token-card')
+      && !markdown.includes('```tokencard')
+    )
+  ) {
     return [];
   }
   const results: CapturedNftCardFence[] = [];
   NFT_CARD_FENCE_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = NFT_CARD_FENCE_RE.exec(markdown)) !== null) {
-    const tag = match[1] as NftCardBackstopTag;
+    const rawTag = (match[1] ?? '').toLowerCase();
+    const tag: NftCardBackstopTag =
+      rawTag === 'tokencard' ? 'token-card' : (rawTag as NftCardBackstopTag);
     const rawBody = (match[2] ?? '').trim();
     if (!rawBody) continue;
     try {
