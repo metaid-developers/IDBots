@@ -302,7 +302,8 @@ async function resolveMvcFtMetaFromWallet(
 
   try {
     if (control.listIssuedTokens) {
-      const issued = control.listIssuedTokens({ limit: 100 });
+      const rawIssued = await Promise.resolve(control.listIssuedTokens({ limit: 100 }));
+      const issued = Array.isArray(rawIssued) ? rawIssued : [];
       const foundIssued = issued.find((r) => {
         const g = r.genesis.toLowerCase();
         const txId = r.genesisTxId.toLowerCase();
@@ -319,6 +320,11 @@ async function resolveMvcFtMetaFromWallet(
         issuedDecimals = foundIssued.decimals ?? 8;
       }
     }
+  } catch {
+    // Best-effort local issuance metadata enrichment
+  }
+
+  try {
     if (typeof control.listMvcFtTokens === 'function') {
       const entries = await control.listMvcFtTokens({ metabotIds: [metabotId] });
       const tokens = entries[0]?.balance?.tokens ?? [];

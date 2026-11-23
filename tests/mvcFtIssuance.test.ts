@@ -32,7 +32,6 @@ import {
 } from '../src/main/services/mvcFtIssueGatewayRoutes';
 import { buildWalletAgentTools, type WalletToolsControl } from '../src/main/libs/walletAgentTools';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const ftProto = require('meta-contract/dist/mcp02/contract-proto/token.proto');
 
 function buildSyntheticFundingUtxo(privKey: any, satoshis = 200_000) {

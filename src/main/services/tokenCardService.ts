@@ -1830,7 +1830,7 @@ export async function buildFtQuoteCardSnapshot(
 
   // Choose recommended rail + build budget sweep suggestion
   let recommendedRail: FtCardRail | undefined;
-  let suggestionParts: string[] = [];
+  const suggestionParts: string[] = [];
 
   if (budgetParsed.amount && budgetParsed.unit === 'me') {
     if (meOrders.length > 0) {

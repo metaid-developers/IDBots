@@ -59,15 +59,15 @@ test('the projection_begin host tool mounts only on projector sessions and never
 test('the projector prompt mandates projection_begin before the page write in both locales', () => {
   // Exact per-locale phrases (the header changelog may also name the tool, so
   // a bare count cannot distinguish copy from prose).
-  assert.equal((promptSource.match(/projection_begin（无参数，立即返回）/g) ?? []).length, 1, 'zh rule');
-  assert.equal((promptSource.match(/Call projection_begin once first \(no parameters, returns immediately\)/g) ?? []).length, 1, 'en rule');
+  assert.equal((promptSource.match(/`projection_begin`（无参，切换极速流式）/g) ?? []).length, 1, 'zh rule');
+  assert.equal((promptSource.match(/Call `projection_begin` once before writing \(no args; switches to fast streaming\)/g) ?? []).length, 1, 'en rule');
   // The rule sits inside the 怎么投影 / How to project paragraphs, ahead of
   // the page-write instruction it gates.
-  const zhIndex = promptSource.indexOf('projection_begin（无参数，立即返回）');
-  const zhWriteIndex = promptSource.indexOf('reports/ 目录');
+  const zhIndex = promptSource.indexOf('`projection_begin`（无参，切换极速流式）');
+  const zhWriteIndex = promptSource.indexOf('`reports/`（如');
   assert.ok(zhIndex >= 0 && zhWriteIndex > zhIndex, 'zh rule must precede the page-write instruction');
-  const enIndex = promptSource.indexOf('Call projection_begin once first');
-  const enWriteIndex = promptSource.indexOf('reports/ (e.g.');
+  const enIndex = promptSource.indexOf('Call `projection_begin` once before writing');
+  const enWriteIndex = promptSource.indexOf('`reports/` (e.g.');
   assert.ok(enIndex >= 0 && enWriteIndex > enIndex, 'en rule must precede the page-write instruction');
 });
 

@@ -67,7 +67,9 @@ describe('asr quota computation', () => {
 
   test('a crash-leftover open row from today is capped at maxSessionSeconds', () => {
     const db = setup();
-    const now = Date.now();
+    // Anchor at 20:00 CST (12:00 UTC) so `now - 3h` stays inside the same CST day
+    // even when tests run between 00:00 and 03:00 Asia/Shanghai.
+    const now = Date.UTC(2026, 9, 31, 12, 0, 0);
     // Open row started 3 h ago TODAY (crashed process): must cap at the
     // session cap, not eat the whole day.
     insertUsageRow(db, { userId, upstream: 'stub', startedAt: now - 3 * 60 * 60 * 1000 });

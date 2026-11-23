@@ -50,9 +50,9 @@ const SRC_LLMFETCH = fs.readFileSync(path.join(projectRoot, 'src/main/services/l
 const SRC_PROXY = fs.readFileSync(path.join(projectRoot, 'src/main/libs/coworkOpenAICompatProxy.ts'), 'utf8');
 
 test('contract: all three wire styles post through fetchLlmPost with their kind tag', () => {
-  assert.equal(SRC_CHAT.split("fetchLlmPost('anthropic'").length - 1, 1, 'anthropic wire must call fetchLlmPost exactly once');
-  assert.equal(SRC_CHAT.split("fetchLlmPost('openai-compat'").length - 1, 1, 'openai-compat wire must call fetchLlmPost exactly once');
-  assert.equal(SRC_CHAT.split("fetchLlmPost('deepseek-responses'").length - 1, 1, 'deepseek-responses wire must call fetchLlmPost exactly once');
+  assert.equal((SRC_CHAT.match(/fetchLlmPost\(\s*'anthropic'/g) ?? []).length, 1, 'anthropic wire must call fetchLlmPost exactly once');
+  assert.equal((SRC_CHAT.match(/fetchLlmPost\(\s*'openai-compat'/g) ?? []).length, 1, 'openai-compat wire must call fetchLlmPost exactly once');
+  assert.equal((SRC_CHAT.match(/fetchLlmPost\(\s*'deepseek-responses'/g) ?? []).length, 1, 'deepseek-responses wire must call fetchLlmPost exactly once');
   assert.ok(!SRC_CHAT.includes('await fetch(url, { method:'), 'bare fetch calls must be replaced by fetchLlmPost in cognitiveChatCompletion');
 });
 

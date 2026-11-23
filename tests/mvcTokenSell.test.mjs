@@ -692,7 +692,7 @@ test('wallet_token_transfer registered; session-less and non-address receivers f
   const handler2 = tools2.find((x) => x.name === 'wallet_token_transfer').handler;
   const badReceiver = await handler2({ genesis: 'ab'.repeat(32), codehash: 'cd'.repeat(20), receiver_address: 'Alice' });
   assert.equal(badReceiver.isError, true);
-  assert.match(badReceiver.content[0].text, /raw MVC address/);
+  assert.match(badReceiver.content[0].text, /neither a local MetaBot name, a GlobalMetaID.*nor an MVC address/);
   assert.equal(transferCalls.length, 0, 'non-address receiver never reaches control');
 
   // valid call: uppercase genesis/codehash normalized, control sees the raw address
