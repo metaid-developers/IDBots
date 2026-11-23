@@ -153,3 +153,21 @@ test('Bot Internet keeps the Co-Work panel visible for Hub and Meta Apps', () =>
   assert.doesNotMatch(internetBranch, /internetPane === 'browser'/);
   assert.doesNotMatch(internetBranch, /internetPane !== 'browser'/);
 });
+
+test('Studio prompt submission switches the right pane to Bot Browser and activates Live Stage', () => {
+  const appSrc = fs.readFileSync(path.join(root, 'src/renderer/App.tsx'), 'utf8');
+  const sidebarSrc = fs.readFileSync(path.join(root, 'src/renderer/components/Sidebar.tsx'), 'utf8');
+  const panelSrc = fs.readFileSync(path.join(root, 'src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx'), 'utf8');
+
+  assert.match(appSrc, /const handleRevealStudioBrowser = useCallback\(\(\) => \{\s*botBrowserShell\.selectInternetPane\('browser'\);/);
+  assert.match(appSrc, /onRevealBrowser=\{handleRevealStudioBrowser\}/);
+  assert.match(sidebarSrc, /onRevealBrowser=\{onRevealBrowser\}/);
+
+  const submitStart = panelSrc.indexOf('const handleSubmit = async');
+  const submitEnd = panelSrc.indexOf('const handleSelectHistory = async');
+  assert.ok(submitStart !== -1 && submitEnd > submitStart, 'BotBrowserCoworkPanel handleSubmit block exists');
+  const submitBlock = panelSrc.slice(submitStart, submitEnd);
+  assert.match(submitBlock, /onRevealBrowser\?\.\(\)/);
+  assert.match(submitBlock, /sessionTabBinding\.revealSessionTab\(currentSession\.id\)/);
+  assert.match(submitBlock, /sessionTabBinding\.prepareDraftTab\(effectiveMetabotId\)/);
+});

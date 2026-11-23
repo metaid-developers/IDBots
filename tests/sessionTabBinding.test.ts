@@ -1303,3 +1303,60 @@ test('Studio restart: restoreLastSession restores BOTH the Live Stage tab and th
     storage.restore();
   }
 });
+
+test('Studio submit tab switch: revealSessionTab activates Live Stage tab from showcase/MetaApp tab', async () => {
+  const storage = installStageEntry(STAGE_ENTRY_URI);
+  try {
+    const bridge = createFakeTabBridge();
+    const fakeHost = createFakeHost(bridge);
+    fakeHost.sessions.set('session-a', sessionOf('session-a'));
+    fakeHost.setOpen('session-a');
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+
+    const stageRes = await binding.controlSessionTab({
+      action: 'open-tab',
+      sessionId: 'session-a',
+      role: 'stage',
+      uri: STAGE_ENTRY_URI,
+      activate: true,
+    });
+    const stageTabId = stageRes.sessionTab!.id;
+
+    // User opens a MetaApp / showcase tab (taking focus away from Live Stage).
+    await bridge.controlTabs({ action: 'open-tab', uri: 'metaapp://demo-app' });
+    assert.notEqual(bridge.activeTabId, stageTabId);
+
+    // Submitting a prompt calls revealSessionTab -> Live Stage becomes active again.
+    await binding.revealSessionTab('session-a');
+    assert.equal(bridge.activeTabId, stageTabId);
+  } finally {
+    storage.restore();
+  }
+});
+
+test('Studio submit tab switch: prepareDraftTab activates prewarmed draft Live Stage tab when another tab is active', async () => {
+  const storage = installStageEntry(STAGE_ENTRY_URI);
+  try {
+    const bridge = createFakeTabBridge();
+    const fakeHost = createFakeHost(bridge);
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+
+    // Prewarm draft stage tab on mount.
+    const draftTabId = await binding.prepareDraftTab(1);
+    assert.ok(draftTabId != null);
+    assert.equal(bridge.activeTabId, draftTabId);
+
+    // User switches to MetaApps/My Bots and opens another tab.
+    await bridge.controlTabs({ action: 'open-tab', uri: 'metaid://bot/demo' });
+    assert.notEqual(bridge.activeTabId, draftTabId);
+
+    // Submitting a draft prompt calls prepareDraftTab -> draft Live Stage tab becomes active again.
+    const resumedDraftTabId = await binding.prepareDraftTab(1);
+    assert.equal(resumedDraftTabId, draftTabId);
+    assert.equal(bridge.activeTabId, draftTabId);
+  } finally {
+    storage.restore();
+  }
+});
