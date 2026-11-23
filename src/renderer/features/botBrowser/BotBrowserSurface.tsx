@@ -85,7 +85,13 @@ type BrowserIframeMessage =
       dy?: number;
     }
   | {
-      source: 'idbots-browser-iframe-bridge';
+      /**
+       * Live Stage relays are FORWARDED BY THE SHELL BRIDGE, so they carry the
+       * parent source tag, not the iframe-bridge tag (the shell rewrites the
+       * source when it re-posts to the app window). `event.source` is already
+       * pinned to the shell frame before these branches run.
+       */
+      source: 'idbots-browser-surface';
       type: 'stage-interaction';
       entry: {
         requestId: string;
@@ -102,6 +108,14 @@ type BrowserIframeMessage =
       requestId: string;
       intent: 'askTwinToBuy' | 'addFriendPrompt' | 'openPromoPack';
       params: Record<string, unknown>;
+    }
+  | {
+      source: 'idbots-browser-surface';
+      type: 'stage-decision';
+      entry: {
+        queueItemId: string;
+        resolutionNote: string;
+      };
     };
 
 type CommerceResponseMessage = {
@@ -548,6 +562,37 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
           callbacksRef.current.onBrowserEvent?.(data);
           return;
         }
+        // Live Stage relays (批 B · P0-3 / 既有 interaction 卡) arrive from the
+        // shell bridge tagged PARENT_SOURCE, so they must be handled BEFORE the
+        // iframe-bridge source gate below — that gate guards the
+        // browser-endpoint traffic, and this branch previously sat after it,
+        // which dropped the click relay entirely (the interaction card only
+        // survived through main's poll fallback). `event.source` is already
+        // pinned to the shell frame above; main re-validates every entry.
+        if (data.source === PARENT_SOURCE && data.type === 'stage-interaction') {
+          void window.electron.cowork.submitStageInteractionAnswer(data.entry);
+          return;
+        }
+        if (data.source === PARENT_SOURCE && data.type === 'stage-decision') {
+          // Same IPC the Process Hub's decision card calls: the store resolve,
+          // redundant-sibling cancel and waiting_owner convergence all live in
+          // one main-side function — two seats, one resolve channel.
+          void window.electron.longtermTask.decisionResolve({
+            queueItemId: data.entry.queueItemId,
+            resolutionNote: data.entry.resolutionNote,
+          }).then((result) => {
+            if (!result?.success) {
+              window.dispatchEvent(new CustomEvent('app:showToast', {
+                detail: i18nService.t('liveStageDecisionResolveFailed'),
+              }));
+            }
+          }).catch(() => {
+            window.dispatchEvent(new CustomEvent('app:showToast', {
+              detail: i18nService.t('liveStageDecisionResolveFailed'),
+            }));
+          });
+          return;
+        }
         if (data.source !== 'idbots-browser-iframe-bridge') return;
         if (data.type === 'browser-ready') {
           readyRef.current = true;
@@ -580,16 +625,6 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
           if (dx || dy) {
             window.electron.window.moveBy(dx, dy);
           }
-          return;
-        }
-
-        // Live Stage interaction click, relayed by the shell bridge. The
-        // renderer is a pass-through: main re-validates requestId + the
-        // single-use token against the pending card before resolving
-        // anything (2026-11-12: the poll fallback proved fragile, this is
-        // the primary delivery path).
-        if (data.type === 'stage-interaction') {
-          void window.electron.cowork.submitStageInteractionAnswer(data.entry);
           return;
         }
 

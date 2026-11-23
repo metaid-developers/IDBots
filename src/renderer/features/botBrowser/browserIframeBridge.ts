@@ -621,6 +621,32 @@ ${buildLegacyWebViewUrlCompatibilityScript()}
       }
       return;
     }
+    // Live Stage owner-decision relay (批 B · P0-3): the stage hosts the FIRST
+    // seat for an owner ruling and hands the intent to the shell; the host
+    // renderer submits it through the SAME longtermTask:decisionResolve IPC
+    // the Process Hub uses, where main re-reads the queue row — a relayed
+    // entry is a hint, never an authority. Only the current html frame's posts
+    // are eligible, and only well-shaped entries.
+    if (data.source === 'idbots-live-stage' && data.type === 'stage-decision') {
+      var decisionFrame = typeof globalThis.currentBrowserHtmlFrameWindow === 'function'
+        ? globalThis.currentBrowserHtmlFrameWindow()
+        : null;
+      var decisionEntry = data.entry;
+      var decisionShapeOk = decisionEntry && typeof decisionEntry === 'object'
+        && typeof decisionEntry.queueItemId === 'string' && decisionEntry.queueItemId
+        && typeof decisionEntry.resolutionNote === 'string' && decisionEntry.resolutionNote;
+      if (decisionFrame && event.source === decisionFrame && decisionShapeOk) {
+        window.parent.postMessage({
+          source: PARENT_SOURCE,
+          type: 'stage-decision',
+          entry: {
+            queueItemId: decisionEntry.queueItemId,
+            resolutionNote: decisionEntry.resolutionNote
+          }
+        }, '*');
+      }
+      return;
+    }
     if (event.source !== window.parent) return;
     if (!data || data.source !== PARENT_SOURCE) return;
     if (data.type === 'endpoint-response') {

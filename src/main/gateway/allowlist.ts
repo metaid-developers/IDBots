@@ -52,6 +52,9 @@ const COWORK_INVOKE: Record<string, AllowlistEntry> = {
   'cowork:session:getMessagesPage': { tier: 'P1' },
   'cowork:session:list': { tier: 'P1' },
   'cowork:session:listArchived': { tier: 'P1' },
+  // 火花线取数面 (2026-11-23): aggregate message counts only — no message text,
+  // no metadata. Same read tier as the session list it decorates.
+  'cowork:session:activitySpark': { tier: 'P1' },
   'cowork:session:getSubagents': { tier: 'P1' },
   'cowork:session:getSubagentMessages': { tier: 'P1' },
   'cowork:session:rename': { tier: 'P1' },
@@ -458,6 +461,8 @@ export const INVOKE_ALLOWLIST: Record<string, AllowlistEntry> = {
 
 export const INVOKE_ALLOWLIST_PREFIXES: Array<{ prefix: string; entry: AllowlistEntry }> = [
   { prefix: 'longtermTask:', entry: { tier: 'P1', note: '`02` + studioStatus (2026-11-18): all 16 longtermTask:* channels are P1.' } },
+  { prefix: 'processDossier:', entry: { tier: 'N', note: 'Not in `02` v1.0.1 (desktop-only process-detail dossier read, 2026-11-22); the mobile gateway has no process detail, so `02` default-deny stands.' } },
+  { prefix: 'metaweb:', entry: { tier: 'N', note: 'Not in `02` v1.0.1 (desktop-only pin naming for the process dossier, 2026-11-22); the mobile gateway does not read pin metadata.' } },
   { prefix: 'groupTask:', entry: { tier: 'P2', note: '`02`: all 16 groupTask:* channels are P2.' } },
   {
     prefix: 'gigSquare:',
