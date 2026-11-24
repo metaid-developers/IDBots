@@ -31,8 +31,8 @@ const baseMetabot = {
   globalmetaid: 'idq14habcdefg9xz',
 } as unknown as Metabot;
 
-test('MetaBotListCard renders global meta id summary below the avatar with a copy action', () => {
-  const markup = renderToStaticMarkup(
+test('MetaBotListCard renders global meta id summary with a copy action across tile and twinStrip variants', () => {
+  const tileMarkup = renderToStaticMarkup(
     <MetaBotListCard
       metabot={baseMetabot}
       onEdit={() => {}}
@@ -42,9 +42,23 @@ test('MetaBotListCard renders global meta id summary below the avatar with a cop
     />,
   );
 
-  assert.match(markup, /metaid:idq14h\.\.\.\.g9xz/);
-  assert.match(markup, /title="Copy metaid"/);
-  assert.match(markup, /aria-label="Copy metaid"/);
+  assert.match(tileMarkup, /idq14h…g9xz/);
+  assert.match(tileMarkup, /title="Copy metaid"/);
+  assert.match(tileMarkup, /aria-label="Copy metaid"/);
+
+  const stripMarkup = renderToStaticMarkup(
+    <MetaBotListCard
+      variant="twinStrip"
+      metabot={{ ...baseMetabot, metabot_type: 'twin' }}
+      onEdit={() => {}}
+      onToggleEnabled={() => {}}
+      isChainSynced
+      onSyncToChain={() => {}}
+    />,
+  );
+
+  assert.match(stripMarkup, /metaid:idq14h…g9xz/);
+  assert.match(stripMarkup, /title="Copy metaid"/);
 });
 
 test('MetaBotListCard shows the Twin badge only on the Twin bot', () => {

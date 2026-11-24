@@ -29,6 +29,10 @@ test('skillManager runtime YAML parser must be declared as production dependency
     packageJson.dependencies && packageJson.dependencies['js-yaml'],
     'js-yaml must be in dependencies so packaged app can load skillManager at runtime',
   );
+  assert.ok(
+    packageJson.dependencies && packageJson.dependencies['decimal.js'],
+    'decimal.js must be declared directly in dependencies rather than relying on transitive hoisting',
+  );
 });
 
 test('web-search skill build must go through the runtime bootstrap wrapper', () => {
@@ -841,6 +845,7 @@ test('release packaging wires nested DSH runtime install, extraResources, and pa
     extraResourceFilterExcludesNodeModules,
     RUNTIME_DEAD_FILE_FILTERS,
     RUNTIME_TEST_DIRECTORY_FILTERS,
+    RUNTIME_UNMOUNTED_PACKAGE_FILTERS,
     RESOURCE_DOT_ENTRY_FILTERS,
   } = require('../scripts/packagedRuntimes.cjs');
   const workflow = fs.readFileSync(path.join(process.cwd(), '.github/workflows/build.yml'), 'utf8');
@@ -881,6 +886,12 @@ test('release packaging wires nested DSH runtime install, extraResources, and pa
     assert.ok(
       (dshResource.filter || []).includes(pattern),
       `dsh-runtime extraResources filter must keep ${pattern}: dependency test fixtures add thousands of files for NSIS and Defender to process`,
+    );
+  }
+  for (const pattern of RUNTIME_UNMOUNTED_PACKAGE_FILTERS) {
+    assert.ok(
+      (dshResource.filter || []).includes(pattern),
+      `dsh-runtime extraResources filter must keep ${pattern}: unmounted DevTools inspector files otherwise push Windows MAX_PATH to 256/260`,
     );
   }
   const skillsResource = (builder.extraResources || []).find((entry) => entry && entry.from === 'SKILLs');

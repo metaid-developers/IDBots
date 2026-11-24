@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
-import TestRenderer from 'react-test-renderer';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { i18nService } from '../src/renderer/services/i18n';
 
 // P0-a (#149) 组件级测试 —— 承袭 tests/ncase-presentation.test.tsx 原件
@@ -85,11 +85,14 @@ async function init(): Promise<(taskId: number) => Promise<string>> {
   const mod = await import('../src/renderer/components/groupTasks/GroupTaskDetailView');
   const GroupTaskDetailView = mod.default;
   inited = async (taskId: number): Promise<string> => {
-    let tr: any;
-    await TestRenderer.act(async () => { tr = TestRenderer.create(React.createElement(GroupTaskDetailView, { taskId, onBack: () => {} })); });
-    await TestRenderer.act(async () => { await new Promise(r => setTimeout(r, 250)); });
-    const json = tr.toJSON ? tr.toJSON() : tr;
-    return JSON.stringify(json);
+    const detail = taskId === 2 ? task2 : task1;
+    return renderToStaticMarkup(
+      React.createElement(GroupTaskDetailView, {
+        taskId,
+        onBack: () => {},
+        initialDetail: detail,
+      }),
+    );
   };
   return inited;
 }
@@ -130,7 +133,6 @@ test('N5 修后: chair 代闭（status event actor_kind=chair）渲染 chair 档
   assert.ok(!text.includes(OWNER_HINT), `chair 代闭页面不得出现 owner 验收文案，实渲染了 ${text.split(OWNER_HINT).length - 1} 次`);
   // 数据源判定（渲染证据）：落库 status event 进了状态史区块（actorName 为空时回显 actorKind='chair'），
   // 组件手里唯一的 chair 信号就是这个事件——分档只可能来自它，而非 session 状态或 UI 现场推断。
-  // 注：TestRenderer JSON 里 fromStatus/→/toStatus 是三个分离文本节点，箭头按带引号片段匹配。
-  assert.ok(text.includes('" → "'), 'task2 的落库 close 事件未进状态史渲染');
+  assert.ok(text.includes(' → '), 'task2 的落库 close 事件未进状态史渲染');
   assert.ok(text.includes('· chair ·'), 'chair actor 未能从落库 status event 渲染出来');
 });

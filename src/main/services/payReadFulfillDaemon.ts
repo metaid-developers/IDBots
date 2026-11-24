@@ -15,7 +15,6 @@
  */
 
 import Decimal from 'decimal.js';
-import { mvc } from 'meta-contract';
 import type { SqliteDatabase as Database } from '../sqliteTypes';
 import type { MetabotStore } from '../metabotStore';
 import type { AgentNotificationInput } from '../../renderer/types/notification';
@@ -44,6 +43,7 @@ import {
 } from './payReadWireProtocol';
 
 const METALET_HOST = 'https://www.metalet.space';
+const APIMVC_HOST = 'https://api.microvisionchain.com/open-api-mvc';
 const NET = 'livenet';
 
 export interface VerifyPaybuzzTokenPaymentInput {
@@ -89,6 +89,7 @@ export interface MvcFtVerifiedUtxo {
   amount?: string;
   amountBase?: string;
   tokenAmount?: string;
+  valueString?: string;
   value?: string;
   spent?: boolean;
   status?: string;
@@ -217,6 +218,10 @@ async function defaultFetchMvcFtVerifiedUtxos(params: {
   genesis: string;
   paymentTxId: string;
 }): Promise<MvcFtVerifiedUtxo[]> {
+  const wantedTxId = params.paymentTxId.trim().toLowerCase();
+  const filterMatchingTxId = (rows: MvcFtVerifiedUtxo[]): MvcFtVerifiedUtxo[] =>
+    rows.filter((r) => String(r?.txId ?? r?.txid ?? '').trim().toLowerCase() === wantedTxId);
+
   const higunBase =
     process.env.IDBOTS_HIGUN_BASE?.trim()?.replace(/\/+$/, '') ||
     process.env.HIGUN_API_BASE?.trim()?.replace(/\/+$/, '');
@@ -236,14 +241,15 @@ async function defaultFetchMvcFtVerifiedUtxos(params: {
           : Array.isArray(json?.data)
             ? json.data
             : json?.data?.list ?? [];
-        if (list.length > 0) return list;
+        const matched = filterMatchingTxId(list);
+        if (matched.length > 0) return matched;
       } catch {
         // Try next endpoint
       }
     }
   }
 
-  // Fallback to MetaSo / Metalet MVC FT UTXO list + raw tx decode
+  // Authoritative MetaSo MVC FT UTXO lookup
   try {
     const metasoBase = getMetasoApiBase();
     const res = await fetch(
@@ -253,71 +259,70 @@ async function defaultFetchMvcFtVerifiedUtxos(params: {
     if (res.ok) {
       const json = (await res.json()) as { data?: MvcFtVerifiedUtxo[] | { list?: MvcFtVerifiedUtxo[] } };
       const list = Array.isArray(json?.data) ? json.data : json?.data?.list ?? [];
-      if (list.length > 0) return list;
+      const matched = filterMatchingTxId(list);
+      if (matched.length > 0) return matched;
+    }
+  } catch {
+    // Fall back to APIMVC / Metalet indexed FT UTXO endpoints
+  }
+
+  // Authoritative APIMVC indexed contract FT UTXO list
+  try {
+    const apimvcUrl = `${APIMVC_HOST}/contract/ft/address/${encodeURIComponent(params.receiveAddress)}/utxo?codeHash=${encodeURIComponent(params.codehash)}&genesis=${encodeURIComponent(params.genesis)}`;
+    const res = await fetch(apimvcUrl, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      const rawList: MvcFtVerifiedUtxo[] = Array.isArray(json) ? json : [];
+      const matched = filterMatchingTxId(rawList).map((r) => ({
+        ...r,
+        codehash: r.codehash ?? r.codeHash ?? params.codehash,
+        genesis: r.genesis ?? params.genesis,
+        ownerAddress: r.ownerAddress ?? r.address ?? params.receiveAddress,
+      }));
+      if (matched.length > 0) return matched;
     }
   } catch {
     // Fall back to Metalet
   }
 
-  const metaletUrl = `${METALET_HOST}/wallet-api/v4/mvc/address/contract/ft/utxo-list?net=${NET}&address=${encodeURIComponent(params.receiveAddress)}&codehash=${encodeURIComponent(params.codehash)}&genesis=${encodeURIComponent(params.genesis)}`;
-  const res = await fetch(metaletUrl, { signal: AbortSignal.timeout(8000) });
-  if (res.ok) {
-    const json = (await res.json()) as { code?: number; data?: { list?: MvcFtVerifiedUtxo[] } };
-    const list = json?.data?.list ?? [];
-    if (list.length > 0) return list;
-  }
-
-  // Last-resort raw tx inspection of MCP02 outputs if UTXO was quickly consolidated
-  const rawRes = await fetch(
-    `${METALET_HOST}/wallet-api/v4/mvc/tx/raw?net=${NET}&txId=${encodeURIComponent(params.paymentTxId)}`,
-    { signal: AbortSignal.timeout(8000) },
-  );
-  if (!rawRes.ok) return [];
-  const rawJson = (await rawRes.json()) as { data?: { hex?: string; rawTx?: string } | string };
-  const hex =
-    typeof rawJson.data === 'string'
-      ? rawJson.data
-      : (rawJson.data?.hex ?? rawJson.data?.rawTx ?? '');
-  if (!hex) return [];
-
+  // Authoritative Metalet v4 indexed contract FT UTXO list (uses `codeHash` query param and `valueString` field)
   try {
-    const tx = new mvc.Transaction(hex);
-    if (tx.id.toLowerCase() !== params.paymentTxId.toLowerCase()) return [];
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const ftProto = require('meta-contract/dist/mcp02/contract-proto/token.proto.js');
-    const expectedHash = new mvc.Address(params.receiveAddress).hashBuffer.toString('hex').toLowerCase();
-    const outList: MvcFtVerifiedUtxo[] = [];
-    for (const out of tx.outputs) {
-      try {
-        const dp = ftProto.parseDataPart(out.script);
-        if (!dp) continue;
-        const addrHex = Buffer.isBuffer(dp.tokenAddress)
-          ? dp.tokenAddress.toString('hex').toLowerCase()
-          : String(dp.tokenAddress ?? '').toLowerCase();
-        const genHex = Buffer.isBuffer(dp.genesisHash)
-          ? dp.genesisHash.toString('hex').toLowerCase()
-          : String(dp.genesisHash ?? '').toLowerCase();
-        const codeHex = Buffer.isBuffer(dp.codeHash)
-          ? dp.codeHash.toString('hex').toLowerCase()
-          : String(dp.codeHash ?? '').toLowerCase();
-        const amt = String(dp.tokenAmount ?? '0');
-        if (addrHex === expectedHash) {
-          outList.push({
-            txId: tx.id.toLowerCase(),
-            codehash: codeHex || params.codehash,
-            genesis: genHex || params.genesis,
-            ownerAddress: params.receiveAddress,
-            amountBase: amt,
-          });
-        }
-      } catch {
-        // Not an FT output
-      }
+    const query = new URLSearchParams({
+      net: NET,
+      address: params.receiveAddress,
+      codeHash: params.codehash,
+      codehash: params.codehash,
+      genesis: params.genesis,
+    });
+    const metaletUrl = `${METALET_HOST}/wallet-api/v4/mvc/address/contract/ft/utxo-list?${query}`;
+    const res = await fetch(metaletUrl, { signal: AbortSignal.timeout(8000) });
+    if (res.ok) {
+      const json = (await res.json()) as { data?: MvcFtVerifiedUtxo[] | { list?: MvcFtVerifiedUtxo[] } };
+      const rawList = Array.isArray(json?.data)
+        ? json.data
+        : Array.isArray(json?.data?.list)
+          ? json.data.list
+          : [];
+      const matched = filterMatchingTxId(rawList).map((r) => ({
+        ...r,
+        codehash: r.codehash ?? r.codeHash ?? params.codehash,
+        genesis: r.genesis ?? params.genesis,
+        ownerAddress: r.ownerAddress ?? r.address ?? params.receiveAddress,
+      }));
+      if (matched.length > 0) return matched;
     }
-    return outList;
   } catch {
-    return [];
+    // Fail closed when all indexed FT sources fail or omit paymentTxId
   }
+
+  // Security invariant (S-02): NEVER fall back to unindexed raw-tx `ftProto.parseDataPart`
+  // inspection — `parseDataPart` slices trailing script bytes without verifying sCrypt
+  // contract codehash or FT input lineage, which would allow a 1-sat fake OP_RETURN
+  // output to spoof an FT payment.
+  return [];
 }
 
 export async function verifyPaybuzzTokenPaymentOnChain(
@@ -416,19 +421,20 @@ export async function verifyPaybuzzTokenPaymentOnChain(
   let matchedBase = 0n;
   for (const utxo of utxos) {
     const uTxId = String(utxo.txId ?? utxo.txid ?? '').trim().toLowerCase();
-    if (uTxId && uTxId !== paymentTxId) continue;
+    // Fail closed if txId is missing or does not match paymentTxId
+    if (!uTxId || uTxId !== paymentTxId) continue;
     if (utxo.status && INVALID_MRC20_STATUSES.has(utxo.status.trim().toLowerCase())) continue;
 
     const uCodehash = String(utxo.codehash ?? utxo.codeHash ?? '').trim().toLowerCase();
     const uGenesis = String(utxo.genesis ?? '').trim().toLowerCase();
-    // S-01 guard: strict codehash + genesis match
-    if (uCodehash && uCodehash !== codehash) continue;
-    if (uGenesis && uGenesis !== genesis) continue;
+    // S-01 guard: fail closed unless codehash + genesis strictly match
+    if (!uCodehash || uCodehash !== codehash) continue;
+    if (!uGenesis || uGenesis !== genesis) continue;
 
     const uOwner = String(utxo.ownerAddress ?? utxo.address ?? '').trim();
     if (uOwner && uOwner !== rule.receiveAddress) continue;
 
-    const rawBase = utxo.amountBase ?? utxo.tokenAmount ?? utxo.value ?? utxo.amount;
+    const rawBase = utxo.amountBase ?? utxo.valueString ?? utxo.tokenAmount ?? utxo.value ?? utxo.amount;
     matchedBase += toExactBaseUnits(rawBase, rule.decimals, true);
   }
 

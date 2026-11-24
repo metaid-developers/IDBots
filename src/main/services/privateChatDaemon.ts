@@ -4839,7 +4839,7 @@ export async function resolveIncomingPrivateChatContent(params: {
   }
 
   if (fileMessagePayload) {
-    let candidateSecrets = validEntries.flatMap((entry) => [entry.sha256, entry.raw]);
+    const candidateSecrets = validEntries.flatMap((entry) => [entry.sha256, entry.raw]);
     let fileAttachment = candidateSecrets.length > 0
       ? await materializePrivateChatFileMessage({
           payload: fileMessagePayload,

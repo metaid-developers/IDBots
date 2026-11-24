@@ -46,10 +46,20 @@ export type SessionBrowserEvent = {
   } | null;
 };
 
+export interface RevealSessionTabOptions {
+  /**
+   * When true (e.g. submitting a chat message while the Bot Browser pane is
+   * already visible on screen), keep the currently active tab focused if it is
+   * an interactive non-projection page (such as an open MetaApp), instead of
+   * covering it with the Live Stage tab.
+   */
+  preserveActiveInteractiveTab?: boolean;
+}
+
 export interface SessionTabBinding {
   attach(host: SessionTabHost): void;
   rememberOpenSession(sessionId: string | null): void;
-  prepareDraftTab(metabotId?: number | null): Promise<number | null>;
+  prepareDraftTab(metabotId?: number | null, options?: RevealSessionTabOptions): Promise<number | null>;
   /**
    * Ensure the prewarmed draft tab exists on the stage entry, then patch its
    * frame with the selected bot's draft identity (metabotId null → the
@@ -58,7 +68,7 @@ export interface SessionTabBinding {
    */
   prepareDraftIdentity(metabotId: number | null): Promise<void>;
   bindNewSession(sessionId: string): Promise<void>;
-  revealSessionTab(sessionId: string): Promise<void>;
+  revealSessionTab(sessionId: string, options?: RevealSessionTabOptions): Promise<void>;
   restoreLastSession(): Promise<void>;
   controlSessionTab(
     command: BotBrowserTabCommand & { sessionId: string },
@@ -89,6 +99,18 @@ const isLiveStagePageUri = (uri: string | null | undefined): boolean => {
   if (!value) return false;
   if (value.includes('/reports/live-stage-')) return true;
   return value.includes('/live-stage/') && /\/stage\.html(?:[?#]|$)/.test(value);
+};
+
+/**
+ * True when `tab` is a live interactive non-projection page (e.g. an open
+ * `metaapp://`, `metaid://`, `https://`, or non-`/reports/` preview app) that
+ * the owner is actively viewing and must not have covered on prompt submit.
+ */
+const isInteractiveNonProjectionTab = (tab: BotBrowserTabInfo | null | undefined): boolean => {
+  const value = uriOf(tab);
+  if (!value || isLiveStagePageUri(value)) return false;
+  if (value.includes('welcome-genesis') || value.includes('/reports/')) return false;
+  return true;
 };
 
 const roleOf = (command: Pick<BotBrowserTabCommand, 'role'>): SessionTabRole =>
@@ -568,13 +590,18 @@ export function createSessionTabBinding(): SessionTabBinding {
    * already on the entry URI counts as reusable too (covers the second
    * prewarm entry point firing after the first draft navigated).
    */
-  const prepareDraftTab = (explicitMetabotId?: number | null): Promise<number | null> => {
+  const prepareDraftTab = (
+    explicitMetabotId?: number | null,
+    options?: RevealSessionTabOptions,
+  ): Promise<number | null> => {
     prepareDraftPromise ??= enqueue(async () => {
       try {
         const uri = await stageEntryUri();
         const snapshot = await listTabs();
         const tabs = snapshot?.tabs ?? [];
         const active = snapshot?.activeTab ?? tabs.find((tab) => tab.isActive) ?? null;
+        const keepActiveInteractive =
+          options?.preserveActiveInteractiveTab === true && isInteractiveNonProjectionTab(active);
         const entryUri = uri?.toLowerCase() ?? null;
         const onEntry = (tab: BotBrowserTabInfo): boolean =>
           entryUri != null && browserUrisMatch(uriOf(tab), entryUri);
@@ -600,7 +627,7 @@ export function createSessionTabBinding(): SessionTabBinding {
               activate: false,
             });
           }
-          if (!existingBotStage.isActive) {
+          if (!keepActiveInteractive && !existingBotStage.isActive) {
             await controlTabs({ action: 'switch-tab', tabId: existingBotStage.id });
           }
           return existingBotStage.id;
@@ -631,7 +658,7 @@ export function createSessionTabBinding(): SessionTabBinding {
             });
             if (!navigated) throw new Error(`Bot Browser tab ${draft.id} could not be navigated.`);
           }
-          if (!draft.isActive) {
+          if (!keepActiveInteractive && !draft.isActive) {
             await controlTabs({ action: 'switch-tab', tabId: draft.id });
           }
           return pendingDraftTabId;
@@ -649,6 +676,9 @@ export function createSessionTabBinding(): SessionTabBinding {
               activate: false,
             });
           }
+        }
+        if (keepActiveInteractive && active && pendingDraftTabId != null && active.id !== pendingDraftTabId) {
+          await controlTabs({ action: 'switch-tab', tabId: active.id });
         }
         return pendingDraftTabId;
       } catch {
@@ -721,11 +751,14 @@ export function createSessionTabBinding(): SessionTabBinding {
 
   const reveal = async (
     sessionId: string,
-    options?: { restoreLastActiveRole?: boolean },
+    options?: { restoreLastActiveRole?: boolean; preserveActiveInteractiveTab?: boolean },
   ): Promise<void> => {
     ensurePagesLoaded();
     const snapshot = await listTabs();
     const tabs = snapshot?.tabs ?? [];
+    const activeBefore = snapshot?.activeTab ?? tabs.find((tab) => tab.isActive) ?? null;
+    const keepCurrentInteractiveTab =
+      options?.preserveActiveInteractiveTab === true && isInteractiveNonProjectionTab(activeBefore);
     const page = pageFor(sessionId);
     const wantShowcaseActive = options?.restoreLastActiveRole === true
       && page != null
@@ -738,7 +771,7 @@ export function createSessionTabBinding(): SessionTabBinding {
     const stageTab = liveBoundTab(sessionId, 'stage', tabs);
     let stageAvailable = Boolean(stageTab);
     if (stageTab) {
-      if (!wantShowcaseActive && !stageTab.isActive) {
+      if (!keepCurrentInteractiveTab && !wantShowcaseActive && !stageTab.isActive) {
         await controlTabs({ action: 'switch-tab', tabId: stageTab.id });
         rememberActiveRole(sessionId, 'stage');
       }
@@ -751,10 +784,10 @@ export function createSessionTabBinding(): SessionTabBinding {
           role: 'stage',
           action: 'open-tab',
           uri: stageUri,
-          activate: true,
+          activate: !keepCurrentInteractiveTab,
           matchByUri: false,
         });
-      } else {
+      } else if (!keepCurrentInteractiveTab) {
         // No stage entry available (prewarm IPC missing): keep the legacy
         // behavior of restoring the session's last showcase page.
         await ensureSessionTab({
@@ -778,10 +811,10 @@ export function createSessionTabBinding(): SessionTabBinding {
           action: 'open-tab',
           uri: page.uri,
           ...(page.title ? { label: page.title } : {}),
-          activate: wantShowcaseActive,
+          activate: !keepCurrentInteractiveTab && wantShowcaseActive,
           matchByUri: true,
         });
-      } else if (wantShowcaseActive && !showcaseTab.isActive) {
+      } else if (!keepCurrentInteractiveTab && wantShowcaseActive && !showcaseTab.isActive) {
         await controlTabs({ action: 'switch-tab', tabId: showcaseTab.id });
         rememberActiveRole(sessionId, 'showcase');
       }
@@ -793,9 +826,9 @@ export function createSessionTabBinding(): SessionTabBinding {
     }
   };
 
-  const revealSessionTab = (sessionId: string): Promise<void> => enqueue(async () => {
+  const revealSessionTab = (sessionId: string, options?: RevealSessionTabOptions): Promise<void> => enqueue(async () => {
     try {
-      await reveal(sessionId);
+      await reveal(sessionId, { preserveActiveInteractiveTab: options?.preserveActiveInteractiveTab });
     } catch {
       // Session selection remains usable when the Browser bridge is unavailable.
     }

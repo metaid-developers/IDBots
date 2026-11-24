@@ -46,7 +46,7 @@ test('run cards live in one height-capped, internally scrolling container', () =
   assert.match(tag, /max-h-\[min\(420px,50vh\)\]/, 'the list needs a bounded max height');
   assert.match(tag, /overflow-y-auto/, 'overflow must scroll inside the container');
   assert.match(tag, /overscroll-contain/, 'scroll chaining to the page is suppressed');
-  assert.match(tag, /space-y-3/, 'the card stack keeps its original spacing');
+  assert.match(tag, /divide-y/, 'the run rows stay cleanly separated inside the list');
 
   // The cap is a static class, never templated from data: that is exactly what
   // makes the panel height independent of the number of surf runs.
@@ -54,12 +54,12 @@ test('run cards live in one height-capped, internally scrolling container', () =
   assert.ok(!/runs\.length/.test(tag), 'the container tag must not read runs.length');
 });
 
-test('runs.map(renderRunCard) renders INSIDE that container', () => {
+test('runs.map(renderRunRow) renders INSIDE that container', () => {
   const source = read(PANEL);
   const { slotIndex, tagEnd } = listContainerTag(source);
 
-  const mapIndex = source.indexOf('{runs.map(renderRunCard)}');
-  assert.ok(mapIndex > 0, 'runs.map(renderRunCard) must still drive the list');
+  const mapIndex = source.indexOf('{runs.map(renderRunRow)}');
+  assert.ok(mapIndex > 0, 'runs.map(renderRunRow) must still drive the list');
   assert.ok(mapIndex > slotIndex, 'the cards must come after the container opens');
   assert.ok(mapIndex > tagEnd, 'the cards must come after the container tag closes');
   // Nothing may close the container between its opening tag and the cards, so
@@ -103,9 +103,9 @@ test('empty states and panel error stay OUTSIDE the capped list', () => {
   assert.ok(errorIndex > 0, 'the panel error branch must still exist');
   assert.ok(errorIndex < slotIndex, 'the panel error renders before the list container');
 
-  // Wording / markup of both hints are unchanged where they existed before.
-  assert.match(source, /<p className="text-xs text-red-600 dark:text-red-400">\{panelError\}<\/p>/);
-  assert.match(source, /<p className=\{hintClass\}>\{i18nService\.t\('surfReportsEmpty'\)\}<\/p>/);
+  // Wording / markup of error and empty hints remain present outside the capped list.
+  assert.match(source, /<p className="text-xs text-red-600 dark:text-rose-400">\{panelError\}<\/p>/);
+  assert.match(source, /\{i18nService\.t\('surfReportsEmpty'\)\}/);
 });
 
 test('expanding a run scrolls its card into view, with an existence guard', () => {
@@ -162,10 +162,10 @@ test('the header keeps a diary-style date chip that pops the calendar overlay', 
   // Owner 2026-11-18 02:0x: no resident calendar. The chip labels the
   // selected day and opens the popup; the calendar renders ONLY inside the
   // fixed overlay that the chip toggles, and a pick closes it.
-  const chipClassIndex = source.indexOf('h-[26px]');
-  assert.ok(chipClassIndex > 0, 'the date chip must use the dream-diary 26px chip classes');
+  const chipClassIndex = source.indexOf('!h-7');
+  assert.ok(chipClassIndex > 0, 'the date chip must use the compact Studio Linear chip classes');
   const overlayClassIndex = source.indexOf(
-    'fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-2xl p-2',
+    'fixed z-40 rounded-[10px] border border-slate-900/[0.12] dark:border-white/[0.12] dark:bg-[#182538] bg-white shadow-2xl p-2',
   );
   assert.ok(overlayClassIndex > chipClassIndex, 'the popup overlay must follow the date chip');
   const calIndex = source.indexOf('<MiniMonthCalendar');
