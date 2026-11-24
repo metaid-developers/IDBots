@@ -597,7 +597,10 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
           <RailButton
             itemId={processesItem.id}
             label={processesItem.label}
-            active={mode === 'browser' ? internetPane === 'processes' : processCenterActive}
+            // The entry is a CONTROL now (floatwin §1.2): its active state is
+            // "the floatwin is open", on BOTH faces — not "this pane is the
+            // destination" (the rail never switches the pane for it anymore).
+            active={processCenterActive || (mode === 'browser' && internetPane === 'processes')}
             hasIndicator={processesItem.hasIndicator}
             indicatorKind={processesItem.indicatorKind}
             indicatorLabel={processesItem.indicatorLabel}

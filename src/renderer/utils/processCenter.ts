@@ -429,21 +429,49 @@ export type ProcessZone = 'orch' | 'scheduled' | 'longterm';
  * the strip and the rows already use — no new table, no second policy.
  */
 
-/** The panel's top tabs, in rail order: 动态 first, then the three sources. */
-export type ProcessHubTab = 'dynamic' | ProcessZone;
+/* ─────────── v6: 三入口重切 (owner approval 2026-11-24 17:23, M3=A / M4=A) ───────────
+ *
+ * The four tabs were a SOURCE list (动态 + 编排 + 定时 + 长期). The owner's cut
+ * is WHO started the process:
+ *
+ *   动态 dynamic       跨来源的时间切口 — 正在运行 + 最近结束 (never a "class")
+ *   自主 autonomous    bot 自己开的：定时 + 长期 + 夜间做梦 + AI 冲浪
+ *   编排 orch          只收 autoOrigin='orchestration'（人开的会话移出，M4=A）
+ *
+ * 已归档 is a terminal-state entry shared by all three (footer), not a tab.
+ * Sources inside 自主 are FILTER CHIPS (M3=A), not tabs — a chip narrows the
+ * list it sits above and never re-partitions the process set.
+ */
+export type ProcessHubTab = 'dynamic' | 'autonomous' | 'orch';
 
 export const PROCESS_HUB_TAB_ORDER: readonly ProcessHubTab[] = [
   'dynamic',
+  'autonomous',
   'orch',
-  'scheduled',
-  'longterm',
 ];
 
 export const PROCESS_HUB_TAB_LABEL_KEY: Record<ProcessHubTab, string> = {
   dynamic: 'processTabDynamic',
+  autonomous: 'processTabAutonomous',
   orch: 'processZoneOrch',
-  scheduled: 'processZoneScheduled',
-  longterm: 'processZoneLongterm',
+};
+
+/** The 自主 tab's source chips, in render order. 'all' is not a source — it is
+ * the chip row's default (no filter). */
+export type ProcessAutonomousSource = 'scheduled' | 'longterm' | 'dream' | 'surf';
+
+export const PROCESS_AUTONOMOUS_SOURCE_ORDER: readonly ProcessAutonomousSource[] = [
+  'scheduled',
+  'longterm',
+  'dream',
+  'surf',
+];
+
+export const PROCESS_AUTONOMOUS_SOURCE_LABEL_KEY: Record<ProcessAutonomousSource, string> = {
+  scheduled: 'processSourceScheduled',
+  longterm: 'processSourceLongterm',
+  dream: 'processSourceDream',
+  surf: 'processSourceSurf',
 };
 
 /** 最近结束 mounts this many rows before the "show more" step takes over. */
@@ -621,6 +649,90 @@ export const buildProcessDynamic = (entries: readonly ProcessEntry[]): ProcessDy
   return { running, recentlyEnded, completedCount, failedCount };
 };
 
+/* ───────────── v6: 三入口的数据判据 (M3=A / M4=A / N6) ─────────────
+ *
+ * N6 — the historical `auto_origin` hole: before the column existed, an
+ * orchestration run was written with auto_origin NULL (read as "人发起"). A
+ * strict 编排 tab would therefore hide every pre-column orchestration run.
+ * The judgment is READ-TIME only (no DB backfill): a NULL-origin row whose
+ * title carries the orchestration prefix (`[督办]` / `[编排任务]`) is treated
+ * as orchestration. That prefix is the fact the title is built from
+ * (`runOrchestratorSkillTurn` → `[编排任务] …`), so it is evidence, not a guess;
+ * nothing else is reclassified and no row is ever rewritten.
+ */
+const ORCHESTRATION_TITLE_PREFIX = /^\[(?:督办|编排任务)\]\s*/;
+
+export const effectiveAutoOriginOf = (
+  session: Pick<CoworkSessionSummary, 'autoOrigin' | 'title'>,
+): CoworkSessionAutoOrigin | null => {
+  if (session.autoOrigin) return session.autoOrigin;
+  return ORCHESTRATION_TITLE_PREFIX.test(String(session.title ?? '').trim())
+    ? 'orchestration'
+    : null;
+};
+
+/** 编排 tab membership: strictly the orchestration creation fact (N6-aware). */
+export const isOrchestrationProcess = (
+  session: Pick<CoworkSessionSummary, 'autoOrigin' | 'title'>,
+): boolean => effectiveAutoOriginOf(session) === 'orchestration';
+
+/** 人开的会话 that are still processes (manual 'in' or a persisted marker).
+ * With M4=A they no longer belong to 编排; 动态 renders them in the folded
+ * 「未归属的人工会话(n)」 strip so they cannot disappear from the UI. */
+export const buildUnassignedHumanEntries = (entries: readonly ProcessEntry[]): ProcessEntry[] =>
+  sortEntries(entries.filter((entry) => effectiveAutoOriginOf(entry.session) === null));
+
+/** The 编排 tab's tree: strictly orchestration rows, same tree builder. */
+export const buildOrchestrationZone = (entries: readonly ProcessEntry[]): ProcessZoneModel => {
+  const rows = entries.filter((entry) => isOrchestrationProcess(entry.session));
+  return { zone: 'orch', nodes: buildProcessTree(rows), runCount: rows.length };
+};
+
+/** Everything the 自主 tab renders, before its chip filter is applied. */
+export interface ProcessAutonomousModel {
+  scheduled: ProcessEntry[];
+  longterm: ProcessEntry[];
+  /** 定时 + 长期 runs (the session-backed half; dream/surf ride in separately). */
+  totalRuns: number;
+}
+
+/**
+ * 自主 = every process the bot started itself (M3=A): 定时 + 长期. The two
+ * automation sources (做梦 / 冲浪) are first-class display items but they are
+ * RUN rows, so their counts ride in from the panel and are added to the badge
+ * separately (`countAutonomousRuns`).
+ */
+export const buildProcessAutonomous = (entries: readonly ProcessEntry[]): ProcessAutonomousModel => {
+  const scheduled: ProcessEntry[] = [];
+  const longterm: ProcessEntry[] = [];
+  for (const entry of entries) {
+    const origin = effectiveAutoOriginOf(entry.session);
+    if (origin === 'schedule') scheduled.push(entry);
+    else if (origin === 'longterm') longterm.push(entry);
+  }
+  scheduled.sort(NEWEST_FIRST);
+  longterm.sort(NEWEST_FIRST);
+  return { scheduled, longterm, totalRuns: scheduled.length + longterm.length };
+};
+
+/** The 自主 tab badge = 定时 runs + 长期 runs + dream/surf runs (ONE unit). */
+export const countAutonomousRuns = (
+  model: Pick<ProcessAutonomousModel, 'totalRuns'>,
+  automationRunCount: number,
+): number => model.totalRuns + Math.max(0, automationRunCount);
+
+/** Per-chip counts, in chip order: ['all', ...sources]. */
+export const autonomousChipCounts = (
+  model: ProcessAutonomousModel,
+  automationRunCounts: Readonly<Record<'dream' | 'surf', number>>,
+): { all: number; scheduled: number; longterm: number; dream: number; surf: number } => ({
+  all: model.totalRuns + automationRunCounts.dream + automationRunCounts.surf,
+  scheduled: model.scheduled.length,
+  longterm: model.longterm.length,
+  dream: automationRunCounts.dream,
+  surf: automationRunCounts.surf,
+});
+
 /* ───────────── v3: hub view state + Twin steering prompt ─────────────
  *
  * Owner order 2026-11-21 17:45 (two interaction cuts):
@@ -648,6 +760,20 @@ export interface ProcessHubViewState {
    * exactly the height of the fold that was no longer expanded.
    */
   expandedTaskKeys: string[];
+  /**
+   * N4 — the floatwin's own state, persisted PER FACE (Home / Internet). The
+   * hub is no longer a column destination: it opens as a 900×80vh overlay, and
+   * closing it must not throw away "I had it open" on the face it was opened
+   * from. `lastSessionId` is the process the owner last stepped into FROM the
+   * floatwin, so reopening can land back on that context.
+   */
+  floatwin: ProcessFloatwinViewState;
+}
+
+/** N4: the overlay's persisted slice (per face — one object sits in each face's ref). */
+export interface ProcessFloatwinViewState {
+  open: boolean;
+  lastSessionId: string | null;
 }
 
 export const DEFAULT_PROCESS_HUB_VIEW_STATE: ProcessHubViewState = {
@@ -655,6 +781,19 @@ export const DEFAULT_PROCESS_HUB_VIEW_STATE: ProcessHubViewState = {
   archivedMode: false,
   scrollTop: 0,
   expandedTaskKeys: [],
+  floatwin: { open: false, lastSessionId: null },
+};
+
+/** Read a persisted floatwin slice defensively (old refs have no field). */
+export const processFloatwinStateOf = (
+  state: Partial<ProcessHubViewState> | null | undefined,
+): ProcessFloatwinViewState => {
+  const value = state?.floatwin;
+  if (!value || typeof value !== 'object') return { open: false, lastSessionId: null };
+  const lastSessionId = typeof value.lastSessionId === 'string' && value.lastSessionId.trim()
+    ? value.lastSessionId.trim()
+    : null;
+  return { open: value.open === true, lastSessionId };
 };
 
 /** Shown in the prompt where a field could not be read (never silently blank). */

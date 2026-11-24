@@ -10,6 +10,7 @@ import {
   ExclamationTriangleIcon,
   HandRaisedIcon,
   LockClosedIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { StopIcon } from '@heroicons/react/24/solid';
 import { RootState } from '../../store';
@@ -19,15 +20,21 @@ import { setNewTaskMetabotId } from '../../store/slices/coworkSlice';
 import { SessionAvatarCircle, formatRelativeTime } from './CoworkSessionItem';
 import type { CoworkPermissionRequest } from '../../types/cowork';
 import {
+  autonomousChipCounts,
   buildArchivedProcessEntries,
+  buildOrchestrationZone,
+  buildProcessAutonomous,
   buildProcessDynamic,
   buildProcessGateEntries,
-  buildProcessZones,
+  buildUnassignedHumanEntries,
   buildTwinSteeringPrompt,
   countAwaitingProcesses,
+  countAutonomousRuns,
   countBotSelfDigested,
   lastAssistantDigest,
   openDecisionIdsForSession,
+  PROCESS_AUTONOMOUS_SOURCE_LABEL_KEY,
+  PROCESS_AUTONOMOUS_SOURCE_ORDER,
   PROCESS_HUB_TAB_LABEL_KEY,
   PROCESS_HUB_TAB_ORDER,
   PROCESS_KIND_LABEL_KEY,
@@ -43,6 +50,7 @@ import {
   retrySteerVisible,
   rowValveLevelOf,
   splitProcessHub,
+  type ProcessAutonomousSource,
   type ProcessEntry,
   type ProcessHubTab,
   type ProcessState,
@@ -51,6 +59,14 @@ import {
   type ProcessTreeNode,
   type ProcessZone,
 } from '../../utils/processCenter';
+import {
+  automationEntriesFor,
+  automationRunCounts,
+  buildAutomationEntries,
+  type ProcessAutomationEntry,
+  type ProcessDreamRunLike,
+  type ProcessSurfRunLike,
+} from '../../utils/processAutomation';
 import { setLineageBucket, useLineageOverrides } from '../../utils/processHubLineageStore';
 import ProcessSparkline from './ProcessSparkline';
 import {
@@ -269,6 +285,152 @@ const useSessionSparks = (
     };
   }, [idsKey, refreshKey]);
   return sparks;
+};
+
+/* ─────────── 自主进程 · 做梦 / 冲浪 (owner 2026-11-24 17:23) ───────────
+ *
+ * Both are bot-initiated runs with their own existing read IPC:
+ *   dream:listRuns({metabotId})   → metabot_dream_runs
+ *   surf:listRuns(metabotId)      → metaweb_surf_runs
+ * No new channel is introduced. The six-hour budget per bot is deliberate: a
+ * hub mount is a read, and a bot with no automation rows is a cheap empty read.
+ * A failed read degrades to "no automation rows" — the hub never invents one.
+ */
+const AUTOMATION_READ_PER_BOT = 6;
+
+interface ProcessAutomationBot {
+  id: number;
+  name: string;
+  avatar: string | null;
+}
+
+const useProcessAutomationRuns = (enabled: boolean): {
+  entries: ProcessAutomationEntry[];
+  bots: Record<number, ProcessAutomationBot>;
+} => {
+  const [entries, setEntries] = useState<ProcessAutomationEntry[]>([]);
+  const [botsById, setBotsById] = useState<Record<number, ProcessAutomationBot>>({});
+  const isStreaming = useSelector((state: RootState) => state.cowork.isStreaming);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let cancelled = false;
+    const read = async () => {
+      const listResult = await window.electron?.metabot?.list?.();
+      const bots = listResult?.list ?? [];
+      const ids = bots
+        .map((bot) => Number(bot?.id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+      const identity: Record<number, ProcessAutomationBot> = {};
+      for (const bot of bots) {
+        const id = Number(bot?.id);
+        if (!Number.isInteger(id) || id <= 0) continue;
+        identity[id] = {
+          id,
+          name: String(bot?.name ?? '').trim() || `#${id}`,
+          avatar: typeof bot?.avatar === 'string' && bot.avatar ? bot.avatar : null,
+        };
+      }
+      const dreamRows: ProcessDreamRunLike[] = [];
+      const surfRows: ProcessSurfRunLike[] = [];
+      for (const metabotId of ids) {
+        try {
+          const result = await window.electron?.dream?.listRuns?.({ metabotId, limit: AUTOMATION_READ_PER_BOT });
+          for (const row of Array.isArray(result?.runs) ? result.runs : []) {
+            if (row && typeof row.id === 'string') dreamRows.push(row as ProcessDreamRunLike);
+          }
+        } catch {
+          // Degrade: one bot's failed read must not blank the section.
+        }
+        try {
+          const result = await window.electron?.surf?.listRuns?.(metabotId, AUTOMATION_READ_PER_BOT);
+          for (const row of Array.isArray(result?.runs) ? result.runs : []) {
+            if (row && typeof row.id === 'string') surfRows.push(row as ProcessSurfRunLike);
+          }
+        } catch {
+          // Same degrade rule as the dream read above.
+        }
+      }
+      return { entries: buildAutomationEntries(dreamRows, surfRows), bots: identity };
+    };
+    void read()
+      .then((next) => {
+        if (cancelled) return;
+        setEntries(next.entries);
+        setBotsById(next.bots);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setEntries([]);
+        setBotsById({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, isStreaming]);
+  return { entries, bots: botsById };
+};
+
+/** 自主 · 做梦 / 冲浪 run row (owner requirement 2026-11-24 17:23).
+ *
+ * It reuses the run row's OWN semantics (dot = three-state band, bot = tail
+ * signature, relative stamp) instead of inventing an automation card: a bot's
+ * nightly dream and its surf are runs like any other, they just have no
+ * cowork session to open. No valve, no jump — display only. */
+const ProcessAutomationRow: React.FC<{
+  entry: ProcessAutomationEntry;
+  nowMs: number;
+  bot: ProcessAutomationBot | null;
+}> = ({ entry, nowMs, bot }) => {
+  const sourceLabel = i18nService.t(
+    entry.source === 'dream' ? 'processSourceDream' : 'processSourceSurf',
+  );
+  const stateLabel = i18nService.t(entry.statusKind === 'live' ? 'processStateLive' : 'processStateDead');
+  const dotColor = entry.error
+    ? PROCESS_STATE_DOT_COLOR.error
+    : entry.statusKind === 'live'
+      ? PROCESS_STATE_DOT_COLOR.live
+      : PROCESS_STATE_DOT_COLOR.dead;
+  const stamp = formatRelativeTime(entry.startedAt, nowMs).compact;
+  return (
+    <div
+      data-testid="process-automation-row"
+      data-automation-source={entry.source}
+      data-automation-status={entry.error ? 'failed' : entry.statusKind}
+      title={[sourceLabel, entry.detail, stateLabel, entry.errorText].filter(Boolean).join(' · ')}
+      className="flex h-[32px] items-center gap-2 rounded-[8px] border border-claude-border/60 px-2 dark:border-claude-darkBorder/60"
+    >
+      <span
+        aria-hidden
+        className={`h-2 w-2 flex-shrink-0 rounded-full ${entry.statusKind === 'live' && !entry.error ? 'process-dot-live' : ''}`}
+        style={{ backgroundColor: dotColor }}
+      />
+      <span className="min-w-0 truncate text-[12.5px] font-medium dark:text-claude-darkText text-claude-text">
+        {sourceLabel}
+      </span>
+      {entry.detail ? (
+        <span className="min-w-0 truncate text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          {entry.detail}
+        </span>
+      ) : null}
+      <span className="ml-auto flex-shrink-0 text-[10.5px] tabular-nums dark:text-claude-darkTextSecondary text-claude-textSecondary">
+        {entry.error ? `${i18nService.t('notificationsGroupFailed')} · ` : ''}{stamp}
+      </span>
+      <span className="flex w-[86px] flex-shrink-0 items-center justify-end gap-1">
+        {bot ? (
+          <>
+            <SessionAvatarCircle src={bot.avatar} name={bot.name} sizeClass="h-4 w-4" />
+            <span className="min-w-0 truncate text-[10.5px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {bot.name}
+            </span>
+          </>
+        ) : (
+          <span className="min-w-0 truncate text-[10.5px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {i18nService.t('processUnattributedBot')}
+          </span>
+        )}
+      </span>
+    </div>
+  );
 };
 
 /** A run row: one session. `depth` 1 means it sits under a task parent. */
@@ -1088,7 +1250,7 @@ const ProcessDecisionBlock: React.FC<{
           data-testid="process-decision-block-label"
           className="min-w-0 truncate text-[11.5px] font-semibold dark:text-claude-darkText text-claude-text"
         >
-          {i18nService.t('processDecisionBlockLabel')}
+          {i18nService.t('processDecisionBlockLabelCount').replace('{count}', String(decisions.length))}
         </span>
         <span
           data-testid="process-decision-count"
@@ -1121,7 +1283,13 @@ const ProcessCenterPanel: React.FC<{
    * the App shell on every pixel.
    */
   viewStateRef?: React.MutableRefObject<ProcessHubViewState>;
-}> = ({ onOpenProcess, viewStateRef }) => {
+  /**
+   * Floatwin shell's explicit exit (M1=B). Rendered as the top-right X of the
+   * header — the 右上显式关闭 — and only when the panel is mounted INSIDE the
+   * floatwin (the pane mount passes none, so the pane has no fake close).
+   */
+  onRequestClose?: () => void;
+}> = ({ onOpenProcess, viewStateRef, onRequestClose }) => {
   const dispatch = useDispatch();
   const lineageOverrides = useLineageOverrides();
   const { model, nowMs } = useProcessHubModel(lineageOverrides);
@@ -1331,10 +1499,33 @@ const ProcessCenterPanel: React.FC<{
 
   const awaitingCount = countAwaitingProcesses(model);
   const botCount = countBotSelfDigested(model);
-  const zones = useMemo(() => buildProcessZones(model.running), [model.running]);
   // 动态 is a re-projection of the SAME byStatus model (live / dead); pending
   // runs stay in the strip above, never in either band.
   const dynamic = useMemo(() => buildProcessDynamic(model.running), [model.running]);
+  // v6 三入口 (owner approval 2026-11-24 17:23):
+  //   自主 = 定时 + 长期 (chips) + 做梦 / 冲浪 (run rows);
+  //   编排 = STRICTLY autoOrigin='orchestration' (N6 read-time prefix fallback);
+  //   人开的会话 are lifted out of 编排 into the dynamic page's folded strip.
+  const autonomousModel = useMemo(() => buildProcessAutonomous(model.running), [model.running]);
+  const orchestrationZone = useMemo(
+    () => buildOrchestrationZone(model.running),
+    [model.running],
+  );
+  const unassignedHumanEntries = useMemo(
+    () => buildUnassignedHumanEntries(model.running),
+    [model.running],
+  );
+  const automation = useProcessAutomationRuns(true);
+  const automationEntries = automation.entries;
+  const automationBots = automation.bots;
+  const automationCounts = useMemo(() => automationRunCounts(automationEntries), [automationEntries]);
+  const chipCounts = useMemo(
+    () => autonomousChipCounts(autonomousModel, automationCounts),
+    [autonomousModel, automationCounts],
+  );
+  // The 自主 chip filter (M3=A): null = 全部, otherwise one source.
+  const [autonomousChip, setAutonomousChip] = useState<ProcessAutonomousSource | null>(null);
+  const [unassignedExpanded, setUnassignedExpanded] = useState(false);
   const liveActionLines = useLiveActionLines(dynamic.running);
   // 火花线: one batched read for every run row the hub can paint (the same
   // entries the two buckets above carry). A finished turn re-reads it.
@@ -1345,10 +1536,20 @@ const ProcessCenterPanel: React.FC<{
   );
   const sessionSparks = useSessionSparks(sparkEntries, isStreamingNow ? 'live' : 'idle');
   // The zone whose tree a NON-dynamic tab renders; 动态 has no zone of its own.
-  const activeZone: ProcessZone = tab === 'dynamic' ? 'orch' : tab;
-  const zoneModel = tab === 'dynamic' ? null : zones[tab];
+  const zoneModel = tab === 'orch' ? orchestrationZone : null;
   const nodes = zoneModel ? zoneModel.nodes.slice(0, visibleNodes) : [];
   const endedRows = dynamic.recentlyEnded.slice(0, endedVisible);
+  /** 自主 chip filter, applied to the two session-backed sources. */
+  const autonomousScheduledRows = autonomousChip == null || autonomousChip === 'scheduled'
+    ? autonomousModel.scheduled
+    : [];
+  const autonomousLongtermRows = autonomousChip == null || autonomousChip === 'longterm'
+    ? autonomousModel.longterm
+    : [];
+  const autonomousAutomationRows = automationEntriesFor(
+    automationEntries,
+    autonomousChip === 'dream' || autonomousChip === 'surf' ? autonomousChip : null,
+  ).filter((entry) => autonomousChip == null || entry.source === autonomousChip);
 
   const handleArchive = (sessionId: string) => {
     void coworkService.archiveSession(sessionId);
@@ -1430,7 +1631,8 @@ const ProcessCenterPanel: React.FC<{
           role="tablist"
           aria-label={i18nService.t('processCenterTitle')}
           data-testid="process-zones"
-          className="ml-auto grid h-[32px] grid-cols-4 gap-0 overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80"
+          data-process-tab-count="3"
+          className="ml-auto grid h-[32px] grid-cols-3 gap-0 overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80"
         >
           {PROCESS_HUB_TAB_ORDER.map((key) => {
             const selected = key === tab;
@@ -1444,7 +1646,13 @@ const ProcessCenterPanel: React.FC<{
             // the unit the rest of the panel already counts: the 正在运行 header,
             // the 最近结束 done/failed split, the rail's 待你拍板 badge, and the
             // task row's own "{n} 次执行" tag.
-            const count = key === 'dynamic' ? dynamic.running.length : zones[key].runCount;
+            // v6: 自主 = 定时 + 长期 + 做梦/冲浪 runs (owner 17:23 extended the
+            // source set); 编排 = the strict orchestration run count.
+            const count = key === 'dynamic'
+              ? dynamic.running.length
+              : key === 'autonomous'
+                ? countAutonomousRuns(autonomousModel, automationEntries.length)
+                : orchestrationZone.runCount;
             return (
               <button
                 key={key}
@@ -1481,6 +1689,18 @@ const ProcessCenterPanel: React.FC<{
             );
           })}
         </div>
+        {onRequestClose ? (
+          <button
+            type="button"
+            data-testid="process-floatwin-close"
+            aria-label={i18nService.t('processFloatwinClose')}
+            title={i18nService.t('processFloatwinClose')}
+            onClick={onRequestClose}
+            className="ml-1 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[var(--shape-radius-xs)] text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
+          >
+            <XMarkIcon className="h-4 w-4" />
+          </button>
+        ) : null}
       </div>
 
       {/* 待你拍板 strip (spec ②): always on, above the tree, one source of truth
@@ -1688,6 +1908,126 @@ const ProcessCenterPanel: React.FC<{
                   </div>
                 ))}
             </section>
+
+            {/* M4=A 兜底: 人开的会话 no longer belong to 编排 — they would
+                otherwise vanish from the hub while alive. Folded by default;
+                the count is honest (only live/human-origin process rows). */}
+            {unassignedHumanEntries.length > 0 ? (
+              <section
+                data-testid="process-unassigned-humans"
+                data-unassigned-count={unassignedHumanEntries.length}
+              >
+                <button
+                  type="button"
+                  data-testid="process-unassigned-toggle"
+                  aria-expanded={unassignedExpanded}
+                  onClick={() => setUnassignedExpanded((previous) => !previous)}
+                  className="flex w-full items-center gap-1.5 px-1 pb-1 text-left text-[11px] font-semibold uppercase tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary"
+                >
+                  <span aria-hidden className="flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center">
+                    {unassignedExpanded ? <ChevronDownIcon className="h-3 w-3" /> : <ChevronRightIcon className="h-3 w-3" />}
+                  </span>
+                  {i18nService.t('processUnassignedHumans').replace('{count}', String(unassignedHumanEntries.length))}
+                </button>
+                {unassignedExpanded ? (
+                  <div data-testid="process-unassigned-list" className="flex flex-col gap-1.5">
+                    {unassignedHumanEntries.map((entry) => renderRun(entry, 0, rowValveLevelOf(entry.session)))}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+          </div>
+        ) : tab === 'autonomous' ? (
+          /* 自主进程 (M3=A): source chips + the source-filtered list. 做梦 /
+             冲浪 ride the SAME row language as 定时 / 长期 runs; they are run
+             rows, not sessions, and carry no valve (nothing to archive/remove). */
+          <div data-testid="process-autonomous-body" className="flex flex-col gap-3">
+            <div
+              role="tablist"
+              aria-label={i18nService.t('processTabAutonomous')}
+              data-testid="process-autonomous-chips"
+              className="flex flex-wrap items-center gap-1"
+            >
+              {([null, ...PROCESS_AUTONOMOUS_SOURCE_ORDER] as Array<ProcessAutonomousSource | null>).map((source) => {
+                const selected = autonomousChip === source;
+                const count = source == null ? chipCounts.all : chipCounts[source];
+                const label = source == null
+                  ? i18nService.t('processSourceAll')
+                  : i18nService.t(PROCESS_AUTONOMOUS_SOURCE_LABEL_KEY[source]);
+                return (
+                  <button
+                    key={source ?? 'all'}
+                    type="button"
+                    role="tab"
+                    data-autonomous-chip={source ?? 'all'}
+                    aria-selected={selected}
+                    onClick={() => setAutonomousChip(source)}
+                    className={`inline-flex h-[24px] items-center gap-1 rounded-[var(--shape-radius-xs)] border px-2 text-[11px] font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+                      selected
+                        ? 'border-claude-border bg-claude-accent text-claude-accentInk dark:border-claude-darkBorder'
+                        : 'border-claude-border/70 text-claude-textSecondary hover:bg-claude-surfaceHover dark:border-claude-darkBorder/70 dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover'
+                    }`}
+                  >
+                    {label}
+                    <span data-count-unit="runs" className="tabular-nums opacity-70">{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {autonomousScheduledRows.length > 0 ? (
+              <section data-testid="process-autonomous-scheduled" data-source-count={autonomousScheduledRows.length}>
+                <div className="px-1 pb-1 text-[11px] font-semibold uppercase tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('processSourceScheduled')} · {autonomousScheduledRows.length}
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {autonomousScheduledRows.map((entry) => renderRun(entry, 0, rowValveLevelOf(entry.session)))}
+                </div>
+              </section>
+            ) : null}
+
+            {autonomousLongtermRows.length > 0 ? (
+              <section data-testid="process-autonomous-longterm" data-source-count={autonomousLongtermRows.length}>
+                <div className="px-1 pb-1 text-[11px] font-semibold uppercase tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('processSourceLongterm')} · {autonomousLongtermRows.length}
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {autonomousLongtermRows.map((entry) => renderRun(entry, 0, rowValveLevelOf(entry.session)))}
+                </div>
+              </section>
+            ) : null}
+
+            {autonomousAutomationRows.length > 0 ? (
+              <section
+                data-testid="process-autonomous-automation"
+                data-source-count={autonomousAutomationRows.length}
+              >
+                <div className="px-1 pb-1 text-[11px] font-semibold uppercase tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('processAutomationSection')} · {autonomousAutomationRows.length}
+                </div>
+                <div data-testid="process-automation-list" className="flex flex-col gap-1.5">
+                  {autonomousAutomationRows.map((entry) => (
+                    <ProcessAutomationRow
+                      key={entry.key}
+                      entry={entry}
+                      nowMs={nowMs}
+                      bot={automationBots[entry.metabotId] ?? null}
+                    />
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {autonomousScheduledRows.length === 0
+              && autonomousLongtermRows.length === 0
+              && autonomousAutomationRows.length === 0 ? (
+              <p
+                data-testid="process-autonomous-empty"
+                className="rounded-[8px] border border-dashed border-claude-border px-3 py-4 text-center text-[11.5px] leading-5 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary text-claude-textSecondary"
+              >
+                {i18nService.t('processAutonomousEmpty')}
+              </p>
+            ) : null}
           </div>
         ) : !zoneModel || zoneModel.nodes.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-10 text-center">
@@ -1709,7 +2049,7 @@ const ProcessCenterPanel: React.FC<{
               {/* Same unit as the zone's tab badge (batch-A P1-4): a tab that
                   says 12 and a heading that says 4 for one zone is exactly the
                   "one position, two numbers" defect. */}
-              {i18nService.t(ZONE_LABEL_KEY[activeZone])} · {zoneModel.runCount}
+              {i18nService.t(ZONE_LABEL_KEY[zoneModel.zone])} · {zoneModel.runCount}
             </div>
             {nodes.map((node) => {
               if (!node.grouped) {
@@ -1763,7 +2103,7 @@ const ProcessCenterPanel: React.FC<{
           data-testid="process-archived-toggle"
           aria-pressed={archivedMode}
           onClick={() => setArchivedMode((previous) => !previous)}
-          className="ml-auto flex flex-shrink-0 items-center gap-1 text-[11.5px] font-semibold text-claude-accent transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+          className="ml-auto flex flex-shrink-0 items-center gap-1 text-[11.5px] font-semibold text-[#7A5F14] transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 dark:text-amber-200"
         >
           <ArchiveBoxIcon className="h-3.5 w-3.5" />
           {i18nService.t(archivedMode ? 'processArchivedBack' : 'processTabArchived')}

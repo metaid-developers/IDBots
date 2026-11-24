@@ -1464,6 +1464,17 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // v4 动态进程优先 (owner ruling 2026-11-23 00:09)：首屏=动态（正在运行 +
     // 最近结束），编排树/定时任务/长期工作降为二级页签，计数并入页签角标。
     processTabDynamic: '动态',
+    // v6 三入口 (owner approval 2026-11-24 17:23): 动态 / 自主 / 编排.
+    processTabAutonomous: '自主',
+    processSourceAll: '全部',
+    processSourceScheduled: '定时任务',
+    processSourceLongterm: '长期工作',
+    processSourceDream: '夜间做梦',
+    processSourceSurf: 'AI 冲浪',
+    processAutomationSection: '做梦 · 冲浪',
+    processAutonomousEmpty: 'bot 现在没有自己在跑的事',
+    processUnassignedHumans: '未归属的人工会话({count})',
+    processFloatwinClose: '关闭进程中心',
     processLiveSection: '正在运行',
     processLiveEmpty: '现在没有正在运行的进程',
     processLiveElapsed: '已跑 {duration}',
@@ -1473,7 +1484,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     processEndedEmpty: '还没有结束的进程',
     processUnattributedBot: '未归属 bot',
     // v2 返工 (2026-11-21 16:37): 待你拍板从页签降为常驻浮条；页签改为三区。
-    processZoneOrch: '编排树',
+    processZoneOrch: '编排',
     processZoneScheduled: '定时任务',
     processZoneLongterm: '长期工作',
     processAwaitingStripLabel: '待你拍板',
@@ -1524,6 +1535,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     processGateClassCapability: '能力·定位',
     processGateViewAction: '查看 · 去 owner 确认',
     processDecisionBlockLabel: '待拍板决策卡',
+    processDecisionBlockLabelCount: '决策卡 · {count}',
     processDecisionRecommend: '推荐',
     processDecisionApprove: '通过',
     processDecisionReject: '驳回',
@@ -5536,6 +5548,17 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // v4 live-first landing: 动态 = running now + recently finished; the three
     // sources become secondary tabs and carry their counts as tab badges.
     processTabDynamic: 'Live',
+    // v6 three entries: Live / Autonomous / Orchestration.
+    processTabAutonomous: 'Autonomous',
+    processSourceAll: 'All',
+    processSourceScheduled: 'Scheduled',
+    processSourceLongterm: 'Long-term',
+    processSourceDream: 'Nightly dream',
+    processSourceSurf: 'AI surf',
+    processAutomationSection: 'Dream · surf',
+    processAutonomousEmpty: 'Your bot has nothing of its own running right now',
+    processUnassignedHumans: 'Unassigned manual conversations ({count})',
+    processFloatwinClose: 'Close process hub',
     processLiveSection: 'Running now',
     processLiveEmpty: 'Nothing is running right now',
     processLiveElapsed: 'Running {duration}',
@@ -5591,6 +5614,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     processGateClassCapability: 'Capability · location',
     processGateViewAction: 'View · owner confirms there',
     processDecisionBlockLabel: 'Decision cards awaiting you',
+    processDecisionBlockLabelCount: 'Decision cards · {count}',
     processDecisionRecommend: 'Recommended',
     processDecisionApprove: 'Approve',
     processDecisionReject: 'Reject',

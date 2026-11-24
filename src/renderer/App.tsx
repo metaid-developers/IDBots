@@ -21,7 +21,13 @@ import WindowTitleBar from './components/window/WindowTitleBar';
 import { CoworkView } from './components/cowork';
 import CoworkPermissionOverlay from './components/cowork/CoworkPermissionOverlay';
 import ProcessCenterPanel from './components/cowork/ProcessCenterPanel';
-import { DEFAULT_PROCESS_HUB_VIEW_STATE, type ProcessHubViewState } from './utils/processCenter';
+import ProcessCenterFloatwin from './components/cowork/ProcessCenterFloatwin';
+import {
+  DEFAULT_PROCESS_HUB_VIEW_STATE,
+  processFloatwinStateOf,
+  type ProcessHubViewState,
+} from './utils/processCenter';
+import { announceFloatwinOpen } from './utils/floatwinRegistry';
 import AgentGameConsentCard from './components/agentGame/AgentGameConsentCard';
 import { configService } from './services/config';
 import { localStore } from './services/store';
@@ -774,6 +780,9 @@ const App: React.FC = () => {
   }, [isInitialized]);
 
   const handleShowSettings = useCallback((options?: SettingsOpenOptions) => {
+    // Settings and the Process Hub are the app's two 900×80vh floatwins:
+    // opening one must yield the other (M1=B / floatwin §1.2).
+    announceFloatwinOpen('settings');
     setSettingsOptions((prev) => ({
       initialTab: options?.initialTab,
       notice: options?.notice,
@@ -1082,8 +1091,11 @@ const App: React.FC = () => {
   // live in the removed type drawer and moved here with the single entry point.
   const handleSelectHomeSection = useCallback((section: BotHomeSection) => {
     botBrowserShell.switchToHome();
+    // 进程中心 is NOT a mainView anymore (floatwin §1.2): the rail intercepts
+    // it before this handler and opens the overlay. This branch only remains
+    // for type completeness — it lands on the Co-Work view, never on a pane.
     if (section === 'processes') {
-      setMainView('processes');
+      setMainView('cowork');
     } else if (section === 'longTerm') {
       setMainView('scheduledTasks');
     } else if (section === 'groupTasks') {
@@ -1883,7 +1895,62 @@ const App: React.FC = () => {
   // 进程中心 remembers where the owner was (zone / fold / scroll) so the 返回
   // affordance lands there instead of the default page (owner order 17:45).
   // A ref, not state: scroll moves must not re-render the shell.
-  const processHubViewRef = useRef<ProcessHubViewState>({ ...DEFAULT_PROCESS_HUB_VIEW_STATE });
+  //
+  // N4 (floatwin shell, owner approval 2026-11-24 17:23): the hub is an OVERLAY
+  // now, and its open/closed state is persisted PER FACE — Home and Internet
+  // each own one view-state object. Two refs (not one) is the whole of that
+  // rule: switching faces restores that face's own floatwin state.
+  const processHubViewRefHome = useRef<ProcessHubViewState>({
+    ...DEFAULT_PROCESS_HUB_VIEW_STATE,
+    floatwin: { ...DEFAULT_PROCESS_HUB_VIEW_STATE.floatwin },
+  });
+  const processHubViewRefInternet = useRef<ProcessHubViewState>({
+    ...DEFAULT_PROCESS_HUB_VIEW_STATE,
+    floatwin: { ...DEFAULT_PROCESS_HUB_VIEW_STATE.floatwin },
+  });
+  const processHubViewRefFor = useCallback(
+    (face: 'home' | 'browser') => (
+      face === 'home' ? processHubViewRefHome : processHubViewRefInternet
+    ),
+    [],
+  );
+  const processHubViewRef = processHubViewRefFor(botBrowserShell.surfaceMode === 'home' ? 'home' : 'browser');
+  /** The floatwin's ONE open bit lives here; each face's ref persists its own. */
+  const [processFloatwinOpen, setProcessFloatwinOpen] = useState(false);
+  const openProcessFloatwin = useCallback((face: 'home' | 'browser') => {
+    // Mutually exclusive with Settings (both are z-50 overlays): opening the
+    // hub closes Settings, and Settings announces first so the hub yields too.
+    announceFloatwinOpen('process-center');
+    setShowSettings(false);
+    setMainView((current) => (current === 'processes' ? 'cowork' : current));
+    const ref = processHubViewRefFor(face);
+    ref.current = { ...ref.current, floatwin: { ...processFloatwinStateOf(ref.current), open: true } };
+    setProcessFloatwinOpen(true);
+  }, [processHubViewRefFor]);
+  const closeProcessFloatwin = useCallback(() => {
+    const face = botBrowserShell.surfaceMode === 'home' ? 'home' : 'browser';
+    const ref = processHubViewRefFor(face);
+    ref.current = { ...ref.current, floatwin: { ...processFloatwinStateOf(ref.current), open: false } };
+    setProcessFloatwinOpen(false);
+  }, [botBrowserShell.surfaceMode, processHubViewRefFor]);
+  // Restore the face's own floatwin state on a face switch (N4).
+  useEffect(() => {
+    const face = botBrowserShell.surfaceMode === 'home' ? 'home' : 'browser';
+    setProcessFloatwinOpen(processFloatwinStateOf(processHubViewRefFor(face).current).open);
+  }, [botBrowserShell.surfaceMode, processHubViewRefFor]);
+  // A persisted destination from an OLDER profile (`mainView`/`internetPane`
+  // = processes) must not render the hub as a column again: convert it into
+  // the floatwin once, then restore the pane the columns should show.
+  useEffect(() => {
+    if (botBrowserShell.internetPane === 'processes') {
+      openProcessFloatwin('browser');
+      botBrowserShell.selectInternetPane('browser');
+    }
+    if (mainView === 'processes') {
+      openProcessFloatwin('home');
+      setMainView('cowork');
+    }
+  }, [botBrowserShell.internetPane, botBrowserShell.selectInternetPane, mainView, openProcessFloatwin]);
   // Which process session was opened FROM the hub — the back chip only shows on
   // that transcript, not on every process session the owner reaches otherwise.
   const [hubOpenedSessionId, setHubOpenedSessionId] = useState<string | null>(null);
@@ -1901,9 +1968,19 @@ const App: React.FC = () => {
     // `hubOpenedSessionId` branch in `internetCatalogContent`). `mainView` is a
     // BotWorks-only concept, so it is written only on that face.
     if (botBrowserShell.surfaceMode === 'home') setMainView('cowork');
+    // Stepping INTO a process is the floatwin's exit (outline §1.2 deviation 3:
+    // the overlay never hosts a second application — it yields to the
+    // transcript). The last session is remembered per face (N4).
+    const face = botBrowserShell.surfaceMode === 'home' ? 'home' : 'browser';
+    const ref = processHubViewRefFor(face);
+    ref.current = {
+      ...ref.current,
+      floatwin: { ...processFloatwinStateOf(ref.current), lastSessionId: sessionId },
+    };
+    setProcessFloatwinOpen(false);
     setHubOpenedSessionId(sessionId);
     await coworkService.loadSession(sessionId);
-  }, [botBrowserShell.surfaceMode]);
+  }, [botBrowserShell.surfaceMode, processHubViewRefFor]);
 
   /** ← 返回进程中心: return lands on the hub of the side the owner is ON
    * (owner ruling 22:17 — no path may force a side switch). Studio addresses it
@@ -1911,15 +1988,13 @@ const App: React.FC = () => {
   const handleBackToProcessHub = useCallback(() => {
     setHubOpenedSessionId(null);
     setStudioTwinOpen(false);
-    if (botBrowserShell.surfaceMode === 'home') {
-      setMainView('processes');
-    } else {
-      botBrowserShell.selectInternetPane('processes');
-    }
-  }, [botBrowserShell.surfaceMode, botBrowserShell.selectInternetPane]);
+    // 返回进程中心 re-opens the floatwin on the face the owner is on (22:17);
+    // no face switch, no pane change — the world stays where it was.
+    openProcessFloatwin(botBrowserShell.surfaceMode === 'home' ? 'home' : 'browser');
+  }, [botBrowserShell.surfaceMode, openProcessFloatwin]);
   const showBackToProcessHub = hubOpenedSessionId != null && hubOpenedSessionId === currentSessionId;
 
-  const isOverlayActive = showSettings || showUpdateModal || pendingConsents.length > 0;
+  const isOverlayActive = showSettings || processFloatwinOpen || showUpdateModal || pendingConsents.length > 0;
   // 按当前 UI 语言解析更新说明（该语言无内容时回退到另一种语言），用于悬停徽章时展示
   const isEmptyChangeLog = (log?: ChangeLogEntry): boolean => !log?.title && !(log?.content?.length > 0);
   const updateChangeLog: ChangeLogEntry | null = (() => {
@@ -2284,9 +2359,16 @@ const App: React.FC = () => {
               onSelectInternetPane={(pane) => {
                 setStudioTwinOpen(false);
                 revealMiddleColumn();
+                // 进程中心 is a CONTROL now, not a destination (floatwin §1.2):
+                // it opens the 900×80vh overlay and leaves the columns exactly
+                // where they were.
+                if (pane === 'processes') {
+                  openProcessFloatwin('home');
+                  return;
+                }
                 botBrowserShell.selectInternetPane(pane);
               }}
-              processCenterActive={mainView === 'processes'}
+              processCenterActive={processFloatwinOpen}
               onSelectHomeSection={(section) => {
                 revealMiddleColumn();
                 // 进程中心 is a mainView-backed pane (it lives in the same
@@ -2294,7 +2376,7 @@ const App: React.FC = () => {
                 // here exactly like the Studio-face rail does. Without this
                 // branch the click was silently swallowed on the BotWorks face.
                 if (section === 'processes') {
-                  setMainView('processes');
+                  openProcessFloatwin('home');
                 } else if (section === 'longTerm') {
                   handleShowScheduledTasks();
                 } else if (section === 'groupTasks') {
@@ -2331,10 +2413,19 @@ const App: React.FC = () => {
               homeSection={homeSection}
               onSelectInternetPane={(pane) => {
                 revealMiddleColumn();
+                if (pane === 'processes') {
+                  openProcessFloatwin('browser');
+                  return;
+                }
                 botBrowserShell.selectInternetPane(pane);
               }}
+              processCenterActive={processFloatwinOpen}
               onSelectHomeSection={(section) => {
                 revealMiddleColumn();
+                if (section === 'processes') {
+                  openProcessFloatwin('browser');
+                  return;
+                }
                 handleSelectHomeSection(section);
               }}
               onNewChat={() => {
@@ -2550,6 +2641,13 @@ const App: React.FC = () => {
       ) : null}
 
       {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}
+      {processFloatwinOpen && (
+        <ProcessCenterFloatwin
+          onClose={closeProcessFloatwin}
+          onOpenProcess={openProcessReadOnly}
+          viewStateRef={processHubViewRef}
+        />
+      )}
       {showSettings && (
         <Suspense fallback={<SettingsLoadingShell onClose={handleCloseSettings} />}>
           <Settings
