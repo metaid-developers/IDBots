@@ -154,12 +154,15 @@ test('Bot Internet keeps the Co-Work panel visible for Hub and Meta Apps', () =>
   assert.doesNotMatch(internetBranch, /internetPane !== 'browser'/);
 });
 
-test('Studio prompt submission switches the right pane to Bot Browser and activates Live Stage', () => {
+test('Studio prompt submission switches the right pane to Bot Browser and preserves active interactive MetaApps', () => {
   const appSrc = fs.readFileSync(path.join(root, 'src/renderer/App.tsx'), 'utf8');
   const sidebarSrc = fs.readFileSync(path.join(root, 'src/renderer/components/Sidebar.tsx'), 'utf8');
   const panelSrc = fs.readFileSync(path.join(root, 'src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx'), 'utf8');
 
-  assert.match(appSrc, /const handleRevealStudioBrowser = useCallback\(\(\) => \{\s*botBrowserShell\.selectInternetPane\('browser'\);/);
+  assert.match(
+    appSrc,
+    /const handleRevealStudioBrowser = useCallback\(\(\): boolean => \{\s*const wasBrowserVisible = botBrowserShell\.internetPane === 'browser';\s*botBrowserShell\.selectInternetPane\('browser'\);\s*return wasBrowserVisible;/,
+  );
   assert.match(appSrc, /onRevealBrowser=\{handleRevealStudioBrowser\}/);
   assert.match(sidebarSrc, /onRevealBrowser=\{onRevealBrowser\}/);
 
@@ -167,7 +170,7 @@ test('Studio prompt submission switches the right pane to Bot Browser and activa
   const submitEnd = panelSrc.indexOf('const handleSelectHistory = async');
   assert.ok(submitStart !== -1 && submitEnd > submitStart, 'BotBrowserCoworkPanel handleSubmit block exists');
   const submitBlock = panelSrc.slice(submitStart, submitEnd);
-  assert.match(submitBlock, /onRevealBrowser\?\.\(\)/);
-  assert.match(submitBlock, /sessionTabBinding\.revealSessionTab\(currentSession\.id\)/);
-  assert.match(submitBlock, /sessionTabBinding\.prepareDraftTab\(effectiveMetabotId\)/);
+  assert.match(submitBlock, /const wasBrowserVisible = onRevealBrowser\?\.\(\) === true/);
+  assert.match(submitBlock, /sessionTabBinding\.revealSessionTab\(currentSession\.id,\s*\{\s*preserveActiveInteractiveTab: wasBrowserVisible,\s*\}\)/);
+  assert.match(submitBlock, /sessionTabBinding\.prepareDraftTab\(effectiveMetabotId,\s*\{\s*preserveActiveInteractiveTab: wasBrowserVisible,\s*\}\)/);
 });

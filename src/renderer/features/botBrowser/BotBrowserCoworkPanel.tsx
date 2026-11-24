@@ -449,9 +449,9 @@ interface BotBrowserCoworkPanelProps {
   /**
    * Switch the Studio right pane back to Bot Browser when a prompt is
    * submitted while the user is viewing another Studio catalog (e.g. Tasks,
-   * MetaApps, My Bots).
+   * MetaApps, My Bots). Returns true when Bot Browser was already visible.
    */
-  onRevealBrowser?: () => void;
+  onRevealBrowser?: () => boolean | void;
   /**
    * Session-records overlay state (owner spec 2026-11-08 21:31). The records
    * toggle lives in the shared surface header bar — beside the surface pill,
@@ -1158,11 +1158,15 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     if (!currentSession && selectedMetabotId == null) return; // botless machines never start sessions here
     setShowHistory(false);
     pinListToBottom();
-    onRevealBrowser?.();
+    const wasBrowserVisible = onRevealBrowser?.() === true;
     if (currentSession && !currentSession.id.startsWith('optimistic-browser-')) {
-      void sessionTabBinding.revealSessionTab(currentSession.id);
+      void sessionTabBinding.revealSessionTab(currentSession.id, {
+        preserveActiveInteractiveTab: wasBrowserVisible,
+      });
     } else if (!currentSession) {
-      void sessionTabBinding.prepareDraftTab(effectiveMetabotId);
+      void sessionTabBinding.prepareDraftTab(effectiveMetabotId, {
+        preserveActiveInteractiveTab: wasBrowserVisible,
+      });
     }
     const captureOutgoingPrompt = async () => {
       // Element-picker capture (ABC v0.10.0): live marks first, then the

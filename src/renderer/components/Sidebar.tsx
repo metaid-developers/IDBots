@@ -76,8 +76,8 @@ interface SidebarProps {
    * ends), but they run in the Bot Browser panel — selecting one must return
    * the user there instead of the home chat view. */
   onSelectBrowserSession?: (sessionId: string) => void | Promise<void>;
-  /** Switch the Studio right pane back to Bot Browser (e.g. on prompt submit). */
-  onRevealBrowser?: () => void;
+  /** Switch the Studio right pane back to Bot Browser (returns true when it was already showing `'browser'`). */
+  onRevealBrowser?: () => boolean | void;
   isCollapsed: boolean;
   /** Expanded middle-column width in px (resizable by the user). */
   width?: number;
