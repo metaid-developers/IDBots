@@ -115,16 +115,22 @@ test('the panel renders through the shared body and keeps no splitter copy of it
     /import \{ UserMessageBody \} from '\.\.\/\.\.\/components\/cowork\/UserAttachmentBody';/.test(panelSource),
     'the panel must import the shared body',
   );
-  // SUPERSEDED IN PLACE (pass #5 ② revert, owner ruling 2026-11-11): the
-  // Telegram sent-quote card is gone for good, and with it the second
-  // UserMessageBody site. The user branch now renders the shared body at
-  // exactly ONE source site — the inline display body (`displayContent`,
-  // quote block flowing above the reply inside the same bubble). The
-  // anti-fork assertions below carry the real teeth; no splitter copy.
-  assert.equal((panelSource.match(/<UserMessageBody/g) ?? []).length, 1, 'one shared body site: the inline display body');
+  // SUPERSEDED TWICE (pass #5 ② revert, owner ruling 2026-11-11, then the
+  // 2026-11-24 NFT and digital goods card suite redesign): the shared body
+  // now renders at exactly TWO either/or sites of the SAME pipeline — one
+  // per markdown segment when the user bubble splits into token-card
+  // segments, one for the whole inline display body (`displayContent`,
+  // quote block flowing above the reply) when it does not. Both hand the
+  // panel's own resolver; the anti-fork assertions below carry the real
+  // teeth: no splitter copy, no second pipeline.
+  assert.equal((panelSource.match(/<UserMessageBody/g) ?? []).length, 2, 'two shared body sites: segmented markdown body + inline display body, same pipeline');
   assert.ok(
     /<UserMessageBody content=\{displayContent\} resolveLocalFilePath=\{resolveLocalFilePath\} \/>/.test(panelSource),
     'the panel hands its own resolver to the shared body (inline display body)',
+  );
+  assert.ok(
+    /<UserMessageBody content=\{seg\.content\} resolveLocalFilePath=\{resolveLocalFilePath\} \/>/.test(panelSource),
+    'the panel hands its own resolver to the shared body (segmented markdown body)',
   );
 
   // Anti-drift: none of the display-side attachment pipeline may be re-declared
