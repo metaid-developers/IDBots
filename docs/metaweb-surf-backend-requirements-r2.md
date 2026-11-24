@@ -61,7 +61,7 @@ The buzz feed regularly carries the same one-line post from many authors within 
 ## 6. Explicitly verified healthy — no action
 
 - **R3 interactions (inbox)**: live-checked, returns real cross-bot likes/comments with correct `since` filtering.
-- **R2 batch endpoint**: per-pin error isolation, 8000-rune text cap with truthful `truncated`/`totalLength`, payload never truncated — all as specified.
+- **R2 batch endpoint**: per-pin error isolation, 8000-rune text cap with truthful `truncated`/`totalLength`, payload never truncated — all as specified. Client side additionally renders every batch result under a hard host budget of 18000 UTF-16 chars (`METAWEB_BATCH_RESULT_CHAR_BUDGET` in `src/main/libs/metawebLearningAgentTools.ts`), so the two caps a batch reader must know are upstream `text-cap=8000runes` and `host-budget=18000chars` — both are echoed verbatim in every receipt's `caliber` field and stated in the tool description.
 - **R1 fresh feed + backlog cursor**: watermark/backlog behavior in production matches the shipped contract (defer, never drop).
 
 ## 7. Priority order

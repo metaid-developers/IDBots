@@ -229,6 +229,9 @@ test('batch receipt carries a machine-readable summary that a hand audit reprodu
   assert.equal(receipt.readable_upstream, (text.match(/^Pin .+:$/gm) ?? []).length);
   assert.equal(receipt.returned, (text.match(/<metaweb_pin_content>/g) ?? []).length);
   assert.equal(receipt.omitted, (text.match(/content omitted to fit this batch's result budget/g) ?? []).length);
+  // 12 cuts fit the list exactly: the cap flag must read false, not be absent.
+  assert.equal(receipt.truncation_points.length, 12);
+  assert.equal(receipt.truncation_points_capped, false);
 
   // Per-cut detail agrees with the per-pin human trim label.
   assert.ok(receipt.truncation_points.length > 0);
@@ -279,6 +282,8 @@ test('receipt separates upstream-readable from actually-delivered and lists omis
   assert.ok(receipt.omitted_ids.length <= METAWEB_BATCH_RECEIPT_MAX_LIST);
   assert.equal(receipt.truncation_point_count, 20);
   assert.ok(receipt.truncation_points.length <= METAWEB_BATCH_RECEIPT_MAX_LIST);
+  // 20 cuts against a 12-entry list cap: the cap must be DECLARED, not silent.
+  assert.equal(receipt.truncation_points_capped, true);
   for (const point of receipt.truncation_points) {
     assert.equal(point.reason, 'omitted');
     assert.equal(point.kept_chars, 0);
@@ -286,6 +291,36 @@ test('receipt separates upstream-readable from actually-delivered and lists omis
   }
   assert.equal(receipt.bytes_written, Buffer.byteLength(text, 'utf8'));
   assert.ok(text.length <= METAWEB_BATCH_RESULT_CHAR_BUDGET, `rendered ${text.length} chars`);
+});
+
+test('truncation_points_capped declares the exact list-cap boundary (12 fits, 13 overflows)', async () => {
+  // Same batch shape as the 12-trimmed receipt test above: every body is cut,
+  // so every pin contributes exactly one truncation point.
+  const trimmedBatches = (count) => {
+    const entries = {};
+    for (let index = 0; index < count; index += 1) {
+      const pinId = pinIdFor(index, 'c');
+      entries[pinId] = makePin(pinId, { text: `Body ${index} — ` + 'w'.repeat(1500) });
+    }
+    return entries;
+  };
+
+  const atCap = makeHarness(trimmedBatches(12));
+  const capReceipt = receiptOf(resultText(await atCap.batch.handler({ pinIds: Object.keys(trimmedBatches(12)) })));
+  assert.equal(capReceipt.truncation_point_count, 12);
+  assert.equal(capReceipt.truncation_points.length, 12);
+  // Exactly at the cap: complete list, flag false (present, not absent).
+  assert.equal(capReceipt.truncation_points_capped, false);
+  assert.equal(capReceipt.truncation_point_count, capReceipt.truncation_points.length);
+
+  const over = makeHarness(trimmedBatches(13));
+  const overReceipt = receiptOf(resultText(await over.batch.handler({ pinIds: Object.keys(trimmedBatches(13)) })));
+  assert.equal(overReceipt.truncation_point_count, 13);
+  assert.equal(overReceipt.truncation_points.length, METAWEB_BATCH_RECEIPT_MAX_LIST);
+  // One cut over the cap: the declaration flips to true and the hidden gap
+  // stays computable as truncation_point_count - truncation_points.length.
+  assert.equal(overReceipt.truncation_points_capped, true);
+  assert.equal(overReceipt.truncation_point_count - overReceipt.truncation_points.length, 1);
 });
 
 test('receipt records unreadable ids and an upstream server cap', async () => {
@@ -327,6 +362,7 @@ test('a batch with no readable body still carries the machine-readable receipt',
   assert.equal(receipt.readable_upstream, 0);
   assert.equal(receipt.returned, 0);
   assert.equal(receipt.truncated, false);
+  assert.equal(receipt.truncation_points_capped, false);
   assert.equal(receipt.unreadable, 1);
   assert.deepEqual(receipt.unreadable_ids, [errId]);
   assert.equal(receipt.bytes_written, Buffer.byteLength(text, 'utf8'));

@@ -251,6 +251,14 @@ export type MetawebBatchReadReceipt = {
   truncation_point_count: number;
   /** Per-cut detail, capped at METAWEB_BATCH_RECEIPT_MAX_LIST. */
   truncation_points: MetawebBatchTruncationPoint[];
+  /**
+   * Explicit cap declaration for `truncation_points`: true = the array was
+   * truncated at METAWEB_BATCH_RECEIPT_MAX_LIST (count `truncation_point_count`
+   * against `truncation_points.length` to size the gap); false = the array is
+   * complete. Always present — absence would leave a reader guessing whether
+   * the detail list was capped or the batch really had no cuts.
+   */
+  truncation_points_capped: boolean;
   /** Exact per-cause split of `unreadable` — the four failure modes stay separate. */
   unreadable_causes: Record<MetawebBatchUnreadableCause, number>;
   /** Per-pin failure attribution, capped at METAWEB_BATCH_RECEIPT_MAX_LIST — counts stay exact. */
@@ -495,7 +503,7 @@ export function buildMetawebLearningAgentTools(deps: {
 
   const readMetawebPinsBatch = tool(
     'read_metaweb_pins_batch',
-    'Read up to 50 MetaWeb pins in ONE call — prefer over looping read_metaweb_pin for a shortlist to deep-read. Returns each pinId mapped to its sheet (protocol, title/meta, author, body) or an isolated per-pin error — single failures never fail the batch. Output is budget-capped: long bodies are trimmed or omitted (labeled per-pin) while every meta block stays complete — a missing body does NOT mean unreadable; follow up with read_metaweb_pin on trimmed/omitted pins you need in full. The receipt carries a one-line machine-readable summary (`- RECEIPT read_metaweb_pins_batch: {…}`) with requested/readable_upstream/returned/omitted/unreadable_causes/truncation_points/bytes_written/caliber, so "read out" and "delivered" are separately checkable. Every unreadable pin carries a cause (malformed_id = fix your id, not_found = the pin could not be located upstream, content_contract = encrypted/binary/empty content, extraction_failed = upstream error while building the pin) — do not treat a malformed_id as a missing pin. ~10-15 pins per call keeps bodies mostly whole; null content means encrypted/empty — skip.',
+    'Read up to 50 MetaWeb pins in ONE call — prefer over looping read_metaweb_pin for a shortlist to deep-read. Returns each pinId mapped to its sheet (protocol, title/meta, author, body) or an isolated per-pin error — single failures never fail the batch. Output is budget-capped by two hard limits, stated up front: the whole result renders under a host budget of 18000 UTF-16 chars (METAWEB_BATCH_RESULT_CHAR_BUDGET), and each pin body can additionally be capped upstream at 8000 runes by the batch endpoint (truncated/totalLength + a server_cap entry in truncation_points say so). Long bodies are trimmed or omitted (labeled per-pin) while every meta block stays complete — a missing body does NOT mean unreadable; follow up with read_metaweb_pin on trimmed/omitted pins you need in full. The receipt carries a one-line machine-readable summary (`- RECEIPT read_metaweb_pins_batch: {…}`) with requested/readable_upstream/returned/omitted/unreadable_causes/truncation_points/truncation_points_capped/bytes_written/caliber, so "read out" and "delivered" are separately checkable. Units are explicit: bytes_written is UTF-8 bytes (of the whole delivered result); truncation_points entries carry kept_chars/total_chars whose meaning is named by their unit field (utf16-char for host-budget cuts, rune for the upstream 8000-rune cap), and truncation_points_capped=true means the detail list itself was capped (truncation_point_count stays exact). Every unreadable pin carries a cause (malformed_id = fix your id, not_found = the pin could not be located upstream, content_contract = encrypted/binary/empty content, extraction_failed = upstream error while building the pin) — do not treat a malformed_id as a missing pin. ~10-15 pins per call keeps bodies mostly whole; null content means encrypted/empty — skip.',
     {
       pinIds: z.array(z.string().min(1)).min(1).max(50),
     },
@@ -612,6 +620,7 @@ export function buildMetawebLearningAgentTools(deps: {
               unreadable_pins: unreadablePins.slice(0, METAWEB_BATCH_RECEIPT_MAX_LIST),
               truncation_point_count: 0,
               truncation_points: [],
+              truncation_points_capped: false,
               caliber: METAWEB_BATCH_READ_CALIBER,
             },
           }));
@@ -623,7 +632,13 @@ export function buildMetawebLearningAgentTools(deps: {
           - sample.skeleton.length
           - sample.pin.text.length
           + 170;
-        const joinsAndFooter = pinIds.length * 2 + METAWEB_CITATION_RULE.length + 260;
+        // 293 = the machine-readable line's fixed skeleton allowance: the
+        // marker prefix + every receipt field's minimum shape, including the
+        // always-present `,"truncation_points_capped":false` (33 chars) and
+        // `,"bytes_written":0` digits — a field added to the receipt must grow
+        // this number by its minimum compact-JSON width, or the budget's first
+        // render can overflow and burn convergence passes.
+        const joinsAndFooter = pinIds.length * 2 + METAWEB_CITATION_RULE.length + 293;
         const skeletonTotal = slots.reduce(
           (sum, slot) => sum + (typeof slot === 'string' ? slot.length : slot.skeleton.length),
           0,
@@ -744,6 +759,7 @@ export function buildMetawebLearningAgentTools(deps: {
               unreadable_pins: unreadablePins.slice(0, METAWEB_BATCH_RECEIPT_MAX_LIST),
               truncation_point_count: truncationPoints.length,
               truncation_points: truncationPoints.slice(0, METAWEB_BATCH_RECEIPT_MAX_LIST),
+              truncation_points_capped: truncationPoints.length > METAWEB_BATCH_RECEIPT_MAX_LIST,
               caliber: METAWEB_BATCH_READ_CALIBER,
             },
           });
