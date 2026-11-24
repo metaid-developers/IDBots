@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
+import { useSelector } from 'react-redux';
 import {
   ArchiveBoxIcon,
-  ArrowPathIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CpuChipIcon,
@@ -16,7 +15,7 @@ import { StopIcon } from '@heroicons/react/24/solid';
 import { RootState } from '../../store';
 import { i18nService } from '../../services/i18n';
 import { coworkService } from '../../services/cowork';
-import { setNewTaskMetabotId } from '../../store/slices/coworkSlice';
+import { sessionTabBinding } from '../../services/sessionTabBinding';
 import { SessionAvatarCircle, formatRelativeTime } from './CoworkSessionItem';
 import type { CoworkPermissionRequest } from '../../types/cowork';
 import {
@@ -27,12 +26,11 @@ import {
   buildProcessDynamic,
   buildProcessGateEntries,
   buildUnassignedHumanEntries,
-  buildTwinSteeringPrompt,
   countAwaitingProcesses,
   countAutonomousRuns,
   countBotSelfDigested,
   lastAssistantDigest,
-  openDecisionIdsForSession,
+  openDecisionForSession,
   PROCESS_AUTONOMOUS_SOURCE_LABEL_KEY,
   PROCESS_AUTONOMOUS_SOURCE_ORDER,
   PROCESS_HUB_TAB_LABEL_KEY,
@@ -46,8 +44,6 @@ import {
   ProcessGateClass,
   ProcessRowValveLevel,
   lineageBucketOf,
-  resolveSourceTaskTitle,
-  retrySteerVisible,
   rowValveLevelOf,
   splitProcessHub,
   type ProcessAutonomousSource,
@@ -454,15 +450,10 @@ const ProcessRunRow: React.FC<{
    */
   onStop?: (sessionId: string) => void;
   /**
-   * R1 重试 (fork 2A, steer class): hand the failed run back to the Twin as a
-   * pre-filled draft — never a direct rerun. Present only on failed rows whose
-   * lineage is human (`retrySteerVisible` + valve level 'full').
-   */
-  onRetry?: (entry: ProcessEntry) => void;
-  /**
-   * L3 决策卡 row link (fork 5A: the row STAYS a session row): present when the
-   * row's task has an open decision card — the click expands the strip and
-   * focuses that card instead of only opening the read-only transcript.
+   * P0 decision POINTER (v3.2 §2.0/§2.2 row 3, S-08): present when the row's
+   * task has an open decision — the click leaves the hub for the ONE decision
+   * seat (Live Stage). It never resolves anything in place; the hub holds no
+   * approve / reject / option control after P0.
    */
   onDecide?: () => void;
   /**
@@ -470,7 +461,7 @@ const ProcessRunRow: React.FC<{
    * reading renders the explicit empty state — never a fabricated bar.
    */
   spark?: ProcessSparkReading | null;
-}> = ({ entry, nowMs, depth, onOpen, onArchive, onRemove, mutedDot = false, bucket, onSetBucket, onStop, onRetry, onDecide, spark = null }) => {
+}> = ({ entry, nowMs, depth, onOpen, onArchive, onRemove, mutedDot = false, bucket, onSetBucket, onStop, onDecide, spark = null }) => {
   const { session, kind, state } = entry;
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -613,7 +604,9 @@ const ProcessRunRow: React.FC<{
           <button
             type="button"
             data-testid="process-row-decide-button"
-            title={i18nService.t('processRowDecideButton')}
+            data-decision-jump="live-stage"
+            aria-label={i18nService.t('processRowDecideHint')}
+            title={i18nService.t('processRowDecideHint')}
             onClick={(event) => {
               event.stopPropagation();
               onDecide();
@@ -644,21 +637,6 @@ const ProcessRunRow: React.FC<{
           className="flex-shrink-0 rounded-[6px] p-1 text-[#b3261e] transition-colors hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 dark:text-red-400"
         >
           <StopIcon className="h-3.5 w-3.5" />
-        </button>
-      )}
-      {onRetry && (
-        <button
-          type="button"
-          data-testid="process-row-retry"
-          aria-label={i18nService.t('processRetryAction')}
-          title={i18nService.t('processRetryAction')}
-          onClick={(event) => {
-            event.stopPropagation();
-            onRetry(entry);
-          }}
-          className="flex-shrink-0 rounded-[6px] p-1 text-claude-accent transition-colors hover:bg-claude-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-        >
-          <ArrowPathIcon className="h-3.5 w-3.5" />
         </button>
       )}
       {orchestratorName && (
@@ -1053,227 +1031,24 @@ const ProcessGateBar: React.FC<{
   );
 };
 
-/** The sliver of a Studio decision-queue item the hub's decision card renders. */
+/**
+ * The sliver of a Studio decision-queue item the hub still needs.
+ *
+ * P0 权限搬迁 (v3.2 §2.0/§2.3, S-06/S-07): the hub no longer RULES — every
+ * approve / reject / option control moved out. What stays is the read-only
+ * pointer a pending row needs to reach the ONE decision seat (Live Stage), so
+ * the hub keeps the decision id + the two landing keys and nothing else.
+ */
 interface ProcessOpenDecision {
   id: string;
-  status: string;
-  kind: string;
-  title: string;
-  question: string;
-  recommendation?: string;
-  backgroundSummary?: string;
-  progressSummary?: string;
-  nextStep?: string;
   longtermTaskId?: string | null;
-  options?: Array<{ label: string; description?: string; recommended?: boolean }>;
-  evidence?: Array<{ kind: string; uri: string; note?: string }>;
+  originStudioSessionId?: string | null;
 }
 
-/**
- * L3 决策卡 (Friday 稿四步④, fork 3A): the hub's seat for owner rulings. Each
- * open Studio decision-queue item renders as a card — evidence links are
- * read-only, an option click (or 驳回 with a reason) records the ruling through
- * the new `longtermTask:decisionResolve` IPC, whose main-side handler is the
- * SAME shared function the Twin's studio_decision_resolve tool calls. Resolving
- * cancels redundant siblings and releases the linked subtask's waiting_owner
- * hold — then the store broadcast refreshes both this block and the strip.
- */
-const ProcessDecisionCard: React.FC<{
-  item: ProcessOpenDecision;
-  highlighted: boolean;
-  resolving: boolean;
-  onResolve: (item: ProcessOpenDecision, note: string) => void;
-}> = ({ item, highlighted, resolving, onResolve }) => {
-  const [rejectOpen, setRejectOpen] = useState(false);
-  const [rejectText, setRejectText] = useState('');
-  const options = item.options ?? [];
-  const evidence = (item.evidence ?? []).slice(0, 3);
-  const resolveWithOption = (label: string) => {
-    if (resolving) return;
-    onResolve(item, i18nService.t('processDecisionOptionNote').replace('{option}', label));
-  };
-  const resolveApprove = () => {
-    if (resolving) return;
-    onResolve(item, i18nService.t('processDecisionAcceptNote'));
-  };
-  const resolveReject = () => {
-    const reason = rejectText.trim();
-    if (resolving || !reason) return;
-    onResolve(item, i18nService.t('processDecisionRejectNote').replace('{reason}', reason));
-  };
-  return (
-    <div
-      data-testid="process-decision-card"
-      data-decision-id={item.id}
-      data-decision-kind={item.kind}
-      data-decision-highlighted={highlighted ? 'true' : 'false'}
-      className={`rounded-[10px] border bg-claude-bg px-3 py-2 dark:bg-claude-darkBg ${
-        highlighted
-          ? 'border-claude-accent ring-2 ring-claude-accent/30'
-          : 'border-claude-border dark:border-claude-darkBorder'
-      }`}
-    >
-      <div className="flex items-center gap-2">
-        <span className={PROCESS_TAG_CLASS}>{item.kind}</span>
-        <span
-          data-testid="process-decision-title"
-          className="min-w-0 flex-1 truncate text-[12.5px] font-semibold dark:text-claude-darkText text-claude-text"
-          title={item.title}
-        >
-          {item.title}
-        </span>
-        <span className="flex-shrink-0 text-[10.5px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          {item.status}
-        </span>
-      </div>
-      <p
-        data-testid="process-decision-question"
-        className="mt-1 line-clamp-2 text-[11.5px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary"
-        title={item.question}
-      >
-        {item.question}
-      </p>
-      {evidence.length > 0 && (
-        <div data-testid="process-decision-evidence" className="mt-1 flex flex-wrap items-center gap-1">
-          <span className="text-[10.5px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            {i18nService.t('processDecisionEvidenceLabel')}
-          </span>
-          {evidence.map((item2, index) => (
-            <span
-              key={`${item.id}:evidence:${index}`}
-              className="max-w-[160px] truncate rounded-[6px] border border-claude-border px-1.5 py-0.5 text-[10.5px] dark:border-claude-darkBorder dark:text-claude-darkTextSecondary text-claude-textSecondary"
-              title={`${item2.kind}: ${item2.uri}${item2.note ? ` · ${item2.note}` : ''}`}
-            >
-              {item2.kind}: {item2.uri}
-            </span>
-          ))}
-        </div>
-      )}
-      {options.length > 0 ? (
-        <div data-testid="process-decision-options" className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          {options.map((option) => (
-            <button
-              key={`${item.id}:option:${option.label}`}
-              type="button"
-              data-testid="process-decision-option"
-              data-decision-option={option.label}
-              disabled={resolving}
-              onClick={() => resolveWithOption(option.label)}
-              title={option.description || undefined}
-              className="inline-flex items-center gap-1 rounded-lg border border-claude-border px-2.5 py-1 text-[11.5px] font-medium dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent hover:bg-claude-accent/10 disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:hover:bg-claude-accent/10"
-            >
-              {option.label}
-              {option.recommended && (
-                <span className="rounded-[4px] bg-claude-accent/20 px-1 text-[9.5px] font-bold text-[#7a5f14] dark:text-amber-300">
-                  {i18nService.t('processDecisionRecommend')}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="mt-1.5 flex items-center gap-1.5">
-          <button
-            type="button"
-            data-testid="process-decision-approve"
-            disabled={resolving}
-            onClick={resolveApprove}
-            className="rounded-lg border border-claude-border px-2.5 py-1 text-[11.5px] font-medium dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent hover:bg-claude-accent/10 disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder"
-          >
-            {i18nService.t('processDecisionApprove')}
-          </button>
-        </div>
-      )}
-      <div className="mt-1.5 flex items-center gap-1.5">
-        {!rejectOpen ? (
-          <button
-            type="button"
-            data-testid="process-decision-reject"
-            disabled={resolving}
-            onClick={() => setRejectOpen(true)}
-            className="rounded-lg border border-claude-border px-2 py-0.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors hover:border-red-300 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:hover:text-red-300"
-          >
-            {i18nService.t('processDecisionReject')}
-          </button>
-        ) : (
-          <>
-            <input
-              type="text"
-              data-testid="process-decision-reject-input"
-              value={rejectText}
-              disabled={resolving}
-              onChange={(event) => setRejectText(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') resolveReject();
-                if (event.key === 'Escape') setRejectOpen(false);
-              }}
-              placeholder={i18nService.t('processDecisionRejectPlaceholder')}
-              className="h-[24px] min-w-0 flex-1 rounded-[6px] border border-claude-border bg-transparent px-2 text-[11.5px] dark:text-claude-darkText text-claude-text focus:border-claude-accent focus:outline-none dark:border-claude-darkBorder"
-            />
-            <button
-              type="button"
-              data-testid="process-decision-reject-confirm"
-              disabled={resolving || !rejectText.trim()}
-              onClick={resolveReject}
-              className="flex-shrink-0 rounded-lg border border-red-300 px-2 py-0.5 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/20"
-            >
-              {i18nService.t('processDecisionReject')}
-            </button>
-          </>
-        )}
-        {resolving && (
-          <span data-testid="process-decision-resolving" className="text-[10.5px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            {i18nService.t('processDecisionResolving')}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-};
-
-const ProcessDecisionBlock: React.FC<{
-  decisions: ProcessOpenDecision[];
-  highlightedId: string | null;
-  resolvingId: string | null;
-  onResolve: (item: ProcessOpenDecision, note: string) => void;
-}> = ({ decisions, highlightedId, resolvingId, onResolve }) => {
-  if (decisions.length === 0) return null;
-  return (
-    <div
-      data-testid="process-decision-block"
-      data-decision-count={decisions.length}
-      className="shrink-0 border-b border-claude-border bg-claude-bg/60 dark:border-claude-darkBorder dark:bg-claude-darkBg/60"
-    >
-      <div className="flex h-[30px] items-center gap-2 px-4">
-        <HandRaisedIcon aria-hidden className="h-3.5 w-3.5 flex-shrink-0 text-claude-accent" />
-        <span
-          data-testid="process-decision-block-label"
-          className="min-w-0 truncate text-[11.5px] font-semibold dark:text-claude-darkText text-claude-text"
-        >
-          {i18nService.t('processDecisionBlockLabelCount').replace('{count}', String(decisions.length))}
-        </span>
-        <span
-          data-testid="process-decision-count"
-          className="flex h-[14px] min-w-[14px] flex-shrink-0 items-center justify-center rounded-full bg-red-500 px-[3px] text-[9.5px] font-bold leading-none text-white"
-        >
-          {decisions.length}
-        </span>
-      </div>
-      <div className="flex flex-col gap-1.5 px-4 pb-2">
-        {decisions.map((item) => (
-          <ProcessDecisionCard
-            key={item.id}
-            item={item}
-            highlighted={highlightedId === item.id}
-            resolving={resolvingId === item.id}
-            onResolve={onResolve}
-          />
-        ))}
-      </div>
-    </div>
-  );
-};
-
+/** The hub's pointers into the live decision queue are read-only by design:
+ *  P0 removed the ruling seat entirely (v3.2 §2.0/§2.3, S-06..S-08). Rows keep
+ *  a 「去看 ›」 pointer that opens the Live Stage card — the hub never resolves,
+ *  rejects, approves or picks an option, and it holds no resolve channel. */
 const ProcessCenterPanel: React.FC<{
   onOpenProcess: (sessionId: string) => void;
   /**
@@ -1290,7 +1065,6 @@ const ProcessCenterPanel: React.FC<{
    */
   onRequestClose?: () => void;
 }> = ({ onOpenProcess, viewStateRef, onRequestClose }) => {
-  const dispatch = useDispatch();
   const lineageOverrides = useLineageOverrides();
   const { model, nowMs } = useProcessHubModel(lineageOverrides);
   const restored = viewStateRef?.current;
@@ -1321,14 +1095,12 @@ const ProcessCenterPanel: React.FC<{
   const pendingPermissions = useSelector((state: RootState) => state.cowork.pendingPermissions);
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
   const longTermBoard = useSelector((state: RootState) => state.longTermTask.board);
-  // L3: open Studio decision items + their resolve-in-flight marker + the one
-  // highlighted card (the row-level 拍板 jump scrolls here).
+  // P0: the ONLY thing the hub keeps from the decision queue is a read-only
+  // pointer set (row → decision → Live Stage). No resolve state lives here.
   const [openDecisions, setOpenDecisions] = useState<ProcessOpenDecision[]>([]);
-  const [resolvingDecisionId, setResolvingDecisionId] = useState<string | null>(null);
-  const [highlightedDecisionId, setHighlightedDecisionId] = useState<string | null>(null);
-  // The row↔card linkage needs the board's decisionSessionIds; the redux board
-  // is loaded by whichever surface opened first, so the hub keeps its OWN
-  // snapshot — the linkage must not depend on another view having run.
+  // The row↔decision pointer needs the board's decisionSessionIds; the redux
+  // board is loaded by whichever surface opened first, so the hub keeps its OWN
+  // snapshot — the pointer must not depend on another view having run.
   const [boardCards, setBoardCards] = useState<Array<{ id: string; decisionSessionIds?: string[] | null }>>([]);
 
   useEffect(() => {
@@ -1388,68 +1160,19 @@ const ProcessCenterPanel: React.FC<{
     window.dispatchEvent(new CustomEvent('cowork:viewSession', { detail: { sessionId } }));
   }, []);
 
-  const focusDecision = useCallback((itemId: string) => {
-    setAwaitingExpanded(true);
-    setHighlightedDecisionId(itemId);
-    window.setTimeout(() => {
-      document.querySelector(`[data-decision-id="${itemId}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }, 60);
+  /**
+   * P0 权限搬迁 (v3.2 §2.0 判据 / §5.2 S-08): a pending row's decision link is a
+   * POINTER, not a ruling. It rides the exact two events the notification
+   * center's `jumpDecision` uses — `cowork:viewSession` + `revealSessionTab` —
+   * so both entry points land on the ONE decision seat (Live Stage 决策卡).
+   * Zero resolve channel exists in this panel after P0.
+   */
+  const jumpToDecisionSeat = useCallback((decision: ProcessOpenDecision, fallbackSessionId: string) => {
+    const sessionId = (decision.originStudioSessionId ?? '').trim() || fallbackSessionId;
+    if (!sessionId) return;
+    window.dispatchEvent(new CustomEvent('cowork:viewSession', { detail: { sessionId } }));
+    void sessionTabBinding.revealSessionTab(sessionId);
   }, []);
-
-  const resolveDecisionItem = useCallback(async (item: ProcessOpenDecision, note: string) => {
-    if (resolvingDecisionId) return;
-    setResolvingDecisionId(item.id);
-    try {
-      const api = window.electron?.longtermTask;
-      const result = await api?.decisionResolve?.({ queueItemId: item.id, resolutionNote: note });
-      if (!result?.success) {
-        window.dispatchEvent(new CustomEvent('app:showToast', {
-          detail: `${i18nService.t('processDecisionResolveFailed')}${result?.error ? ` (${result.error})` : ''}`,
-        }));
-      }
-    } catch {
-      window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('processDecisionResolveFailed') }));
-    } finally {
-      setResolvingDecisionId(null);
-    }
-  }, [resolvingDecisionId]);
-
-  const handleRetryToTwin = useCallback((entry: ProcessEntry) => {
-    // R1 重试 (fork 2A): a FAILURE-CONTEXT draft into the Twin's composer via
-    // the existing cowork:newChatWithDraft channel — the Twin decides rerun vs
-    // reassign; the hub never reruns anything itself.
-    void (async () => {
-      let progress: string | null = null;
-      try {
-        const reader = window.electron?.cowork?.getSessionMessagesPage;
-        if (typeof reader === 'function') {
-          const result = await reader({ sessionId: entry.session.id, limit: 12 });
-          progress = result?.success ? lastAssistantDigest(result.page?.messages, 96) : null;
-        }
-      } catch {
-        // Unreadable transcript → the prompt builder shows the placeholder.
-      }
-      const draftText = buildTwinSteeringPrompt(i18nService.t('processRetryDraft'), {
-        task: resolveSourceTaskTitle(entry.session, longTermBoard?.cards ?? boardCards),
-        process: entry.session.title ?? null,
-        state: i18nService.t('processRetryStateFailed'),
-        progress,
-        action: i18nService.t('processRetryActionDraft'),
-      });
-      const openWithDraft = () => {
-        window.dispatchEvent(new CustomEvent('cowork:newChatWithDraft', { detail: { text: draftText } }));
-      };
-      try {
-        const result = await window.electron?.idbots?.getMetaBots?.();
-        const twin = result?.success ? (result.list ?? []).find((bot) => bot.metabot_type === 'twin') : null;
-        if (twin) dispatch(setNewTaskMetabotId(twin.id));
-        openWithDraft();
-      } catch {
-        // Roster unavailable: still hand over the context, default bot.
-        openWithDraft();
-      }
-    })();
-  }, [dispatch, longTermBoard, boardCards]);
 
   useEffect(() => {
     if (!archivedMode || archivedEntries !== null) return;
@@ -1576,12 +1299,13 @@ const ProcessCenterPanel: React.FC<{
    * The brake valve rides `onStop`, keyed on statusKind — NOT on the level.
    */
   const renderRun = (entry: ProcessEntry, depth: 0 | 1, valveLevel: ProcessRowValveLevel, mutedDot = false) => {
-    // L3 row link: which open decision cards belong to this row's task (a jump,
-    // not a steer — lineage-agnostic, and unreachable on archived rows anyway).
+    // P0 decision pointer: which open decision belongs to this row's task (a
+    // jump to Live Stage, not a steer — lineage-agnostic, and unreachable on
+    // archived rows anyway).
     // The redux board is the live source; the panel's own snapshot keeps the
     // linkage alive when no other surface has loaded the board yet.
     const linkageCards = longTermBoard?.cards ?? boardCards;
-    const linkedDecisionIds = openDecisionIdsForSession(entry.session.id, linkageCards, openDecisions);
+    const linkedDecision = openDecisionForSession(entry.session.id, linkageCards, openDecisions);
     return (
       <ProcessRunRow
         key={entry.session.id}
@@ -1595,8 +1319,7 @@ const ProcessCenterPanel: React.FC<{
         bucket={lineageBucketOf(entry.session.id, lineageOverrides)}
         onSetBucket={valveLevel !== 'none' ? (sessionId, next) => void setLineageBucket(sessionId, next) : undefined}
         onStop={entry.statusKind === 'live' ? handleStopRun : undefined}
-        onRetry={valveLevel === 'full' && retrySteerVisible(entry) ? handleRetryToTwin : undefined}
-        onDecide={linkedDecisionIds.length > 0 ? () => focusDecision(linkedDecisionIds[0]) : undefined}
+        onDecide={linkedDecision ? () => jumpToDecisionSeat(linkedDecision, entry.session.id) : undefined}
         spark={sessionSparks[entry.session.id] ?? null}
       />
     );
@@ -1747,15 +1470,6 @@ const ProcessCenterPanel: React.FC<{
         )}
       </div>
 
-      {/* L3 决策卡 (Friday 稿四步④): open Studio rulings, resolvable HERE — the
-          write rides the new longtermTask:decisionResolve IPC, same source as
-          the Twin's agent tool. Empty when the queue is empty. */}
-      <ProcessDecisionBlock
-        decisions={openDecisions}
-        highlightedId={highlightedDecisionId}
-        resolvingId={resolvingDecisionId}
-        onResolve={(item, note) => void resolveDecisionItem(item, note)}
-      />
 
       {/* 三例外闸只读条 (Friday 稿四步③): pending G1/G2/G3 gates, view + jump
           only — the decisive seats stay in the chat composer / corner overlay. */}

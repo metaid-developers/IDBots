@@ -150,10 +150,11 @@ export type LiveStageTaskHudEntry = {
  * The ONE owner-decision card the stage hosts inline (批 B · P0-3, owner
  * ruling 2026-11-23 22:23: 「决策要回到 Live Stage，这才是真正做决策的地方」).
  *
- * The card is a VIEW over the same `StudioDecisionQueueStore.listOpen()` rows
- * the Process Hub's decision block renders, and it resolves through the same
- * `longtermTask:decisionResolve` IPC — one data source, one resolve channel,
- * two seats. The stage never holds its own copy of a ruling.
+ * The card is a VIEW over `StudioDecisionQueueStore.listOpen()` and resolves
+ * through the `longtermTask:decisionResolve` IPC — one data source, one resolve
+ * channel. Since P0 (v3.2 §2.0/§2.3) the Live Stage is the ONLY ruling seat:
+ * the Process Hub renders pointers, never approve / reject / option controls.
+ * The stage never holds its own copy of a ruling.
  */
 export type LiveStageDecisionEvidence = {
   kind: string;
@@ -220,8 +221,8 @@ export type LiveStageTaskHud = {
  *      is the owner's next act, so it is hosted here and marked `foreign`.
  *
  * Anything else → null: several foreign decisions are a LIST, and the list
- * lives in the Process Hub (the summary seat), not on a stage that belongs to
- * one session.
+ * lives in the notification center (the entry seat), not on a stage that
+ * belongs to one session. P0 removed the Process Hub's ruling seat.
  */
 export function buildLiveStageDecisionCard(params: {
   items: readonly LiveStageDecisionItem[];

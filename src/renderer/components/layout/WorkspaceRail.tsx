@@ -561,10 +561,6 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
             same h-10 w-10/rounded-[8px] tile, same hover language, same 14 px
             count badge — instead of a second, privately styled button. */}
         <NotificationCenter
-          onOpenProcesses={() => {
-            if (mode === 'browser') onSelectInternetPane('processes' as BotInternetPane);
-            else handleHomeItem('processes');
-          }}
           renderTrigger={({ open: notificationsOpen, unreadCount, decisionCount, label, toggle }) => (
             <RailButton
               itemId="notifications"

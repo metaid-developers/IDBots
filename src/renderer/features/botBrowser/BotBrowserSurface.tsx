@@ -574,9 +574,9 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
           return;
         }
         if (data.source === PARENT_SOURCE && data.type === 'stage-decision') {
-          // Same IPC the Process Hub's decision card calls: the store resolve,
-          // redundant-sibling cancel and waiting_owner convergence all live in
-          // one main-side function — two seats, one resolve channel.
+          // The ONE ruling channel (P0 removed the Process Hub's decision
+          // card): the store resolve, redundant-sibling cancel and
+          // waiting_owner convergence live in one main-side function.
           void window.electron.longtermTask.decisionResolve({
             queueItemId: data.entry.queueItemId,
             resolutionNote: data.entry.resolutionNote,

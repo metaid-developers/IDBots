@@ -131,18 +131,21 @@ test('component renders exactly three groups with the agreed data keys', () => {
   assert.match(source, /renderTrigger\(\{ open, unreadCount, decisionCount, label, toggle \}\)/);
 });
 
-test('component jumps decisions to the Live Stage first, Process Hub as fallback', () => {
+test('component jumps decisions to the Live Stage first, long-term task card second — never the hub', () => {
   const source = read('src/renderer/components/notifications/NotificationCenter.tsx');
   assert.match(source, /sessionTabBinding\.revealSessionTab\(sessionId\)/);
-  assert.match(source, /onOpenProcesses\(\)/);
   assert.match(source, /cowork:viewSession/);
+  assert.match(source, /longtermTask:viewTask/);
+  // P0: the Process Hub is not a decision destination any more.
+  assert.doesNotMatch(source, /onOpenProcesses/);
 });
 
 test('mount: the rail system zone hosts the bell on both faces', () => {
   const rail = read('src/renderer/components/layout/WorkspaceRail.tsx');
   assert.match(rail, /import NotificationCenter from '\.\.\/notifications\/NotificationCenter';/);
   assert.match(rail, /<NotificationCenter/);
-  assert.match(rail, /onOpenProcesses=\{\(\) => \{/);
+  // P0: the panel no longer takes an "open the Process Hub" route at all.
+  assert.doesNotMatch(rail, /onOpenProcesses/);
   assert.match(rail, /onSelectInternetPane\('processes' as BotInternetPane\)/);
   assert.match(rail, /handleHomeItem\('processes'\)/);
   // The bell's identity attributes ride the rail's entry, because that is where

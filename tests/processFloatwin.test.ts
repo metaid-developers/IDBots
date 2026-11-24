@@ -304,7 +304,7 @@ test('i18n: every new key exists in BOTH languages', () => {
     'processAutonomousEmpty',
     'processUnassignedHumans',
     'processFloatwinClose',
-    'processDecisionBlockLabelCount',
+    'processRowDecideHint',
   ]) {
     assert.ok(zh.includes(`${key}:`), `zh has ${key}`);
     assert.ok(en.includes(`${key}:`), `en has ${key}`);

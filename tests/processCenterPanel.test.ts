@@ -31,9 +31,8 @@ import {
   buildTwinSteeringPrompt,
   classifyProcessGate,
   lastAssistantDigest,
-  openDecisionIdsForSession,
+  openDecisionForSession,
   resolveSourceTaskTitle,
-  retrySteerVisible,
   rowValveLevelOf,
   buildProcessDynamic,
   buildProcessZones,
@@ -1068,26 +1067,12 @@ test('every v2 i18n key exists once per language pack', () => {
     // ── v5 动作沉浸 (Friday 稿四步, owner approval 2026-11-23 06:07) ──
     'processValveStop',
     'processRowDecideButton',
-    'processRetryAction',
-    'processRetryDraft',
-    'processRetryActionDraft',
-    'processRetryStateFailed',
+    'processRowDecideHint',
     'processGateBarLabel',
     'processGateClassDelete',
     'processGateClassFunds',
     'processGateClassCapability',
     'processGateViewAction',
-    'processDecisionBlockLabel',
-    'processDecisionRecommend',
-    'processDecisionApprove',
-    'processDecisionReject',
-    'processDecisionRejectPlaceholder',
-    'processDecisionResolving',
-    'processDecisionEvidenceLabel',
-    'processDecisionOptionNote',
-    'processDecisionAcceptNote',
-    'processDecisionRejectNote',
-    'processDecisionResolveFailed',
   ];
   for (const key of keys) {
     assert.equal(
@@ -1343,32 +1328,22 @@ test('v5 ② S1 brake valve: live rows only, the existing stop channel, zero new
   assert.doesNotMatch(panel, /processStopRun|session:stopRun/);
 });
 
-test('v5 fork 2A: retry hands the FAILED run to the Twin as a draft — never a direct rerun', () => {
+test('P0 转向类移出 (v3.2 §2.2 row 7): the hub holds NO retry/steer valve', () => {
   const panel = readSource('src/renderer/components/cowork/ProcessCenterPanel.tsx');
   const model = readSource('src/renderer/utils/processCenter.ts');
 
-  // Steer class: dead + error + human lineage only.
-  const base = { statusKind: 'dead', error: true } as const;
-  assert.equal(retrySteerVisible({ ...base, session: mkSession('h', undefined) }), true);
-  assert.equal(retrySteerVisible({ ...base, session: mkSession('b', 'orchestration') }), false, 'bot rows: no steer valve (fork 1A)');
-  assert.equal(retrySteerVisible({ ...base, error: false, session: mkSession('h', undefined) }), false, 'a clean run is not a retry');
-  assert.equal(
-    retrySteerVisible({ statusKind: 'pending', error: true, session: mkSession('h', undefined) }),
-    false,
-    'a pending row is waiting on a verdict, not failed',
-  );
-  assert.match(model, /export const retrySteerVisible = \(/);
-
-  // The panel wires the steer valve under 'full' only…
-  assert.match(panel, /onRetry=\{valveLevel === 'full' && retrySteerVisible\(entry\) \? handleRetryToTwin : undefined\}/);
-  assert.match(panel, /data-testid="process-row-retry"/);
-  // …and the action is the DRAFT channel (cowork:newChatWithDraft), addressed to
-  // the Twin — the same handoff the detail page's 对 Twin 说 uses. Zero new wire.
-  assert.match(panel, /dispatch\(setNewTaskMetabotId\(twin\.id\)\)/);
-  assert.match(panel, /new CustomEvent\('cowork:newChatWithDraft', \{ detail: \{ text: draftText \} \}\)/);
-  assert.match(panel, /buildTwinSteeringPrompt\(i18nService\.t\('processRetryDraft'\)/);
-  assert.match(panel, /resolveSourceTaskTitle\(entry\.session, longTermBoard\?\.cards \?\? boardCards\)/);
+  // 转向 = 派活, not 处置: its entry is the session itself (人说话的地方),
+  // never a hub button. Both the button and its draft channel left the panel.
+  assert.doesNotMatch(panel, /process-row-retry/);
+  assert.doesNotMatch(panel, /onRetry/);
+  assert.doesNotMatch(panel, /handleRetryToTwin/);
+  assert.doesNotMatch(panel, /buildTwinSteeringPrompt/);
+  assert.doesNotMatch(panel, /cowork:newChatWithDraft/);
+  assert.doesNotMatch(model, /retrySteerVisible/);
+  // No hidden rerun channel either.
   assert.doesNotMatch(panel, /sessionRerun|session:rerun/);
+  // The row itself still opens the session — that is where steering belongs.
+  assert.match(panel, /onClick=\{\(\) => onOpen\(session\.id\)\}/);
 });
 
 test('v5 ③ the exception-gate bar classifies the three gates and stays READ-ONLY', () => {
@@ -1436,72 +1411,114 @@ test('v5 ③ the exception-gate bar classifies the three gates and stays READ-ON
   assert.doesNotMatch(bar, /cowork:permission:respond/);
 });
 
-test('v5 ④ fork 3A: decisionResolve is ONE shared path — agent tool and IPC same source', () => {
+test('P0 权限搬迁 (v3.2 §2.3): the hub holds NO ruling channel — Live Stage is the only writer', () => {
   const preload = readSource('src/main/preload.ts');
   const main = readSource('src/main/main.ts');
   const typings = readSource('src/renderer/types/electron.d.ts');
   const panel = readSource('src/renderer/components/cowork/ProcessCenterPanel.tsx');
+  const liveStage = readSource('src/renderer/features/botBrowser/BotBrowserSurface.tsx');
 
-  // The renderer wire exists once.
+  // The ONE renderer wire + the ONE shared main-side function stay untouched.
   assert.match(preload, /decisionResolve: \(input: \{ queueItemId: string; resolutionNote: string; activeSessionId\?: string \| null \}\) =>\s*\n\s*ipcRenderer\.invoke\('longtermTask:decisionResolve', input\)/);
   assert.match(typings, /decisionResolve: \(input: \{ queueItemId: string; resolutionNote: string; activeSessionId\?: string \| null \}\)/);
-
-  // N1: the whole segment (resolve + sibling cancel + waiting_owner release)
-  // lives in ONE shared function. `cancelSiblingQueuedForTask(` now appears in
-  // main.ts exactly once — inside it — so no second body can drift.
   assert.equal((main.match(/cancelSiblingQueuedForTask\(/g) ?? []).length, 1, 'the sibling cancel lives ONLY in the shared function');
   assert.match(main, /const resolveOwnerDecision = \(/);
   assert.match(main, /getLongTermTaskStore\(\)\.acceptSubtask\(ltSub\.id, 'owner',/);
   assert.match(main, /getLongTermTaskStore\(\)\.unblockSubtask\(ltSub\.id, 'owner',/);
-
-  // The Twin's agent tool delegates…
   assert.match(main, /resolveDecision: \(sid, queueItemId, resolutionNote\) => \{[\s\S]{0,420}return resolveOwnerDecision\(sid \?\? null, queueItemId, resolutionNote\);/);
-  // …and the new IPC handler calls the SAME function.
   assert.match(main, /registerIpcHandler\('longtermTask:decisionResolve'/);
   assert.match(main, /RESOLUTION_NOTE_REQUIRED/, 'a ruling without a recorded reason is not a ruling');
   assert.match(main, /const result = resolveOwnerDecision\(sid, queueItemId, resolutionNote\);/);
 
-  // The hub's decision card rides that wire — queueItemId + a non-empty note.
-  assert.match(panel, /data-testid="process-decision-block"/);
-  assert.match(panel, /data-testid="process-decision-card"/);
-  assert.match(panel, /data-testid="process-decision-option"/);
-  assert.match(panel, /data-testid="process-decision-reject-input"/);
-  assert.match(panel, /api\?\.decisionResolve\?\.\(\{ queueItemId: item\.id, resolutionNote: note \}\)/);
-  // Notes are composed from the ruling, never empty: option → 拍板：{option},
-  // approval → accept note, rejection → 驳回：{reason} with a required reason.
-  assert.match(panel, /processDecisionOptionNote'\)\.replace\('\{option\}', label\)/);
-  assert.match(panel, /processDecisionAcceptNote/);
-  assert.match(panel, /processDecisionRejectNote'\)\.replace\('\{reason\}', reason\)/);
-  assert.match(panel, /!rejectText\.trim\(\)/, 'the reject confirm stays disabled until a reason exists');
-  // The card never writes the store directly — only through the IPC.
+  // P0: the hub's ruling seat is GONE — no card, no option/approve/reject, no
+  // resolve call, no note builders, no direct store write.
+  assert.doesNotMatch(panel, /decisionResolve/, 'the hub must never call the resolve channel');
+  assert.doesNotMatch(panel, /data-testid="process-decision-(block|card|option|reject-input|approve|reject-confirm)"/);
+  assert.doesNotMatch(panel, /processDecision(Option|Accept|Reject|ResolveFailed)/);
+  assert.doesNotMatch(panel, /!rejectText\.trim\(\)/);
   assert.doesNotMatch(panel, /getStudioDecisionQueueStore|studioDecisionQueueStore\./);
+
+  // …and the Live Stage still rides the very same IPC: one resolve channel.
+  assert.match(liveStage, /window\.electron\.longtermTask\.decisionResolve\(\{/);
+  assert.match(liveStage, /queueItemId: data\.entry\.queueItemId/);
+
+  // The hub still READS the same live queue it points into (no invented data).
+  assert.match(panel, /api\?\.studioStatus\?\.\(\{\}\)|api\.studioStatus\(\{\}\)|studioStatus\(\{\}\)/);
 });
 
-test('v5 L3 row link: a pending row jumps to its decision card, an unlinked row keeps the span', () => {
+test('P0 同源 (验收 3): both seats read the SAME live decision queue; no surface invents a row', () => {
+  const panel = readSource('src/renderer/components/cowork/ProcessCenterPanel.tsx');
+  const nc = readSource('src/renderer/components/notifications/NotificationCenter.tsx');
+  const main = readSource('src/main/main.ts');
+
+  // Both renderer surfaces go through the one studioStatus read…
+  assert.match(panel, /api\.studioStatus\(\{\}\)/);
+  assert.match(nc, /lt\.studioStatus\(\{\}\)/);
+  // …and consume the SAME field the main handler serves from listOpen().
+  assert.match(panel, /result\.openDecisions/);
+  assert.match(nc, /status\.openDecisions/);
+  assert.match(main, /const openDecisions = twin \? getStudioDecisionQueueStore\(\)\.listOpen\(twin\.id\) : \[\];/);
+  // Neither renderer may reach the store or fabricate a decision row.
+  assert.doesNotMatch(panel, /getStudioDecisionQueueStore|studioDecisionQueueStore\./);
+  assert.doesNotMatch(nc, /getStudioDecisionQueueStore|studioDecisionQueueStore\./);
+});
+
+test('P0 pointer (v3.2 S-08): a pending row jumps to the Live Stage seat, an unlinked row keeps the span', () => {
   const panel = readSource('src/renderer/components/cowork/ProcessCenterPanel.tsx');
   const model = readSource('src/renderer/utils/processCenter.ts');
 
   // Pure linkage: row → its board card (decisionSessionIds) → the open decision
-  // on that task. Fork 5A: the row itself stays a SESSION row — no task uproll.
+  // on that task. The decision itself is returned because its origin session is
+  // the landing key for the Live Stage jump.
   const cards = [{ id: 'task-1', decisionSessionIds: ['sess-a'] }];
   const decisions = [
-    { id: 'd1', longtermTaskId: 'task-1' },
-    { id: 'd2', longtermTaskId: 'task-2' },
-    { id: 'd3', longtermTaskId: null },
+    { id: 'd1', longtermTaskId: 'task-1', originStudioSessionId: 'studio-a' },
+    { id: 'd2', longtermTaskId: 'task-2', originStudioSessionId: 'studio-b' },
+    { id: 'd3', longtermTaskId: null, originStudioSessionId: null },
   ];
-  assert.deepEqual(openDecisionIdsForSession('sess-a', cards, decisions), ['d1']);
-  assert.deepEqual(openDecisionIdsForSession('sess-b', cards, decisions), []);
-  assert.deepEqual(openDecisionIdsForSession('sess-a', [], decisions), []);
-  assert.deepEqual(openDecisionIdsForSession('sess-a', [{ id: 'task-1' }], decisions), [], 'a card without decisionSessionIds binds nothing');
-  assert.match(model, /export const openDecisionIdsForSession = \(/);
+  assert.deepEqual(openDecisionForSession('sess-a', cards, decisions), decisions[0]);
+  assert.equal(openDecisionForSession('sess-b', cards, decisions), null);
+  assert.equal(openDecisionForSession('sess-a', [], decisions), null);
+  assert.equal(openDecisionForSession('sess-a', [{ id: 'task-1' }], decisions), null, 'a card without decisionSessionIds binds nothing');
+  assert.match(model, /export const openDecisionForSession = \(/);
 
-  // The row renders a real 拍板 BUTTON only when linked; otherwise the span stays.
+  // The row renders a pointer BUTTON only when linked; otherwise the span stays.
   assert.match(panel, /data-testid="process-row-decide-button"/);
   assert.match(panel, /data-testid="process-row-decide"/);
-  assert.match(panel, /onDecide=\{linkedDecisionIds\.length > 0 \? \(\) => focusDecision\(linkedDecisionIds\[0\]\) : undefined\}/);
-  assert.match(panel, /focusDecision/);
-  // The card carries the per-item anchor the jump targets.
-  assert.match(panel, /data-decision-id=\{item\.id\}/);
+  assert.match(panel, /data-decision-jump="live-stage"/);
+  assert.match(panel, /onDecide=\{linkedDecision \? \(\) => jumpToDecisionSeat\(linkedDecision, entry\.session\.id\) : undefined\}/);
+  // The pointer rides the SAME two events the notification center's jump uses.
+  assert.match(panel, /const jumpToDecisionSeat = useCallback/);
+  assert.match(panel, /originStudioSessionId/);
+  assert.match(panel, /new CustomEvent\('cowork:viewSession', \{ detail: \{ sessionId \} \}\)/);
+  assert.match(panel, /sessionTabBinding\.revealSessionTab\(sessionId\)/);
+  // The old in-place seat (card anchor + scroll) is gone.
+  assert.doesNotMatch(panel, /data-decision-id=\{item\.id\}/);
+  assert.doesNotMatch(panel, /focusDecision/);
+});
+
+test('P0 交互分类 (v3.2 §2.0): the hub keeps EXACTLY the four management actions, each on its own surface', () => {
+  const panel = readSource('src/renderer/components/cowork/ProcessCenterPanel.tsx');
+
+  // 1) kill — the existing brake channel, live rows only (22:50 点名的那一个).
+  assert.match(panel, /onStop=\{entry\.statusKind === 'live' \? handleStopRun : undefined\}/);
+  assert.match(panel, /void coworkService\.stopSession\(sessionId\)/);
+  // 2) archive — DB archived_at via the existing service.
+  assert.match(panel, /onArchive=\{valveLevel !== 'none' \? handleArchive : undefined\}/);
+  assert.match(panel, /void coworkService\.archiveSession\(sessionId\)/);
+  // 3) remove — fold override 'out', never the creation fact.
+  assert.match(panel, /onRemove=\{valveLevel !== 'none' \? handleRemove : undefined\}/);
+  assert.match(panel, /coworkService\.setSessionFoldOverride\(sessionId, 'out'\)/);
+  // 4) bucket — renderer-local routing, gated on awaiting rows.
+  assert.match(panel, /onSetBucket=\{valveLevel !== 'none' \? \(sessionId, next\) => void setLineageBucket\(sessionId, next\) : undefined\}/);
+  assert.match(panel, /state === 'awaiting' &&/);
+
+  // None of the four writes a ruling: no waiting_owner / decision mutation.
+  assert.doesNotMatch(panel, /waiting_owner/);
+  assert.doesNotMatch(panel, /acceptSubtask|unblockSubtask|decisionResolve/);
+  assert.doesNotMatch(panel, /studio_decision_queue/);
+  // And no fifth action survives: the 转向类 retry valve moved out in P0.
+  assert.doesNotMatch(panel, /data-testid="process-row-retry"|onRetry|handleRetryToTwin/);
 });
 
 test('v5 forks 4B + 5A: scheduled task objects stay OUT of the hub; rows stay sessions', () => {

@@ -892,9 +892,12 @@ export const lastAssistantDigest = (
  *   'housekeeping' bot-origin rows (autoOrigin != null): 整理类 only — the three
  *                  existing valves, because they only move WHERE a run is visible,
  *                  never what it does next (判据② exemption);
- *   'full'         human-origin rows (autoOrigin == null): housekeeping PLUS
- *                  steer-class valves (转向类, e.g. R1 retry) — the only class
- *                  the lineage gate constrains.
+ *   'full'         human-origin rows (autoOrigin == null): housekeeping. The
+ *                  转向类 valve (R1 retry) MOVED OUT of the hub in P0 (v3.2
+ *                  §2.2 row 7: steering is 派活, and its entry is the session
+ *                  itself), so today 'full' renders the same four management
+ *                  actions as 'housekeeping'. The level is kept as the seam the
+ *                  P1 valve cleanup (S-18) needs — it is not a second action set.
  *
  * The brake class (S1 停止) is exempt from the lineage gate entirely and is
  * keyed on `statusKind === 'live'`, so it is NOT expressed through this level.
@@ -904,16 +907,6 @@ export type ProcessRowValveLevel = 'none' | 'housekeeping' | 'full';
 export const rowValveLevelOf = (
   session: Pick<CoworkSessionSummary, 'autoOrigin'>,
 ): Exclude<ProcessRowValveLevel, 'none'> => (session.autoOrigin ? 'housekeeping' : 'full');
-
-/**
- * R1 重试 (fork 2A) visibility: steer-class valve, so lineage-gated (human rows
- * only) AND failure-gated (a dead row that ended in error — retrying a run that
- * is waiting on a verdict or finished cleanly is not a retry). The action itself
- * is a Twin-handoff draft, never a direct rerun.
- */
-export const retrySteerVisible = (
-  entry: Pick<ProcessEntry, 'statusKind' | 'error' | 'session'>,
-): boolean => entry.statusKind === 'dead' && entry.error === true && !entry.session.autoOrigin;
 
 /* ───────────── 三例外闸只读条 (判据③): classify, never decide ───────────── */
 
@@ -1023,32 +1016,37 @@ export const processGateQuestionOf = (permission: ProcessGatePermissionLike): st
   return null;
 };
 
-/* ───────────── L3 决策卡: link open decisions to hub rows ───────────── */
+/* ───────────── P0 决策指针: link open decisions to hub rows ───────────── */
 
-/** The sliver of `StudioDecisionQueueItem` the linkage needs. */
+/** The sliver of `StudioDecisionQueueItem` the linkage/pointer needs. */
 export interface ProcessDecisionLike {
   id: string;
   longtermTaskId?: string | null;
+  /** The session whose Live Stage hosts this decision's card (the jump key). */
+  originStudioSessionId?: string | null;
 }
 
 /**
- * Which open decision cards belong to a hub row: the row's board card binds it
- * to a task via `decisionSessionIds`, and an open decision binds to the same
- * task via `longtermTaskId`. Decisions with no task linkage stay in the decision
- * block — they simply get no row-level 拍板 jump.
+ * Which open decision belongs to a hub row: the row's board card binds it to a
+ * task via `decisionSessionIds`, and an open decision binds to the same task
+ * via `longtermTaskId`.
+ *
+ * P0 (v3.2 §2.0/§2.2 row 3): the hub no longer renders a decision card. The
+ * row keeps a POINTER to the ONE decision seat (Live Stage), so the linkage
+ * returns the decision itself — its `originStudioSessionId` is the landing key.
+ * Decisions with no task linkage bind nothing; they stay in the notification
+ * center, never in the hub.
  */
-export const openDecisionIdsForSession = (
+export const openDecisionForSession = (
   sessionId: string,
   cards: ReadonlyArray<{ id: string; decisionSessionIds?: readonly string[] | null }> | null | undefined,
   openDecisions: readonly ProcessDecisionLike[],
-): string[] => {
+): ProcessDecisionLike | null => {
   const linkedTaskIds = new Set(
     (cards ?? [])
       .filter((card) => (card.decisionSessionIds ?? []).includes(sessionId))
       .map((card) => card.id),
   );
-  if (linkedTaskIds.size === 0) return [];
-  return openDecisions
-    .filter((item) => (item.longtermTaskId ? linkedTaskIds.has(item.longtermTaskId) : false))
-    .map((item) => item.id);
+  if (linkedTaskIds.size === 0) return null;
+  return openDecisions.find((item) => (item.longtermTaskId ? linkedTaskIds.has(item.longtermTaskId) : false)) ?? null;
 };

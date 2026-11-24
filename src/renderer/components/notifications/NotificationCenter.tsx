@@ -23,10 +23,13 @@ import {
  * has no decision-type notification write (that is P2-2, upstream PR #179):
  *   1. `permission.required` rows already in the notification pipeline;
  *   2. the LIVE open Studio decision queue (`longtermTask:studioStatus`), the
- *      same rows the Live Stage card and the Process Hub card render.
+ *      same rows the Live Stage card rules on; the Process Hub only POINTS at
+ *      them (P0 removed its ruling seat).
  * Nothing is invented: both are existing read channels, and a decision row
- * jumps to the seat that actually decides (Live Stage first, Process Hub when
- * the row has no session).
+ * jumps to the seat that actually decides (Live Stage). The Process Hub is NOT
+ * a decision destination any more (P0, v3.2 §2.0/§3.2 S-05): when a row has no
+ * studio session, the jump lands on its long-term task card; with neither key
+ * the panel stays open — the notification center IS that decision's home.
  *
  * The ENTRY is not drawn here. `renderTrigger` hands the button back to the
  * host whose rail it sits on, so 通知中心 rides the same RailButton as 进程中心
@@ -44,8 +47,6 @@ interface OpenDecisionRow {
 }
 
 interface NotificationCenterProps {
-  /** Switch the shell to the Process Hub (the summary seat for decisions). */
-  onOpenProcesses: () => void;
   /**
    * The entry that opens this panel — supplied BY THE RAIL, not drawn here.
    *
@@ -125,7 +126,7 @@ const NotificationRow: React.FC<{
   );
 };
 
-const NotificationCenter: React.FC<NotificationCenterProps> = ({ onOpenProcesses, renderTrigger }) => {
+const NotificationCenter: React.FC<NotificationCenterProps> = ({ renderTrigger }) => {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<AgentNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -242,16 +243,24 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ onOpenProcesses
     const sessionId = typeof row.originStudioSessionId === 'string' ? row.originStudioSessionId.trim() : '';
     if (sessionId) {
       // Live Stage is the decision's FIRST landing (owner ruling 22:23):
-      // open that session and bring its stage tab forward.
+      // open that session and bring its stage tab forward. This is the ONE
+      // decision seat after P0 — the Process Hub no longer rules.
       window.dispatchEvent(new CustomEvent('cowork:viewSession', { detail: { sessionId } }));
       void sessionTabBinding.revealSessionTab(sessionId);
       setOpen(false);
       return;
     }
-    // No session to land on → the Process Hub keeps the summary seat.
-    onOpenProcesses();
-    setOpen(false);
-  }, [onOpenProcesses]);
+    const taskId = typeof row.longtermTaskId === 'string' ? row.longtermTaskId.trim() : '';
+    if (taskId) {
+      // No studio session → land on the decision's long-term task card. The
+      // hub is deliberately NOT a fallback (v3.2 §3.2 S-05: it has no seat).
+      window.dispatchEvent(new CustomEvent('longtermTask:viewTask', { detail: { taskId } }));
+      setOpen(false);
+      return;
+    }
+    // Neither landing key: keep the panel open — the decision row is already
+    // at its home, and a click must not dump the owner into a room with no desk.
+  }, []);
 
   const markAllRead = useCallback(() => {
     void window.electron?.notification?.markAllRead?.().then(() => {

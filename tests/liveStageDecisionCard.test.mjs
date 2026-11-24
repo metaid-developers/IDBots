@@ -230,9 +230,10 @@ test('bridge + surface: stage-decision relays to the SAME longtermTask:decisionR
   assert.match(surface, /window\.electron\.longtermTask\.decisionResolve\(\{/);
   assert.match(surface, /queueItemId: data\.entry\.queueItemId/);
   assert.match(surface, /resolutionNote: data\.entry\.resolutionNote/);
-  // The hub's decision card calls the exact same IPC — two seats, one channel.
+  // P0 (v3.2 §2.0/§2.3): the hub no longer holds a ruling seat, so it must NOT
+  // call the resolve channel. It still READS the same live queue it points into.
   const hub = read('src/renderer/components/cowork/ProcessCenterPanel.tsx');
-  assert.match(hub, /api\?\.decisionResolve\?\.\(\{ queueItemId: item\.id, resolutionNote: note \}\)/);
+  assert.doesNotMatch(hub, /decisionResolve/, 'the hub must never resolve a decision');
   assert.match(hub, /api\.studioStatus\(\{\}\)/);
 });
 
