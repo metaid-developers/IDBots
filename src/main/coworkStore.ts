@@ -11527,7 +11527,7 @@ export class CoworkStore implements MemoryBackend {
             AND live.usage_class = 'self_identity'
             AND live.status != 'deleted'
         )
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, rowid DESC
     `);
     if (deleted.length === 0) return 0;
 
