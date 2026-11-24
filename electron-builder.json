@@ -68,7 +68,9 @@
         "!**/node_modules/**/*.d.cts",
         "!**/node_modules/**/*.map",
         "!**/node_modules/**/__tests__/**",
-        "!**/node_modules/**/tests/**"
+        "!**/node_modules/**/tests/**",
+        "!**/node_modules/@deepseek-ai/dsh-experimental-inspector/**",
+        "!**/node_modules/@deepseek-ai/dsh-experimental-inspector-profile/**"
       ]
     }
   ],

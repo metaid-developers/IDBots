@@ -51,6 +51,21 @@ const RUNTIME_TEST_DIRECTORY_FILTERS = RUNTIME_TEST_DIRECTORY_NAMES.map(
 );
 
 /**
+ * Transitive @deepseek-ai/dsh CLI packages never mounted by IDBots's generated
+ * Cordis composition (`dsh-runtime/lib/generate-runtime-config.mjs`). Dropping
+ * the unused Web DevTools Inspector bundle reclaims 48 chars of Windows NSIS
+ * MAX_PATH headroom (deepest path drops from 256/260 to 208/260 for a 20-char
+ * username) and skips ~2,500 static DevTools files during install/uninstall.
+ */
+const RUNTIME_UNMOUNTED_PACKAGE_DIRS = [
+  '@deepseek-ai/dsh-experimental-inspector',
+  '@deepseek-ai/dsh-experimental-inspector-profile',
+];
+const RUNTIME_UNMOUNTED_PACKAGE_FILTERS = RUNTIME_UNMOUNTED_PACKAGE_DIRS.map(
+  (pkgDir) => `!**/node_modules/${pkgDir}/**`,
+);
+
+/**
  * Content extraResources (SKILLs, METAAPPs) copy from the developer's working
  * tree, so git-ignored local scratch dirs (SKILLs/.tmp_*, .cowork-temp, ...)
  * would otherwise ship in the installer: in the 1.0.2/1.0.3 builds that was
@@ -197,10 +212,14 @@ function findPackagedRuntimeDeadFiles(runtimeRoot) {
       }
       if (!entry.isFile()) continue;
       const relativeSegments = path.relative(nodeModulesRoot, full).split(path.sep);
+      const relativePosix = relativeSegments.join('/');
       const isTestFile = relativeSegments
         .slice(0, -1)
         .some((segment) => RUNTIME_TEST_DIRECTORY_NAMES.includes(segment));
-      if (isRuntimeDeadFile(entry.name) || isTestFile) {
+      const isUnmountedPkgFile = RUNTIME_UNMOUNTED_PACKAGE_DIRS.some(
+        (pkgDir) => relativePosix.startsWith(`${pkgDir}/`),
+      );
+      if (isRuntimeDeadFile(entry.name) || isTestFile || isUnmountedPkgFile) {
         found.push(path.relative(runtimeRoot, full).split(path.sep).join('/'));
       }
     }
@@ -363,6 +382,8 @@ module.exports = {
   RUNTIME_DEAD_FILE_FILTERS,
   RUNTIME_TEST_DIRECTORY_NAMES,
   RUNTIME_TEST_DIRECTORY_FILTERS,
+  RUNTIME_UNMOUNTED_PACKAGE_DIRS,
+  RUNTIME_UNMOUNTED_PACKAGE_FILTERS,
   RESOURCE_DOT_ENTRY_FILTERS,
   isRuntimeDeadFile,
   findPackagedRuntimeDeadFiles,
