@@ -129,6 +129,40 @@ const resolveRequestFile = (root: string, pathname: string): string | null => {
     return null;
   }
 
+  if (
+    appId !== 'personal-goods-shop'
+    && relativeSegments.length === 1
+    && (relativeSegments[0] === 'index.html' || relativeSegments[0] === 'styles.css' || relativeSegments[0] === 'app.js')
+  ) {
+    try {
+      const shopCfgRaw = JSON.parse(fs.readFileSync(path.resolve(rootRealPath, appId, 'shop-config.json'), 'utf8'));
+      const ownerId = typeof shopCfgRaw?.ownerGlobalMetaId === 'string' ? shopCfgRaw.ownerGlobalMetaId.trim() : '';
+      if (/^idq1[a-z0-9]{30,64}$/iu.test(ownerId)) {
+        const moduleDir = typeof __dirname === 'string' ? __dirname : process.cwd();
+        const overlayCandidates = [
+          path.resolve(rootRealPath, 'personal-goods-shop', relativeSegments[0]),
+          typeof process.resourcesPath === 'string' && process.resourcesPath
+            ? path.resolve(process.resourcesPath, 'METAAPPs', 'personal-goods-shop', relativeSegments[0])
+            : '',
+          path.resolve(moduleDir, '..', '..', 'METAAPPs', 'personal-goods-shop', relativeSegments[0]),
+          path.resolve(moduleDir, '..', '..', '..', 'METAAPPs', 'personal-goods-shop', relativeSegments[0]),
+        ].filter(Boolean);
+        for (const overlayPath of overlayCandidates) {
+          try {
+            const realOverlay = fs.realpathSync.native(overlayPath);
+            if (fs.statSync(realOverlay).isFile()) {
+              return realOverlay;
+            }
+          } catch {
+            // Try next candidate.
+          }
+        }
+      }
+    } catch {
+      // Not a personal-goods-shop instance; serve the original local file.
+    }
+  }
+
   return candidateRealPath;
 };
 

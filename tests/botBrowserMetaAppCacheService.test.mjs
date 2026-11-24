@@ -858,3 +858,107 @@ test('local preview serves a pdf with the classified MIME', async () => {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
 });
+
+test('existing published personal-goods-shop MetaApp overlays upgraded storefront assets while preserving shop-config.json', async () => {
+  const cacheRoot = await mkdtemp(path.join(os.tmpdir(), 'idbots-personal-shop-overlay-'));
+  const shopPinId = 'e673a6b8da63394d15a4d145ad5f37904bfca48bbb5f286a6aa6aa1af842e685i0';
+  const codePinId = '99bffcc35d10ca0c5ea7b96c14fb9b377e676f29afb84781b7af7e598b44194bi0';
+  const ownerGlobalMetaId = 'idq14hmv23j5fnlx4ccnmvlyldjd38xjsechzwg9xz';
+
+  const legacyZip = new AdmZip();
+  legacyZip.addFile('index.html', Buffer.from('<!doctype html><html><body>legacy ◆ owner-bar</body></html>', 'utf8'));
+  legacyZip.addFile('styles.css', Buffer.from('.legacy-broken { display: flex; }', 'utf8'));
+  legacyZip.addFile('app.js', Buffer.from('window.__legacyBrokenShop = true;', 'utf8'));
+  legacyZip.addFile('shop-config.json', Buffer.from(JSON.stringify({
+    ownerGlobalMetaId,
+    shopName: 'AI_Sunny 精选头像铺',
+    slogan: '老玩家精选头像铺，积分自动秒发',
+    mockSnapshot: {
+      owner: {
+        globalMetaId: ownerGlobalMetaId,
+        name: 'AI_Sunny',
+        avatar: '/content/607b2da84bbd01e01397bb6ea8cd09e4f9b0e87552dd0d0e24b828f18884dd30i0',
+      },
+    },
+  }), 'utf8'));
+  const legacyZipBuffer = legacyZip.toBuffer();
+
+  const service = createBotBrowserMetaAppCacheService({
+    cacheRoot,
+    previewPortCandidates: [0],
+    fetch: async (url) => {
+      if (String(url).endsWith(`/pin/${shopPinId}`)) {
+        return new Response(JSON.stringify({
+          code: 0,
+          data: {
+            pin: {
+              path: '/protocols/metaapp',
+              ownerGlobalMetaId,
+              timestamp: 1_795_340_000,
+              contentSummary: JSON.stringify({
+                title: 'AI_Sunny 精选头像铺',
+                appName: 'aisunny-goods-shop',
+                summary: '老玩家精选头像铺，积分自动秒发',
+                runtime: 'browser',
+                version: 'v1.0.0',
+                indexFile: 'index.html',
+                contentType: 'application/zip',
+                content: `metafile://${codePinId}.zip`,
+              }),
+            },
+          },
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (String(url).includes(codePinId)) {
+        return new Response(legacyZipBuffer, {
+          status: 200,
+          headers: { 'content-type': 'application/zip' },
+        });
+      }
+      return new Response('not found', { status: 404 });
+    },
+  });
+
+  try {
+    const resolved = await service.resolveMetaAppPin(shopPinId);
+    assert.equal(resolved.ok, true);
+    assert.equal(resolved.data.title, 'AI_Sunny 的 NFT 橱窗');
+
+    const indexUrl = resolved.data.runUrl;
+    const basePreviewUrl = indexUrl.replace(/\/index\.html$/, '');
+
+    const [htmlRes, cssRes, jsRes, cfgRes] = await Promise.all([
+      fetch(indexUrl),
+      fetch(`${basePreviewUrl}/styles.css`),
+      fetch(`${basePreviewUrl}/app.js`),
+      fetch(`${basePreviewUrl}/shop-config.json`),
+    ]);
+
+    const [htmlText, cssText, jsText, cfgJson] = await Promise.all([
+      htmlRes.text(),
+      cssRes.text(),
+      jsRes.text(),
+      cfgRes.json(),
+    ]);
+
+    assert.equal(htmlRes.status, 200);
+    assert.doesNotMatch(htmlText, /legacy ◆ owner-bar/);
+    assert.doesNotMatch(htmlText, /◆/);
+    assert.match(htmlText, /id="shop-title"/);
+
+    assert.equal(cssRes.status, 200);
+    assert.doesNotMatch(cssText, /\.legacy-broken/);
+    assert.match(cssText, /\[hidden\]\s*\{\s*display:\s*none\s*!important;/);
+
+    assert.equal(jsRes.status, 200);
+    assert.doesNotMatch(jsText, /__legacyBrokenShop/);
+    assert.match(jsText, /buildImageCandidates/);
+
+    assert.equal(cfgRes.status, 200);
+    assert.equal(cfgJson.ownerGlobalMetaId, ownerGlobalMetaId);
+    assert.equal(cfgJson.mockSnapshot.owner.name, 'AI_Sunny');
+  } finally {
+    await service.stop();
+    await rm(cacheRoot, { recursive: true, force: true }).catch(() => undefined);
+  }
+});

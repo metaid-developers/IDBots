@@ -1849,7 +1849,7 @@ export function buildMrc721AgentTools(deps: {
     'mrc721_sell_intent',
     [
       'Declare the intent to sell one MRC-721 digital item as an on-chain sell-intent pin (/protocols/mrc721sell v2.2) — the discoverable, currency-agnostic "I want to sell this" announcement.',
-      'Supports ME points pricing (price_me, min 1 ME), CNY fiat reference pricing (price_cny_yuan, min ¥1.00), and direct FT token pricing (price_tokens: array of { asset_key: "mrc20:<id>" | "mvc-ft:<codehash>:<genesis>", amount_display, symbol?, decimals? }), plus auto_fulfill_me / auto_fulfill_tokens (default true), negotiable (default true), and optional shop_metaapp_pin_id.',
+      'Supports ME points pricing (price_me, min 1 ME), CNY fiat reference pricing (price_cny_yuan, min ¥1.00), and direct FT token pricing (price_tokens: array of { asset_key: "mrc20:<id>" | "mvc-ft:<codehash>:<genesis>", amount_display, symbol?, decimals? }), plus auto_fulfill_me / auto_fulfill_tokens (default true), negotiable (default false), and optional shop_metaapp_pin_id.',
       'The pin moves no funds and transfers nothing: settlement later runs over ME Escrow (goods_buy_with_me), direct Token settlement (goods_buy_with_token), atomic swap (mrc721_sell), or guarantor escrow. The item must currently be held by this bot.',
       'Broadcasts a declaration pin on /protocols/mrc721sell (append-only log, latest declaration per item wins) and appends an ```nft-card fence with action "selling" — include it verbatim in your announcement.',
     ].join(' '),
@@ -1865,7 +1865,7 @@ export function buildMrc721AgentTools(deps: {
       })).optional().describe('Optional accepted fungible token prices (MRC-20 or MVC MetaContract FT).'),
       auto_fulfill_me: z.boolean().optional().describe('Allow SellerAutoFulfillDaemon to automatically transfer the item when a buyer locks ME escrow (default true).'),
       auto_fulfill_tokens: z.boolean().optional().describe('Allow SellerAutoFulfillDaemon to automatically verify and settle direct token purchases (default true).'),
-      negotiable: z.boolean().optional().describe('Whether buyers can send an inquiry/quote before buying (default true).'),
+      negotiable: z.boolean().optional().describe('Whether buyers can send an inquiry/quote before buying (default false).'),
       shop_metaapp_pin_id: z.string().optional().describe('Optional seller MetaApp shop pinId to display on cards and link buyers to.'),
       price_hint_sats: z.number().int().positive().optional().describe('Reference price in native SPACE sats, display only. Omit for "make an offer".'),
       accepted_currencies: z.array(z.string().min(1)).optional().describe('Accepted settlement currencies, e.g. ["me","space","fiat:CNY","ft:mrc20:..."]. Auto-merges with priced currencies.'),
@@ -1942,6 +1942,7 @@ export function buildMrc721AgentTools(deps: {
           sellerOnline: botName ? true : undefined,
           shopMetaAppPinId: result.intent.shopMetaAppPinId,
           caVerified,
+          negotiable: result.intent.negotiable === true,
           action: 'selling',
         });
         const priceParts: string[] = [];
@@ -1962,7 +1963,7 @@ export function buildMrc721AgentTools(deps: {
           `- item pinId: ${result.intent.itemPinId}`,
           `- sell-intent pin: pin://${result.sellPinId}`,
           `- pricing: ${priceParts.length ? priceParts.join(' / ') : 'make an offer'}`,
-          `- autoFulfillMe: ${result.intent.autoFulfillMe !== false ? 'enabled' : 'disabled'} | autoFulfillTokens: ${result.intent.autoFulfillTokens !== false ? 'enabled' : 'disabled'} | negotiable: ${result.intent.negotiable !== false ? 'yes' : 'no'}`,
+          `- autoFulfillMe: ${result.intent.autoFulfillMe !== false ? 'enabled' : 'disabled'} | autoFulfillTokens: ${result.intent.autoFulfillTokens !== false ? 'enabled' : 'disabled'} | negotiable: ${result.intent.negotiable === true ? 'yes' : 'no'}`,
           `- accepted currencies: ${result.intent.acceptedCurrencies.join(', ')}`,
           `- settlement: ${result.intent.settlement.join(' / ')}`,
         ].join('\n'), withNftCardHostStamp(cardFields, sessionId)));

@@ -76,6 +76,10 @@ type BotBrowserMetaAppCacheServiceOptions = {
   // order before falling back to an ephemeral port. Defaults to
   // PREVIEW_PORT_CANDIDATES; primarily a test hook.
   previewPortCandidates?: number[];
+  // Optional override path to the bundled METAAPPs/personal-goods-shop template
+  // directory used to upgrade storefront UI assets for existing published Bot
+  // NFT shop pins while keeping each shop's own shop-config.json intact.
+  personalGoodsShopTemplateDir?: string;
 };
 
 type ArtifactManifest = {
@@ -139,6 +143,56 @@ const PREVIEW_PORT_CANDIDATES = [47613, 47614, 47615];
 const PREVIEW_SESSION_TTL_MS = 30 * 60 * 1000;
 const LOCAL_PREVIEW_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_METAAPP_DOWNLOAD_REDIRECTS = 5;
+const PERSONAL_GOODS_SHOP_OVERLAY_ASSETS = new Set(['index.html', 'styles.css', 'app.js']);
+const PERSONAL_GOODS_SHOP_OWNER_RE = /^idq1[a-z0-9]{30,64}$/iu;
+const LEGACY_SHOP_TITLE_RE = /精选头像铺|头像铺|老藏家|清仓小铺|个人数字商品小店|数字商品小店/iu;
+const LEGACY_SHOP_SUMMARY_RE = /自动秒发|秒发|24\s*h|24\s*小时|精选头像铺|头像铺|老藏家|清仓小铺|免费升级盘活/iu;
+
+function resolveDefaultPersonalGoodsShopDir(): string | null {
+  const moduleDir = typeof __dirname === 'string' ? __dirname : process.cwd();
+  const candidates = [
+    typeof process.resourcesPath === 'string' && process.resourcesPath
+      ? path.resolve(process.resourcesPath, 'METAAPPs', 'personal-goods-shop')
+      : '',
+    path.resolve(moduleDir, '..', '..', 'METAAPPs', 'personal-goods-shop'),
+    path.resolve(moduleDir, '..', '..', '..', 'METAAPPs', 'personal-goods-shop'),
+    path.resolve(process.cwd(), 'METAAPPs', 'personal-goods-shop'),
+  ].filter(Boolean);
+
+  for (const dir of candidates) {
+    try {
+      if (
+        fsSync.statSync(path.join(dir, 'index.html')).isFile()
+        && fsSync.statSync(path.join(dir, 'styles.css')).isFile()
+        && fsSync.statSync(path.join(dir, 'app.js')).isFile()
+      ) {
+        return dir;
+      }
+    } catch {
+      // Try next candidate.
+    }
+  }
+  return null;
+}
+
+function parsePersonalGoodsShopConfig(
+  value: unknown,
+): { ownerGlobalMetaId: string; ownerName: string; shopName: string } | null {
+  const raw = readObject(value);
+  if (!raw) return null;
+  const ownerGlobalMetaId = text(raw.ownerGlobalMetaId);
+  if (!PERSONAL_GOODS_SHOP_OWNER_RE.test(ownerGlobalMetaId)) {
+    return null;
+  }
+  const snapOwner = readObject(readObject(raw.mockSnapshot)?.owner);
+  const ownerName = text(snapOwner?.name);
+  const shopName = text(raw.shopName);
+  return {
+    ownerGlobalMetaId: ownerGlobalMetaId.toLowerCase(),
+    ownerName,
+    shopName,
+  };
+}
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -560,6 +614,9 @@ export function createBotBrowserMetaAppCacheService(
       { browser: { ...createDefaultBrowserConfig(), localMode: true } },
       process.env,
     ).metafileContentBaseUrl);
+  const personalGoodsShopTemplateDir = options.personalGoodsShopTemplateDir
+    ? path.resolve(options.personalGoodsShopTemplateDir)
+    : resolveDefaultPersonalGoodsShopDir();
 
   let server: http.Server | null = null;
   let baseUrl: string | null = null;
@@ -739,6 +796,23 @@ export function createBotBrowserMetaAppCacheService(
 
   const resolveAssetPath = async (session: PreviewSession, assetPath?: string): Promise<string> => {
     const normalizedAssetPath = normalizeRelativePath(assetPath, session.indexFile);
+    if (
+      personalGoodsShopTemplateDir
+      && session.previewId.startsWith('metaapp-preview-')
+      && !session.viewer
+      && PERSONAL_GOODS_SHOP_OVERLAY_ASSETS.has(normalizedAssetPath)
+    ) {
+      const shopCfg = parsePersonalGoodsShopConfig(
+        await readJsonFile(path.join(session.artifactDir, 'shop-config.json')),
+      );
+      if (shopCfg) {
+        const templateAsset = path.resolve(personalGoodsShopTemplateDir, normalizedAssetPath);
+        if (await fileExists(templateAsset)) {
+          return fs.realpath(templateAsset);
+        }
+      }
+    }
+
     const candidate = path.resolve(session.artifactDir, ...normalizedAssetPath.split('/'));
     if (!isInside(session.artifactDir, candidate)) {
       throw new Error('Preview asset path cannot escape the artifact directory.');
@@ -786,9 +860,8 @@ export function createBotBrowserMetaAppCacheService(
       const filePath = await resolveAssetPath(session, requestPath.assetPath);
       const fileClass = classifyLocalFile(filePath);
       const contentType = MIME_TYPES[path.extname(filePath).toLowerCase()] ?? fileClass.contentType;
-      const indexRealPath = await fs.realpath(path.join(session.artifactDir, session.indexFile))
-        .catch(() => path.resolve(session.artifactDir, session.indexFile));
-      const isSessionIndexFile = filePath === indexRealPath;
+      const normalizedRequestedPath = normalizeRelativePath(requestPath.assetPath, session.indexFile);
+      const isSessionIndexFile = normalizedRequestedPath === session.indexFile;
 
       // preview-file:// viewer sessions: ?abc-viewer=1 on the session's index
       // file renders the sanitized viewer document (markdown/code/csv …)
@@ -1073,11 +1146,50 @@ export function createBotBrowserMetaAppCacheService(
 
   return {
     async resolveMetaAppPin(pinId) {
-      return resolveMetaAppPinToRecord({
+      const resolved = await resolveMetaAppPinToRecord({
         pinId,
         fetch: fetchImpl,
         createPreviewSession,
       });
+      if (!resolved.ok || !resolved.data) {
+        return resolved;
+      }
+      const cached = await getMetaAppArtifactDir(pinId).catch(() => null);
+      if (!cached) {
+        return resolved;
+      }
+      const shopCfg = parsePersonalGoodsShopConfig(
+        await readJsonFile(path.join(cached.artifactDir, 'shop-config.json')),
+      );
+      if (!shopCfg) {
+        return resolved;
+      }
+      const rawRecord = resolved.data as MetaAppGalleryRecord & Record<string, unknown>;
+      let sanitizedRecord: MetaAppGalleryRecord & Record<string, unknown> = { ...rawRecord };
+      const currentTitle = text(rawRecord.title);
+      if (!currentTitle || LEGACY_SHOP_TITLE_RE.test(currentTitle)) {
+        const inferredOwner = shopCfg.ownerName
+          || currentTitle
+            .replace(/\s*(?:的)?(?:精选头像铺|头像铺|老藏家清仓小铺|清仓小铺|个人数字商品小店|数字商品小店).*$/iu, '')
+            .trim();
+        sanitizedRecord = {
+          ...sanitizedRecord,
+          title: inferredOwner ? `${inferredOwner} 的 NFT 橱窗` : 'NFT 橱窗',
+        };
+      }
+      for (const field of ['summary', 'description', 'intro', 'subtitle'] as const) {
+        const currentValue = rawRecord[field];
+        if (typeof currentValue === 'string' && LEGACY_SHOP_SUMMARY_RE.test(currentValue)) {
+          sanitizedRecord = {
+            ...sanitizedRecord,
+            [field]: '链上 MRC-721 数字藏品橱窗 · 点对点担保交割',
+          };
+        }
+      }
+      return {
+        ...resolved,
+        data: sanitizedRecord,
+      };
     },
 
     createLocalPreviewSession,

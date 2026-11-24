@@ -65,6 +65,7 @@ export interface NftCardEmitFields {
   sellerOnline?: boolean;
   shopMetaAppPinId?: string;
   caVerified?: boolean;
+  negotiable?: boolean;
   action?: string;
   /**
    * Host source signature (S4 Correction slice, owner decision A): stamped by
@@ -78,7 +79,7 @@ const NFT_CARD_KEY_ORDER: Array<keyof NftCardEmitFields> = [
   'format', 'pinId', 'genesis', 'codehash', 'tokenIndex', 'number', 'name',
   'series', 'imgUrl', 'icon', 'owner', 'ownerLabel', 'issuer', 'issuerLabel',
   'priceSats', 'priceMeMilli', 'priceCnyCents', 'priceTokens', 'sellerGlobalMetaId',
-  'sellerName', 'sellerOnline', 'shopMetaAppPinId', 'caVerified', 'action', 'hostStamp',
+  'sellerName', 'sellerOnline', 'shopMetaAppPinId', 'caVerified', 'negotiable', 'action', 'hostStamp',
 ];
 
 const cleanOptional = (value: string | undefined, max: number): string | undefined => {
@@ -189,6 +190,7 @@ export const buildMrc721CardFields = (input: {
   sellerOnline?: boolean;
   shopMetaAppPinId?: string;
   caVerified?: boolean;
+  negotiable?: boolean;
   action?: string;
 }): NftCardEmitFields => {
   const item = input.facts?.item ?? null;
@@ -247,6 +249,9 @@ export const buildMrc721CardFields = (input: {
   if (shopMetaAppPinId) fields.shopMetaAppPinId = shopMetaAppPinId;
   if (typeof input.caVerified === 'boolean') {
     fields.caVerified = input.caVerified;
+  }
+  if (typeof input.negotiable === 'boolean') {
+    fields.negotiable = input.negotiable;
   }
   const action = cleanOptional(input.action, 16);
   if (action) fields.action = action.toLowerCase();

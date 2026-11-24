@@ -486,7 +486,10 @@ const NftCard: React.FC<NftCardProps> = ({
   );
   const showTokenCapsules = Boolean(!userSide && healed.pinId && tokenPrices.length > 0);
   const showNegotiateCapsule = Boolean(
-    !userSide && healed.pinId && (healed.sellerGlobalMetaId || healed.action === 'selling'),
+    !userSide &&
+      healed.pinId &&
+      healed.negotiable !== false &&
+      (healed.sellerGlobalMetaId || healed.action === 'selling'),
   );
   const showShopCapsule = Boolean(!userSide && healed.shopMetaAppPinId);
   const hasCommerceActions = showBuyCapsule || showTokenCapsules || showNegotiateCapsule || showShopCapsule;
@@ -542,7 +545,7 @@ const NftCard: React.FC<NftCardProps> = ({
               )}
               {isListed && !userSide && (
                 <span className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded-[7px] border border-emerald-400/35 bg-emerald-600/85 px-2 py-[2px] text-[10px] font-bold leading-tight text-white backdrop-blur-md">
-                  ✦ {ct('Auto-Delivery', '在售 · AI秒发')}
+                  ✦ {ct('Listed', '在售')}
                 </span>
               )}
               {userSide && (
@@ -653,7 +656,7 @@ const NftCard: React.FC<NftCardProps> = ({
                     : ct('Ask Quote', '私聊询价')}
                 </div>
                 <div className="mt-0.5 truncate text-[10.5px] tabular-nums text-[#5b6472] dark:text-[#9aa3b2]">
-                  {secondaryCny ? `≈ ${secondaryCny}` : ct('Escrow Protected', '担保锁单自动秒发')}
+                  {secondaryCny ? `≈ ${secondaryCny}` : ct('Escrow Protected', 'ME 积分担保托管')}
                 </div>
               </div>
               <div className={TK_BENTO_CELL}>
@@ -665,7 +668,7 @@ const NftCard: React.FC<NftCardProps> = ({
                 <div className="mt-0.5 truncate text-[13.5px] font-bold tabular-nums text-[#1f2329] dark:text-[#f4f5f8]">
                   {tokenPrices.length > 0
                     ? `${tokenPrices[0].amountDisplay} $${tokenPrices[0].symbol}`
-                    : ct('⚡ AI 24h Auto', '⚡ AI 24h 秒发')}
+                    : ct('⚡ Escrow Settlement', '⚡ 链上担保交割')}
                 </div>
                 <div className="mt-0.5 truncate text-[10.5px] text-[#5b6472] dark:text-[#9aa3b2]">
                   {tokenPrices.length > 0

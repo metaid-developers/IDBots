@@ -48,7 +48,7 @@ export const NftFillCard: React.FC<NftFillCardProps> = ({ data, className = '' }
       : ct('Purchase Settled!', '买入交割完成！');
 
   const subStatus = isSeller
-    ? ct('⚡ AI Auto-Fulfilled · Proceeds Credited', '⚡ AI 后台自动秒发 · 收益已入账')
+    ? ct('⚡ Escrow Auto-Fulfilled · Proceeds Credited', '⚡ 链上担保自动交割 · 收益已入账')
     : ct('✦ Delivered to Your Wallet', '✦ 链上交割完成 · 已转入钱包');
 
   const counterpartyDisplay =

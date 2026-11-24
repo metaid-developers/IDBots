@@ -1,7 +1,7 @@
 {
   "ownerGlobalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
-  "shopName": "老藏家清仓小铺",
-  "slogan": "积分拍下 24 小时自动秒发 · 老藏品免费升级盘活",
+  "shopName": "小林的Twin 的 NFT 橱窗",
+  "slogan": "链上 MRC-721 数字藏品橱窗 · 支持 ME 积分与代币点对点担保交割",
   "theme": "dark",
   "apiBaseUrl": "https://so.metaid.io",
   "lang": "zh",
@@ -20,8 +20,12 @@
         "itemPinId": "1e288800fdec1a5911a169e0cb499a3bc63e6083e5f035f5d552f73c601f2cf2i0",
         "collectionPinId": "77da77280b9b218cf1edd62f658ca2be561dd7e377f3980182e280487ec38c56i0",
         "collectionName": "metabot-avatar",
+        "collectionDisplayTitle": "MetaBot 官方初代头像",
         "caVerified": true,
         "itemName": "MetaBot Avatar - 金框墨镜 #1310",
+        "itemNumber": 2,
+        "totalSupply": 9560,
+        "issuerName": "Avatar 兑换站",
         "cover": "",
         "prices": {
           "me": { "amountMilli": 15000 },
@@ -38,7 +42,7 @@
           ]
         },
         "autoFulfillMe": true,
-        "negotiable": true,
+        "negotiable": false,
         "shopMetaAppPinId": "",
         "seller": {
           "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
@@ -50,17 +54,21 @@
       },
       {
         "itemPinId": "a84159688af3ca37a4be05a0d422b94451b2e24e000000000000000000000000i0",
-        "collectionPinId": "77da77280b9b218cf1edd62f658ca2be561dd7e377f3980182e280487ec38c56i0",
-        "collectionName": "metabot-avatar",
-        "caVerified": true,
-        "itemName": "MetaBot Avatar - 星空斗篷 #0721",
+        "collectionPinId": "ad7e094d767a7041308dc41a02532fbb23a6a7ac01ee54b0d6179c45f88e34cdi0",
+        "collectionName": "night-flight-series",
+        "collectionDisplayTitle": "都市夜航 · 像素纪实",
+        "caVerified": false,
+        "itemName": "都市夜航 · 第二帧｜高楼悬停",
+        "itemNumber": 2,
+        "totalSupply": 10,
+        "issuerName": "小林的Twin",
         "cover": "",
         "prices": {
           "me": { "amountMilli": 9900 },
           "fiat": { "currency": "CNY", "amountCents": 660 }
         },
         "autoFulfillMe": true,
-        "negotiable": false,
+        "negotiable": true,
         "shopMetaAppPinId": "",
         "seller": {
           "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
@@ -75,7 +83,12 @@
       {
         "itemPinId": "b11b902cb710a353ff058421b949f6cab97bb6e4a46a885b20a945ff2a9464a0i0",
         "collectionName": "metabot-avatar",
+        "collectionDisplayTitle": "MetaBot 官方初代头像",
+        "caVerified": true,
         "itemName": "MetaBot Avatar - 初代头像 #0001",
+        "itemNumber": 1,
+        "totalSupply": 9560,
+        "issuerName": "Avatar 兑换站",
         "cover": "",
         "genesis": "075a1d198772e71ad2ca8fd5fb5f0fb1bd7fd680",
         "listed": false

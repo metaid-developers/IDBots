@@ -117,6 +117,8 @@ export interface NftCardData {
   shopMetaAppPinId?: string;
   /** Whether the collection is CA-certified official. */
   caVerified?: boolean;
+  /** Whether price negotiation / inquiry is enabled for this listing (defaults to false for new listings). */
+  negotiable?: boolean;
   /** listed | transferred | sold | bought | escrow | delisted | minted | info … */
   action?: string;
   /**
@@ -332,6 +334,7 @@ export const parseNftCardFence = (codeText: string): NftCardData | null => {
   const shopMetaAppPinId = cleanPinId(row.shopMetaAppPinId);
   if (shopMetaAppPinId) data.shopMetaAppPinId = shopMetaAppPinId;
   if (typeof row.caVerified === 'boolean') data.caVerified = row.caVerified;
+  if (typeof row.negotiable === 'boolean') data.negotiable = row.negotiable;
   const action = cleanTextField(row.action, MAX_ACTION_FIELD);
   if (action) data.action = action.toLowerCase();
   // hostStamp is copy-through only: an admissible stamp keeps its exact
@@ -452,7 +455,7 @@ const NFT_CARD_KEY_ORDER: Array<keyof NftCardData> = [
   'format', 'pinId', 'genesis', 'codehash', 'tokenIndex', 'number', 'name',
   'series', 'imgUrl', 'icon', 'owner', 'ownerLabel', 'issuer', 'issuerLabel',
   'priceSats', 'priceMeMilli', 'priceCnyCents', 'priceTokens', 'sellerGlobalMetaId',
-  'sellerName', 'sellerOnline', 'shopMetaAppPinId', 'caVerified', 'action', 'hostStamp',
+  'sellerName', 'sellerOnline', 'shopMetaAppPinId', 'caVerified', 'negotiable', 'action', 'hostStamp',
 ];
 
 /**
