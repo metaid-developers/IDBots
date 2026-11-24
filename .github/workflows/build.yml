@@ -284,12 +284,13 @@ jobs:
 
       # On-chain commerce, FT/NFT escrow & atomic-swap, Token/FT/NFT card suites,
       # and PayBuzz dual-track unlock verification gates.
-      - name: Run commerce, goods-trade, FT-commerce, and PayBuzz tests
+      - name: Run commerce, goods-trade, FT-commerce, PayBuzz, and wallet-security tests
         run: |
           pnpm run test:commerce
           pnpm run test:goods-trade
           pnpm run test:ft-commerce
           pnpm run test:paybuzz
+          pnpm run test:wallet-security
 
       - name: Install web-search skill dependencies
         working-directory: SKILLs/web-search
