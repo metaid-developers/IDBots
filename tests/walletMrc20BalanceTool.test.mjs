@@ -119,3 +119,40 @@ test('wallet_mrc20_balance surfaces per-entry lookup errors and empty results', 
   assert.equal(badInput.isError, true);
   assert.match(badInput.content[0].text, /requires metabot_ids, names, or address/);
 });
+
+test('wallet_mrc20_balance handles local and external idq1 GlobalMetaIDs with SegWit fallback and Taproot boundary guidance', async () => {
+  const { buildWalletAgentTools } = loadCompiled('libs/walletAgentTools.js');
+  const { convertToGlobalMetaId, convertGlobalMetaIdToAddresses } = loadCompiled('services/globalMetaid.js');
+  const sampleMvcAddr = '15Lofqw6Kpa6P8WnTYXKvmPyw3UZvvQWrB';
+  const sampleGmid = convertToGlobalMetaId(sampleMvcAddr);
+  const decoded = convertGlobalMetaIdToAddresses(sampleGmid);
+
+  // 1. Local MetaBot GlobalMetaID routes straight to metabotIds
+  const localHarness = createMrc20Harness({ assets: MRC20_ASSETS });
+  localHarness.control.resolveLocalMetabotByGlobalMetaId = (gmid) =>
+    gmid === sampleGmid ? { id: 1, name: 'AI_Sunny', mvcAddress: sampleMvcAddr } : null;
+  buildWalletAgentTools({
+    tool: localHarness.tool,
+    control: localHarness.control,
+    sessionId: 's1',
+    resolveMetabotId: () => 1,
+  });
+  const localRes = await localHarness.handlers.wallet_mrc20_balance.handler({ address: sampleGmid });
+  assert.match(localRes.content[0].text, /# metabot_id 1 1TwinBtc/);
+  assert.match(localRes.content[0].text, /TEST \(Test Token\): 1000\.75 TEST/);
+
+  // 2. External idq1 GlobalMetaID with 0 on both 1... and bc1q... checks both and emits Taproot bc1p... guidance
+  const extEmptyHarness = createMrc20Harness({ assets: [] });
+  buildWalletAgentTools({
+    tool: extEmptyHarness.tool,
+    control: extEmptyHarness.control,
+    sessionId: 's1',
+    resolveMetabotId: () => 1,
+  });
+  const extEmptyRes = await extEmptyHarness.handlers.wallet_mrc20_balance.handler({ address: sampleGmid });
+  assert.equal(extEmptyHarness.calls.length, 2, 'checks both P2PKH 1... and P2WPKH bc1q... for external idq1');
+  assert.equal(extEmptyHarness.calls[0].address, decoded.btcAddress);
+  assert.equal(extEmptyHarness.calls[1].address, decoded.btcSegwitAddress);
+  assert.match(extEmptyRes.content[0].text, /Taproot \(bc1p\.\.\.\) address that cannot be derived offline from idq1/);
+});
+

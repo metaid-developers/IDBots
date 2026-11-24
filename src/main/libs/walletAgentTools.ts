@@ -1680,6 +1680,11 @@ export function buildWalletAgentTools(deps: {
         if (!metabotIds.includes(id)) metabotIds.push(id);
       }
       let address = asString(args.address);
+      let externalP2pkhDecoded: {
+        globalMetaId: string;
+        btcLegacyAddress: string;
+        btcSegwitAddress?: string;
+      } | null = null;
       if (address && extractGlobalMetaIdCandidate(address)) {
         const decoded = convertGlobalMetaIdToAddresses(address);
         if (!decoded?.btcAddress) {
@@ -1688,13 +1693,45 @@ export function buildWalletAgentTools(deps: {
             true,
           );
         }
-        address = decoded.btcAddress;
+        const localHit = control.resolveLocalMetabotByGlobalMetaId?.(decoded.globalMetaId) ?? null;
+        if (localHit) {
+          if (!metabotIds.includes(localHit.id)) metabotIds.push(localHit.id);
+          address = '';
+        } else {
+          address = decoded.btcAddress;
+          if (decoded.addressType === 'p2pkh') {
+            externalP2pkhDecoded = {
+              globalMetaId: decoded.globalMetaId,
+              btcLegacyAddress: decoded.btcAddress,
+              btcSegwitAddress: decoded.btcSegwitAddress,
+            };
+          }
+        }
       }
       if (metabotIds.length === 0 && !address) {
         return textResult('wallet_mrc20_balance requires metabot_ids, names, or address (pass the ids you want in ONE call).', true);
       }
       try {
         const entries = await control.listMrc20s({ metabotIds, address: address || undefined });
+        let checkedSegwitFallback = false;
+        if (
+          externalP2pkhDecoded?.btcSegwitAddress &&
+          externalP2pkhDecoded.btcSegwitAddress !== externalP2pkhDecoded.btcLegacyAddress
+        ) {
+          const addrIdx = entries.findIndex((e) => e.metabotId == null && e.address === externalP2pkhDecoded!.btcLegacyAddress);
+          const legacyEntry = addrIdx >= 0 ? entries[addrIdx] : null;
+          if (legacyEntry && !legacyEntry.error && (legacyEntry.assets?.length ?? 0) === 0) {
+            checkedSegwitFallback = true;
+            const segwitEntries = await control.listMrc20s({
+              metabotIds: [],
+              address: externalP2pkhDecoded.btcSegwitAddress,
+            });
+            const segwitEntry = segwitEntries.find((e) => e.metabotId == null);
+            if (segwitEntry && !segwitEntry.error && (segwitEntry.assets?.length ?? 0) > 0) {
+              entries.splice(addrIdx, 1, segwitEntry);
+            }
+          }
+        }
         const sections: string[] = [];
         for (const entry of entries) {
           const label = entry.metabotId != null ? `metabot_id ${entry.metabotId}` : 'address';
@@ -1702,7 +1739,20 @@ export function buildWalletAgentTools(deps: {
             sections.push(`# ${label} ${entry.address}\n- lookup failed: ${entry.error}`);
             continue;
           }
-          sections.push(`# ${label} ${entry.address}\n${formatMrc20Balance(entry.assets ?? [])}`);
+          const lines = [`# ${label} ${entry.address}`, formatMrc20Balance(entry.assets ?? [])];
+          if (
+            externalP2pkhDecoded &&
+            entry.metabotId == null &&
+            (entry.assets?.length ?? 0) === 0
+          ) {
+            const checkedAddrs = checkedSegwitFallback && externalP2pkhDecoded.btcSegwitAddress
+              ? `${externalP2pkhDecoded.btcLegacyAddress} and ${externalP2pkhDecoded.btcSegwitAddress}`
+              : externalP2pkhDecoded.btcLegacyAddress;
+            lines.push(
+              `- note: GlobalMetaID ${externalP2pkhDecoded.globalMetaId} only encodes a 20-byte P2PKH hash (checked ${checkedAddrs}). External Metalet wallets often derive idq1... from MVC while holding BTC MRC-20 on a 32-byte Taproot (bc1p...) address that cannot be derived offline from idq1 — pass their bc1p... address directly or look up their profile if Taproot is expected.`,
+            );
+          }
+          sections.push(lines.join('\n'));
         }
         return textResult(sections.join('\n') || 'No addresses resolved.');
       } catch (error) {
@@ -2873,6 +2923,9 @@ export function buildWalletAgentTools(deps: {
             : '',
           decoded.dogeAddress ? `- dogeAddress: ${decoded.dogeAddress}` : '',
           localHit ? `- localMetaBot: ${localHit.name} (metabot_id ${localHit.id})` : '- localMetaBot: external (not in local roster)',
+          !localHit && decoded.addressType === 'p2pkh'
+            ? '- taprootNote: External Metalet users often derive idq1... from MVC P2PKH while holding BTC/MRC-20 on a separate 32-byte Taproot (bc1p...) address that cannot be derived offline from idq1.'
+            : '',
           decoded.note ? `- note: ${decoded.note}` : '',
         ].filter(Boolean);
         return textResult(lines.join('\n'));
