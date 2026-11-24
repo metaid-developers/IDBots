@@ -139,6 +139,12 @@ function createHarness({ chats, ranker }) {
     getMemoryBackend() {
       return { resolveMetabotIdForMemory() { return 7; } };
     },
+    // isA2ASession (A2A isolation hardening, 437368322) reads the session row
+    // to gate conversation search; null keeps these fixtures on the local
+    // (non-A2A) path the rank tests exercise.
+    getSession() {
+      return null;
+    },
     conversationSearch() {
       return chats;
     },

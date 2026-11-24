@@ -138,6 +138,10 @@ test('non-destructive safety gates default an unanswered prompt to allow (owner 
   // defaulted to deny, so the owner declined a plain upload. Ruling: every
   // non-delete safety gate (upload / transfer / install / location) stamps
   // timeoutDefault 'allow'; only delete-class keeps fail-closed deny.
+  // SUPERSEDED for wallet_transfer (transfer-approval hardening, 437368322
+  // 2026-11-24): an EXTERNAL-address transfer is irreversible money movement,
+  // so its gate stamps fail-closed 'deny' + ownerOnly — an away-from-keyboard
+  // owner must NOT have an unanswered external transfer auto-proceed.
   // The deadline stamp and the watchdog follow the same per-call default…
   assert.match(runnerSource, /stampPermissionDeadline\(request, timeoutDefault\)/);
   assert.match(runnerSource, /timeoutBehavior: timeoutDefault/);
@@ -145,8 +149,8 @@ test('non-destructive safety gates default an unanswered prompt to allow (owner 
   assert.match(runnerSource, /if \(result\.behavior === 'allow'\) \{[\s\S]{0,80}?return 'approved';/);
   // …and the host stamps the destructive classification for the renderer.
   assert.match(runnerSource, /destructive: this\.isDeleteOperation\(requestedToolName, requestedToolInput\)/);
-  // Every non-delete gate passes 'allow' to requestSafetyApproval.
-  for (const toolName of ['upload_file', 'wallet_transfer', 'skill_tool', 'get_host_location']) {
+  // Non-delete gates still pass 'allow' to requestSafetyApproval…
+  for (const toolName of ['upload_file', 'skill_tool', 'get_host_location']) {
     const callStart = runnerSource.indexOf(`'${toolName}',`);
     assert.notEqual(callStart, -1, `requestSafetyApproval call for ${toolName} must exist`);
     assert.match(
@@ -155,6 +159,12 @@ test('non-destructive safety gates default an unanswered prompt to allow (owner 
       `${toolName} gate must stamp timeoutDefault allow`,
     );
   }
+  // …while the external wallet_transfer gate stays fail-closed deny + ownerOnly.
+  const transferCallStart = runnerSource.indexOf(`'wallet_transfer',`);
+  assert.notEqual(transferCallStart, -1, 'requestSafetyApproval call for wallet_transfer must exist');
+  const transferCallBody = runnerSource.slice(transferCallStart, transferCallStart + 500);
+  assert.match(transferCallBody, /'deny'/, 'external wallet_transfer gate must stamp fail-closed deny (437368322)');
+  assert.match(transferCallBody, /\{\s*ownerOnly:\s*true\s*\}/, 'external wallet_transfer gate must be ownerOnly');
   // The delete-class gate keeps the deny default — no 'allow' argument.
   const deleteCallStart = runnerSource.indexOf('deleteQuestion,');
   assert.notEqual(deleteCallStart, -1, 'delete gate call must exist');

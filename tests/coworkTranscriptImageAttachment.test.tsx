@@ -69,8 +69,8 @@ test('every user-message branch renders its body through the shared attachment-a
   const bodyUses = detailSource.match(/<UserMessageBody/g) ?? [];
   assert.equal(
     bodyUses.length,
-    3,
-    'plain, reply-quote and selection-quote bodies must all render through UserMessageBody',
+    4,
+    'plain, reply-quote, selection-quote and token-card-segmented bodies must all render through UserMessageBody (4th site: 2026-11-24 NFT/digital-goods card suite segmented user branch)',
   );
   assert.ok(
     !/content=\{message\.content\}[\s\S]{0,80}className="max-w-none whitespace-pre-wrap/.test(detailSource),
