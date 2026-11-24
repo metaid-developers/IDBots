@@ -603,7 +603,7 @@ test('the rail entry resolves on both faces', () => {
   assert.equal((app.match(/<ProcessCenterPanel /g) ?? []).length, 1, 'one pane instance, two switches');
 });
 
-test('v4 panel: 动态 is the DEFAULT tab, the three sources are secondary tabs', () => {
+test('v6 panel: 动态 is the DEFAULT tab, 自主 / 编排 are the two source entries (M3=A / M4=A)', () => {
   const panel = readSource('src/renderer/components/cowork/ProcessCenterPanel.tsx');
   const model = readSource('src/renderer/utils/processCenter.ts');
 
@@ -611,13 +611,26 @@ test('v4 panel: 动态 is the DEFAULT tab, the three sources are secondary tabs'
   assert.match(panel, /data-process-tab=\{tab\}/);
   // ONE tab row, 动态 FIRST and selected by default (owner ruling 2026-11-23
   // 00:09): the landing page is the live processes; 编排/定时/长期 are demoted.
-  assert.match(model, /export const PROCESS_HUB_TAB_ORDER: readonly ProcessHubTab\[\] = \[\s*\n\s*'dynamic',\s*\n\s*'orch',\s*\n\s*'scheduled',\s*\n\s*'longterm',\s*\n\s*\];/);
+  assert.match(model, /export const PROCESS_HUB_TAB_ORDER: readonly ProcessHubTab\[\] = \[\s*\n\s*'dynamic',\s*\n\s*'autonomous',\s*\n\s*'orch',\s*\n\s*\];/);
   assert.match(panel, /const \[tab, setTab\] = useState<ProcessHubTab>\(restored\?\.tab \?\? 'dynamic'\);/);
   assert.match(panel, /\{PROCESS_HUB_TAB_ORDER\.map\(\(key\) => \{/);
   assert.match(panel, /data-process-tab-key=\{key\}/);
   // Counts are TAB BADGES (角标), never a flat 567/657 band on the first screen.
   // Batch-A P1-4 retired the node-count unit here: every tab now counts RUNS.
-  assert.match(panel, /const count = key === 'dynamic' \? dynamic\.running\.length : zones\[key\]\.runCount;/);
+  assert.match(
+    panel,
+    /const count = key === 'dynamic'\s*\n\s*\? dynamic\.running\.length\s*\n\s*: key === 'autonomous'\s*\n\s*\? countAutonomousRuns\(autonomousModel, automationEntries\.length\)\s*\n\s*: orchestrationZone\.runCount;/,
+  );
+  // 自主's source chips (M3=A): 全部 / 定时 / 长期 / 做梦 / 冲浪 — chips narrow the
+  // list, they never re-partition the process set.
+  assert.match(panel, /data-testid="process-autonomous-chips"/);
+  assert.match(panel, /\[null, \.\.\.PROCESS_AUTONOMOUS_SOURCE_ORDER\] as Array<ProcessAutonomousSource \| null>\)\.map\(\(source\) => \{/);
+  // 编排 is STRICT: only autoOrigin='orchestration' (N6 prefix fallback lives in
+  // the model, not in the panel).
+  assert.match(model, /export const buildOrchestrationZone = \(entries: readonly ProcessEntry\[\]\): ProcessZoneModel => \{\s*\n\s*const rows = entries\.filter\(\(entry\) => isOrchestrationProcess\(entry\.session\)\);/);
+  // 人开的会话 fall back into the dynamic page's folded strip (M4=A 兜底).
+  assert.match(panel, /data-testid="process-unassigned-humans"/);
+  assert.match(panel, /processUnassignedHumans'\)\.replace\('\{count\}'/);
   assert.match(panel, /data-testid="process-tab-count"/);
   assert.match(panel, /data-tab-count-for=\{key\}/);
   assert.doesNotMatch(panel, /const ZONE_ORDER: ProcessZone\[\]/);
@@ -651,7 +664,10 @@ test('v4 panel: 动态 is the DEFAULT tab, the three sources are secondary tabs'
   assert.match(rail, /const lineageOverrides = useLineageOverrides\(\);/);
   // Tree: parent rows (36px) fold to child rows (32px) with a 16px indent and a
   // 1px connector. The tree content is MOVED verbatim onto the zone tabs.
-  assert.match(panel, /const zones = useMemo\(\(\) => buildProcessZones\(model\.running\), \[model\.running\]\);/);
+  // v6: the zone model splits into 自主 (scheduled + longterm) and the STRICT
+  // orchestration zone; the old four-zone record is retired.
+  assert.match(panel, /const autonomousModel = useMemo\(\(\) => buildProcessAutonomous\(model\.running\), \[model\.running\]\);/);
+  assert.match(panel, /const orchestrationZone = useMemo\(\s*\n\s*\(\) => buildOrchestrationZone\(model\.running\),\s*\n\s*\[model\.running\],\s*\n\s*\);/);
   assert.match(panel, /data-testid="process-task-row"/);
   assert.match(panel, /data-testid="process-tree-group"/);
   assert.match(panel, /data-testid="process-tree-children"/);
@@ -742,7 +758,7 @@ test('v4 动态: 正在运行 breathing rows + 最近结束, re-projected from t
   const dynamicBody = panel.slice(panel.indexOf('data-testid="process-dynamic-body"'), panel.indexOf('data-testid="process-zone-heading"'));
   assert.ok(dynamicBody.length > 0, 'the zone heading follows the dynamic body');
   assert.doesNotMatch(dynamicBody, /process-zone-heading/);
-  assert.match(panel, /data-testid="process-zone-heading"[\s\S]{0,900}ZONE_LABEL_KEY\[activeZone\]/);
+  assert.match(panel, /data-testid="process-zone-heading"[\s\S]{0,900}ZONE_LABEL_KEY\[zoneModel\.zone\]/);
 
   // Behaviour: the pure projection sorts by recency, splits completed/failed,
   // and keeps pending rows out of both bands.
@@ -878,7 +894,7 @@ test("the panel speaks the app's shape language (copied values, no bespoke px)",
 
   // ② zone switcher = the Studio|BotWorks segmented master (HomeSidebar):
   //    grid + h-[32px] + gap-0 + clipped radius token + per-cell h-full text-xs.
-  assert.match(panel, /className="ml-auto grid h-\[32px\] grid-cols-4 gap-0 overflow-hidden rounded-\[var\(--shape-radius-sm\)\] border border-claude-border\/70 bg-claude-bg\/80 dark:border-claude-darkBorder\/70 dark:bg-claude-darkBg\/80"/);
+  assert.match(panel, /className="ml-auto grid h-\[32px\] grid-cols-3 gap-0 overflow-hidden rounded-\[var\(--shape-radius-sm\)\] border border-claude-border\/70 bg-claude-bg\/80 dark:border-claude-darkBorder\/70 dark:bg-claude-darkBg\/80"/);
   assert.match(panel, /inline-flex h-full min-w-0 items-center justify-center gap-1 px-2 text-\[11\.5px\] font-medium leading-none/);
   // Selected = the master's fill pair (claude-accent = #FFDC51, accentInk = #303133).
   assert.match(panel, /'bg-claude-accent text-claude-accentInk'/);
@@ -1000,7 +1016,9 @@ test('opening a process row routes through the SAME transcript, read-only', () =
   const app = readSource('src/renderer/App.tsx');
   assert.match(app, /const openProcessReadOnly = useCallback\(async \(sessionId: string\) => \{/);
   assert.match(app, /setMainView\('cowork'\);\s*\n\s*await coworkService\.loadSession\(sessionId\);/);
-  assert.match(app, /<ProcessCenterPanel onOpenProcess=\{openProcessReadOnly\} viewStateRef=\{processHubViewRef\} \/>/);
+  // The panel now mounts INSIDE the floatwin shell (which owns the exit).
+  assert.match(app, /<ProcessCenterFloatwin\s*\n\s*onClose=\{closeProcessFloatwin\}/);
+  assert.match(app, /onOpenProcess=\{openProcessReadOnly\}\s*\n\s*viewStateRef=\{processHubViewRef\}/);
 });
 
 test('every v2 i18n key exists once per language pack', () => {
@@ -1115,10 +1133,16 @@ test('v3 ①: the process transcript has a return chip, and the hub remembers wh
 
   // App: one ref holds the hub's own view state; the flag names WHICH session
   // came from the hub (a bare boolean would leak onto unrelated transcripts).
-  assert.match(app, /const processHubViewRef = useRef<ProcessHubViewState>\(\{ \.\.\.DEFAULT_PROCESS_HUB_VIEW_STATE \}\);/);
+  // N4 (floatwin): ONE view-state object PER FACE, so the overlay's open bit
+  // survives a face switch without leaking across faces.
+  assert.match(app, /const processHubViewRefHome = useRef<ProcessHubViewState>\(\{/);
+  assert.match(app, /const processHubViewRefInternet = useRef<ProcessHubViewState>\(\{/);
+  assert.match(app, /floatwin: \{ \.\.\.DEFAULT_PROCESS_HUB_VIEW_STATE\.floatwin \}/);
+  assert.match(app, /const processHubViewRef = processHubViewRefFor\(botBrowserShell\.surfaceMode === 'home' \? 'home' : 'browser'\);/);
   assert.match(app, /const \[hubOpenedSessionId, setHubOpenedSessionId\] = useState<string \| null>\(null\);/);
   // Back returns on the side the owner is already on.
-  assert.match(app, /const handleBackToProcessHub = useCallback\(\(\) => \{\s*\n\s*setHubOpenedSessionId\(null\);\s*\n\s*setStudioTwinOpen\(false\);\s*\n\s*if \(botBrowserShell\.surfaceMode === 'home'\)/);
+  assert.match(app, /const handleBackToProcessHub = useCallback\(\(\) => \{\s*\n\s*setHubOpenedSessionId\(null\);\s*\n\s*setStudioTwinOpen\(false\);/);
+  assert.match(app, /openProcessFloatwin\(botBrowserShell\.surfaceMode === 'home' \? 'home' : 'browser'\);/);
   assert.match(app, /const showBackToProcessHub = hubOpenedSessionId != null && hubOpenedSessionId === currentSessionId;/);
   assert.match(app, /<ProcessCenterPanel onOpenProcess=\{openProcessReadOnly\} viewStateRef=\{processHubViewRef\} \/>/);
   // both the view and the detail receive it
@@ -1133,7 +1157,13 @@ test('v3 ①: the process transcript has a return chip, and the hub remembers wh
   assert.match(panel, /onScroll=\{handleBodyScroll\}/);
   assert.match(panel, /scrollTop: event\.currentTarget\.scrollTop/);
   // The default is a named constant, so "nothing remembered" is explicit.
-  assert.deepEqual(DEFAULT_PROCESS_HUB_VIEW_STATE, { tab: 'dynamic', archivedMode: false, scrollTop: 0, expandedTaskKeys: [] });
+  assert.deepEqual(DEFAULT_PROCESS_HUB_VIEW_STATE, {
+    tab: 'dynamic',
+    archivedMode: false,
+    scrollTop: 0,
+    expandedTaskKeys: [],
+    floatwin: { open: false, lastSessionId: null },
+  });
   // The fold rides the same view state: restoring only the offset is not enough,
   // because a collapsed list is shorter and the offset clamps (-71px measured).
   assert.match(panel, /useState<Set<string>>\(\s*\n?\s*\(\) => new Set\(restored\?\.expandedTaskKeys \?\? \[\]\)/);
@@ -1252,7 +1282,9 @@ test('both rail wirings route the entry, and NO path forces a side switch', () =
   assert.match(opener, /if \(botBrowserShell\.surfaceMode === 'home'\) setMainView\('cowork'\);/);
   assert.match(app, /if \(botBrowserShell\.surfaceMode === 'home'\) setMainView\('cowork'\);/);
   // Back returns on the CURRENT side.
-  assert.match(app, /if \(botBrowserShell\.surfaceMode === 'home'\) \{\s*\n\s*setMainView\('processes'\);\s*\n\s*\} else \{\s*\n\s*botBrowserShell\.selectInternetPane\('processes'\);/);
+  // v6: back re-opens the FLOATWIN on the face the owner is on; no side switch
+  // and no pane change (the hub is a control now, not a destination).
+  assert.match(app, /openProcessFloatwin\(botBrowserShell\.surfaceMode === 'home' \? 'home' : 'browser'\);/);
   // …and the Studio column can mount the transcript (that is what removed the
   // need to switch at all).
   // The session test must come BEFORE the pane test, or the hub list wins and the
@@ -1744,7 +1776,7 @@ test('批 A P1-4: ONE count unit — runs — on the tabs, the section headings 
   // vs its N runs) — the same content reading two numbers.
   assert.match(
     panel,
-    /const count = key === 'dynamic' \? dynamic\.running\.length : zones\[key\]\.runCount;/,
+    /key === 'autonomous'\s*\n\s*\? countAutonomousRuns\(autonomousModel, automationEntries\.length\)/,
     'tab badge unit = runs',
   );
   assert.doesNotMatch(
@@ -1764,8 +1796,8 @@ test('批 A P1-4: ONE count unit — runs — on the tabs, the section headings 
 
   // ③ A zone's own heading must read the SAME number its tab shows.
   assert.match(panel, /data-testid="process-zone-heading"[\s\S]{0,200}data-count-unit="runs"/);
-  assert.match(panel, /ZONE_LABEL_KEY\[activeZone\]\)\} · \{zoneModel\.runCount\}/);
-  assert.doesNotMatch(panel, /ZONE_LABEL_KEY\[activeZone\]\)\} · \{zoneModel\.nodes\.length\}/);
+  assert.match(panel, /ZONE_LABEL_KEY\[zoneModel\.zone\]\)\} · \{zoneModel\.runCount\}/);
+  assert.doesNotMatch(panel, /ZONE_LABEL_KEY\[zoneModel\.zone\]\)\} · \{zoneModel\.nodes\.length\}/);
 
   // Tab badges carry the unit explicitly, so a reader (or a probe) never has to
   // guess which of the three numbers it is looking at.
