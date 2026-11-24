@@ -31,7 +31,13 @@ import type {
   MvcFtIssuanceRecord,
   MvcFtIssueConfirmationInfo,
 } from '../services/mvcFtIssueService';
-import { appendNftCardBlock, findNftCardDetail, type NftCardEmitFields } from './nftCardMarkdown';
+import {
+  appendNftCardBlock,
+  appendNftMyListingsCardBlock,
+  appendNftPortfolioCardBlock,
+  findNftCardDetail,
+  type NftCardEmitFields,
+} from './nftCardMarkdown';
 import { withNftCardHostStamp } from './tradeActivityStamp';
 import Decimal from 'decimal.js';
 import {
@@ -1135,7 +1141,37 @@ export function buildWalletAgentTools(deps: {
       if (sections.length === 0) {
         return textResult('wallet_nft_balance: nothing to query.', true);
       }
-      return textResult(sections.join('\n'));
+      let out = sections.join('\n');
+      if (results.length === 1 && !results[0].error && results[0].balance) {
+        const single = results[0];
+        const cols = single.balance!.collections ?? [];
+        const legacyCount = cols.reduce((sum, col) => sum + (col.count ?? col.items.length), 0);
+        out = appendNftPortfolioCardBlock(out, {
+          metabotId: single.metabotId ?? undefined,
+          ownerAddress: single.address || undefined,
+          isThirdParty: single.metabotId == null,
+          totalCount: legacyCount,
+          mrc721Count: 0,
+          legacyCount,
+          mrc721Collections: [],
+          legacySeries: cols.slice(0, 8).map((col) => ({
+            name: col.seriesName || 'Legacy MetaContract Series',
+            seriesName: col.seriesName || 'Legacy MetaContract Series',
+            genesis: col.genesis,
+            codehash: col.codeHash,
+            count: col.count ?? col.items.length,
+            sampleIndexes: col.items.slice(0, 6).map((it) => String(it.tokenIndex)),
+            previewItems: col.items.slice(0, 3).map((it) => ({
+              format: 'metacontract' as const,
+              tokenIndex: String(it.tokenIndex),
+              name: it.name || undefined,
+              icon: it.icon || undefined,
+              imgUrl: it.imgUrl || undefined,
+            })),
+          })),
+        });
+      }
+      return textResult(out);
     }
   );
 
@@ -1306,7 +1342,29 @@ export function buildWalletAgentTools(deps: {
           lines.push(`- ${entry.address}: ${orders.count} open sell order(s)`);
           for (const order of orders.orders) lines.push(formatSellOrder(order));
         }
-        return textResult(lines.join('\n') || 'No addresses resolved.');
+        let out = lines.join('\n') || 'No addresses resolved.';
+        if (entries.length === 1 && !entries[0].error) {
+          const single = entries[0];
+          const list = single.orders?.orders ?? [];
+          out = appendNftMyListingsCardBlock(out, {
+            metabotId: single.metabotId ?? undefined,
+            sellerAddress: single.address || undefined,
+            items: list.slice(0, 20).map((order) => ({
+              format: 'metacontract' as const,
+              genesis: order.genesis || undefined,
+              codehash: order.codeHash || undefined,
+              tokenIndex: order.tokenIndex != null ? String(order.tokenIndex) : undefined,
+              name: order.name || undefined,
+              series: order.seriesName || undefined,
+              icon: order.icon || undefined,
+              rail: 'mvc-contract' as const,
+              priceSats: order.priceSats ?? undefined,
+              sellUtxo: `${order.txId}:${order.outputIndex}`,
+              txId: order.txId || undefined,
+            })),
+          });
+        }
+        return textResult(out);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_sell_orders failed: ${msg}`, true);

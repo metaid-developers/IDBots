@@ -555,8 +555,41 @@ export class PrivateChatOrderCowork extends EventEmitter {
     }
   }
 
+  private static isSensitiveOrderPermissionTool(toolName: string): boolean {
+    const normalized = String(toolName || '').trim().toLowerCase();
+    if (!normalized) return true;
+    const blockedPrefixes = [
+      'wallet_',
+      'me_charge',
+      'metabot_',
+      'escrow_',
+      'mrc721_',
+      'nft_',
+      'idbots_session_',
+      'local_worker',
+      'twin_task_',
+      'scheduled_task_',
+      'longterm_task_',
+      'send_private_chat',
+      'browser_',
+      'desktop_',
+      'askuserquestion',
+    ];
+    return blockedPrefixes.some((prefix) => normalized.startsWith(prefix));
+  }
+
   private handlePermissionRequest(sessionId: string, request: PermissionRequest): void {
     if (!this.sessionIds.has(sessionId)) return;
+    const isOwnerOnly =
+      request.ownerOnly === true
+      || this.coworkRunner.isPermissionOwnerOnly?.(request.requestId) === true;
+    if (isOwnerOnly || PrivateChatOrderCowork.isSensitiveOrderPermissionTool(request.toolName)) {
+      this.coworkRunner.respondToPermission(request.requestId, {
+        behavior: 'deny',
+        message: `Permission denied in remote private-chat order session: "${request.toolName}" requires explicit owner approval.`,
+      });
+      return;
+    }
     this.coworkRunner.respondToPermission(request.requestId, {
       behavior: 'allow',
       updatedInput: request.toolInput,

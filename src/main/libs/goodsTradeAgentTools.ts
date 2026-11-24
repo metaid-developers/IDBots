@@ -36,7 +36,19 @@ import {
   type MeNftEscrowOrder,
 } from '../services/meNftEscrowService';
 import { formatGoodsTradeWireMessage } from '../services/goodsTradeWireProtocol';
-import { appendNftCardBlock, buildMrc721CardFields } from './nftCardMarkdown';
+import {
+  appendNftCardBlock,
+  appendNftCollectionCardBlock,
+  appendNftFillCardBlock,
+  appendNftNegotiateCardBlock,
+  appendNftPortfolioCardBlock,
+  buildMrc721CardFields,
+  buildNftNegotiateCardFence,
+  normalizeMrc721Cover,
+  type NftCollectionPreviewEmitItem,
+  type NftPortfolioCollectionEmitRow,
+  type NftPortfolioPreviewEmitItem,
+} from './nftCardMarkdown';
 import { withNftCardHostStamp } from './tradeActivityStamp';
 
 type SdkToolFactory = (
@@ -312,10 +324,39 @@ export function buildGoodsTradeAgentTools(deps: {
           if (info?.pinId) collectionPinId = info.pinId;
         }
 
+        const buildPreviewItems = (rows: Mrc721MarketListing[]): NftCollectionPreviewEmitItem[] =>
+          rows
+            .filter((row) => isMrc721PinId(row.itemPinId))
+            .slice(0, 3)
+            .map((row) => ({
+              pinId: row.itemPinId,
+              name: row.itemName || undefined,
+              ...normalizeMrc721Cover(row.cover),
+              priceMeMilli: row.prices?.me?.amountMilli,
+              priceCnyCents: row.prices?.fiat?.amountCents,
+              priceSats: row.priceHintSats,
+              sellerAddress: row.seller?.address,
+              sellerGlobalMetaId: row.seller?.globalMetaId,
+              sellerName: row.seller?.name,
+            }));
+
+        const safePreviewListings = async (pinId: string): Promise<Mrc721MarketListing[]> => {
+          if (control.fetchMarketListings) {
+            const page = await control.fetchMarketListings({ collectionPinId: pinId, sort: 'price_me_asc', size: 3 }).catch(() => ({ items: [] }));
+            return page.items ?? [];
+          }
+          if (process.env.NODE_TEST_CONTEXT == null) {
+            const page = await getMarketListings({ collectionPinId: pinId, sort: 'price_me_asc', size: 3 }).catch(() => ({ items: [] }));
+            return page.items ?? [];
+          }
+          return [];
+        };
+
         if (collectionPinId) {
-          const [summary, tradesPage] = await Promise.all([
+          const [summary, tradesPage, previewRows] = await Promise.all([
             getMarketCollectionSummary(collectionPinId),
             getMarketTrades({ collectionPinId, size: Math.min(size, 10) }).catch(() => ({ items: [] })),
+            safePreviewListings(collectionPinId),
           ]);
 
           if (!summary) {
@@ -346,7 +387,29 @@ export function buildGoodsTradeAgentTools(deps: {
               lines.push(`- ${t.itemPinId} · ${amt} (${t.currency || 'me'}) · tx ${t.txId.slice(0, 12)}…`);
             }
           }
-          return textResult(lines.join('\n'));
+          const previewItems = buildPreviewItems(previewRows);
+          let out = lines.join('\n');
+          if (isMrc721PinId(summary.collectionPinId)) {
+            out = appendNftCollectionCardBlock(out, {
+              collectionId: summary.collectionPinId,
+              collectionName: summary.collectionName,
+              name: summary.displayTitle || summary.collectionName,
+              ...normalizeMrc721Cover(summary.cover),
+              totalSupply: summary.totalSupply ?? undefined,
+              minted: summary.mintedCount ?? undefined,
+              caVerified: verified,
+              listedCount: summary.listedCount,
+              holderCount: summary.holderCount,
+              floorPriceMeMilli: summary.floorPriceMeMilli,
+              floorPriceCnyCents: summary.floorPriceCnyCents,
+              medianPriceMeMilli: summary.medianPriceMeMilli,
+              tradeCount24h: tradesPage.items.length,
+              shopMetaAppPinId: summary.floorSeller?.shopMetaAppPinId,
+              previewItems: previewItems.length > 0 ? previewItems : undefined,
+              action: 'summary',
+            });
+          }
+          return textResult(out);
         }
 
         const [collectionsPage, tradesPage] = await Promise.all([
@@ -381,7 +444,34 @@ export function buildGoodsTradeAgentTools(deps: {
             lines.push(`- ${t.itemPinId} · ${amt} · ${t.currency || 'me'}`);
           }
         }
-        return textResult(lines.join('\n'));
+        let out = lines.join('\n');
+        const top = collectionsPage.items[0];
+        if (top && isMrc721PinId(top.collectionPinId)) {
+          const topVerified = top.caVerified === true
+            || verifiedSet.has(top.collectionPinId.toLowerCase())
+            || verifiedSet.has(top.collectionName.toLowerCase());
+          const previewRows = await safePreviewListings(top.collectionPinId);
+          const previewItems = buildPreviewItems(previewRows);
+          out = appendNftCollectionCardBlock(out, {
+            collectionId: top.collectionPinId,
+            collectionName: top.collectionName,
+            name: top.displayTitle || top.collectionName,
+            ...normalizeMrc721Cover(top.cover),
+            totalSupply: top.totalSupply ?? undefined,
+            minted: top.mintedCount ?? undefined,
+            caVerified: topVerified,
+            listedCount: top.listedCount,
+            holderCount: top.holderCount,
+            floorPriceMeMilli: top.floorPriceMeMilli,
+            floorPriceCnyCents: top.floorPriceCnyCents,
+            medianPriceMeMilli: top.medianPriceMeMilli,
+            tradeCount24h: tradesPage.items.length,
+            shopMetaAppPinId: top.floorSeller?.shopMetaAppPinId,
+            previewItems: previewItems.length > 0 ? previewItems : undefined,
+            action: 'summary',
+          });
+        }
+        return textResult(out);
       } catch (error) {
         return textResult(`goods_market_summary failed: ${error instanceof Error ? error.message : String(error)}`, true);
       }
@@ -555,14 +645,27 @@ export function buildGoodsTradeAgentTools(deps: {
         if (itemPinId) {
           const item = await getItemInfo({ pinId: itemPinId });
           if (!item) return textResult(`Item ${itemPinId} not found.`);
-          return textResult([
+          const out = [
             `Item Holder Info: ${item.name || item.itemPinId}`,
             `- pinId: ${item.itemPinId}`,
             `- collection: ${item.collectionName || item.collectionPinId || 'unknown'}`,
             `- ownerAddress: ${item.ownerAddress || 'unknown'}`,
             `- ownerMetaId: ${item.ownerMetaId || 'unknown'}`,
             `- burned: ${item.burned ? 'yes' : 'no'}`,
-          ].join('\n'));
+          ].join('\n');
+          return textResult(
+            isMrc721PinId(item.itemPinId)
+              ? appendNftCardBlock(
+                  out,
+                  buildMrc721CardFields({
+                    pinId: item.itemPinId,
+                    facts: { item },
+                    owner: item.ownerAddress,
+                    action: 'info',
+                  }),
+                )
+              : out,
+          );
         }
 
         if (!collectionPinId && collectionName) {
@@ -606,7 +709,42 @@ export function buildGoodsTradeAgentTools(deps: {
           for (const it of items.slice(0, size)) {
             lines.push(`- [Item] ${it.name || it.itemPinId} (${it.collectionName || 'unknown'}) · pin://${it.itemPinId}`);
           }
-          return textResult(lines.join('\n'));
+          const grouped = new Map<string, NftPortfolioCollectionEmitRow>();
+          for (const it of items) {
+            const colKey = (it.collectionPinId || it.collectionName || 'mrc721').toLowerCase();
+            const existing = grouped.get(colKey);
+            if (existing) {
+              existing.count += 1;
+            } else {
+              const cov = normalizeMrc721Cover(it.cover);
+              grouped.set(colKey, {
+                collectionId: it.collectionPinId || undefined,
+                name: it.collectionName || 'Digital Collection',
+                collectionName: it.collectionName || 'mrc721',
+                count: 1,
+                ...cov,
+              });
+            }
+          }
+          const previewItems: NftPortfolioPreviewEmitItem[] = items.slice(0, 4).map((it) => ({
+            format: 'mrc721' as const,
+            pinId: it.itemPinId,
+            number: it.number,
+            name: it.name,
+            ...normalizeMrc721Cover(it.cover),
+          }));
+          const out = appendNftPortfolioCardBlock(lines.join('\n'), {
+            ownerAddress: address || items[0]?.ownerAddress || undefined,
+            ownerGlobalMetaId: globalMetaId || items[0]?.ownerMetaId || undefined,
+            isThirdParty: true,
+            totalCount: items.length,
+            mrc721Count: items.length,
+            legacyCount: 0,
+            mrc721Collections: Array.from(grouped.values()).slice(0, 8),
+            previewItems: previewItems.length > 0 ? previewItems : undefined,
+            legacySeries: [],
+          });
+          return textResult(out);
         }
 
         return textResult('goods_holder_lookup: provide at least one of item_pin_id, collection_pin_id, collection_name, address, or global_metaid.', true);
@@ -906,7 +1044,37 @@ export function buildGoodsTradeAgentTools(deps: {
       } else if (latestOrder.status === 'DISPUTED_HOLD') {
         lines.push(`- hold reason: ${latestOrder.verifyDetail || 'delivery verification hold'}.`);
       }
-      return textResult(lines.join('\n'));
+      let out = lines.join('\n');
+      if (latestOrder.status === 'SETTLED' || latestOrder.status === 'settled') {
+        const cov = normalizeMrc721Cover(item.cover || activeListing?.cover);
+        out = appendNftFillCardBlock(
+          out,
+          withNftCardHostStamp(
+            {
+              side: 'bought',
+              rail: 'me-escrow',
+              format: 'mrc721',
+              pinId: itemPinId,
+              number: item.number,
+              name: item.name || activeListing?.itemName,
+              series: item.collectionName || activeListing?.collectionName,
+              ...cov,
+              caVerified: activeListing?.caVerified,
+              priceMeMilli: latestOrder.amountMilli || amountMilli,
+              priceCnyCents: activeListing?.prices?.fiat?.amountCents,
+              counterpartyName: sellerName,
+              counterpartyAddress: sellerAddress,
+              counterpartyGlobalMetaId: sellerMetaId,
+              txId: latestOrder.deliveryTxId,
+              deliveryTxId: latestOrder.deliveryTxId,
+              orderId: latestOrder.orderId,
+              shopMetaAppPinId: activeListing?.shopMetaAppPinId,
+            },
+            sessionId,
+          ),
+        );
+      }
+      return textResult(out);
     },
   );
 
@@ -945,19 +1113,26 @@ export function buildGoodsTradeAgentTools(deps: {
       }
 
       let sellerMetaId = asString(args.seller_global_metaid);
-      if (!sellerMetaId) {
+      let matchedListing: Mrc721MarketListing | null = null;
+      let fetchedItem: Mrc721ItemSummary | null = null;
+
+      if (!sellerMetaId || control.fetchMarketListings || process.env.NODE_TEST_CONTEXT == null) {
         try {
           const marketPage = await getMarketListings({ itemPinId, size: 5 });
-          const matched = marketPage.items.find((x) => x.itemPinId.toLowerCase() === itemPinId);
-          sellerMetaId = matched?.seller?.globalMetaId || '';
+          matchedListing = marketPage.items.find((x) => x.itemPinId.toLowerCase() === itemPinId) ?? null;
+          if (!sellerMetaId) {
+            sellerMetaId = matchedListing?.seller?.globalMetaId || '';
+          }
         } catch {
           // Ignore and try item info
         }
       }
-      if (!sellerMetaId) {
+      if (!sellerMetaId || (!matchedListing && (control.fetchItemInfo || process.env.NODE_TEST_CONTEXT == null))) {
         try {
-          const item = await getItemInfo({ pinId: itemPinId });
-          sellerMetaId = item?.ownerMetaId || '';
+          fetchedItem = await getItemInfo({ pinId: itemPinId });
+          if (!sellerMetaId) {
+            sellerMetaId = fetchedItem?.ownerMetaId || '';
+          }
         } catch {
           // Ignore
         }
@@ -980,6 +1155,35 @@ export function buildGoodsTradeAgentTools(deps: {
         note: args.note.trim(),
       });
 
+      const cov = normalizeMrc721Cover(matchedListing?.cover || fetchedItem?.cover);
+      const sharedCardFields = {
+        format: 'mrc721' as const,
+        inquiryId,
+        pinId: itemPinId,
+        number: fetchedItem?.number,
+        name: matchedListing?.itemName || fetchedItem?.name,
+        series: matchedListing?.collectionName || fetchedItem?.collectionName,
+        ...cov,
+        caVerified: matchedListing?.caVerified,
+        originalPriceMeMilli: matchedListing?.prices?.me?.amountMilli,
+        listedPriceCnyCents: matchedListing?.prices?.fiat?.amountCents,
+        proposedPriceMeMilli: offerAmountMilli,
+        quoteExpiresAt: expiresAt,
+        sellerName: matchedListing?.seller?.name,
+        sellerAddress: matchedListing?.seller?.address || fetchedItem?.ownerAddress,
+        sellerGlobalMetaId: sellerMetaId,
+        sellerOnline: matchedListing?.seller?.isOnline,
+        buyerName: buyerIdentity.name,
+        buyerAddress: buyerIdentity.mvcAddress || undefined,
+        buyerGlobalMetaId: buyerIdentity.globalMetaId || undefined,
+        note: args.note.trim(),
+        shopMetaAppPinId: matchedListing?.shopMetaAppPinId,
+      };
+      const peerCardFence = buildNftNegotiateCardFence({
+        ...sharedCardFields,
+        kind: 'inquiry_received',
+      });
+
       const humanSummary = offerAmountMilli != null
         ? `Inquiry (${inquiryId}) for item ${itemPinId}: offering ${formatMe(offerAmountMilli)} — ${args.note.trim()}`
         : `Inquiry (${inquiryId}) for item ${itemPinId}: ${args.note.trim()}`;
@@ -988,16 +1192,22 @@ export function buildGoodsTradeAgentTools(deps: {
         const sent = await control.sendTradeMessage({
           metabotId,
           toGlobalMetaId: sellerMetaId,
-          content: `${wire}\n\n${humanSummary}`,
+          content: `${wire}\n\n${humanSummary}\n\n${peerCardFence}`,
         });
-        return textResult([
+        const out = [
           'Digital goods inquiry sent to seller.',
           `- inquiryId: ${inquiryId}`,
           `- itemPinId: ${itemPinId}`,
           `- sellerGlobalMetaId: ${sellerMetaId}`,
           ...(offerAmountMilli != null ? [`- offer: ${formatMe(offerAmountMilli)}`] : []),
           `- message pin: pin://${sent.pinId}`,
-        ].join('\n'));
+        ].join('\n');
+        return textResult(
+          appendNftNegotiateCardBlock(out, {
+            ...sharedCardFields,
+            kind: 'inquiry_sent',
+          }),
+        );
       } catch (error) {
         return textResult(`goods_send_inquiry failed: ${error instanceof Error ? error.message : String(error)}`, true);
       }
@@ -1140,14 +1350,48 @@ export function buildGoodsTradeAgentTools(deps: {
         note: asString(args.note) || undefined,
       });
 
+      let matchedListing: Mrc721MarketListing | null = null;
+      if (control.fetchMarketListings || process.env.NODE_TEST_CONTEXT == null) {
+        try {
+          const marketPage = await getMarketListings({ itemPinId, size: 5 });
+          matchedListing = marketPage.items.find((x) => x.itemPinId.toLowerCase() === itemPinId) ?? null;
+        } catch {
+          // Best-effort listing enrichment
+        }
+      }
+      const quoteCardFields = {
+        kind: 'quote_accepted' as const,
+        format: 'mrc721' as const,
+        inquiryId,
+        pinId: itemPinId,
+        number: item.number,
+        name: item.name || matchedListing?.itemName,
+        series: item.collectionName || matchedListing?.collectionName,
+        ...normalizeMrc721Cover(item.cover || matchedListing?.cover),
+        caVerified: matchedListing?.caVerified,
+        originalPriceMeMilli: matchedListing?.prices?.me?.amountMilli,
+        listedPriceCnyCents: matchedListing?.prices?.fiat?.amountCents,
+        agreedPriceMeMilli: agreedAmountMilli,
+        quoteExpiresAt: validUntil,
+        sellerName: sellerIdentity.name,
+        sellerAddress: sellerIdentity.mvcAddress,
+        sellerGlobalMetaId: sellerIdentity.globalMetaId || undefined,
+        sellerOnline: true,
+        buyerAddress: buyerNftAddress,
+        buyerGlobalMetaId,
+        note: asString(args.note) || undefined,
+        shopMetaAppPinId: matchedListing?.shopMetaAppPinId,
+      };
+      const quoteCardFence = buildNftNegotiateCardFence(quoteCardFields);
+
       const humanSummary = `Accepted inquiry ${inquiryId} for ${item.name || itemPinId} at ${formatMe(agreedAmountMilli)} (valid for ${validMinutes} min).`;
       try {
         const sent = await control.sendTradeMessage({
           metabotId,
           toGlobalMetaId: buyerGlobalMetaId,
-          content: `${wire}\n\n${humanSummary}`,
+          content: `${wire}\n\n${humanSummary}\n\n${quoteCardFence}`,
         });
-        return textResult([
+        const out = [
           'Digital goods quote accepted and sent to buyer.',
           `- inquiryId: ${inquiryId}`,
           `- itemPinId: ${itemPinId}`,
@@ -1156,7 +1400,8 @@ export function buildGoodsTradeAgentTools(deps: {
           ...(buyerNftAddress ? [`- bound buyerNftAddress: ${buyerNftAddress}`] : []),
           `- validUntil: ${validUntil}`,
           `- message pin: pin://${sent.pinId}`,
-        ].join('\n'));
+        ].join('\n');
+        return textResult(appendNftNegotiateCardBlock(out, quoteCardFields));
       } catch (error) {
         return textResult(`goods_accept_inquiry DM failed (local quote authorized): ${error instanceof Error ? error.message : String(error)}`, true);
       }
@@ -1430,24 +1675,83 @@ export function buildGoodsTradeAgentTools(deps: {
             collectionName: item.collectionName || matchedListing?.collectionName,
             shopMetaAppPinId: matchedListing?.shopMetaAppPinId,
           });
-          return textResult([
+          const out = [
             'Atomic FT-for-Goods swap SETTLED on-chain.',
             `- item: ${item.name || itemPinId} (${itemPinId})`,
             `- paid: ${tokenPrice.amountDisplay} $${tokenPrice.symbol} (${parsedKey.assetKey})`,
             `- atomic txId: ${reply.txId}`,
             `- buyer address: ${buyerIdentity.mvcAddress}`,
-          ].join('\n'));
+          ].join('\n');
+          return textResult(
+            appendNftFillCardBlock(
+              out,
+              withNftCardHostStamp(
+                {
+                  side: 'token_bought',
+                  rail: 'token-for-goods',
+                  format: 'mrc721',
+                  pinId: itemPinId,
+                  number: item.number,
+                  name: item.name || matchedListing?.itemName,
+                  series: item.collectionName || matchedListing?.collectionName,
+                  ...normalizeMrc721Cover(item.cover || matchedListing?.cover),
+                  caVerified: matchedListing?.caVerified,
+                  tokenSymbol: tokenPrice.symbol,
+                  tokenAmountDisplay: tokenPrice.amountDisplay,
+                  tokenChain: 'mvc',
+                  tokenAssetKey: parsedKey.assetKey,
+                  paymentTxId: reply.txId,
+                  txId: reply.txId,
+                  deliveryTxId: reply.txId,
+                  orderId: proposal.proposalId,
+                  counterpartyName: matchedListing?.seller?.name,
+                  counterpartyAddress: item.ownerAddress,
+                  counterpartyGlobalMetaId: sellerMetaId,
+                  shopMetaAppPinId: matchedListing?.shopMetaAppPinId,
+                },
+                sessionId,
+              ),
+            ),
+          );
         }
 
         // Fallback short-check if reply DM lagged
         const refreshed = await getItemInfo({ pinId: itemPinId }).catch(() => null);
         if (refreshed?.ownerAddress?.toLowerCase() === buyerIdentity.mvcAddress.toLowerCase()) {
-          return textResult([
+          const out = [
             'Atomic FT-for-Goods swap SETTLED (confirmed via item ownership).',
             `- item: ${item.name || itemPinId} (${itemPinId})`,
             `- paid: ${tokenPrice.amountDisplay} $${tokenPrice.symbol} (${parsedKey.assetKey})`,
             `- proposalId: ${proposal.proposalId}`,
-          ].join('\n'));
+          ].join('\n');
+          return textResult(
+            appendNftFillCardBlock(
+              out,
+              withNftCardHostStamp(
+                {
+                  side: 'token_bought',
+                  rail: 'token-for-goods',
+                  format: 'mrc721',
+                  pinId: itemPinId,
+                  number: item.number,
+                  name: item.name || matchedListing?.itemName,
+                  series: item.collectionName || matchedListing?.collectionName,
+                  ...normalizeMrc721Cover(item.cover || matchedListing?.cover),
+                  caVerified: matchedListing?.caVerified,
+                  tokenSymbol: tokenPrice.symbol,
+                  tokenAmountDisplay: tokenPrice.amountDisplay,
+                  tokenChain: 'mvc',
+                  tokenAssetKey: parsedKey.assetKey,
+                  orderId: proposal.proposalId,
+                  counterpartyName: matchedListing?.seller?.name,
+                  counterpartyAddress: item.ownerAddress,
+                  counterpartyGlobalMetaId: sellerMetaId,
+                  shopMetaAppPinId: matchedListing?.shopMetaAppPinId,
+                },
+                sessionId,
+              ),
+            ),
+          );
         }
         return textResult([
           'Atomic FT-for-Goods proposal sent to seller; awaiting settlement confirmation.',
@@ -1577,14 +1881,45 @@ export function buildGoodsTradeAgentTools(deps: {
           collectionName: item.collectionName || matchedListing?.collectionName,
           shopMetaAppPinId: matchedListing?.shopMetaAppPinId,
         });
-        return textResult([
+        const out = [
           'Cross-chain Token-for-Goods purchase DELIVERED.',
           `- item: ${item.name || itemPinId} (${itemPinId})`,
           `- paid: ${reservedDisplay} $${tokenPrice.symbol} (${parsedKey.assetKey})`,
           `- payment revealTxId: ${transferRes.revealTxId}`,
           `- NFT delivery txId: ${deliverReply.nftDeliveryTxId}`,
           `- reservationId: ${reserveReply.reservationId}`,
-        ].join('\n'));
+        ].join('\n');
+        return textResult(
+          appendNftFillCardBlock(
+            out,
+            withNftCardHostStamp(
+              {
+                side: 'token_bought',
+                rail: 'token-for-goods',
+                format: 'mrc721',
+                pinId: itemPinId,
+                number: item.number,
+                name: item.name || matchedListing?.itemName,
+                series: item.collectionName || matchedListing?.collectionName,
+                ...normalizeMrc721Cover(item.cover || matchedListing?.cover),
+                caVerified: matchedListing?.caVerified,
+                tokenSymbol: tokenPrice.symbol,
+                tokenAmountDisplay: reservedDisplay,
+                tokenChain: 'btc',
+                tokenAssetKey: parsedKey.assetKey,
+                paymentTxId: transferRes.revealTxId,
+                txId: deliverReply.nftDeliveryTxId,
+                deliveryTxId: deliverReply.nftDeliveryTxId,
+                orderId: reserveReply.reservationId,
+                counterpartyName: matchedListing?.seller?.name,
+                counterpartyAddress: item.ownerAddress,
+                counterpartyGlobalMetaId: sellerMetaId,
+                shopMetaAppPinId: matchedListing?.shopMetaAppPinId,
+              },
+              sessionId,
+            ),
+          ),
+        );
       }
 
       return textResult([

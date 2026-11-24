@@ -26,6 +26,11 @@ import crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { IMPlatform } from './types';
+import {
+  SecretEgressBlockedError,
+  assertNoSecretEgressFile,
+  scanSecretEgressText,
+} from '../security/secretEgressGuard';
 
 export type IMOutboundMediaKind = 'image' | 'video' | 'audio' | 'file';
 
@@ -384,6 +389,24 @@ export async function sendImOutboundMessage(
     });
   }
 
+  if (text.trim()) {
+    const violations = scanSecretEgressText(text);
+    if (violations.length > 0) {
+      const detectors = Array.from(new Set(violations.map((v) => v.detector))).join(', ');
+      console.warn(`[SecretEgressGuard] blocked outbound IM (${channel}): ${detectors}`);
+      return failure(
+        channel,
+        label,
+        [`安全拦截：外发文本疑似包含助记词、私钥或敏感凭据（${detectors}），已阻止发送。`],
+        {
+          target: ownerConversationId,
+          targetIsOwnerDirect: true,
+          targetIdentityBasis,
+        },
+      );
+    }
+  }
+
   const capabilities = transport.capabilities;
   const errors: string[] = [];
   // Validate EVERY attachment before the first outbound byte: a bad path or an
@@ -394,6 +417,15 @@ export async function sendImOutboundMessage(
     if (!path.isAbsolute(attachment)) {
       errors.push(`附件必须是本地绝对路径：${attachment}`);
       continue;
+    }
+    try {
+      assertNoSecretEgressFile(attachment, { channel: `im_outbound:${channel}` });
+    } catch (error) {
+      if (error instanceof SecretEgressBlockedError) {
+        errors.push(`安全拦截：附件 ${path.basename(attachment)} 包含敏感钱包或凭据文件/内容，已阻止发送。`);
+        continue;
+      }
+      throw error;
     }
     let stats: fs.Stats;
     try {

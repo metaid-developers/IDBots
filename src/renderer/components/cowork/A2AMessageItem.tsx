@@ -18,6 +18,11 @@ import { pickRenderableAvatarSource as pickSharedRenderableAvatarSource } from '
 import NftAvatarFrame from '../metabots/NftAvatarFrame';
 import { parseNftAvatarReference } from '../metabots/nftAvatarPresentation.js';
 import MarkdownContent from '../MarkdownContent';
+import TokenSuiteSegmentCard from '../chat/TokenSuiteSegmentCard';
+import {
+  hasStandaloneTokenCardSegment,
+  splitTokenCardMessageSegments,
+} from '../chat/tokenCardSyntax';
 import { ImagePreviewStrip, splitUserAttachmentLines } from './UserAttachmentBody';
 import type { LocalImagePreviewScope } from '../../utils/localImage';
 import FriendBadge from './FriendBadge';
@@ -126,7 +131,7 @@ const METAID_FILE_INFO_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/fi
 const STRICT_METAFILE_PIN_ID_RE = /^[0-9a-f]{64}i0$/i;
 const COMPAT_METAFILE_ID_RE = /^(?:[0-9a-f]{64}i\d+|[0-9a-f]{64})$/i;
 const METAFILE_EXTRACT_RE = /metafile:\/\/([0-9a-f]{64}i0)(?:\.([a-z0-9]{1,16})(?![a-z0-9]))?(?![0-9a-z])/gi;
-const NFT_CARD_FENCE_STRIP_RE = /```(?:nft-card-group|nft-collection-card|nft-card|nftcard|nft)\b[\s\S]*?```/gi;
+const NFT_CARD_FENCE_STRIP_RE = /```(?:nft-card-group|nft-collection-card|nft-(?:listing|fill|my-listings|portfolio|swap|action|negotiate)-card|nft(?:listing|fill|mylistings|portfolio|swap|action|negotiate)card|nft-card|nftcard|nft)\b[\s\S]*?```/gi;
 const METAFILE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 const METAFILE_METADATA_CACHE_MAX = 500;
 
@@ -1423,13 +1428,48 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
             CoworkSessionDetail's A2A branch) but rings the innermost one, so
             the highlight hugs the bubble instead of drawing a rule across the
             full row width. */}
-        <div className={messengerBubbleClassName(displayRight)} data-message-id={message.id}>
-          {/* Display-time WeChat bracket-code mapping; the raw message
-              (copy, delivery parsing, chain data) is untouched. emojiImages:
-              catalog emoji render as bundled Twemoji artwork (display-only). */}
-          <MarkdownContent content={mapWechatBracketCodesForDisplay(peerBodyToRender)} className={markdownClassName} emojiImages />
-          {peerImagePaths.length > 0 && <ImagePreviewStrip imagePaths={peerImagePaths} inline scope={peerAttachmentScope} />}
-        </div>
+        {(() => {
+          const a2aSegments = splitTokenCardMessageSegments(peerBodyToRender);
+          if (!hasStandaloneTokenCardSegment(a2aSegments)) {
+            return (
+              <div className={messengerBubbleClassName(displayRight)} data-message-id={message.id}>
+                <MarkdownContent content={mapWechatBracketCodesForDisplay(peerBodyToRender)} className={markdownClassName} emojiImages />
+                {peerImagePaths.length > 0 && <ImagePreviewStrip imagePaths={peerImagePaths} inline scope={peerAttachmentScope} />}
+              </div>
+            );
+          }
+          return (
+            <div
+              className={`flex flex-col gap-1.5 ${displayRight ? 'items-end' : 'items-start'}`}
+              data-message-id={message.id}
+            >
+              {a2aSegments.map((seg, segIdx) => {
+                if (seg.kind !== 'markdown') {
+                  return (
+                    <div
+                      key={`a2a-ts-${seg.kind}-${segIdx}`}
+                      data-standalone-token-bubble="true"
+                      data-standalone-card-kind={seg.kind}
+                      className={seg.kind === 'nft-card-group' ? 'w-full max-w-full' : 'w-full max-w-[364px]'}
+                    >
+                      <TokenSuiteSegmentCard segment={seg} />
+                    </div>
+                  );
+                }
+                return (
+                  <div key={`a2a-md-${segIdx}`} className={messengerBubbleClassName(displayRight)}>
+                    <MarkdownContent content={mapWechatBracketCodesForDisplay(seg.content)} className={markdownClassName} emojiImages />
+                  </div>
+                );
+              })}
+              {peerImagePaths.length > 0 && (
+                <div className={messengerBubbleClassName(displayRight)}>
+                  <ImagePreviewStrip imagePaths={peerImagePaths} inline scope={peerAttachmentScope} />
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {metafileItems.length > 0 && (
           <MetafileGallery items={metafileItems} alignEnd={displayRight} />
         )}

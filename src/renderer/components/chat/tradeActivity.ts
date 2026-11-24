@@ -1,20 +1,14 @@
 /**
  * Trade activity detection (S4 chat trade markers) — renderer side.
  *
- * Scans a chat message's markdown text for `nft-card` fences (the S3 card
- * syntax) and classifies the trade kind the message announces:
+ * Scans a chat message's markdown text for `nft-card` and `nft-*-card` fences
+ * and classifies the trade kind the message announces:
  *
  *   'p2p'    — contract sale/listing (listed/sold/bought/delisted) or a
- *              direct transfer (transferred) — the wallet/mrc721 tool
+ *              direct transfer (transferred) — the wallet/mrc721/goods tool
  *              announcements.
  *   'escrow' — three-party escrow activity (action 'escrow', the
  *              syntax-layer reserved value group escrow emitters write).
- *
- * Detection reuses the same parser the cards themselves render through
- * (nftCardSyntax.parseNftCardFence / parseNftCardGroupFence), so a fence only
- * counts when it would actually render as a card — analysis text that quotes
- * a fence (line-number prefixes, truncated JSON) never validates and can
- * never fake a badge. DOM-free so SSR tests drive it directly.
  */
 
 import {
@@ -24,6 +18,14 @@ import {
   parseNftCardGroupFence,
   type NftCardData,
 } from './nftCardSyntax';
+import {
+  isNftActionCardFenceLanguage,
+  isNftFillCardFenceLanguage,
+  isNftListingCardFenceLanguage,
+  parseNftActionCardFence,
+  parseNftFillCardFence,
+  parseNftListingCardFence,
+} from './nftSuiteSyntax';
 
 export type TradeBadgeKind = 'p2p' | 'escrow';
 
@@ -33,9 +35,7 @@ export interface TradeActivity {
   actions: string[];
 }
 
-/** Actions that announce peer-to-peer trade activity. */
 const P2P_ACTIONS = new Set(['listed', 'sold', 'bought', 'delisted', 'transferred', 'selling']);
-/** Actions that announce escrow activity. */
 const ESCROW_ACTIONS = new Set(['escrow']);
 
 const actionTradeKind = (action: string | undefined): TradeBadgeKind | null => {
@@ -45,29 +45,16 @@ const actionTradeKind = (action: string | undefined): TradeBadgeKind | null => {
   return null;
 };
 
-/** Escrow outranks p2p — an escrow message subsumes the transfers around it. */
 const mergeKind = (a: TradeBadgeKind | null, b: TradeBadgeKind | null): TradeBadgeKind | null => {
   if (a === 'escrow' || b === 'escrow') return 'escrow';
   if (a === 'p2p' || b === 'p2p') return 'p2p';
   return null;
 };
 
-/**
- * Host stamp structural check (renderer side, main-side HMAC verify mirror).
- *
- * The renderer cannot hold the HMAC secret (source-signing slice, owner
- * decision A), so this is a presence-shape + binding check only: the stamp
- * must parse as `v1.<issuedMs>.<sessionId>.<64hex>` and — when the viewing
- * context knows its session id — bind to THAT session (a card relayed from
- * another session's emit fails, killing the cross-session mislabel).
- * Authoritative HMAC verification lives main-side (tradeBadge.ts write
- * path); the renderer chip never fabricates a mark the store column lacks.
- */
 const STAMP_PREFIX = 'v1.';
 
-const stampSessionBound = (card: NftCardData, sessionId: string | undefined): boolean => {
-  const row = card as unknown as Record<string, unknown>;
-  const stamp = typeof row.hostStamp === 'string' ? row.hostStamp.trim() : '';
+const stampSessionBound = (card: { hostStamp?: string }, sessionId: string | undefined): boolean => {
+  const stamp = typeof card.hostStamp === 'string' ? card.hostStamp.trim() : '';
   if (!stamp.startsWith(STAMP_PREFIX)) return false;
   const tail = stamp.slice(STAMP_PREFIX.length);
   const first = tail.indexOf('.');
@@ -78,9 +65,6 @@ const stampSessionBound = (card: NftCardData, sessionId: string | undefined): bo
   if (second <= 0) return false;
   const bound = rest.slice(0, second);
   if (!bound || !/^[0-9a-f]{64}$/.test(rest.slice(second + 1))) return false;
-  // Chain-side group transcripts have no cowork session id to bind to; the
-  // shape check above is the strongest available there (trust model:
-  // adversary-in-the-message is out of scope, HMAC truth stays main-side).
   return !sessionId || bound === sessionId;
 };
 
@@ -98,16 +82,17 @@ const foldCards = (
   }
 };
 
-/**
- * Detect the trade activity a message's text announces. Returns null for
- * messages with no trade-card fence (including every text that merely
- * mentions tools or quotes fences without valid card payloads).
- *
- * Source-signing slice (2026-11-03): p2p cards must carry a v1-shaped
- * hostStamp; when `context.sessionId` is known (cowork session detail / A2A)
- * the stamp must also bind to that session. Escrow keeps the reserved
- * hand-written contract.
- */
+const recordP2pSuiteCard = (
+  card: { hostStamp?: string },
+  action: string,
+  state: { kind: TradeBadgeKind | null; actions: string[] },
+  context: { sessionId?: string } | undefined,
+): void => {
+  if (!stampSessionBound(card, context?.sessionId)) return;
+  state.kind = mergeKind(state.kind, 'p2p');
+  state.actions.push(action);
+};
+
 export const detectTradeActivity = (
   content: string,
   context?: { sessionId?: string },
@@ -124,7 +109,10 @@ export const detectTradeActivity = (
     const tag = open[1].trim().toLowerCase();
     const isCard = isNftCardFenceLanguage(tag);
     const isGroup = isNftCardGroupFenceLanguage(tag);
-    if (!isCard && !isGroup) continue;
+    const isListing = isNftListingCardFenceLanguage(tag);
+    const isFill = isNftFillCardFenceLanguage(tag);
+    const isAction = isNftActionCardFenceLanguage(tag);
+    if (!isCard && !isGroup && !isListing && !isFill && !isAction) continue;
 
     let j = i + 1;
     const bodyLines: string[] = [];
@@ -132,7 +120,7 @@ export const detectTradeActivity = (
       bodyLines.push(lines[j]);
       j += 1;
     }
-    if (j >= lines.length) continue; // unterminated fence — keep scanning the rest of the text
+    if (j >= lines.length) continue;
     i = j;
 
     const body = bodyLines.join('\n').trim();
@@ -140,9 +128,34 @@ export const detectTradeActivity = (
     if (isGroup) {
       const cards = parseNftCardGroupFence(body);
       if (cards) foldCards(cards, state, context);
-    } else {
+    } else if (isCard) {
       const card = parseNftCardFence(body);
       if (card) foldCards([card], state, context);
+    } else if (isListing) {
+      const listing = parseNftListingCardFence(body);
+      if (listing) {
+        recordP2pSuiteCard(
+          listing,
+          listing.status === 'delisted' ? 'delisted' : 'listed',
+          state,
+          context,
+        );
+      }
+    } else if (isFill) {
+      const fill = parseNftFillCardFence(body);
+      if (fill) {
+        recordP2pSuiteCard(
+          fill,
+          fill.side === 'sold' ? 'sold' : 'bought',
+          state,
+          context,
+        );
+      }
+    } else if (isAction) {
+      const act = parseNftActionCardFence(body);
+      if (act && act.kind === 'transfer') {
+        recordP2pSuiteCard(act, 'transferred', state, context);
+      }
     }
   }
 

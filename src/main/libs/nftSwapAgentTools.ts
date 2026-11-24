@@ -9,6 +9,12 @@ import type {
   RegisterNftSwapOrderInput,
 } from '../services/swapOrderTrackerService';
 import { formatSwapWireMessage, type SwapClaimItemV1 } from '../services/swapWireProtocol';
+import {
+  buildNftSwapCardFence,
+  NFT_CARD_RESULT_HINT,
+  normalizeMrc721Cover,
+  type NftSwapCardEmitFields,
+} from './nftCardMarkdown';
 
 type SdkToolFactory = (
   name: string,
@@ -68,6 +74,63 @@ function textResult(text: string, isError = false) {
   return {
     content: [{ type: 'text' as const, text }],
     ...(isError ? { isError: true } : {}),
+  };
+}
+
+function textResultWithSwapCard(jsonText: string, cardFields: NftSwapCardEmitFields, isError = false) {
+  return {
+    content: [
+      { type: 'text' as const, text: jsonText },
+      { type: 'text' as const, text: `${NFT_CARD_RESULT_HINT}\n${buildNftSwapCardFence(cardFields)}` },
+    ],
+    ...(isError ? { isError: true } : {}),
+  };
+}
+
+function mapOrderRecordToSwapCard(order: NftSwapClientOrderRecord): NftSwapCardEmitFields {
+  const completedByIndex = new Map(
+    (order.completedItems ?? []).map((item) => [normalizeTokenIndex(item.tokenIndex), item]),
+  );
+  const items = (order.items ?? []).map((dep) => {
+    const comp = completedByIndex.get(normalizeTokenIndex(dep.tokenIndex));
+    if (comp) {
+      const cov = normalizeMrc721Cover((comp as { cover?: string }).cover);
+      return {
+        tokenIndex: dep.tokenIndex,
+        name: comp.itemName || undefined,
+        ...cov,
+        status: (comp.status === 'completed' ? 'completed' : 'failed') as 'completed' | 'failed',
+        depositTxId: dep.depositTxId,
+        newItemPinId: comp.itemPinId || undefined,
+        deliveryTxId: (comp as { deliveryTxId?: string }).deliveryTxId || undefined,
+        error: comp.error || undefined,
+      };
+    }
+    return {
+      tokenIndex: dep.tokenIndex,
+      status: (order.status === 'failed' ? 'failed' : 'confirming') as 'confirming' | 'failed',
+      depositTxId: dep.depositTxId,
+    };
+  });
+  const completedCount = items.filter((i) => i.status === 'completed').length;
+  const status: NftSwapCardEmitFields['status'] =
+    order.status === 'completed'
+      ? 'completed'
+      : order.status === 'partially_completed'
+        ? 'partial'
+        : order.status === 'failed'
+          ? 'failed'
+          : 'confirming';
+  return {
+    requestId: order.requestId,
+    status,
+    collectionSlug: order.collectionSlug,
+    targetCollectionPinId: order.targetCollectionPinId || undefined,
+    stationGlobalMetaId: order.stationGlobalMetaId,
+    caVerified: true,
+    totalCount: items.length,
+    completedCount,
+    items,
   };
 }
 
@@ -258,7 +321,7 @@ export function buildNftSwapAgentTools(deps: {
             toGlobalMetaId: retryVerified.stationEntry.globalMetaId,
             content: retryClaimMessage,
           });
-          return textResult(
+          return textResultWithSwapCard(
             JSON.stringify(
               {
                 ok: true,
@@ -273,6 +336,7 @@ export function buildNftSwapAgentTools(deps: {
               null,
               2,
             ),
+            mapOrderRecordToSwapCard(existingOrder),
           );
         } catch (err) {
           return textResult(
@@ -556,29 +620,54 @@ export function buildNftSwapAgentTools(deps: {
         claimSendError = err instanceof Error ? err.message : String(err);
       }
 
-      return textResult(
-        JSON.stringify(
-          {
-            ok: !claimSendError && failedTransfers.length === 0,
-            requestId: order.requestId,
-            collectionSlug: verified.seriesConfig.collectionSlug,
-            targetCollectionPinId: verified.seriesConfig.targetCollectionPinId,
-            stationGlobalMetaId: verified.stationEntry.globalMetaId,
-            badgeLabel: verified.badgeLabel,
-            vaultAddress,
-            depositedItems,
-            ...(failedTransfers.length > 0 ? { failedTransfers } : {}),
-            claimPinId,
-            claimTxIds,
-            ...(claimSendError ? { claimSendError } : {}),
-            trackingNote:
-              'Order registered in SwapOrderTrackerService. Completion will be detected automatically via SWAP_COMPLETED_V1 or 45s MetaSo polling.',
-          },
-          null,
-          2,
-        ),
-        Boolean(claimSendError && depositedItems.length === 0),
+      const jsonPayload = JSON.stringify(
+        {
+          ok: !claimSendError && failedTransfers.length === 0,
+          requestId: order.requestId,
+          collectionSlug: verified.seriesConfig.collectionSlug,
+          targetCollectionPinId: verified.seriesConfig.targetCollectionPinId,
+          stationGlobalMetaId: verified.stationEntry.globalMetaId,
+          badgeLabel: verified.badgeLabel,
+          vaultAddress,
+          depositedItems,
+          ...(failedTransfers.length > 0 ? { failedTransfers } : {}),
+          claimPinId,
+          claimTxIds,
+          ...(claimSendError ? { claimSendError } : {}),
+          trackingNote:
+            'Order registered in SwapOrderTrackerService. Completion will be detected automatically via SWAP_COMPLETED_V1 or 45s MetaSo polling.',
+        },
+        null,
+        2,
       );
+      const isBatchErr = Boolean(claimSendError && depositedItems.length === 0);
+      const swapCardFields: NftSwapCardEmitFields = {
+        requestId: order.requestId,
+        status: 'confirming',
+        collectionSlug: verified.seriesConfig.collectionSlug,
+        collectionName: seriesName,
+        targetCollectionPinId: verified.seriesConfig.targetCollectionPinId || undefined,
+        stationGlobalMetaId: verified.stationEntry.globalMetaId,
+        stationName: verified.stationEntry.badgeLabel || undefined,
+        caVerified: true,
+        totalCount: depositedItems.length + failedTransfers.length,
+        completedCount: 0,
+        items: [
+          ...depositedItems.map((dep) => ({
+            tokenIndex: dep.tokenIndex,
+            name: heldByIndex.get(normalizeTokenIndex(dep.tokenIndex))?.name,
+            status: 'confirming' as const,
+            depositTxId: dep.depositTxId,
+          })),
+          ...failedTransfers.map((failed) => ({
+            tokenIndex: failed.tokenIndex,
+            name: heldByIndex.get(normalizeTokenIndex(failed.tokenIndex))?.name,
+            status: 'failed' as const,
+            error: failed.error,
+          })),
+        ],
+      };
+      return textResultWithSwapCard(jsonPayload, swapCardFields, isBatchErr);
     },
   );
 
@@ -592,11 +681,18 @@ export function buildNftSwapAgentTools(deps: {
       const metabotId = resolveMetabotId(sessionId);
       if (args.requestId?.trim() && control.getOrder) {
         const order = control.getOrder(args.requestId.trim());
-        return textResult(JSON.stringify(order, null, 2), !order);
+        if (!order) {
+          return textResult(JSON.stringify(order, null, 2), true);
+        }
+        return textResultWithSwapCard(JSON.stringify(order, null, 2), mapOrderRecordToSwapCard(order));
       }
       if (control.listOrders) {
         const orders = control.listOrders(metabotId);
-        return textResult(JSON.stringify({ metabotId: metabotId ?? null, orders }, null, 2));
+        const jsonOut = JSON.stringify({ metabotId: metabotId ?? null, orders }, null, 2);
+        if (orders.length > 0) {
+          return textResultWithSwapCard(jsonOut, mapOrderRecordToSwapCard(orders[0]));
+        }
+        return textResult(jsonOut);
       }
       return textResult('Swap order query is unavailable.', true);
     },

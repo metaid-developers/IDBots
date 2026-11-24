@@ -1189,3 +1189,9 @@ blob-report/
 !tests/tokenCard.test.tsx
 !tests/tokenCardsE2ePolish.test.tsx
 !tests/panelAutoScroll.test.ts
+
+# NFT / Digital Goods 9-Scenario Card Suite (N1, C2, L2, F1, O1, P1, S2, A1, Q1)
+!tests/nftSuiteCards.test.tsx
+
+# Batch 1 P0 wallet & secret security hardening
+!tests/walletSecurityP0.test.mjs

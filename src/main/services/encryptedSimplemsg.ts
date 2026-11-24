@@ -1,6 +1,7 @@
 import { ecdhEncrypt, computeEcdhSharedSecretSha256 } from './metaWebCrypto';
 import { getPrivateKeyBufferForEcdh } from './metabotWalletService';
 import type { MetaidDataPayload } from './metaidCore';
+import { assertNoSecretEgressText } from '../security/secretEgressGuard';
 
 const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0";
 const DEFAULT_CONTENT_TYPE = 'text/markdown';
@@ -86,6 +87,10 @@ export const sendEncryptedSimplemsg = async (input: SendEncryptedSimplemsgInput)
   const peerChatPubkey = requireNonEmpty(input.peerChatPubkey, 'peerChatPubkey');
   requireNonEmpty(input.plaintext, 'plaintext');
   const plaintext = String(input.plaintext);
+  assertNoSecretEgressText(plaintext, {
+    channel: 'private_chat',
+    extraMnemonics: [mnemonic],
+  });
   const walletPath = String(input.wallet.path || '').trim() || DEFAULT_WALLET_PATH;
 
   const privateKeyBuffer = await getPrivateKeyBufferForEcdh(mnemonic, walletPath);

@@ -6,10 +6,16 @@ import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssist
 import {
   appendNftCardBlock,
   appendNftCollectionCardBlock,
+  appendNftListingCardBlock,
+  appendNftMyListingsCardBlock,
+  appendNftPortfolioCardBlock,
   buildMrc721CardFields,
   buildMrc721CollectionCardFields,
   buildNftCardFence,
   NFT_CARD_RESULT_HINT,
+  normalizeMrc721Cover,
+  type NftPortfolioCollectionEmitRow,
+  type NftPortfolioPreviewEmitItem,
 } from './nftCardMarkdown';
 import { withNftCardHostStamp } from './tradeActivityStamp';
 import {
@@ -1374,6 +1380,12 @@ export function buildMrc721AgentTools(deps: {
         return textResult('mrc721_balance requires metabot_ids, address, metaid (or a session bot).', true);
       }
       const lines: string[] = [];
+      let portfolioCardTarget: {
+        metabotId?: number;
+        address: string;
+        isThirdParty: boolean;
+        items: Mrc721ItemSummary[];
+      } | null = null;
       for (const target of targets) {
         const label = target.metabotId != null ? `metabot_id ${target.metabotId}` : 'address';
         if (!target.address) {
@@ -1383,11 +1395,58 @@ export function buildMrc721AgentTools(deps: {
         try {
           const items = await fetchMrc721AddressItems({ address: target.address, pinId: collectionPinId });
           lines.push(`# ${label} ${target.address}\n${formatMrc721Items(items)}`);
+          if (!portfolioCardTarget) {
+            portfolioCardTarget = {
+              metabotId: target.metabotId,
+              address: target.address,
+              isThirdParty: target.metabotId == null,
+              items,
+            };
+          }
         } catch (error) {
           lines.push(`# ${label} ${target.address}\n- lookup failed: ${errorMessage(error)}`);
         }
       }
-      return textResult(lines.join('\n'));
+      let out = lines.join('\n');
+      // Build P1 nft-portfolio-card strictly in-memory from already-fetched items (ZERO extra network fetches)
+      if (portfolioCardTarget && targets.length === 1) {
+        const grouped = new Map<string, NftPortfolioCollectionEmitRow>();
+        for (const it of portfolioCardTarget.items) {
+          const key = (it.collectionPinId || it.collectionName || 'mrc721').toLowerCase();
+          const prev = grouped.get(key);
+          if (prev) {
+            prev.count += 1;
+          } else {
+            grouped.set(key, {
+              collectionId: it.collectionPinId || undefined,
+              name: it.collectionName || 'MRC-721 Collection',
+              collectionName: it.collectionName || 'mrc721',
+              count: 1,
+              ...normalizeMrc721Cover(it.cover),
+            });
+          }
+        }
+        const previewItems: NftPortfolioPreviewEmitItem[] = portfolioCardTarget.items.slice(0, 4).map((it) => ({
+          format: 'mrc721' as const,
+          pinId: it.itemPinId,
+          number: it.number,
+          name: it.name,
+          ...normalizeMrc721Cover(it.cover),
+        }));
+        out = appendNftPortfolioCardBlock(out, {
+          metabotId: portfolioCardTarget.metabotId,
+          ownerAddress: portfolioCardTarget.address,
+          ownerGlobalMetaId: asString(args.metaid) || undefined,
+          isThirdParty: portfolioCardTarget.isThirdParty,
+          totalCount: portfolioCardTarget.items.length,
+          mrc721Count: portfolioCardTarget.items.length,
+          legacyCount: 0,
+          mrc721Collections: Array.from(grouped.values()).slice(0, 8),
+          previewItems: previewItems.length > 0 ? previewItems : undefined,
+          legacySeries: [],
+        });
+      }
+      return textResult(out);
     }
   );
 
@@ -1752,14 +1811,31 @@ export function buildMrc721AgentTools(deps: {
           orders = kept;
         }
         if (!orders.length) {
-          return textResult('No local MRC-721 listings. Create one with mrc721_sell and give the listing JSON to the buyer.');
+          const emptyMsg = 'No local MRC-721 listings. Create one with mrc721_sell and give the listing JSON to the buyer.';
+          return textResult(
+            appendNftMyListingsCardBlock(emptyMsg, {
+              metabotId: owner,
+              items: [],
+            }),
+          );
         }
         const lines = [`Local MRC-721 listings (${orders.length}):`];
         for (const order of orders) {
           lines.push(`- ${order.status} ${order.id} · ${order.itemPinId} · ${order.priceSats} sats → ${order.buyerAddress} · ${order.outpoint}`);
           if (order.reason) lines.push(`  reason: ${order.reason}`);
         }
-        return textResult(lines.join('\n'));
+        const activeOrders = orders.filter((o) => o.status === 'valid');
+        const out = appendNftMyListingsCardBlock(lines.join('\n'), {
+          metabotId: owner,
+          items: activeOrders.map((order) => ({
+            format: 'mrc721' as const,
+            pinId: order.itemPinId,
+            rail: 'onchain-sell' as const,
+            priceSats: order.priceSats,
+            sellUtxo: order.outpoint,
+          })),
+        });
+        return textResult(out);
       } catch (error) {
         return textResult(`mrc721_sell_orders failed: ${errorMessage(error)}`, true);
       }
@@ -1914,11 +1990,31 @@ export function buildMrc721AgentTools(deps: {
       }
       try {
         const result = await control.sellIntentCancel({ metabotId: owner, itemPinId: args.item_pin_id, network: args.network });
-        return textResult([
+        const out = [
           'MRC-721 sell intent cancelled on-chain.',
           `- item pinId: ${result.intent.itemPinId}`,
           `- sell-intent pin: pin://${result.sellPinId} (modified, active=false)`,
-        ].join('\n'));
+        ].join('\n');
+        return textResult(
+          appendNftListingCardBlock(
+            out,
+            withNftCardHostStamp(
+              {
+                status: 'delisted',
+                rail: 'multi-intent',
+                format: 'mrc721',
+                pinId: result.intent.itemPinId,
+                series: result.intent.collectionName || undefined,
+                sellerAddress: result.intent.sellerAddress || undefined,
+                sellerGlobalMetaId: result.intent.sellerMetaId || undefined,
+                shopMetaAppPinId: result.intent.shopMetaAppPinId || undefined,
+                intentPinId: result.sellPinId || undefined,
+                cancelPinId: result.sellPinId || undefined,
+              },
+              sessionId,
+            ),
+          ),
+        );
       } catch (error) {
         return textResult(`mrc721_sell_intent_cancel failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
       }
@@ -1944,7 +2040,14 @@ export function buildMrc721AgentTools(deps: {
           collectionName: asString(args.collection_name) || undefined,
           collectionPinId: asString(args.collection_pinid) || undefined,
         });
-        if (!views.length) return textResult('No sell intents declared by this bot.');
+        if (!views.length) {
+          return textResult(
+            appendNftMyListingsCardBlock('No sell intents declared by this bot.', {
+              metabotId: owner,
+              items: [],
+            }),
+          );
+        }
         const lines = [`${views.length} sell intent(s):`];
         for (const view of views) {
           const priceTags: string[] = [];
@@ -1965,7 +2068,36 @@ export function buildMrc721AgentTools(deps: {
           if (view.reason) lines.push(`  reason: ${view.reason}`);
           if (view.intent.note) lines.push(`  note: ${view.intent.note}`);
         }
-        return textResult(lines.join('\n'));
+        const activeViews = views.filter((v) => v.status === 'active');
+        const firstActive = activeViews[0];
+        let totalMeMilli = 0;
+        let totalCnyCents = 0;
+        for (const v of activeViews) {
+          if (v.intent.prices?.me?.amountMilli != null) totalMeMilli += v.intent.prices.me.amountMilli;
+          if (v.intent.prices?.fiat?.amountCents != null) totalCnyCents += v.intent.prices.fiat.amountCents;
+        }
+        return textResult(
+          appendNftMyListingsCardBlock(lines.join('\n'), {
+            metabotId: owner,
+            sellerAddress: firstActive?.intent.sellerAddress || undefined,
+            sellerGlobalMetaId: firstActive?.intent.sellerMetaId || undefined,
+            shopMetaAppPinId: firstActive?.intent.shopMetaAppPinId || undefined,
+            totalMeMilli: totalMeMilli > 0 ? totalMeMilli : undefined,
+            totalCnyCents: totalCnyCents > 0 ? totalCnyCents : undefined,
+            items: activeViews.map((v) => ({
+              format: 'mrc721' as const,
+              pinId: v.itemPinId,
+              series: v.intent.collectionName || undefined,
+              rail: 'multi-intent' as const,
+              autoFulfill: v.intent.autoFulfillMe !== false,
+              priceMeMilli: v.intent.prices?.me?.amountMilli,
+              priceCnyCents: v.intent.prices?.fiat?.amountCents,
+              priceSats: v.intent.priceHintSats,
+              priceTokens: v.intent.prices?.tokens,
+              intentPinId: v.sellPinId || undefined,
+            })),
+          }),
+        );
       } catch (error) {
         return textResult(`mrc721_sell_intents failed: ${errorMessage(error)}`, true);
       }
@@ -2498,14 +2630,32 @@ export function buildMrc721AgentTools(deps: {
       }
       try {
         const result = await control.offerCancel({ metabotId: owner, itemPinId: args.item_pin_id, network: args.network });
-        return textResult([
+        const out = [
           'MRC-721 open offer cancelled.',
           `- item pinId: ${result.offer.itemPinId}`,
           result.revocation === 'revoked'
             ? `- on-chain revocation: self-transfer ${result.revokeTxId} moved the item to a fresh outpoint of this bot — the signed offer can never complete`
             : '- on-chain revocation: not needed — the item had already left the offered outpoint, so the signed offer was already dead',
           `- closing declaration: pin://${result.offerPinId} (active=false — the market stops listing it)`,
-        ].join('\n'));
+        ].join('\n');
+        return textResult(
+          appendNftListingCardBlock(
+            out,
+            withNftCardHostStamp(
+              {
+                status: 'delisted',
+                rail: 'open-offer',
+                format: 'mrc721',
+                pinId: result.offer.itemPinId,
+                priceSats: result.offer.priceSats,
+                intentPinId: result.offerPinId || undefined,
+                cancelPinId: result.offerPinId || undefined,
+                txId: result.revokeTxId || undefined,
+              },
+              sessionId,
+            ),
+          ),
+        );
       } catch (error) {
         return textResult(`mrc721_offer_cancel failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
       }

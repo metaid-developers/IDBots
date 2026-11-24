@@ -268,16 +268,44 @@ export const PanelMessage: React.FC<{
       ? [sentQuoteBlock, sentQuoteRest].filter(Boolean).join('\n\n')
       : message.content;
     const bubbleClassName = "studio-user-bubble max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface dark:text-claude-darkText text-claude-text";
+    const userSegments = splitTokenCardMessageSegments(displayContent);
+    if (hasStandaloneTokenCardSegment(userSegments)) {
+      return (
+        <div data-panel-message-id={message.id} className="flex w-full min-w-0 flex-col items-end gap-1.5">
+          {userSegments.map((seg, segIdx) => {
+            const isLastSeg = segIdx === userSegments.length - 1;
+            if (seg.kind !== 'markdown') {
+              return (
+                <div
+                  key={`usr-ts-${seg.kind}-${segIdx}`}
+                  data-standalone-token-bubble="true"
+                  data-standalone-card-kind={seg.kind}
+                  data-standalone-user-side="true"
+                  onContextMenu={handleBubbleContextMenu}
+                  className={seg.kind === 'nft-card-group' ? 'flex w-full max-w-full justify-end' : 'flex w-full max-w-[364px] justify-end'}
+                >
+                  <div className="flex flex-col items-end">
+                    <TokenSuiteSegmentCard segment={seg} userSide />
+                    {isLastSeg ? bubbleFooter : null}
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div key={`usr-md-${segIdx}`} onContextMenu={handleBubbleContextMenu} className={bubbleClassName}>
+                <UserMessageBody content={seg.content} resolveLocalFilePath={resolveLocalFilePath} />
+                {isLastSeg ? bubbleFooter : null}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
     return (
       // data-panel-message-id lets the locator rail measure this row
       // (purity pass #2 ③) without touching the bubble chrome.
       <div data-panel-message-id={message.id} className="flex flex-col items-end">
         <div onContextMenu={handleBubbleContextMenu} className={bubbleClassName}>
-          {/* Same display-side body pipeline as the main cowork transcript:
-              the attachment marker lines split out at render time, image
-              files render as the shared thumbnail strip with the in-app
-              lightbox, and the rest renders as markdown. The panel keeps
-              its own bubble chrome. */}
           <UserMessageBody content={displayContent} resolveLocalFilePath={resolveLocalFilePath} />
           {bubbleFooter}
         </div>
@@ -393,7 +421,7 @@ export const PanelMessage: React.FC<{
                 onContextMenu={
                   seg.kind === 'token-card-streaming' ? undefined : handleBubbleContextMenu
                 }
-                className="w-full max-w-[364px]"
+                className={seg.kind === 'nft-card-group' ? 'w-full max-w-full' : 'w-full max-w-[364px]'}
               >
                 <TokenSuiteSegmentCard segment={seg} />
                 {renderSegmentFooter(isLastSeg)}
