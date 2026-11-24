@@ -305,18 +305,68 @@ export function extractEmittedNftCardFences(
   return parseNftCardFencesFromMarkdown(toolResultText);
 }
 
+function extractJsonStringPropertyFromPartialEnvelope(
+  envelopePrefix: string,
+  propName: string,
+): string | null {
+  const keyNeedle = `"${propName}"`;
+  let searchFrom = 0;
+  while (searchFrom < envelopePrefix.length) {
+    const keyIdx = envelopePrefix.indexOf(keyNeedle, searchFrom);
+    if (keyIdx < 0) return null;
+    let cursor = keyIdx + keyNeedle.length;
+    while (cursor < envelopePrefix.length && /\s/.test(envelopePrefix[cursor]!)) cursor += 1;
+    if (envelopePrefix[cursor] !== ':') {
+      searchFrom = cursor;
+      continue;
+    }
+    cursor += 1;
+    while (cursor < envelopePrefix.length && /\s/.test(envelopePrefix[cursor]!)) cursor += 1;
+    if (envelopePrefix[cursor] !== '"') {
+      searchFrom = cursor;
+      continue;
+    }
+    const quoteStart = cursor;
+    cursor += 1;
+    while (cursor < envelopePrefix.length) {
+      const ch = envelopePrefix[cursor]!;
+      if (ch === '\\') {
+        cursor += 2;
+        continue;
+      }
+      if (ch === '"') {
+        const literal = envelopePrefix.slice(quoteStart, cursor + 1);
+        try {
+          const decoded = JSON.parse(literal) as unknown;
+          return typeof decoded === 'string' ? decoded : null;
+        } catch {
+          return null;
+        }
+      }
+      cursor += 1;
+    }
+    return null;
+  }
+  return null;
+}
+
+function isSuccessfulSkillCardEnvelope(parsed: Record<string, unknown>): boolean {
+  if (parsed.success === false) return false;
+  if (typeof parsed.cardType !== 'string' || !parsed.cardType.trim()) return false;
+  if (parsed.success === true) return true;
+  return typeof parsed.mode === 'string' && parsed.mode.trim().length > 0 && parsed.mode !== 'unsupported';
+}
+
 /**
  * Extract protocol card fences emitted by structured CLI skills (such as
  * `metabot-token-broker` or `metabot-trade-metaidmarket-v2`) executed via DSH
- * `bash`. Only matches genuine JSON skill envelopes (`{ success: true, cardType, message }`)
- * so reading documentation or grepping source files never triggers false captures.
+ * `bash`. Only matches genuine JSON skill envelopes (`{ success: true, cardType, message }`
+ * or `{ mode: "...", cardType, message }`) — including envelopes whose trailing
+ * `data` payload was trimmed by DSH after an intact `message` string — so
+ * reading documentation or grepping source files never triggers false captures.
  */
 export function extractEmittedSkillBashCardFences(toolResultText: string): CapturedNftCardFence[] {
-  if (
-    !toolResultText ||
-    !toolResultText.includes('"cardType"') ||
-    !toolResultText.includes('"message"')
-  ) {
+  if (!toolResultText || !toolResultText.includes('"message"')) {
     return [];
   }
   const trimmed = toolResultText.trim();
@@ -326,24 +376,43 @@ export function extractEmittedSkillBashCardFences(toolResultText: string): Captu
   if (firstBrace >= 0 && lastBrace > firstBrace && (firstBrace > 0 || lastBrace < trimmed.length - 1)) {
     candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
   }
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate) as Record<string, unknown> | null;
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        !Array.isArray(parsed) &&
-        parsed.success === true &&
-        typeof parsed.cardType === 'string' &&
-        typeof parsed.message === 'string'
-      ) {
-        const fences = parseNftCardFencesFromMarkdown(parsed.message);
-        if (fences.length > 0) return fences;
+  if (toolResultText.includes('"cardType"')) {
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate) as Record<string, unknown> | null;
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          !Array.isArray(parsed) &&
+          isSuccessfulSkillCardEnvelope(parsed)
+        ) {
+          if (typeof parsed.message === 'string') {
+            const fences = parseNftCardFencesFromMarkdown(parsed.message);
+            if (fences.length > 0) return fences;
+          }
+          if (parsed.card && typeof parsed.card === 'object' && !Array.isArray(parsed.card)) {
+            const fallbackFence = `\`\`\`${parsed.cardType}\n${JSON.stringify(parsed.card, null, 2)}\n\`\`\``;
+            const fences = parseNftCardFencesFromMarkdown(fallbackFence);
+            if (fences.length > 0) return fences;
+          }
+        }
+      } catch {
+        // Try next candidate slice or partial-envelope fallback below
       }
-    } catch {
-      // Try next candidate slice
     }
   }
+
+  // Fallback for genuine JSON skill envelopes whose trailing `data` array was
+  // truncated by `| head` or DSH's tool-result trimmer after an intact `"message"` field.
+  const jsonStart = firstBrace >= 0 ? trimmed.slice(firstBrace) : '';
+  if (/^\{\s*"(?:success|mode)"\s*:/.test(jsonStart)) {
+    const decodedMessage = extractJsonStringPropertyFromPartialEnvelope(jsonStart, 'message');
+    if (decodedMessage) {
+      const fences = parseNftCardFencesFromMarkdown(decodedMessage);
+      if (fences.length > 0) return fences;
+    }
+  }
+
   return [];
 }
 
