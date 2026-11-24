@@ -370,6 +370,7 @@ import { buildOmniCasterAgentTools } from './omniCasterAgentTools';
 import { buildPostSimpleLogAgentTools } from './postSimpleLogAgentTools';
 import {
   buildWalletAgentTools,
+  type WalletAssetActionConfirmationInfo,
   type WalletToolsControl,
 } from './walletAgentTools';
 import {
@@ -382,6 +383,7 @@ import {
 } from './safetyGateSteer';
 import {
   buildMrc721AgentTools,
+  type Mrc721AssetActionConfirmationInfo,
   type Mrc721ToolsControl,
 } from './mrc721AgentTools';
 import {
@@ -9318,6 +9320,33 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
+   * Fail-closed owner confirmation gate for FT, MetaContract NFT, and MRC-721
+   * asset transfer / listing / offer / buy tools. Times out to 'deny' and sets
+   * ownerOnly: true so remote/A2A/sub-agent callers cannot silently drain assets.
+   */
+  private async confirmAssetAction(
+    sessionId: string,
+    info: WalletAssetActionConfirmationInfo | Mrc721AssetActionConfirmationInfo,
+  ): Promise<boolean> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (!activeSession) {
+      return false;
+    }
+    const question = tApp(info.summaryZh, info.summaryEn);
+    const outcome = await this.requestSafetyApproval(
+      sessionId,
+      activeSession.abortController.signal,
+      activeSession,
+      question,
+      info.toolName,
+      info.details,
+      'deny',
+      { ownerOnly: true },
+    );
+    return outcome === 'approved';
+  }
+
+  /**
    * Per-charge owner gate for me_charge (freeze / capture / pay). Runs BEFORE
    * the ME ledger is touched, so a refusal is a no-op on the balance rather
    * than a rollback. 60s card; an unanswered card is a denial (timeoutDefault
@@ -16799,6 +16828,7 @@ export class CoworkRunner extends EventEmitter {
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
           confirmExternalTransfer: (info) => this.confirmExternalTransfer(sessionId, info),
           confirmTokenIssue: (info) => this.confirmMvcFtIssue(sessionId, info),
+          confirmAssetAction: (info) => this.confirmAssetAction(sessionId, info),
         })
       );
     }
@@ -16827,6 +16857,7 @@ export class CoworkRunner extends EventEmitter {
           control: this.mrc721Tools,
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+          confirmAssetAction: (info) => this.confirmAssetAction(sessionId, info),
         })
       );
     }

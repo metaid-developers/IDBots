@@ -20,6 +20,7 @@ import type { SqliteDatabase } from '../sqliteTypes';
 import type { MetabotStore } from '../metabotStore';
 import { getMvcWalletFromPath } from './metabotWalletService';
 import { isMvcAddress, isMrc721PinId } from './mrc721Service';
+import { getWalletTxStatus } from './walletTxStatusService';
 import {
   baseUnitsToDecimalDisplay,
   decimalDisplayToBaseUnits,
@@ -432,6 +433,8 @@ export interface AuthoritativeMrc20Utxo {
   address?: string;
   toAddress?: string;
   status?: string;
+  blockHeight?: number;
+  confirmations?: number;
   mrc20Id?: string;
   tickId?: string;
   tick?: string;
@@ -457,6 +460,8 @@ export interface VerifyMrc20GoodsPaymentInput {
   expectedMrc20Id: string;
   expectedDecimals: number;
   expectedAmountBase: string;
+  /** Minimum BTC block confirmations required (default 1 — blocks 0-conf RBF double-spend). */
+  minConfirmations?: number;
 }
 
 export interface VerifyMrc20GoodsPaymentResult {
@@ -464,6 +469,7 @@ export interface VerifyMrc20GoodsPaymentResult {
   reason: string;
   matchedAmountBase: string;
   expectedAmountBase: string;
+  confirmations?: number;
 }
 
 const REJECTED_MRC20_UTXO_STATUSES = new Set([
@@ -475,23 +481,28 @@ const REJECTED_MRC20_UTXO_STATUSES = new Set([
   'pending_out',
 ]);
 
-const ALLOWED_MRC20_UTXO_STATUSES = new Set([
+const CONFIRMED_MRC20_UTXO_STATUSES = new Set([
   '',
   'available',
-  'transferpendingin',
-  'pendingin',
-  'pending_in',
   'confirmed',
-  'unconfirmed',
-  '0',
   '1',
 ]);
 
-function isAllowedMrc20Status(rawStatus: unknown): boolean {
+const UNCONFIRMED_MRC20_UTXO_STATUSES = new Set([
+  'transferpendingin',
+  'pendingin',
+  'pending_in',
+  'unconfirmed',
+  '0',
+]);
+
+function isAllowedMrc20Status(rawStatus: unknown, requireConfirmed: boolean): boolean {
   const s = String(rawStatus ?? '').trim().toLowerCase();
   if (!s) return true;
   if (REJECTED_MRC20_UTXO_STATUSES.has(s)) return false;
-  return ALLOWED_MRC20_UTXO_STATUSES.has(s);
+  if (CONFIRMED_MRC20_UTXO_STATUSES.has(s)) return true;
+  if (!requireConfirmed && UNCONFIRMED_MRC20_UTXO_STATUSES.has(s)) return true;
+  return false;
 }
 
 function safeDisplayToBaseUnits(rawAmount: unknown, decimals: number): bigint {
@@ -518,20 +529,23 @@ export async function fetchMrc20UtxosForAddressDefault(params: {
 }
 
 /**
- * Verify via authoritative man-p2p / Metalet MRC-20 asset state that
- * `paymentTxId` genuinely credited `sellerReceiveAddress` with `Available` /
- * `TransferPendingIn` balance of exact `expectedMrc20Id` >= `expectedAmountBase`.
+ * Verify via authoritative man-p2p / Metalet MRC-20 asset state AND BTC
+ * on-chain confirmation status that `paymentTxId` genuinely credited
+ * `sellerReceiveAddress` with a confirmed `Available` balance of exact
+ * `expectedMrc20Id` >= `expectedAmountBase`.
  *
  * Blocks:
  * - S-01 Ticker Spoofing: requires exact `mrc20Id` match (never symbol-only).
  * - S-02 `sendAllAmountToFirstOutput` fallback fraud: never trusts raw tx JSON;
- *   only counts indexed UTXO credits owned by `sellerReceiveAddress` in a valid
- *   Available / TransferPendingIn state.
+ *   only counts indexed UTXO credits owned by `sellerReceiveAddress`.
+ * - BTC 0-conf RBF double-spend: requires `>= minConfirmations` (default 1)
+ *   BTC block confirmations and rejects pending/unconfirmed UTXO states.
  */
 export async function verifyMrc20GoodsPayment(
   input: VerifyMrc20GoodsPaymentInput,
   deps?: {
     fetchUtxos?: (params: { address: string; mrc20Id: string }) => Promise<AuthoritativeMrc20Utxo[]>;
+    fetchBtcTxStatus?: (txid: string) => Promise<{ found: boolean; confirmed?: boolean; confirmations?: number }>;
   },
 ): Promise<VerifyMrc20GoodsPaymentResult> {
   const paymentTxId = String(input.paymentTxId ?? '').trim().toLowerCase();
@@ -546,6 +560,10 @@ export async function verifyMrc20GoodsPayment(
   const sellerReceiveAddress = String(input.sellerReceiveAddress ?? '').trim();
   const expectedMrc20Id = String(input.expectedMrc20Id ?? '').trim().toLowerCase();
   const expectedBase = BigInt(input.expectedAmountBase);
+  const minConfirmations = Number.isInteger(input.minConfirmations) && Number(input.minConfirmations) >= 0
+    ? Number(input.minConfirmations)
+    : 1;
+  const requireConfirmed = minConfirmations >= 1;
   if (!sellerReceiveAddress || !expectedMrc20Id || expectedBase <= 0n) {
     return {
       valid: false,
@@ -569,6 +587,7 @@ export async function verifyMrc20GoodsPayment(
   }
 
   let matchedBase = 0n;
+  let sawUnconfirmedMatch = false;
   for (const utxo of utxos) {
     const utxoTxId = String(utxo.txId ?? utxo.txid ?? '').trim().toLowerCase();
     if (utxoTxId !== paymentTxId) continue;
@@ -578,7 +597,18 @@ export async function verifyMrc20GoodsPayment(
     if (utxoOwner && utxoOwner.toLowerCase() !== sellerReceiveAddress.toLowerCase()) {
       continue;
     }
-    if (!isAllowedMrc20Status(utxo.status)) {
+    if (requireConfirmed) {
+      const utxoConf = typeof utxo.confirmations === 'number' ? utxo.confirmations : null;
+      const utxoHeight = typeof utxo.blockHeight === 'number' ? utxo.blockHeight : null;
+      if ((utxoConf !== null && utxoConf < minConfirmations) || (utxoHeight !== null && utxoHeight <= 0)) {
+        sawUnconfirmedMatch = true;
+        continue;
+      }
+    }
+    if (!isAllowedMrc20Status(utxo.status, requireConfirmed)) {
+      if (requireConfirmed && UNCONFIRMED_MRC20_UTXO_STATUSES.has(String(utxo.status ?? '').trim().toLowerCase())) {
+        sawUnconfirmedMatch = true;
+      }
       continue;
     }
 
@@ -596,7 +626,12 @@ export async function verifyMrc20GoodsPayment(
       const entryId = String(entry.mrc20Id ?? entry.tickId ?? utxo.mrc20Id ?? utxo.tickId ?? '').trim().toLowerCase();
       // S-01 hard check: reject any entry lacking or mismatching exact mrc20Id
       if (!entryId || entryId !== expectedMrc20Id) continue;
-      if (!isAllowedMrc20Status(entry.status)) continue;
+      if (!isAllowedMrc20Status(entry.status, requireConfirmed)) {
+        if (requireConfirmed && UNCONFIRMED_MRC20_UTXO_STATUSES.has(String(entry.status ?? '').trim().toLowerCase())) {
+          sawUnconfirmedMatch = true;
+        }
+        continue;
+      }
       const entryOwner = String(entry.address ?? '').trim();
       if (entryOwner && entryOwner.toLowerCase() !== sellerReceiveAddress.toLowerCase()) {
         continue;
@@ -609,7 +644,9 @@ export async function verifyMrc20GoodsPayment(
   if (matchedBase <= 0n) {
     return {
       valid: false,
-      reason: 'no_valid_mrc20_credit_for_seller',
+      reason: sawUnconfirmedMatch
+        ? `btc_payment_unconfirmed:0:${minConfirmations}`
+        : 'no_valid_mrc20_credit_for_seller',
       matchedAmountBase: '0',
       expectedAmountBase: expectedBase.toString(),
     };
@@ -622,6 +659,54 @@ export async function verifyMrc20GoodsPayment(
       expectedAmountBase: expectedBase.toString(),
     };
   }
+
+  if (requireConfirmed) {
+    const fetchBtcTxStatus =
+      deps?.fetchBtcTxStatus ??
+      ((txid: string) => getWalletTxStatus({}, { chain: 'btc', txid }));
+    let txStatus: { found: boolean; confirmed?: boolean; confirmations?: number };
+    try {
+      txStatus = await fetchBtcTxStatus(paymentTxId);
+    } catch (err) {
+      return {
+        valid: false,
+        reason: `btc_tx_status_fetch_failed:${err instanceof Error ? err.message : String(err)}`,
+        matchedAmountBase: matchedBase.toString(),
+        expectedAmountBase: expectedBase.toString(),
+      };
+    }
+    if (!txStatus?.found) {
+      return {
+        valid: false,
+        reason: 'btc_payment_tx_not_found',
+        matchedAmountBase: matchedBase.toString(),
+        expectedAmountBase: expectedBase.toString(),
+      };
+    }
+    const confirmations =
+      typeof txStatus.confirmations === 'number' && Number.isFinite(txStatus.confirmations)
+        ? txStatus.confirmations
+        : txStatus.confirmed === true
+          ? 1
+          : 0;
+    if (txStatus.confirmed !== true || confirmations < minConfirmations) {
+      return {
+        valid: false,
+        reason: `btc_payment_unconfirmed:${confirmations}:${minConfirmations}`,
+        matchedAmountBase: matchedBase.toString(),
+        expectedAmountBase: expectedBase.toString(),
+        confirmations,
+      };
+    }
+    return {
+      valid: true,
+      reason: 'verified',
+      matchedAmountBase: matchedBase.toString(),
+      expectedAmountBase: expectedBase.toString(),
+      confirmations,
+    };
+  }
+
   return {
     valid: true,
     reason: 'verified',

@@ -654,6 +654,19 @@ const fetchNftCardFacts = async (
   }
 };
 
+export interface WalletAssetActionConfirmationInfo {
+  toolName:
+    | 'wallet_nft_transfer'
+    | 'wallet_nft_sell'
+    | 'wallet_nft_buy'
+    | 'wallet_token_transfer'
+    | 'wallet_token_sell'
+    | 'wallet_token_buy';
+  summaryZh: string;
+  summaryEn: string;
+  details: Record<string, unknown>;
+}
+
 /**
  * wallet_balance (R1) and wallet_transfer (R2) inline MCP tools for every
  * cowork surface. Balance queries are read-only (public chain data) and
@@ -671,6 +684,8 @@ export function buildWalletAgentTools(deps: {
   confirmExternalTransfer?: (info: ExternalTransferInfo) => Promise<boolean>;
   /** Renders the fail-closed owner approval dialog for MVC FT issuance/minting. */
   confirmTokenIssue?: (info: MvcFtIssueConfirmationInfo) => Promise<boolean>;
+  /** Renders the fail-closed owner approval dialog for FT/NFT transfers & market trades. */
+  confirmAssetAction?: (info: WalletAssetActionConfirmationInfo) => Promise<boolean>;
 }): unknown[] {
   const { tool, control, sessionId, resolveMetabotId } = deps;
 
@@ -1233,6 +1248,27 @@ export function buildWalletAgentTools(deps: {
         );
       }
 
+      if (toMetabotId == null && deps.confirmAssetAction) {
+        const senderAddress = control.getMetabotMvcAddress(metabotId) ?? '(unknown)';
+        const approved = await deps.confirmAssetAction({
+          toolName: 'wallet_nft_transfer',
+          summaryZh:
+            `Agent 将从本机 MetaBot 钱包向【外部地址】转移 MetaContract NFT（不可撤销）：\n` +
+            `- from: ${senderAddress}\n- to: ${toAddress}\n` +
+            `- NFT: #${tokenIndex} (genesis ${genesis})\n` +
+            `是否允许本次 NFT 转出？`,
+          summaryEn:
+            `The agent is about to transfer a MetaContract NFT to an EXTERNAL address (irreversible):\n` +
+            `- from: ${senderAddress}\n- to: ${toAddress}\n` +
+            `- NFT: #${tokenIndex} (genesis ${genesis})\n` +
+            `Allow this NFT transfer?`,
+          details: { from: senderAddress, to: toAddress, genesis, codehash, token_index: tokenIndex },
+        });
+        if (!approved) {
+          return textResult('wallet_nft_transfer cancelled: owner did not confirm the external NFT transfer.', true);
+        }
+      }
+
       try {
         // Pre-action snapshot: the token sits in the session bot's wallet
         // right now, so its artwork facts are guaranteed present; the card
@@ -1412,6 +1448,29 @@ export function buildWalletAgentTools(deps: {
       if (priceSats < 22000) {
         return textResult('wallet_nft_sell: price_sats must be at least 22000 (the NftManager sell floor; 0.001 SPACE = 100000).', true);
       }
+      if (deps.confirmAssetAction) {
+        const sellerAddress = control.getMetabotMvcAddress(metabotId) ?? '(unknown)';
+        const spaceStr = `${priceSats} sats (${(priceSats / SATOSHI_PER_UNIT).toFixed(8)} SPACE)`;
+        const approved = await deps.confirmAssetAction({
+          toolName: 'wallet_nft_sell',
+          summaryZh:
+            `Agent 准备将本机 MetaBot 钱包的 MetaContract NFT 挂单出售：\n` +
+            `- 卖家地址: ${sellerAddress}\n` +
+            `- NFT: #${tokenIndex} (genesis ${genesis})\n` +
+            `- 挂单价格: ${spaceStr}\n` +
+            `挂单后任意买家均可在链上直接拍下，是否允许挂单？`,
+          summaryEn:
+            `The agent is about to list a MetaContract NFT for sale on-chain:\n` +
+            `- seller: ${sellerAddress}\n` +
+            `- NFT: #${tokenIndex} (genesis ${genesis})\n` +
+            `- ask price: ${spaceStr}\n` +
+            `Any buyer can take this order on-chain until cancelled. Allow listing?`,
+          details: { seller: sellerAddress, genesis, codehash, token_index: tokenIndex, price_sats: priceSats },
+        });
+        if (!approved) {
+          return textResult('wallet_nft_sell cancelled: owner did not confirm listing this NFT for sale.', true);
+        }
+      }
       try {
         // Pre-action snapshot: the token still sits in the bot's wallet, so
         // the artwork facts are guaranteed present even if the indexer lags
@@ -1576,6 +1635,39 @@ export function buildWalletAgentTools(deps: {
         sellUtxo = buildSellUtxoArg(args);
         if (!sellUtxo) {
           return textResult('wallet_nft_buy: sell_txid must be 64 hex and sell_output_index a non-negative integer.', true);
+        }
+      }
+      if (deps.confirmAssetAction) {
+        const buyerAddress = control.getMetabotMvcAddress(metabotId) ?? '(unknown)';
+        const priceDesc = sellUtxo?.price
+          ? `${sellUtxo.price} sats (${(sellUtxo.price / SATOSHI_PER_UNIT).toFixed(8)} SPACE)`
+          : 'on-chain order ask price';
+        const approved = await deps.confirmAssetAction({
+          toolName: 'wallet_nft_buy',
+          summaryZh:
+            `Agent 准备使用本机 MetaBot 钱包购买链上 MetaContract NFT（不可撤销）：\n` +
+            `- 买家地址: ${buyerAddress}\n` +
+            `- NFT: #${tokenIndex} (genesis ${genesis})\n` +
+            `- 价格: ${priceDesc}${sellUtxo?.sellerAddress ? `\n- 卖家: ${sellUtxo.sellerAddress}` : ''}\n` +
+            `是否允许支付并购买该 NFT？`,
+          summaryEn:
+            `The agent is about to buy a MetaContract NFT on-chain (irreversible):\n` +
+            `- buyer: ${buyerAddress}\n` +
+            `- NFT: #${tokenIndex} (genesis ${genesis})\n` +
+            `- price: ${priceDesc}${sellUtxo?.sellerAddress ? `\n- seller: ${sellUtxo.sellerAddress}` : ''}\n` +
+            `Allow spending SPACE to buy this NFT?`,
+          details: {
+            buyer: buyerAddress,
+            genesis,
+            codehash,
+            token_index: tokenIndex,
+            ...(sellUtxo?.txId ? { sell_txid: sellUtxo.txId, sell_output_index: sellUtxo.outputIndex } : {}),
+            ...(sellUtxo?.price ? { sell_price_sats: sellUtxo.price } : {}),
+            ...(sellUtxo?.sellerAddress ? { seller_address: sellUtxo.sellerAddress } : {}),
+          },
+        });
+        if (!approved) {
+          return textResult('wallet_nft_buy cancelled: owner did not confirm buying this NFT.', true);
         }
       }
       try {
@@ -1868,6 +1960,35 @@ export function buildWalletAgentTools(deps: {
       try {
         const preMeta = await resolveMvcFtMetaFromWallet(control, metabotId, genesis, codehash);
         const canonicalGenesis = preMeta.canonicalGenesis || genesis;
+        if (resolvedReceiver.toMetabotId == null && deps.confirmAssetAction) {
+          const senderAddress = control.getMetabotMvcAddress(metabotId) ?? '(unknown)';
+          const approved = await deps.confirmAssetAction({
+            toolName: 'wallet_token_transfer',
+            summaryZh:
+              `Agent 将从本机 MetaBot 钱包向【外部地址】整笔转出 MVC20 FT UTXO（不可撤销）：\n` +
+              `- from: ${senderAddress}\n- to: ${receiverAddress}\n` +
+              `- 代币: ${preMeta.symbol} (genesis ${canonicalGenesis})\n` +
+              `- 说明: 整笔 UTXO 转移${preMeta.balanceDisplay ? `（钱包总额参考: ${preMeta.balanceDisplay} ${preMeta.symbol}）` : ''}\n` +
+              `是否允许本次代币转出？`,
+            summaryEn:
+              `The agent is about to transfer an entire MVC20 FT UTXO to an EXTERNAL address (irreversible):\n` +
+              `- from: ${senderAddress}\n- to: ${receiverAddress}\n` +
+              `- token: ${preMeta.symbol} (genesis ${canonicalGenesis})\n` +
+              `- note: full-UTXO transfer${preMeta.balanceDisplay ? ` (wallet balance ref: ${preMeta.balanceDisplay} ${preMeta.symbol})` : ''}\n` +
+              `Allow this token transfer?`,
+            details: {
+              from: senderAddress,
+              to: receiverAddress,
+              symbol: preMeta.symbol,
+              genesis: canonicalGenesis,
+              codehash,
+              ...(tokenTxid ? { token_txid: tokenTxid, token_vout: args.token_vout } : {}),
+            },
+          });
+          if (!approved) {
+            return textResult('wallet_token_transfer cancelled: owner did not confirm the external token transfer.', true);
+          }
+        }
         const result = await control.transferToken({
           metabotId,
           genesis: canonicalGenesis,
@@ -2092,7 +2213,54 @@ export function buildWalletAgentTools(deps: {
                 true,
               );
             }
-            const splitRes = await control.splitMvcFtForSell({
+          }
+        }
+
+        if (deps.confirmAssetAction) {
+          const sellerAddress = control.getMetabotMvcAddress(metabotId) ?? '(unknown)';
+          const spaceStr = `${priceSats} sats (${(priceSats / SATOSHI_PER_UNIT).toFixed(8)} SPACE)`;
+          const qtyLabel = displayAmountArg
+            ? `${displayAmountArg} ${preMeta.symbol}`
+            : resolvedTokenAmountBase
+              ? `${resolvedTokenAmountBase} base units ${preMeta.symbol}`
+              : `1 UTXO ${preMeta.symbol}${preMeta.balanceDisplay ? ` (wallet ref: ${preMeta.balanceDisplay})` : ''}`;
+          const approved = await deps.confirmAssetAction({
+            toolName: 'wallet_token_sell',
+            summaryZh:
+              `Agent 准备将本机 MetaBot 钱包的 MVC20 代币挂单出售（链上 TokenSell）：\n` +
+              `- 卖家地址: ${sellerAddress}\n` +
+              `- 代币: ${qtyLabel} (genesis ${canonicalGenesis})\n` +
+              `- 挂单总价: ${spaceStr}\n` +
+              `是否允许挂单出售？`,
+            summaryEn:
+              `The agent is about to list MVC20 FT tokens for sale on-chain (TokenSell):\n` +
+              `- seller: ${sellerAddress}\n` +
+              `- token: ${qtyLabel} (genesis ${canonicalGenesis})\n` +
+              `- ask price: ${spaceStr}\n` +
+              `Allow creating this on-chain sell order?`,
+            details: {
+              seller: sellerAddress,
+              symbol: preMeta.symbol,
+              genesis: canonicalGenesis,
+              codehash,
+              amount: displayAmountArg || resolvedTokenAmountBase || 'full_utxo',
+              price_sats: priceSats,
+            },
+          });
+          if (!approved) {
+            return textResult('wallet_token_sell cancelled: owner did not confirm listing this token for sale.', true);
+          }
+        }
+
+        if (displayAmountArg) {
+          const targetBase = parseDisplayAmountToBaseUnits(displayAmountArg, preMeta.decimals)!;
+          const needsSplit =
+            !resolvedTokenTxid &&
+            (preMeta.totalBalanceBase === undefined ||
+              targetBase < preMeta.totalBalanceBase ||
+              (preMeta.utxoCount ?? 1) > 1);
+          if (needsSplit) {
+            const splitRes = await control.splitMvcFtForSell!({
               metabotId,
               codehash,
               genesis: canonicalGenesis,
@@ -2285,6 +2453,41 @@ export function buildWalletAgentTools(deps: {
           return textResult(resolvedReceiver.error, true);
         }
         receiverAddress = resolvedReceiver.address;
+      }
+      if (deps.confirmAssetAction) {
+        const buyerAddress = control.getMetabotMvcAddress(metabotId) ?? '(unknown)';
+        const finalReceiver = receiverAddress || buyerAddress;
+        const spaceStr = `${listing.sell_price_sats} sats (${(listing.sell_price_sats / SATOSHI_PER_UNIT).toFixed(8)} SPACE)`;
+        const approved = await deps.confirmAssetAction({
+          toolName: 'wallet_token_buy',
+          summaryZh:
+            `Agent 准备使用本机 MetaBot 钱包吃单购买 MVC20 代币（不可撤销）：\n` +
+            `- 买家地址: ${buyerAddress}\n` +
+            `- 收币地址: ${finalReceiver}\n` +
+            `- 卖家地址: ${listing.seller_address}\n` +
+            `- 支付金额: ${spaceStr}\n` +
+            `- 挂单 outpoint: ${listing.sell_txid}:${listing.sell_output_index}\n` +
+            `是否允许支付 SPACE 吃单？`,
+          summaryEn:
+            `The agent is about to take (buy) an MVC20 TokenSell order on-chain (irreversible):\n` +
+            `- buyer: ${buyerAddress}\n` +
+            `- receiver: ${finalReceiver}\n` +
+            `- seller: ${listing.seller_address}\n` +
+            `- price: ${spaceStr}\n` +
+            `- order outpoint: ${listing.sell_txid}:${listing.sell_output_index}\n` +
+            `Allow spending SPACE to take this order?`,
+          details: {
+            buyer: buyerAddress,
+            receiver: finalReceiver,
+            seller_address: listing.seller_address,
+            sell_txid: listing.sell_txid,
+            sell_output_index: listing.sell_output_index,
+            sell_price_sats: listing.sell_price_sats,
+          },
+        });
+        if (!approved) {
+          return textResult('wallet_token_buy cancelled: owner did not confirm taking this token sell order.', true);
+        }
       }
       try {
         const result = await control.takeToken({

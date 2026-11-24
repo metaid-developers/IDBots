@@ -1,4 +1,5 @@
 import {
+  BUILTIN_OFFICIAL_ESCROW_GUARANTORS,
   getNftCaRegistry,
   type NftCaOfficialBotEntry,
   type NftCaRegistry,
@@ -29,7 +30,7 @@ export type VerifyOfficialSwapStationResult =
     };
 
 export interface VerifyOfficialEscrowGuarantorInput {
-  guarantorGlobalMetaId: string;
+  guarantorGlobalMetaId?: string;
   custodyAddress?: string;
   refresh?: boolean;
 }
@@ -127,10 +128,100 @@ function evaluateSwapStationAgainstRegistry(
   };
 }
 
+function matchesGuarantorEntry(
+  entry: NftCaOfficialBotEntry,
+  guarantorGlobalMetaId: string,
+  custodyAddress: string,
+): boolean {
+  if (entry.role !== 'escrow_guarantor') return false;
+  if (guarantorGlobalMetaId) {
+    return entry.globalMetaId.trim().toLowerCase() === guarantorGlobalMetaId.toLowerCase();
+  }
+  if (custodyAddress) {
+    const entryMvc = entry.mvcAddress.trim();
+    const entryCustody = entry.escrowConfig?.custodyAddress?.trim() ?? '';
+    return entryMvc === custodyAddress || entryCustody === custodyAddress;
+  }
+  return false;
+}
+
+function verifyGuarantorCustodyMatch(
+  guarantor: NftCaOfficialBotEntry,
+  custodyAddress: string,
+): boolean {
+  if (!custodyAddress) return true;
+  const expectedCustody = guarantor.escrowConfig?.custodyAddress?.trim() || guarantor.mvcAddress.trim();
+  return expectedCustody === custodyAddress;
+}
+
 function evaluateEscrowGuarantorAgainstRegistry(
   registry: NftCaRegistry,
   input: VerifyOfficialEscrowGuarantorInput,
 ): VerifyOfficialEscrowGuarantorResult {
+  const guarantorGlobalMetaId = String(input.guarantorGlobalMetaId ?? '').trim();
+  const custodyAddress = String(input.custodyAddress ?? '').trim();
+  if (!guarantorGlobalMetaId && !custodyAddress) {
+    return {
+      verified: false,
+      reason: 'Missing guarantorGlobalMetaId or custodyAddress.',
+      registryPinId: registry.pinId,
+    };
+  }
+
+  // 1. Authoritative check against a verified on-chain CA registry first
+  //    (allows on-chain revocation `active: false` to override built-in roots).
+  if (registry.verified) {
+    const onChain = registry.officialBots.find((entry) =>
+      matchesGuarantorEntry(entry, guarantorGlobalMetaId, custodyAddress),
+    );
+    if (onChain) {
+      if (onChain.active !== true) {
+        return {
+          verified: false,
+          reason: `Official escrow_guarantor ${onChain.globalMetaId} has been revoked (active !== true).`,
+          registryPinId: registry.pinId,
+        };
+      }
+      if (!verifyGuarantorCustodyMatch(onChain, custodyAddress)) {
+        return {
+          verified: false,
+          reason: 'Guarantor custodyAddress does not match official CA escrowConfig.custodyAddress.',
+          registryPinId: registry.pinId,
+        };
+      }
+      return {
+        verified: true,
+        guarantorEntry: onChain,
+        registryPinId: registry.pinId,
+        badgeType: onChain.badgeType,
+        badgeLabel: onChain.badgeLabel,
+      };
+    }
+  }
+
+  // 2. Built-in CA trust root fallback for early official IDBots guarantor bots
+  //    (still revocable above whenever a verified on-chain CA marks active=false).
+  const builtin = BUILTIN_OFFICIAL_ESCROW_GUARANTORS.find((entry) =>
+    matchesGuarantorEntry(entry, guarantorGlobalMetaId, custodyAddress),
+  );
+  if (builtin && builtin.active === true) {
+    if (!verifyGuarantorCustodyMatch(builtin, custodyAddress)) {
+      return {
+        verified: false,
+        reason: 'Guarantor custodyAddress does not match official CA escrowConfig.custodyAddress.',
+        registryPinId: registry.pinId ?? 'builtin-ca-trust-root',
+      };
+    }
+    return {
+      verified: true,
+      guarantorEntry: builtin,
+      registryPinId: registry.pinId ?? 'builtin-ca-trust-root',
+      badgeType: builtin.badgeType,
+      badgeLabel: builtin.badgeLabel,
+    };
+  }
+
+  // 3. Not in verified on-chain CA and not in built-in trust root -> fail closed.
   if (!registry.verified) {
     return {
       verified: false,
@@ -139,51 +230,10 @@ function evaluateEscrowGuarantorAgainstRegistry(
     };
   }
 
-  const guarantorGlobalMetaId = String(input.guarantorGlobalMetaId ?? '').trim();
-  if (!guarantorGlobalMetaId) {
-    return {
-      verified: false,
-      reason: 'Missing guarantorGlobalMetaId.',
-      registryPinId: registry.pinId,
-    };
-  }
-
-  const guarantor = registry.officialBots.find(
-    (entry) => entry.role === 'escrow_guarantor' && entry.globalMetaId.trim() === guarantorGlobalMetaId,
-  );
-  if (!guarantor) {
-    return {
-      verified: false,
-      reason: `Guarantor ${guarantorGlobalMetaId} is not certified as an official escrow_guarantor in CA registry.`,
-      registryPinId: registry.pinId,
-    };
-  }
-
-  if (guarantor.active !== true) {
-    return {
-      verified: false,
-      reason: `Official escrow_guarantor ${guarantorGlobalMetaId} has been revoked (active !== true).`,
-      registryPinId: registry.pinId,
-    };
-  }
-
-  if (input.custodyAddress !== undefined) {
-    const custodyAddress = String(input.custodyAddress).trim();
-    if (!guarantor.escrowConfig || guarantor.escrowConfig.custodyAddress.trim() !== custodyAddress) {
-      return {
-        verified: false,
-        reason: 'Guarantor custodyAddress does not match official CA escrowConfig.custodyAddress.',
-        registryPinId: registry.pinId,
-      };
-    }
-  }
-
   return {
-    verified: true,
-    guarantorEntry: guarantor,
+    verified: false,
+    reason: `Guarantor ${guarantorGlobalMetaId || custodyAddress} is not certified as an official escrow_guarantor in CA registry.`,
     registryPinId: registry.pinId,
-    badgeType: guarantor.badgeType,
-    badgeLabel: guarantor.badgeLabel,
   };
 }
 

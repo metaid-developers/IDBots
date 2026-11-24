@@ -312,8 +312,10 @@ export function registerFtActiveOrder(
   if (!/^[1-9]\d*$/.test(amountBase)) {
     throw new Error('amountBase must be a positive integer string');
   }
-  const autoFulfillMe =
-    input.rail === 'me-escrow' ? input.autoFulfillMe !== false : input.autoFulfillMe === true;
+  // Explicit opt-in only: autoFulfillMe defaults to false even on me-escrow.
+  // Passing autoFulfillMe: true on mvc-tokensell or btc-psbt still triggers the
+  // C1.3 mutual-exclusion conflict check immediately below.
+  const autoFulfillMe = input.autoFulfillMe === true;
 
   // Contract C1.3: UTXO mutual exclusion check across active listings
   if ((input.rail === 'mvc-tokensell' || input.rail === 'btc-psbt') && autoFulfillMe) {
