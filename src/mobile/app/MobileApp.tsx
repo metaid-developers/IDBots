@@ -217,6 +217,11 @@ export default function MobileApp(): JSX.Element {
       setTab('tasks');
       return true;
     }
+    if (target.kind === 'artifact') {
+      // A digest belongs to a conversation; the mobile shell has no Browser
+      // showcase tab, so the honest landing is the session itself.
+      return target.sessionId ? openWorkSession(target.sessionId) : false;
+    }
     setScheduledDeepLink({ taskId: target.taskId, runId: target.runId });
     setTab('tasks');
     return true;

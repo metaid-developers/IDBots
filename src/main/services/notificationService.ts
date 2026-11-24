@@ -1,4 +1,5 @@
 import type { NotificationStore } from '../notificationStore';
+import type { ProcessNeedsHumanReason } from './processNeedsHuman';
 import type { ScheduledTask, ScheduledTaskRun } from '../scheduledTaskStore';
 import type {
   AgentNotificationInput,
@@ -36,6 +37,10 @@ const COPY = {
     attemptCompletedBody: (worker: string) => `${worker} delivered; review when ready.`,
     attemptFailedBody: (worker: string, detail: string) =>
       detail ? `${worker} failed: ${detail}` : `${worker} failed.`,
+    // N1: 推进完毕 · 需要人类下一步动作 — the ONLY completion-class notification
+    // that survives the N8 gate.
+    needsHuman: 'Needs your next step',
+    needsHumanBody: (title: string) => `“${title}” finished its push and left a digest for you.`,
   },
   zh: {
     workCompleted: '任务已完成',
@@ -63,6 +68,8 @@ const COPY = {
     attemptCompletedBody: (worker: string) => `${worker} 已完成交付，可以验收了。`,
     attemptFailedBody: (worker: string, detail: string) =>
       detail ? `${worker} 交付失败：${detail}` : `${worker} 交付失败。`,
+    needsHuman: '需要你的下一步',
+    needsHumanBody: (title: string) => `“${title}”已推进完毕，给你留了一份摘要件。`,
   },
 } as const;
 
@@ -196,6 +203,54 @@ export class NotificationService {
       body: copy.openResult(text(input.title, 160)),
       priority: input.outcome === 'completed' ? 'normal' : 'high',
       target: { kind: 'session', sessionId: input.sessionId },
+    });
+  }
+
+  /**
+   * N1 — `process.needs_human`: the one completion-state notification that
+   * survives the N8 gate (owner definition 2026-11-24 00:47). Written ONLY when
+   * the authoring bot declared a human next step, or an OBJECTIVE wait state
+   * exists (M7=A fallback). A normal completion must never reach this method.
+   *
+   * `target` prefers the digest (artifact) because 态3's click has to land on
+   * the file; without a digest the row still jumps to the session.
+   */
+  recordProcessNeedsHuman(input: {
+    sessionId: string;
+    taskId?: string | null;
+    /** Dedup key: the same session + reason + marker writes one row. */
+    marker: string | number;
+    reason: ProcessNeedsHumanReason;
+    title: string;
+    body?: string | null;
+    artifactUri?: string | null;
+    metabotId?: number | null;
+    language?: string;
+  }): boolean {
+    const copy = COPY[language(input.language)];
+    const artifactUri = String(input.artifactUri ?? '').trim();
+    const body = String(input.body ?? '').trim() || copy.needsHumanBody(text(input.title, 160));
+    return this.record({
+      eventId: `process_needs_human:${input.sessionId}:${input.reason}:${input.marker}`,
+      type: 'process.needs_human',
+      category: 'action',
+      metabotId: input.metabotId ?? null,
+      sessionId: input.sessionId,
+      taskId: input.taskId ?? null,
+      runId: null,
+      title: copy.needsHuman,
+      body: text(body, 360),
+      priority: 'high',
+      target: artifactUri
+        ? {
+            kind: 'artifact',
+            artifactUri,
+            sessionId: input.sessionId,
+            ...(input.taskId ? { taskId: input.taskId } : {}),
+          }
+        : input.sessionId
+          ? { kind: 'session', sessionId: input.sessionId }
+          : { kind: 'task', taskId: input.taskId ?? '' },
     });
   }
 

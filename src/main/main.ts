@@ -23,6 +23,13 @@ import { runServerBootstrap, ServerBootstrapStore, type ServerBootstrapRun } fro
 import { createServerBootstrapFacts, createServerBootstrapStepExecutors } from './server/bootstrapSteps';
 import { SqliteStore } from './sqliteStore';
 import { isAllowedPaymentLaunchUrl } from './paymentLaunchUrl';
+import {
+  buildProcessDigestHtml,
+  parseFollowUpDeclarationWithReason,
+  resolveProcessNeedsHuman,
+  writeProcessDigest,
+  type ProcessNeedsHumanReason,
+} from './services/processNeedsHuman';
 import { isGatewayInvokeEvent, registerIpcHandler } from './ipc/registry';
 import { broadcastToRenderers } from './ipc/broadcast';
 import {
@@ -6902,6 +6909,77 @@ const getCompletionDesktopNotify = (): CompletionDesktopNotify => {
   return completionDesktopNotify;
 };
 
+/**
+ * N8 — the write-side gate (owner definition 2026-11-24 00:47, adopted by the
+ * floatwin outline §4.0/§4.3):
+ *
+ *   运行时的展示归 Live Stage；推进完毕且需要人类下一步动作 → 摘要件进通知中心；
+ *   不需要人类动作的正常完成 → 只进台账，不进通知中心。
+ *
+ * Before this gate `recordCoworkTerminal` wrote a `work.completed` row for EVERY
+ * cowork terminal — the spam the definition forbids. Now:
+ *   · failed  → `work.failed` (unchanged: a failure is attention-worthy);
+ *   · completed + needs_human → ONE `process.needs_human` row carrying the
+ *     authoring bot's digest (artifact target);
+ *   · completed + nothing owed → NO row at all.
+ *
+ * The verdict is M7=A: the bot's own `[FOLLOW_UP: owner — …]` declaration wins,
+ * and the host may only add OBJECTIVE wait states on top (pending permission,
+ * open decision card, waiting_owner, overrun).
+ */
+const PROCESS_TERMINAL_LOOKBACK = 12;
+
+const lastAssistantTextOf = (sessionId: string): string => {
+  try {
+    const page = getCoworkStore().getSessionMessagesPage(sessionId, { limit: PROCESS_TERMINAL_LOOKBACK });
+    const messages = page.messages ?? [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message?.type !== 'assistant') continue;
+      const content = String(message.content ?? '').trim();
+      if (content) return content;
+    }
+  } catch {
+    // An unreadable transcript degrades to "no declaration" — never to a guess.
+  }
+  return '';
+};
+
+/** The linked long-term sub-project, if this session executes one. */
+const linkedSubtaskOf = (sessionId: string): {
+  taskId: string;
+  taskTitle: string;
+  subtaskId: string | null;
+  expectedMinutes: number | null;
+  startedAtIso: string | null;
+  evidence: string[];
+} | null => {
+  try {
+    const linked = getLongTermTaskStore().findBySessionId(sessionId);
+    if (!linked) return null;
+    const sub = linked.subtask;
+    return {
+      taskId: linked.task.id,
+      taskTitle: linked.task.title,
+      subtaskId: sub?.id ?? null,
+      expectedMinutes: sub?.expectedMinutes ?? null,
+      startedAtIso: sub?.leaseClaimedAt ?? sub?.lastActivityAt ?? sub?.createdAt ?? null,
+      evidence: (sub?.evidence ?? [])
+        .map((item) => String((item as { uri?: unknown }).uri ?? '').trim())
+        .filter(Boolean),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const overrunOf = (link: ReturnType<typeof linkedSubtaskOf>, nowMs: number): boolean => {
+  if (!link?.expectedMinutes || !link.startedAtIso) return false;
+  const startedAt = Date.parse(link.startedAtIso);
+  if (!Number.isFinite(startedAt)) return false;
+  return nowMs - startedAt > link.expectedMinutes * 60_000;
+};
+
 const recordCoworkTerminalNotification = (sessionId: string, outcome: 'completed' | 'failed'): void => {
   try {
     const session = getCoworkStore().getSessionWithoutMessages(sessionId);
@@ -6911,11 +6989,93 @@ const recordCoworkTerminalNotification = (sessionId: string, outcome: 'completed
     const latestMessage = marker === null
       ? getCoworkStore().getSessionMessagesPage(sessionId, { limit: 1 }).messages.at(-1)
       : undefined;
-    getNotificationService().recordCoworkTerminal({
-      sessionId,
-      terminalMarker: marker ?? latestMessage?.id ?? Date.now(),
+    const terminalMarker = marker ?? latestMessage?.id ?? Date.now();
+    if (outcome === 'failed') {
+      getNotificationService().recordCoworkTerminal({
+        sessionId,
+        terminalMarker,
+        outcome,
+        title: session.title,
+        metabotId: session.metabotId ?? null,
+        language: getPersistedAppLanguage(),
+      });
+      return;
+    }
+
+    // ── completed: the N8 gate ──────────────────────────────────────────
+    const lastAssistantText = lastAssistantTextOf(sessionId);
+    const declaration = parseFollowUpDeclarationWithReason(lastAssistantText);
+    const link = linkedSubtaskOf(sessionId);
+    const nowMs = Date.now();
+    const openDecisions = (() => {
+      try {
+        return getStudioDecisionQueueStore().listOpen();
+      } catch {
+        return [];
+      }
+    })();
+    const verdict = resolveProcessNeedsHuman({
       outcome,
-      title: session.title,
+      declaration: declaration?.verdict ?? null,
+      declarationReason: declaration?.reason ?? null,
+      followUpState: session.followUpState ?? null,
+      pendingPermission: listPendingPermissions().some((entry) => entry.sessionId === sessionId),
+      openDecision: openDecisions.some((item) => item.originStudioSessionId === sessionId),
+      overrun: overrunOf(link, nowMs),
+    });
+    if (!verdict.needsHuman) {
+      // Ledger only — the session row IS the record. Nothing enters the
+      // notification center (that is the whole point of the N8 gate).
+      return;
+    }
+
+    // N3 — the digest is rendered from the AUTHORING bot's own closing words;
+    // the host never writes the conclusion. Evidence comes from what the bot
+    // already registered on the task blackboard (never invented).
+    const taskKey = link?.taskId ?? sessionId;
+    const stamp = `${terminalMarker}`;
+    let artifactUri: string | null = null;
+    try {
+      const conclusion = lastAssistantText
+        .replace(/\[FOLLOW_UP:[^\]]*\]/gi, '')
+        .replace(/\s+\n/g, '\n')
+        .trim()
+        .slice(0, 1600);
+      const html = buildProcessDigestHtml({
+        title: session.title,
+        conclusion,
+        evidence: link?.evidence ?? [],
+        nextSteps: verdict.nextStep ? [verdict.nextStep] : [],
+        language: getPersistedAppLanguage() === 'zh' ? 'zh' : 'en',
+        meta: {
+          sessionId,
+          taskId: link?.taskId ?? null,
+          metabotName: null,
+          reason: verdict.reason,
+          generatedAt: nowMs,
+        },
+      });
+      const written = writeProcessDigest({
+        userDataDir: app.getPath('userData'),
+        taskKey,
+        stamp,
+        html,
+      });
+      artifactUri = written.artifactUri;
+    } catch (error) {
+      // A failed digest write must not swallow the notification: the row
+      // degrades to a session target (outline §4.4 第一条).
+      console.warn('[Notification] Failed to write process digest:', error);
+    }
+
+    getNotificationService().recordProcessNeedsHuman({
+      sessionId,
+      taskId: link?.taskId ?? null,
+      marker: terminalMarker,
+      reason: (verdict.reason ?? 'decision') as ProcessNeedsHumanReason,
+      title: link?.taskTitle || session.title,
+      body: verdict.nextStep ?? null,
+      artifactUri,
       metabotId: session.metabotId ?? null,
       language: getPersistedAppLanguage(),
     });
@@ -11598,6 +11758,31 @@ const getLongTermTaskStore = () => {
         // Focus update is best-effort.
       }
       broadcastLongTermTaskUpdate([change.taskId], `subtask_${change.reason}`);
+      // N7 — the WAITING-state write hook. `waiting_owner` already rides
+      // recordLongTermTask below (unchanged, one row); `waiting_external` had
+      // NO notification exit at all — a sub-project parked on an outside
+      // condition was invisible to the notification center. It now writes the
+      // SAME process.needs_human type with reason 'waiting_external'.
+      if (detailForFocus && change.status === 'waiting_external') {
+        try {
+          const subtask = detailForFocus.subtasks.find((item) => item.id === change.subtaskId);
+          const notificationTitle = subtask && subtask.title !== detailForFocus.title
+            ? `${detailForFocus.title} · ${subtask.title}`
+            : detailForFocus.title;
+          getNotificationService().recordProcessNeedsHuman({
+            sessionId: detailForFocus.definitionSessionId ?? '',
+            taskId: detailForFocus.id,
+            marker: `${change.subtaskId}:${change.reason}`,
+            reason: 'waiting_external',
+            title: notificationTitle,
+            body: subtask?.waitNote ?? null,
+            metabotId: detailForFocus.currentAssigneeMetabotId ?? null,
+            language: getPersistedAppLanguage(),
+          });
+        } catch (error) {
+          console.warn('[Notification] Failed to record waiting_external hook:', error);
+        }
+      }
       if (detailForFocus && (
         change.status === 'waiting_owner'
         || (change.status === 'accepted' && detailForFocus.stage === 'done')

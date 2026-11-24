@@ -28,6 +28,11 @@ export function notificationCenterPath(eventId?: string): string {
 
 export function notificationTargetPath(target: AgentNotificationTarget): string {
   if (target.kind === 'session') return `/app/sessions/${segment(target.sessionId)}`;
+  if (target.kind === 'artifact') {
+    // The digest opens in the desktop showcase tab; mobile lands on the
+    // conversation that produced it (same fallback as the click route).
+    return target.sessionId ? `/app/sessions/${segment(target.sessionId)}` : '/app/notifications';
+  }
   if (target.kind === 'task') return `/app/tasks/${segment(target.taskId)}`;
   if (target.kind === 'bot_automation') {
     const params = new URLSearchParams({ section: target.section });

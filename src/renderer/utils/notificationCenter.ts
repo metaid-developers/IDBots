@@ -25,7 +25,10 @@ export function classifyNotification(type: string): NotificationClass {
   if (!value) return 'other';
   if (value.endsWith('.completed')) return 'completed';
   if (value.endsWith('.failed')) return 'failed';
-  if (value === 'permission.required') return 'decision';
+  // N1: 推进完毕 · 需要人类下一步动作 — the completion-class row that survives
+  // the N8 gate (owner definition 2026-11-24 00:47). It IS a decision row: the
+  // owner's next act is to open the digest and steer.
+  if (value === 'permission.required' || value === 'process.needs_human') return 'decision';
   return 'other';
 }
 
@@ -56,6 +59,8 @@ export type NotificationJump =
   | { kind: 'session'; sessionId: string }
   | { kind: 'scheduled'; sessionId: string }
   | { kind: 'task'; taskId: string }
+  /** N2: open the session, bring its SHOWCASE tab to the digest, focus composer. */
+  | { kind: 'artifact'; sessionId: string; artifactUri: string }
   | null;
 
 /**
@@ -79,6 +84,13 @@ export function resolveNotificationJump(target: AgentNotificationTarget | null |
   if (target.kind === 'task') {
     const taskId = typeof target.taskId === 'string' ? target.taskId.trim() : '';
     return taskId ? { kind: 'task', taskId } : null;
+  }
+  if (target.kind === 'artifact') {
+    const artifactUri = typeof target.artifactUri === 'string' ? target.artifactUri.trim() : '';
+    const sessionId = typeof target.sessionId === 'string' ? target.sessionId.trim() : '';
+    // Without a session there is nothing to open it IN — the row degrades to
+    // text-only (outline §4.4: 摘要件打不开 → 纯文本摘要 + 打开任务).
+    return artifactUri && sessionId ? { kind: 'artifact', sessionId, artifactUri } : null;
   }
   return null;
 }

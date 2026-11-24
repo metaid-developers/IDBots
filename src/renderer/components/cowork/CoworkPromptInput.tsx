@@ -667,6 +667,23 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     return () => observer.disconnect();
   }, [isLarge]);
 
+  // N2 (owner approval 2026-11-24 17:23): a `process.needs_human` digest click
+  // lands here — 态3 requires the caret back in the composer after the showcase
+  // tab opens the HTML. ONE window event, matched against this composer's
+  // scope so a background session's notification cannot steal the caret from
+  // the conversation the owner is actually in.
+  useEffect(() => {
+    const onFocusComposer = (event: Event): void => {
+      const detail = (event as CustomEvent<{ sessionId?: string | null }>).detail;
+      const target = typeof detail?.sessionId === 'string' ? detail.sessionId.trim() : '';
+      if (target && scopeKey && target !== scopeKey) return;
+      if (target && !scopeKey) return;
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    };
+    window.addEventListener('cowork:focusComposer', onFocusComposer);
+    return () => window.removeEventListener('cowork:focusComposer', onFocusComposer);
+  }, [scopeKey]);
+
   // 暴露方法给父组件
   React.useImperativeHandle(ref, () => ({
     setValue: (newValue: string) => {

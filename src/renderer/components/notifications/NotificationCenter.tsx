@@ -217,6 +217,21 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ onOpenProcesses
       window.dispatchEvent(new CustomEvent('cowork:viewSession', { detail: { sessionId: jump.sessionId } }));
     } else if (jump.kind === 'scheduled') {
       window.dispatchEvent(new CustomEvent('scheduledTask:viewSession', { detail: { sessionId: jump.sessionId } }));
+    } else if (jump.kind === 'artifact') {
+      // N2 态3 (owner definition 2026-11-24 00:47): open the conversation,
+      // bring its SHOWCASE tab forward onto the digest, then put the caret
+      // back in the composer so the owner can steer immediately.
+      window.dispatchEvent(new CustomEvent('cowork:viewSession', { detail: { sessionId: jump.sessionId } }));
+      void sessionTabBinding.controlSessionTab({
+        action: 'navigate-tab',
+        sessionId: jump.sessionId,
+        role: 'showcase',
+        uri: jump.artifactUri,
+        activate: true,
+      }).catch(() => {
+        // A dead preview route must not block the session open above.
+      });
+      window.dispatchEvent(new CustomEvent('cowork:focusComposer', { detail: { sessionId: jump.sessionId } }));
     } else {
       window.dispatchEvent(new CustomEvent('longtermTask:viewTask', { detail: { taskId: jump.taskId } }));
     }
