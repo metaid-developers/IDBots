@@ -29,6 +29,10 @@ test('skillManager runtime YAML parser must be declared as production dependency
     packageJson.dependencies && packageJson.dependencies['js-yaml'],
     'js-yaml must be in dependencies so packaged app can load skillManager at runtime',
   );
+  assert.ok(
+    packageJson.dependencies && packageJson.dependencies['decimal.js'],
+    'decimal.js must be declared directly in dependencies rather than relying on transitive hoisting',
+  );
 });
 
 test('web-search skill build must go through the runtime bootstrap wrapper', () => {
