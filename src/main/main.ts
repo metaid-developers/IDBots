@@ -23,6 +23,10 @@ import { runServerBootstrap, ServerBootstrapStore, type ServerBootstrapRun } fro
 import { createServerBootstrapFacts, createServerBootstrapStepExecutors } from './server/bootstrapSteps';
 import { SqliteStore } from './sqliteStore';
 import { isAllowedPaymentLaunchUrl } from './paymentLaunchUrl';
+import {
+  registerLocalSecretProvider,
+  registerSensitiveUserDataPath,
+} from './security/secretEgressGuard';
 import { isGatewayInvokeEvent, registerIpcHandler } from './ipc/registry';
 import { broadcastToRenderers } from './ipc/broadcast';
 import {
@@ -25099,6 +25103,33 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     startupLog('fee rate store init scheduled');
     // Local Q&A answer ledger (post_simpleanswer repeat notice): same kv store.
     setSimpleQaAnswerLedgerStore(getStore());
+
+    // Outbound DLP / secret-egress guard: register local wallet mnemonics,
+    // human identity mnemonic, active RPC token, and sensitive userData dir
+    // so outbound chat/pin/upload/IM paths can never exfiltrate them.
+    registerSensitiveUserDataPath(app.getPath('userData'));
+    registerLocalSecretProvider(() => {
+      const mnemonics: string[] = [];
+      try {
+        mnemonics.push(...getMetabotStore().listAllMetabotWalletMnemonics());
+      } catch {
+        // Store may not be initialized yet during early startup.
+      }
+      try {
+        const userMnemonic = getUserIdentityStore().get()?.mnemonic?.trim();
+        if (userMnemonic) mnemonics.push(userMnemonic);
+      } catch {
+        // Ignore if user identity is not initialized.
+      }
+      const tokens: string[] = [];
+      try {
+        const rpcToken = getMetaidRpcToken();
+        if (rpcToken) tokens.push(rpcToken);
+      } catch {
+        // Ignore if RPC token is not generated yet.
+      }
+      return { mnemonics, tokens };
+    });
 
     startupLog('metaid rpc server start begin');
     metaidRpcServer = startMetaidRpcServer(getMetabotStore, getStore, getCoworkStore, {

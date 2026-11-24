@@ -1189,3 +1189,7 @@ blob-report/
 !tests/tokenCard.test.tsx
 !tests/tokenCardsE2ePolish.test.tsx
 !tests/panelAutoScroll.test.ts
+
+# Batch 1 P0 wallet & secret security hardening
+!tests/walletSecurityP0.test.mjs
+

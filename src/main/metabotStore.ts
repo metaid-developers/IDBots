@@ -877,6 +877,16 @@ export class MetabotStore {
     return metabot ? this.getMetabotWalletById(metabot.wallet_id) : null;
   }
 
+  /** Return all non-empty wallet mnemonics for in-memory egress fingerprinting (never logged). */
+  listAllMetabotWalletMnemonics(): string[] {
+    const rows = this.getAll<{ mnemonic?: string | null }>(
+      'SELECT mnemonic FROM metabot_wallets WHERE mnemonic IS NOT NULL AND TRIM(mnemonic) != ""'
+    );
+    return rows
+      .map((row) => String(row.mnemonic ?? '').trim())
+      .filter((value) => value.length > 0);
+  }
+
   listRecentPinTransactionsByAddress(address: string, limit = 8): Array<{ txid: string; timestamp: number }> {
     const normalizedAddress = address.trim();
     if (!normalizedAddress) return [];
