@@ -149,7 +149,11 @@ function listSourceFiles(dir, extensions) {
 const CJK_PATTERN = /[぀-ヿ㐀-䶿一-鿿豈-﫿]/;
 
 const scannedFiles = listSourceFiles(MOBILE_ROOT, ['.ts', '.tsx']).filter(
-  (file) => !file.endsWith('/i18n.ts') && !file.endsWith('/taskCenterI18n.ts') && !file.endsWith('/loginCopy.ts') && !statSync(file).isDirectory(),
+  (file) => !file.endsWith('/i18n.ts') && !file.endsWith('/taskCenterI18n.ts') && !file.endsWith('/loginCopy.ts')
+    // metaAppShopTitles.ts: dedicated CJK dictionary module for published
+    // personal-goods-shop title patterns (UI-language-independent content,
+    // see the module header — cannot route through t()).
+    && !file.endsWith('/metaAppShopTitles.ts') && !statSync(file).isDirectory(),
 );
 
 test('mobile sources contain no CJK characters outside i18n.ts', () => {

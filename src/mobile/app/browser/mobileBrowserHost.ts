@@ -4,6 +4,11 @@ import { createIdbotsBrowserHostAdapter } from '@/features/botBrowser/idbotsBrow
 import { getMobileElectron } from '../appBridge';
 import { resolveLocalFileUrl } from '../../../renderer/services/localFileUrl';
 import { createMobileMetaAppPreviewSession } from './mobileMetaAppPreview';
+import {
+  NFT_SHOP_TITLE_MATCH_RE,
+  NFT_SHOP_TITLE_OWNER_STRIP_RE,
+  nftShowcaseTitle,
+} from './metaAppShopTitles';
 import { installLegacyWebViewUrlCompatibility } from '@/features/botBrowser/legacyWebViewUrl';
 
 export function createMobileBrowserHost(): {
@@ -46,15 +51,15 @@ export function createMobileBrowserHost(): {
       });
       if (!resolved.ok || !resolved.data) return resolved;
       const currentTitle = typeof resolved.data.title === 'string' ? resolved.data.title.trim() : '';
-      if (/精选头像铺|头像铺|老藏家|清仓小铺|个人数字商品小店|数字商品小店/iu.test(currentTitle)) {
+      if (NFT_SHOP_TITLE_MATCH_RE.test(currentTitle)) {
         const inferredOwner = currentTitle
-          .replace(/\s*(?:的)?(?:精选头像铺|头像铺|老藏家清仓小铺|清仓小铺|个人数字商品小店|数字商品小店).*$/iu, '')
+          .replace(NFT_SHOP_TITLE_OWNER_STRIP_RE, '')
           .trim();
         return {
           ...resolved,
           data: {
             ...resolved.data,
-            title: inferredOwner ? `${inferredOwner} 的 NFT 橱窗` : 'NFT 橱窗',
+            title: nftShowcaseTitle(inferredOwner),
           },
         };
       }
