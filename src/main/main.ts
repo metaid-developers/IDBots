@@ -30,6 +30,10 @@ import {
   writeProcessDigest,
   type ProcessNeedsHumanReason,
 } from './services/processNeedsHuman';
+import {
+  registerLocalSecretProvider,
+  registerSensitiveUserDataPath,
+} from './security/secretEgressGuard';
 import { isGatewayInvokeEvent, registerIpcHandler } from './ipc/registry';
 import { broadcastToRenderers } from './ipc/broadcast';
 import {
@@ -243,20 +247,36 @@ import {
 } from './services/walletQueryService';
 import { executeWalletMvcTransfer } from './services/walletTransferService';
 import { executeWalletTokenSend } from './services/walletTokenSendService';
-import { getWalletTxStatus, verifyWalletTx } from './services/walletTxStatusService';
+import {
+  getWalletTxStatus,
+  verifyEscrowOnChainCustodyTx,
+  verifyWalletTx,
+} from './services/walletTxStatusService';
+import { verifyOfficialEscrowGuarantor } from './services/officialBotVerifyService';
 import { openMetabotBtcWallet, signBtcPsbtPartial } from './services/btcPartialSign';
 import { broadcastBtcTx, fetchBtcUtxos } from './libs/btcApi';
 import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
 import { executeMvcTokenSellTrade, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
-import { broadcastMvcFtTransferBundle, listMvcFtAssets, mvcFtTokenBalanceFromAssets } from './services/mvcFtService';
+import {
+  broadcastMvcFtTransferBundle,
+  listMvcFtAssets,
+  mvcFtTokenBalanceFromAssets,
+  recordMvcFtBundleSpendSession,
+} from './services/mvcFtService';
+import { convertToGlobalMetaId } from './services/globalMetaid';
 import { executeMvcFtIssue, executeMvcFtMint, listMvcFtIssuances } from './services/mvcFtIssueService';
 import { executeMrc20Transfer, listMrc20Assets } from './services/mrc20Service';
-import { TokenOrderWatcher } from './services/tokenOrderWatcher';
+import {
+  buildPassiveSellFillCardMessage,
+  TokenOrderWatcher,
+  type PassiveSellFillCardParams,
+} from './services/tokenOrderWatcher';
 import { defaultFtMandateGate } from './services/ftMandateGateService';
 import {
   getFtBatchOrderProgress,
   listFtActiveOrders,
   markFtOrdersCanceledByOutpoint,
+  registerFtActiveOrder,
   updateFtOrderStatus,
 } from './services/ftOrderStore';
 import {
@@ -278,6 +298,12 @@ import {
   verifyMrc721Listing,
   type Mrc721CreatePinFn,
 } from './services/mrc721Service';
+import {
+  buildNftFillCardFence,
+  buildNftSwapCardFence,
+  normalizeMrc721Cover,
+} from './libs/nftCardMarkdown';
+import { withNftCardHostStamp } from './libs/tradeActivityStamp';
 import {
   broadcastMrc721TradeReceipt,
   cancelMrc721SellIntent,
@@ -354,6 +380,7 @@ import {
   meRelease,
 } from './services/meChargeService';
 import { startCreditPullLoop, type CreditPullLoop } from './services/creditPullService';
+import { startInviteGrantPullLoop, type InviteGrantPullLoop } from './services/inviteGrantPullService';
 import { initBundleService, registerBundleIpcHandlers } from './services/bundleService';
 import { initLlmRelayService, registerLlmRelayIpcHandlers, getLlmRelayQuota } from './services/llmRelayService';
 import { createRelayCatalogRefresh, RELAY_CATALOG_REFRESH_INTERVAL_MS } from './services/relayCatalogFreshness';
@@ -767,7 +794,13 @@ import {
   installCommunityMetaApp,
   listCommunityMetaApps,
 } from './services/metaAppChainService';
-import { getMetaidRpcBase, getMetaidRpcToken } from './services/metaidRpcEndpoint';
+import {
+  getMetaidRpcBase,
+  getMetaidRpcToken,
+  issueScopedMetaidRpcToken,
+  listActiveScopedMetaidRpcTokens,
+} from './services/metaidRpcEndpoint';
+import { migratePlaintextMnemonicsAtRest } from './security/mnemonicVault';
 import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
 import {
   ServiceOrderLifecycleService,
@@ -3251,6 +3284,7 @@ let relayCatalogRefresh: ReturnType<typeof createRelayCatalogRefresh> | null = n
 let relayCatalogRefreshTimer: ReturnType<typeof setInterval> | null = null;
 /** Plan B: tenant-side pull of pending credit grants (server mode only). */
 let creditPullLoop: CreditPullLoop | null = null;
+let inviteGrantPullLoop: InviteGrantPullLoop | null = null;
 let notificationDeliveryLoop: NotificationDeliveryLoop | null = null;
 
 function text(value: unknown): string {
@@ -4471,9 +4505,32 @@ function getSwapOrderTrackerService(): SwapOrderTrackerService {
                 return `#${item.tokenIndex}: ${item.status}${confPart}`;
               })
               .join(', ');
+            const swapStatusCard = buildNftSwapCardFence({
+              requestId: event.requestId,
+              status: event.wireStatus === 'failed' ? 'failed' : 'confirming',
+              collectionSlug: event.collectionSlug,
+              stationGlobalMetaId: event.stationGlobalMetaId,
+              caVerified: true,
+              totalCount: event.items.length,
+              completedCount: event.items.filter((i) => i.status === 'completed' || i.status === 'delivered').length,
+              items: event.items.map((item) => ({
+                tokenIndex: item.tokenIndex,
+                status:
+                  item.status === 'completed' || item.status === 'delivered'
+                    ? ('completed' as const)
+                    : item.status === 'failed' || item.status === 'rejected'
+                      ? ('failed' as const)
+                      : ('confirming' as const),
+                confirmations: typeof item.confirmations === 'number' ? item.confirmations : undefined,
+                newItemPinId: (item as { itemPinId?: string }).itemPinId || undefined,
+                error: (item as { error?: string }).error || undefined,
+              })),
+            });
             const lines = [
               `Legacy collectible swap update (${event.collectionSlug}, request ${event.requestId}): status=${event.wireStatus}${itemSummary ? ` [${itemSummary}]` : ''}.`,
               ...(event.note ? [event.note] : []),
+              '',
+              swapStatusCard,
             ];
             const msg = cStore.addMessage(event.sessionId, {
               type: 'assistant',
@@ -4499,6 +4556,30 @@ function getSwapOrderTrackerService(): SwapOrderTrackerService {
             const cStore = getCoworkStore();
             if (!cStore.getSessionWithoutMessages(event.sessionId)) return;
             const completedCount = event.results.filter((r) => r.status === 'completed').length;
+            const swapDoneCard = buildNftSwapCardFence({
+              requestId: event.requestId,
+              status:
+                event.status === 'completed'
+                  ? 'completed'
+                  : event.status === 'partially_completed'
+                    ? 'partial'
+                    : 'failed',
+              collectionSlug: event.collectionSlug,
+              targetCollectionPinId: event.targetCollectionPinId || undefined,
+              stationGlobalMetaId: event.stationGlobalMetaId,
+              caVerified: true,
+              totalCount: event.results.length,
+              completedCount,
+              items: event.results.map((r) => ({
+                tokenIndex: r.tokenIndex,
+                name: r.itemName || undefined,
+                ...normalizeMrc721Cover((r as { cover?: string }).cover),
+                status: r.status === 'completed' ? ('completed' as const) : ('failed' as const),
+                newItemPinId: r.itemPinId || undefined,
+                deliveryTxId: (r as { deliveryTxId?: string }).deliveryTxId || undefined,
+                error: r.error || undefined,
+              })),
+            });
             const lines = [
               `Legacy collectible swap completed (${event.collectionSlug}, request ${event.requestId}, source=${event.source}): ${completedCount}/${event.results.length} item(s) delivered.`,
               ...event.results.map((r) =>
@@ -4506,6 +4587,8 @@ function getSwapOrderTrackerService(): SwapOrderTrackerService {
                   ? `- #${r.tokenIndex}: ${r.itemName || 'MRC-721'} (pin: ${r.itemPinId || 'n/a'})`
                   : `- #${r.tokenIndex}: failed (${r.error || 'unknown'})`,
               ),
+              '',
+              swapDoneCard,
             ];
             const msg = cStore.addMessage(event.sessionId, {
               type: 'assistant',
@@ -4636,11 +4719,152 @@ function getSellerAutoFulfillDaemon(): SellerAutoFulfillDaemon {
             console.warn('[SellerAutoFulfill/FT] recordNotification failed:', err);
           }
         },
-        emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+        onFtEscrowPassiveSold: (payload) =>
+          pushPassiveFtSellCardToCowork({
+            metabotId: payload.metabotId,
+            preferredSessionId: payload.sessionId,
+            listingKey: payload.listingKey,
+            cardParams: {
+              assetKey: payload.assetKey,
+              symbol: payload.symbol,
+              rail: 'me-escrow',
+              chain: payload.chain,
+              amountDisplay: payload.amountDisplay,
+              priceMeMilli: payload.amountMilli,
+              filledTxId: payload.deliveryTxId,
+              buyerAddress: payload.buyerAddress,
+              filledLots: payload.filledLots,
+              totalLots: payload.totalLots,
+            },
+          }),
+        emitToRenderer: (channel, data) => {
+          broadcastToRenderers(channel, data);
+          if (channel === 'goodsTrade:autoSold' && data && typeof data === 'object') {
+            const payload = data as {
+              orderId?: string;
+              sellerMetabotId?: number;
+              itemPinId?: string;
+              buyerAddress?: string;
+              amountMilli?: number;
+              assetKey?: string;
+              deliveryTxId?: string;
+              tradePinId?: string;
+            };
+            const sellerBotId = Number(payload.sellerMetabotId);
+            const soldPinId = String(payload.itemPinId ?? '').trim();
+            if (Number.isInteger(sellerBotId) && sellerBotId > 0 && isMrc721PinId(soldPinId)) {
+              void (async () => {
+                try {
+                  const cStore = getCoworkStore();
+                  const targetSession = cStore
+                    .listSessions({ metabotId: sellerBotId, omitInlinePeerDataAvatar: true })
+                    .find((s) => s.sessionType !== 'a2a');
+                  if (!targetSession) return;
+                  const itemSnap = await fetchMrc721ItemInfo({ pinId: soldPinId }).catch(() => null);
+                  const fillFence = buildNftFillCardFence(
+                    withNftCardHostStamp(
+                      {
+                        side: 'sold',
+                        rail: payload.assetKey ? 'token-for-goods' : 'me-escrow',
+                        format: 'mrc721',
+                        pinId: soldPinId,
+                        number: itemSnap?.number,
+                        name: itemSnap?.name || undefined,
+                        series: itemSnap?.collectionName || undefined,
+                        ...normalizeMrc721Cover(itemSnap?.cover),
+                        priceMeMilli:
+                          typeof payload.amountMilli === 'number' && payload.amountMilli > 0
+                            ? payload.amountMilli
+                            : undefined,
+                        tokenAssetKey: payload.assetKey || undefined,
+                        counterpartyAddress: payload.buyerAddress || undefined,
+                        txId: payload.deliveryTxId || undefined,
+                        deliveryTxId: payload.deliveryTxId || undefined,
+                        tradePinId: payload.tradePinId || undefined,
+                        orderId: payload.orderId || undefined,
+                      },
+                      targetSession.id,
+                    ),
+                  );
+                  const summaryLine =
+                    typeof payload.amountMilli === 'number' && payload.amountMilli > 0
+                      ? `Auto-fulfilled digital goods order ${payload.orderId || ''}: +${payload.amountMilli / 1000} ME settled.`
+                      : `Auto-fulfilled digital goods token swap ${payload.orderId || ''}.`;
+                  const msg = cStore.addMessage(targetSession.id, {
+                    type: 'assistant',
+                    content: `${summaryLine}\n\n${fillFence}`,
+                    metadata: {
+                      goodsAutoSoldReceipt: {
+                        orderId: payload.orderId,
+                        itemPinId: soldPinId,
+                        deliveryTxId: payload.deliveryTxId,
+                      },
+                    },
+                  });
+                  emitCoworkStreamMessage(targetSession.id, msg);
+                } catch (postErr) {
+                  console.warn('[SellerAutoFulfill] failed to post F1 sold card to cowork session:', postErr);
+                }
+              })();
+            }
+          }
+        },
       },
     );
   }
   return sellerAutoFulfillDaemon;
+}
+
+function pushPassiveFtSellCardToCowork(input: {
+  metabotId: number;
+  preferredSessionId?: string | null;
+  listingKey: string;
+  cardParams: PassiveSellFillCardParams;
+}): { sessionId: string | null } {
+  try {
+    const coworkStore = getCoworkStore();
+    let targetSessionId: string | null = null;
+    const preferred = String(input.preferredSessionId || '').trim();
+    if (preferred) {
+      const summary = coworkStore.getSessionSummary(preferred, { omitInlinePeerDataAvatar: true });
+      if (summary && !summary.archivedAt) {
+        targetSessionId = summary.id;
+      }
+    }
+    if (!targetSessionId) {
+      const sessions = coworkStore.listSessions({
+        metabotId: input.metabotId,
+        omitInlinePeerDataAvatar: true,
+      });
+      const primaryHumanSession =
+        sessions.find(
+          (s) => (!s.sessionType || s.sessionType === 'standard') && !s.autoOrigin && !s.archivedAt,
+        ) ??
+        sessions.find((s) => (!s.sessionType || s.sessionType === 'standard') && !s.archivedAt) ??
+        sessions[0];
+      targetSessionId = primaryHumanSession?.id ?? null;
+    }
+    if (!targetSessionId) {
+      return { sessionId: null };
+    }
+
+    const content = buildPassiveSellFillCardMessage(input.cardParams);
+    const msg = coworkStore.addMessage(targetSessionId, {
+      type: 'assistant',
+      content,
+      metadata: {
+        ftPassiveFillCard: true,
+        listingKey: input.listingKey,
+        filledTxId: input.cardParams.filledTxId,
+        suppressRunningStatus: true,
+      },
+    });
+    emitCoworkStreamMessage(targetSessionId, msg);
+    return { sessionId: targetSessionId };
+  } catch (err) {
+    console.warn('[pushPassiveFtSellCardToCowork] failed:', err);
+    return { sessionId: null };
+  }
 }
 
 let tokenOrderWatcher: TokenOrderWatcher | null = null;
@@ -4651,6 +4875,25 @@ function getTokenOrderWatcher(): TokenOrderWatcher {
       getStore().getSaveFunction(),
       {
         emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+        onOrderFilledPassive: (event, order, meta) =>
+          pushPassiveFtSellCardToCowork({
+            metabotId: order.metabotId,
+            preferredSessionId: order.sessionId,
+            listingKey: order.listingKey,
+            cardParams: {
+              assetKey: order.assetKey,
+              symbol: order.symbol,
+              rail: order.rail,
+              chain: order.chain,
+              amountDisplay: order.amountDisplay,
+              priceSats: order.priceSats,
+              priceMeMilli: order.priceMeMilli,
+              filledTxId: event.filledTxId,
+              buyerAddress: meta.buyerAddress,
+              filledLots: event.filledLots,
+              totalLots: event.totalLots,
+            },
+          }),
         recordNotification: (notif) => {
           try {
             getNotificationService().record(notif);
@@ -7985,16 +8228,23 @@ const getCoworkRunner = () => {
             processEnv: process.env,
           })
         );
+        const sessionType = session?.sessionType ?? 'standard';
         if (metabotId != null && typeof metabotId === 'number') {
           const wallet = metabot ? metabotStore.getMetabotWalletByMetabotId(metabotId) : null;
           if (metabot && wallet) {
+            const scopedRpcToken = issueScopedMetaidRpcToken({
+              sessionId,
+              metabotId,
+              sessionType,
+            });
             Object.assign(overrides, {
               IDBOTS_METABOT_ID: String(metabotId),
-              IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
+              // Never expose wallet mnemonic to agent bash / DSH BASH_ENV files;
+              // signing runs exclusively inside host-managed tools / RPC workers.
               IDBOTS_TWIN_NAME: metabot.name,
               IDBOTS_METABOT_PATH: wallet.path,
               IDBOTS_RPC_URL: getMetaidRpcBase(),
-              IDBOTS_RPC_TOKEN: getMetaidRpcToken(),
+              IDBOTS_RPC_TOKEN: scopedRpcToken,
             });
             if (metabot.globalmetaid) {
               overrides.IDBOTS_METABOT_GLOBALMETAID = metabot.globalmetaid;
@@ -8014,13 +8264,18 @@ const getCoworkRunner = () => {
         const twin = metabotStore.getTwinWallet();
         if (!twin && Object.keys(overrides).length === 0) return overrides;
         if (twin) {
+          const scopedRpcToken = issueScopedMetaidRpcToken({
+            sessionId,
+            metabotId: twin.id,
+            sessionType,
+          });
           Object.assign(overrides, {
             IDBOTS_METABOT_ID: String(twin.id),
-            IDBOTS_METABOT_MNEMONIC: twin.mnemonic,
+            // Never expose wallet mnemonic to agent bash / DSH BASH_ENV files.
             IDBOTS_TWIN_NAME: twin.name,
             IDBOTS_METABOT_PATH: twin.path,
             IDBOTS_RPC_URL: getMetaidRpcBase(),
-            IDBOTS_RPC_TOKEN: getMetaidRpcToken(),
+            IDBOTS_RPC_TOKEN: scopedRpcToken,
           });
           const twinMetabot = metabotStore.getMetabotById(twin.id);
           if (twinMetabot?.globalmetaid) {
@@ -9504,6 +9759,45 @@ const getCoworkRunner = () => {
           feeRate: getGlobalFeeRate('mvc'),
         }),
       ),
+      splitMvcFtForSell: ({ metabotId, codehash, genesis, amountBase }) =>
+        withChainWriteBudget('wallet_token_sell_split', async () => {
+          const store = getMetabotStore();
+          const bot = store.getMetabotById(metabotId);
+          if (!bot?.mvc_address) {
+            throw new Error(`MetaBot ${metabotId} MVC address not found`);
+          }
+          const feeRate = getGlobalFeeRate('mvc');
+          const built = await buildMvcFtTransferRawTx(store, {
+            metabotId,
+            token: {
+              codeHash: codehash,
+              genesisHash: genesis,
+            },
+            toAddress: bot.mvc_address,
+            amount: amountBase,
+            feeRate,
+          });
+          const broadcasted = await broadcastMvcFtTransferBundle(
+            {
+              amountCheckRawTx: built.amount_check_raw_tx,
+              rawTx: built.raw_tx,
+            },
+            (rawTx) => broadcastMvcTx(rawTx),
+          );
+          recordMvcFtBundleSpendSession({
+            metabotId,
+            walletAddress: bot.mvc_address,
+            amountCheckRawTx: built.amount_check_raw_tx,
+            rawTx: built.raw_tx,
+            txId: broadcasted.txId,
+          });
+          return {
+            txId: broadcasted.txId,
+            outputIndex: built.output_index,
+            amountBase,
+            rawTx: built.raw_tx,
+          };
+        }),
       takeToken: (params) => withChainWriteBudget(
         'wallet_token_buy',
         () => executeMvcTokenSellTrade(getMetabotStore(), {
@@ -9556,12 +9850,53 @@ const getCoworkRunner = () => {
           metabotId: filter?.metabotId,
           status: 'active',
         }),
+      registerActiveFtOrder: (orderInput) => {
+        const row = registerFtActiveOrder(getStore().getDatabase(), orderInput);
+        getStore().getSaveFunction()?.();
+        return row;
+      },
+      cancelActiveFtOrderByOutpoint: (metabotId, outpoint) => {
+        const changed = markFtOrdersCanceledByOutpoint(
+          getStore().getDatabase(),
+          metabotId,
+          outpoint,
+        );
+        if (changed > 0) getStore().getSaveFunction()?.();
+        return changed;
+      },
+      resolveLocalMetabotByGlobalMetaId: (globalMetaId) => {
+        const target = String(globalMetaId || '').trim().toLowerCase();
+        if (!target) return null;
+        for (const bot of getMetabotStore().listMetabots()) {
+          const candidates = [
+            bot.globalmetaid || '',
+            bot.mvc_address ? convertToGlobalMetaId(bot.mvc_address) : '',
+            bot.btc_address ? convertToGlobalMetaId(bot.btc_address) : '',
+            bot.doge_address ? convertToGlobalMetaId(bot.doge_address) : '',
+          ]
+            .map((s) => s.trim().toLowerCase())
+            .filter(Boolean);
+          if (candidates.includes(target)) {
+            return {
+              id: bot.id,
+              name: bot.name,
+              mvcAddress: bot.mvc_address || undefined,
+              btcAddress: bot.btc_address ?? undefined,
+              dogeAddress: bot.doge_address ?? undefined,
+            };
+          }
+        }
+        return null;
+      },
       getMetabotSummary: (metabotId) => {
         const bot = getMetabotStore().getMetabotById(metabotId);
         if (!bot) return null;
         return {
           id: bot.id,
           name: bot.name,
+          globalMetaId:
+            bot.globalmetaid ||
+            (bot.mvc_address ? convertToGlobalMetaId(bot.mvc_address) : undefined),
           mvcAddress: bot.mvc_address,
           btcAddress: bot.btc_address ?? undefined,
           dogeAddress: bot.doge_address ?? undefined,
@@ -9785,6 +10120,10 @@ const getCoworkRunner = () => {
             getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
           getMetabotDisplayName: (metabotId) =>
             getMetabotStore().getMetabotById(metabotId)?.name?.trim() || null,
+          getMetabotGlobalMetaId: (metabotId) =>
+            getMetabotStore().getMetabotById(metabotId)?.globalmetaid?.trim() || null,
+          verifyEscrowGuarantor: (input) => verifyOfficialEscrowGuarantor(input),
+          verifyOnChainCustodyTx: (input) => verifyEscrowOnChainCustodyTx(input),
         },
         orders: getEscrowOrderStore(),
       },
@@ -12617,6 +12956,7 @@ const getStudioChiefOfStaffService = () => {
       getAppLanguage: () => getPersistedAppLanguage(),
       getPreferredStudioSessionId: () => preferredStudioOpenSessionId,
       getStudioContinuity: (twinMetabotId) => getDreamStore().getStudioContinuity(twinMetabotId),
+      listTasksResolvedSince: (sinceMs) => getLongTermTaskStore().listTasksResolvedSince(sinceMs, 8),
       listPendingTwinTodos: (twinMetabotId) =>
         getTwinTodoStore().list({ metabotId: twinMetabotId, includeDone: false, limit: 15 }),
       hasDefiningDraftForSession: (sid) => {
@@ -22791,6 +23131,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         } catch {
           // Best-effort quote consumption
         }
+        const resolvedShopPinId =
+          (typeof input.shopMetaAppPinId === 'string' && input.shopMetaAppPinId.trim())
+          || item.activeListing?.shopMetaAppPinId;
         broadcastToRenderers('goodsTrade:purchaseSettled', {
           metabotId: botId,
           orderId: latestOrder.orderId,
@@ -22802,11 +23145,60 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
           buyerAddress: bot.mvc_address,
           itemName: item.name || item.activeListing?.itemName,
           collectionName: item.collectionName || item.activeListing?.collectionName,
-          shopMetaAppPinId:
-            (typeof input.shopMetaAppPinId === 'string' && input.shopMetaAppPinId.trim())
-            || item.activeListing?.shopMetaAppPinId,
+          shopMetaAppPinId: resolvedShopPinId,
           source: 'ipc_buy_with_me',
         });
+        try {
+          const cStore = getCoworkStore();
+          const explicitSid = typeof input.sessionId === 'string' ? input.sessionId.trim() : '';
+          const targetSessionId =
+            (explicitSid && cStore.getSessionWithoutMessages(explicitSid) ? explicitSid : '')
+            || cStore
+              .listSessions({ metabotId: botId, omitInlinePeerDataAvatar: true })
+              .find((s) => s.sessionType !== 'a2a')?.id
+            || '';
+          if (targetSessionId) {
+            const fillFence = buildNftFillCardFence(
+              withNftCardHostStamp(
+                {
+                  side: 'bought',
+                  rail: 'me-escrow',
+                  format: 'mrc721',
+                  pinId: itemPinId,
+                  number: item.number,
+                  name: item.name || item.activeListing?.itemName,
+                  series: item.collectionName || item.activeListing?.collectionName,
+                  ...normalizeMrc721Cover(item.cover || item.activeListing?.cover),
+                  caVerified: item.activeListing?.caVerified,
+                  priceMeMilli: latestOrder.amountMilli || amountMilli,
+                  priceCnyCents: item.activeListing?.prices?.fiat?.amountCents,
+                  counterpartyName: item.activeListing?.seller?.name,
+                  counterpartyAddress: sellerBotAddress,
+                  counterpartyGlobalMetaId: sellerMetaId,
+                  txId: latestOrder.deliveryTxId,
+                  deliveryTxId: latestOrder.deliveryTxId,
+                  orderId: latestOrder.orderId,
+                  shopMetaAppPinId: resolvedShopPinId,
+                },
+                targetSessionId,
+              ),
+            );
+            const msg = cStore.addMessage(targetSessionId, {
+              type: 'assistant',
+              content: `ME Escrow Order SETTLED (${latestOrder.orderId}): received ${item.name || itemPinId}.\n\n${fillFence}`,
+              metadata: {
+                goodsPurchaseSettledReceipt: {
+                  orderId: latestOrder.orderId,
+                  itemPinId,
+                  deliveryTxId: latestOrder.deliveryTxId,
+                },
+              },
+            });
+            emitCoworkStreamMessage(targetSessionId, msg);
+          }
+        } catch (postErr) {
+          console.warn('[goodsTrade:buyWithMe] failed to post F1 bought card to cowork session:', postErr);
+        }
       }
 
       return { success: true, order: latestOrder };
@@ -24962,6 +25354,8 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     relayCatalogRefresh = null;
     creditPullLoop?.stop();
     creditPullLoop = null;
+    inviteGrantPullLoop?.stop();
+    inviteGrantPullLoop = null;
     notificationDeliveryLoop?.stop();
     notificationDeliveryLoop = null;
     await stopMetaAppServer().catch((error) => {
@@ -25351,6 +25745,10 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       creditPullLoop = startCreditPullLoop({
         log: (level, msg, extra) => serverPhaseLog(level, 'credit-pull', msg, extra),
       });
+      inviteGrantPullLoop = startInviteGrantPullLoop({
+        log: (level, msg, extra) => serverPhaseLog(level, 'invite-grant-pull', msg, extra),
+      });
+      void serverBootstrapRun.finished.then(() => inviteGrantPullLoop?.runNow()).catch(() => undefined);
       notificationDeliveryLoop = startNotificationDeliveryLoop(getNotificationService().getStore(), {
         log: (level, msg, extra) => serverPhaseLog(level, 'notification-delivery', msg, extra),
       });
@@ -25429,6 +25827,48 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     startupLog('fee rate store init scheduled');
     // Local Q&A answer ledger (post_simpleanswer repeat notice): same kv store.
     setSimpleQaAnswerLedgerStore(getStore());
+
+    // At-rest encryption for wallet mnemonics: idempotently migrate any legacy
+    // plaintext rows in metabot_wallets & user_identity using OS safeStorage.
+    try {
+      const store = getStore();
+      const mig = migratePlaintextMnemonicsAtRest(store.getDatabase(), store.getSaveFunction());
+      if (!mig.skipped && (mig.encryptedWallets > 0 || mig.encryptedUserIdentity > 0)) {
+        startupLog(
+          `encrypted legacy mnemonics at rest (wallets=${mig.encryptedWallets}, userIdentity=${mig.encryptedUserIdentity})`
+        );
+      }
+    } catch (err) {
+      startupLog(`mnemonic at-rest migration skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // Outbound DLP / secret-egress guard: register local wallet mnemonics,
+    // human identity mnemonic, active RPC tokens, and sensitive userData dir
+    // so outbound chat/pin/upload/IM paths can never exfiltrate them.
+    registerSensitiveUserDataPath(app.getPath('userData'));
+    registerLocalSecretProvider(() => {
+      const mnemonics: string[] = [];
+      try {
+        mnemonics.push(...getMetabotStore().listAllMetabotWalletMnemonics());
+      } catch {
+        // Store may not be initialized yet during early startup.
+      }
+      try {
+        const userMnemonic = getUserIdentityStore().get()?.mnemonic?.trim();
+        if (userMnemonic) mnemonics.push(userMnemonic);
+      } catch {
+        // Ignore if user identity is not initialized.
+      }
+      const tokens: string[] = [];
+      try {
+        const rpcToken = getMetaidRpcToken();
+        if (rpcToken) tokens.push(rpcToken);
+        tokens.push(...listActiveScopedMetaidRpcTokens());
+      } catch {
+        // Ignore if RPC token is not generated yet.
+      }
+      return { mnemonics, tokens };
+    });
 
     startupLog('metaid rpc server start begin');
     metaidRpcServer = startMetaidRpcServer(getMetabotStore, getStore, getCoworkStore, {

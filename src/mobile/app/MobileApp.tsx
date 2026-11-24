@@ -8,7 +8,8 @@ import { useMetabots } from './hooks/useMetabots';
 import { useResync } from './hooks/useResync';
 import { useNotificationReadThrough, useNotificationUnreadCount } from './hooks/useNotifications';
 import { useTerminalBridgeState } from './hooks/useTerminalBridgeState';
-import { getMeStore, isMeSubscribed } from './me/mePointsStore';
+import { ensureMeOverview, getMeStore, isMeSubscribed } from './me/mePointsStore';
+import { BottomSheet } from './components/BottomSheet';
 import { BridgeUnavailable } from './components/BridgeUnavailable';
 import { ConnectionBanner } from './components/ConnectionBanner';
 import {
@@ -107,6 +108,7 @@ export default function MobileApp(): JSX.Element {
     setNotificationCenterOpen(false);
     setTab('browser');
   }, []);
+  const [iosHintOpen, setIosHintOpen] = useState(false);
   const purchaseAllowed = isRechargeAllowed(window.idbotsMobile);
   const openPurchase = useCallback((section: PurchaseSection, subjectId?: string, orderId?: string) => {
     if (!purchaseAllowed) return;
@@ -115,6 +117,13 @@ export default function MobileApp(): JSX.Element {
       ...(section === 'subscribe' ? { planId: subjectId } : { packageId: subjectId }),
       ...(orderId ? { orderId } : {}),
     });
+  }, [purchaseAllowed]);
+  const openSubscribeGate = useCallback(() => {
+    if (!purchaseAllowed) {
+      setIosHintOpen(true);
+      return;
+    }
+    setPurchase({ section: 'subscribe' });
   }, [purchaseAllowed]);
   const openRecharge = useCallback(() => {
     if (!purchaseAllowed) return;
@@ -191,6 +200,10 @@ export default function MobileApp(): JSX.Element {
       if (active) void coordinator.load();
     });
   }, []);
+
+  useEffect(() => {
+    ensureMeOverview();
+  }, [resyncCounter, billingRevision]);
 
   const notificationUnreadCount = useNotificationUnreadCount(resyncCounter);
   useNotificationReadThrough(
@@ -373,6 +386,7 @@ export default function MobileApp(): JSX.Element {
                   botsError={botsError}
                   onReloadBots={() => void reloadBots()}
                   onOpenRecharge={openRecharge}
+                  onOpenSubscribe={openSubscribeGate}
                   onOpenUri={openBrowser}
                   rechargeAllowed={purchaseAllowed}
                   notificationUnreadCount={notificationUnreadCount}
@@ -389,6 +403,7 @@ export default function MobileApp(): JSX.Element {
                   onOpenSession={openWorkSession}
                   onOpenDraft={openTaskDraft}
                   onOpenUri={openBrowser}
+                  onOpenSubscribe={openSubscribeGate}
                   onAttentionCount={setTaskAttentionCount}
                   notificationUnreadCount={notificationUnreadCount}
                   onOpenNotifications={openNotificationCenter}
@@ -451,6 +466,20 @@ export default function MobileApp(): JSX.Element {
             )}
           </Suspense>
         </div>
+      ) : null}
+      {iosHintOpen ? (
+        <BottomSheet title={t('mobile.me.points.iosTitle')} onClose={() => setIosHintOpen(false)}>
+          <p className="mb-4 text-sm text-[var(--text-secondary)]" data-testid="app-ios-guidance-body">
+            {t('mobile.me.points.iosBody')}
+          </p>
+          <button
+            type="button"
+            className="twin-button twin-button-primary twin-button-full"
+            onClick={() => setIosHintOpen(false)}
+          >
+            {t('mobile.me.points.iosAck')}
+          </button>
+        </BottomSheet>
       ) : null}
     </div>
   );

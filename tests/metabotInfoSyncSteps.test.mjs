@@ -384,12 +384,13 @@ test('renderer chat skill hint copy references the /info/chatSkills protocol pat
 
   assert.match(
     source,
-    /metabotAllowChatSkillsHint:\s*'分配给该 Bot 的外部技能：私聊、群聊与干活会话均可用，并同步发布到 \/info\/chatSkills。/,
+    /metabotGroupSkillsNote:\s*'[^']*\/info\/chatSkills'/,
   );
   assert.match(
     source,
-    /metabotAllowChatSkillsHint:\s*'External skills assigned to this bot: usable in private chats, group chats and work sessions, and published to \/info\/chatSkills\./,
+    /metabotGroupSkillsNote:\s*'[^']*\/info\/chatSkills[^']*'/,
   );
+  assert.equal((source.match(/\/info\/chatSkills/g) ?? []).length >= 2, true);
   assert.match(source, /metabotSyncStepChatSkills:\s*'聊天技能'/);
   assert.doesNotMatch(source, /bio\.allowChatSkills/);
 });

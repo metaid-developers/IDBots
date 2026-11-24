@@ -23,6 +23,7 @@ export const FT_MY_ORDERS_CARD_FENCE_TAG = 'ft-my-orders-card';
 export const FT_PORTFOLIO_CARD_FENCE_TAG = 'ft-portfolio-card';
 export const FT_BRIDGE_CARD_FENCE_TAG = 'ft-bridge-card';
 export const FT_ACTION_CARD_FENCE_TAG = 'ft-action-card';
+export const FT_ORDERBOOK_CARD_FENCE_TAG = 'ft-orderbook-card';
 
 const FT_QUOTE_FENCE_TAGS = new Set(['ft-quote-card', 'ft-quote', 'ftquotecard']);
 const FT_ORDER_FENCE_TAGS = new Set(['ft-order-card', 'ft-order', 'ftordercard']);
@@ -51,6 +52,13 @@ const FT_ACTION_FENCE_TAGS = new Set([
   'ftactioncard',
   'token-action-card',
   'ft-receipt-card',
+]);
+const FT_ORDERBOOK_FENCE_TAGS = new Set([
+  'ft-orderbook-card',
+  'ft-orderbook',
+  'ftorderbookcard',
+  'ft-orders-card',
+  'token-orderbook-card',
 ]);
 
 const VALID_RAILS = new Set<FtCardRail>(['btc-psbt', 'mvc-tokensell', 'me-escrow', 'mvc-swap']);
@@ -210,6 +218,39 @@ export interface FtActionCardData {
   supplyProgressText?: string;
 }
 
+export interface FtOrderBookRow {
+  rank?: number;
+  orderId: string;
+  rail?: FtCardRail;
+  amountDisplay: string;
+  unitPricePrimary: string;
+  unitPriceSecondary?: string;
+  totalPriceLabel: string;
+  currencyUnit?: string;
+  sellerAddress?: string;
+  utxoOutpoint?: string;
+  sellTxid?: string;
+  sellOutputIndex?: number;
+  sellPriceSats?: number;
+}
+
+export interface FtOrderBookCardData {
+  assetKey: string;
+  symbol: string;
+  caVerified: boolean;
+  chain?: FtAssetChain;
+  standard?: FtAssetStandard;
+  rail?: FtCardRail;
+  icon?: string;
+  totalOrdersCount?: number;
+  floorPriceLabel?: string;
+  floorUsdText?: string;
+  holdersCount?: number;
+  pageSize?: number;
+  totalCurrencyUnit?: string;
+  orders: FtOrderBookRow[];
+}
+
 function cleanStr(val: unknown, maxLen = 160): string {
   if (typeof val !== 'string') return '';
   return val.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, maxLen);
@@ -251,6 +292,10 @@ export function isFtActionCardFenceLanguage(lang: string | undefined | null): bo
   return FT_ACTION_FENCE_TAGS.has(normalizeFenceLang(lang));
 }
 
+export function isFtOrderBookCardFenceLanguage(lang: string | undefined | null): boolean {
+  return FT_ORDERBOOK_FENCE_TAGS.has(normalizeFenceLang(lang));
+}
+
 export function isAnyFtSuiteFenceLanguage(lang: string | undefined | null): boolean {
   const norm = normalizeFenceLang(lang);
   return (
@@ -260,7 +305,8 @@ export function isAnyFtSuiteFenceLanguage(lang: string | undefined | null): bool
     FT_MY_ORDERS_FENCE_TAGS.has(norm) ||
     FT_PORTFOLIO_FENCE_TAGS.has(norm) ||
     FT_BRIDGE_FENCE_TAGS.has(norm) ||
-    FT_ACTION_FENCE_TAGS.has(norm)
+    FT_ACTION_FENCE_TAGS.has(norm) ||
+    FT_ORDERBOOK_FENCE_TAGS.has(norm)
   );
 }
 
@@ -761,6 +807,98 @@ export function parseFtActionCardFence(raw: string): FtActionCardData | null {
   }
 }
 
+export function parseFtOrderBookCardFence(raw: string): FtOrderBookCardData | null {
+  try {
+    const obj = JSON.parse(String(raw ?? '').trim()) as Record<string, unknown>;
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+    const assetKey = cleanStr(obj.assetKey, 180);
+    const symbol = cleanSymbol(obj.symbol);
+    if (!assetKey || !symbol || !Array.isArray(obj.orders)) return null;
+
+    const orders: FtOrderBookRow[] = [];
+    for (let i = 0; i < Math.min(obj.orders.length, 60); i += 1) {
+      const item = obj.orders[i];
+      if (!item || typeof item !== 'object') continue;
+      const r = item as Record<string, unknown>;
+      const orderId = cleanStr(r.orderId ?? r.id, 140) || `order_${i + 1}`;
+      const amountDisplay = cleanStr(r.amountDisplay ?? r.qty, 64);
+      const unitPricePrimary = cleanStr(r.unitPricePrimary ?? r.unitPriceLabel, 80);
+      const totalPriceLabel = cleanStr(r.totalPriceLabel, 80);
+      if (!amountDisplay || !unitPricePrimary || !totalPriceLabel) continue;
+
+      const railRaw = cleanStr(r.rail, 24) as FtCardRail;
+      const unitPriceSecondary = cleanStr(r.unitPriceSecondary, 64);
+      const currencyUnit = cleanStr(r.currencyUnit, 16);
+      const sellerAddress = cleanStr(r.sellerAddress, 80);
+      const utxoOutpoint = cleanStr(r.utxoOutpoint, 96);
+      const sellTxid = cleanStr(r.sellTxid, 80);
+      const rankNum = Number(r.rank);
+
+      orders.push({
+        ...(Number.isInteger(rankNum) && rankNum > 0 ? { rank: rankNum } : { rank: orders.length + 1 }),
+        orderId,
+        ...(VALID_RAILS.has(railRaw) ? { rail: railRaw } : {}),
+        amountDisplay,
+        unitPricePrimary,
+        ...(unitPriceSecondary ? { unitPriceSecondary } : {}),
+        totalPriceLabel,
+        ...(currencyUnit ? { currencyUnit } : {}),
+        ...(sellerAddress ? { sellerAddress } : {}),
+        ...(utxoOutpoint ? { utxoOutpoint } : {}),
+        ...(sellTxid ? { sellTxid } : {}),
+        ...(typeof r.sellOutputIndex === 'number' && Number.isFinite(r.sellOutputIndex)
+          ? { sellOutputIndex: Math.floor(r.sellOutputIndex) }
+          : {}),
+        ...(typeof r.sellPriceSats === 'number' && Number.isFinite(r.sellPriceSats)
+          ? { sellPriceSats: Math.floor(r.sellPriceSats) }
+          : {}),
+      });
+    }
+
+    const chainRaw = cleanStr(obj.chain, 12).toLowerCase() as FtAssetChain;
+    const stdRaw = cleanStr(obj.standard, 16).toLowerCase() as FtAssetStandard;
+    const railRaw = cleanStr(obj.rail, 24) as FtCardRail;
+    const icon = cleanStr(obj.icon, 300);
+    const floorPriceLabel = cleanStr(obj.floorPriceLabel, 64);
+    const floorUsdText = cleanStr(obj.floorUsdText, 48);
+    const totalCurrencyUnit = cleanStr(obj.totalCurrencyUnit, 16);
+    const totalOrdersCountRaw = Number(obj.totalOrdersCount);
+    const totalOrdersCount =
+      Number.isFinite(totalOrdersCountRaw) && totalOrdersCountRaw >= 0
+        ? Math.max(orders.length, Math.floor(totalOrdersCountRaw))
+        : orders.length;
+    const holdersCountRaw = Number(obj.holdersCount);
+    const holdersCount =
+      Number.isFinite(holdersCountRaw) && holdersCountRaw > 0
+        ? Math.floor(holdersCountRaw)
+        : undefined;
+    const pageSizeRaw = Number(obj.pageSize);
+    const pageSize =
+      Number.isInteger(pageSizeRaw) && pageSizeRaw >= 1 && pageSizeRaw <= 10
+        ? pageSizeRaw
+        : 6;
+
+    return {
+      assetKey,
+      symbol,
+      caVerified: obj.caVerified === true,
+      ...(VALID_CHAINS.has(chainRaw) ? { chain: chainRaw } : {}),
+      ...(VALID_STANDARDS.has(stdRaw) ? { standard: stdRaw } : {}),
+      ...(VALID_RAILS.has(railRaw) ? { rail: railRaw } : {}),
+      ...(icon ? { icon } : {}),
+      totalOrdersCount,
+      ...(floorPriceLabel ? { floorPriceLabel } : {}),
+      ...(floorUsdText ? { floorUsdText } : {}),
+      ...(holdersCount !== undefined ? { holdersCount } : {}),
+      pageSize,
+      ...(totalCurrencyUnit ? { totalCurrencyUnit } : {}),
+      orders,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function formatFtQuoteCardFence(data: FtQuoteCardData): string {
   return `\`\`\`${FT_QUOTE_CARD_FENCE_TAG}\n${JSON.stringify(data)}\n\`\`\``;
 }
@@ -787,4 +925,8 @@ export function formatFtBridgeCardFence(data: FtBridgeCardData): string {
 
 export function formatFtActionCardFence(data: FtActionCardData): string {
   return `\`\`\`${FT_ACTION_CARD_FENCE_TAG}\n${JSON.stringify(data)}\n\`\`\``;
+}
+
+export function formatFtOrderBookCardFence(data: FtOrderBookCardData): string {
+  return `\`\`\`${FT_ORDERBOOK_CARD_FENCE_TAG}\n${JSON.stringify(data)}\n\`\`\``;
 }

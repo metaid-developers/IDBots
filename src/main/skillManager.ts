@@ -25,7 +25,7 @@ import {
 } from './libs/skillAssignmentStore';
 import type { MetabotStore } from './metabotStore';
 import { buildImageSkillEnvOverrides } from './libs/skillImageProviderEnv';
-import { getMetaidRpcBase, getMetaidRpcToken } from './services/metaidRpcEndpoint';
+import { getMetaidRpcBase, getMetaidRpcToken, issueScopedMetaidRpcToken } from './services/metaidRpcEndpoint';
 import { broadcastToRenderers } from './ipc/broadcast';
 
 export type SkillRecord = {
@@ -1843,7 +1843,14 @@ export class SkillManager {
       SKILLS_ROOT: skillsRoot,
       IDBOTS_SKILLS_ROOT: skillsRoot,
       IDBOTS_RPC_URL: getMetaidRpcBase(),
-      IDBOTS_RPC_TOKEN: getMetaidRpcToken(),
+      IDBOTS_RPC_TOKEN:
+        context?.metabotId != null
+          ? issueScopedMetaidRpcToken({
+              sessionId: `skill-exec-${skill.id}-${context.metabotId}`,
+              metabotId: context.metabotId,
+              sessionType: 'standard',
+            })
+          : getMetaidRpcToken(),
     };
     let metabotLlmId: string | null = null;
     let metabotLlmProvider: string | null = null;
@@ -1852,7 +1859,7 @@ export class SkillManager {
       try {
         const db = this.getStore().getDatabase();
         const row = db.exec(
-          `SELECT mw.mnemonic AS mnemonic, mw.path AS path, m.name AS name, m.globalmetaid AS globalmetaid, m.llm_id AS llm_id, m.llm_provider AS llm_provider
+          `SELECT mw.path AS path, m.name AS name, m.globalmetaid AS globalmetaid, m.llm_id AS llm_id, m.llm_provider AS llm_provider
            FROM metabots m
            JOIN metabot_wallets mw ON mw.id = m.wallet_id
            WHERE m.id = ?
@@ -1861,13 +1868,12 @@ export class SkillManager {
         );
         const values = row[0]?.values?.[0] as unknown[] | undefined;
         if (values) {
-          const mnemonic = typeof values[0] === 'string' ? values[0].trim() : '';
-          const walletPath = typeof values[1] === 'string' ? values[1].trim() : '';
-          const metabotName = typeof values[2] === 'string' ? values[2].trim() : '';
-          const globalmetaid = typeof values[3] === 'string' ? values[3].trim() : '';
-          metabotLlmId = typeof values[4] === 'string' ? values[4].trim() || null : null;
-          metabotLlmProvider = typeof values[5] === 'string' ? values[5].trim() || null : null;
-          if (mnemonic) envOverrides.IDBOTS_METABOT_MNEMONIC = mnemonic;
+          const walletPath = typeof values[0] === 'string' ? values[0].trim() : '';
+          const metabotName = typeof values[1] === 'string' ? values[1].trim() : '';
+          const globalmetaid = typeof values[2] === 'string' ? values[2].trim() : '';
+          metabotLlmId = typeof values[3] === 'string' ? values[3].trim() || null : null;
+          metabotLlmProvider = typeof values[4] === 'string' ? values[4].trim() || null : null;
+          // Never expose wallet mnemonic in skill script env; signing uses host RPC.
           if (walletPath) envOverrides.IDBOTS_METABOT_PATH = walletPath;
           if (metabotName) envOverrides.IDBOTS_TWIN_NAME = metabotName;
           if (globalmetaid) envOverrides.IDBOTS_METABOT_GLOBALMETAID = globalmetaid;

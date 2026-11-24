@@ -423,3 +423,193 @@ export function decodeGlobalMetaIdPayload(globalMetaId: string): { version: numb
   if (payload.length === 0) return null;
   return { version, payload };
 }
+
+export interface GlobalMetaIdAddressResolution {
+  globalMetaId: string;
+  version: number;
+  addressType: 'p2pkh' | 'p2sh' | 'p2wpkh' | 'p2wsh' | 'p2ms' | 'p2tr';
+  payloadHex: string;
+  /** MVC mainnet P2PKH address (derived offline when payload is a 20-byte pubkey hash160: idq1... or idz1...). */
+  mvcAddress?: string;
+  /** Primary BTC mainnet address matching the GlobalMetaID version (1... for idq1, 3... for idp1, bc1q... for idz1/idr1, bc1p... for idt1). */
+  btcAddress?: string;
+  /** BTC Legacy P2PKH (1...) when payload is 20-byte pubkey hash160. */
+  btcLegacyAddress?: string;
+  /** BTC Native SegWit P2WPKH (bc1q...) when payload is 20-byte pubkey hash160. */
+  btcSegwitAddress?: string;
+  /** DOGE mainnet address (D... for P2PKH/P2WPKH 20-byte hash160; 9/A... for P2SH). */
+  dogeAddress?: string;
+  note?: string;
+}
+
+function base58Encode(bytes: Uint8Array): string {
+  if (bytes.length === 0) return '';
+
+  let num = 0n;
+  for (const byte of bytes) {
+    num = num * 256n + BigInt(byte);
+  }
+
+  let encoded = '';
+  while (num > 0n) {
+    const rem = Number(num % 58n);
+    encoded = BASE58_ALPHABET[rem] + encoded;
+    num = num / 58n;
+  }
+
+  for (const byte of bytes) {
+    if (byte === 0) {
+      encoded = '1' + encoded;
+    } else {
+      break;
+    }
+  }
+
+  return encoded;
+}
+
+function base58CheckEncode(version: number, payload: Uint8Array): string {
+  const data = new Uint8Array(1 + payload.length);
+  data[0] = version & 0xff;
+  data.set(payload, 1);
+  const checksum = doubleSHA256(data).slice(0, 4);
+  const full = new Uint8Array(data.length + 4);
+  full.set(data, 0);
+  full.set(checksum, data.length);
+  return base58Encode(full);
+}
+
+function bech32CreateChecksum(hrp: string, data: number[], encoding: Bech32Encoding): number[] {
+  const values = [...bech32HrpExpand(hrp), ...data, 0, 0, 0, 0, 0, 0];
+  const bech32Const = encoding === Bech32Encoding.Bech32 ? 1 : 0x2bc830a3;
+  const polymod = bech32Polymod(values) ^ bech32Const;
+  const checksum: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    checksum.push((polymod >> (5 * (5 - i))) & 31);
+  }
+  return checksum;
+}
+
+function bech32EncodeWitness(hrp: string, witnessVersion: number, program: Uint8Array): string {
+  const encoding = witnessVersion === 0 ? Bech32Encoding.Bech32 : Bech32Encoding.Bech32m;
+  const words = Array.from(convertBits(program, 8, 5, true));
+  const data = [witnessVersion, ...words];
+  const checksum = bech32CreateChecksum(hrp, data, encoding);
+  let out = `${hrp}1`;
+  for (const v of [...data, ...checksum]) {
+    out += BECH32_CHARSET[v];
+  }
+  return out;
+}
+
+/**
+ * Extract a normalized raw GlobalMetaID from either a bare GlobalMetaID
+ * (`idq1...` / `idt1...`) or a `metaid://idq1...[/...]` URI.
+ */
+export function extractGlobalMetaIdCandidate(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  let trimmed = input.trim();
+  if (!trimmed) return null;
+  if (/^metaid:\/\//i.test(trimmed)) {
+    trimmed = trimmed.slice('metaid://'.length).split(/[/?#]/)[0]?.trim() ?? '';
+  }
+  return normalizeRawGlobalMetaId(trimmed);
+}
+
+/**
+ * Deterministically decode a GlobalMetaID (`idq1...`, `idp1...`, `idz1...`,
+ * `idr1...`, `idt1...`, or `metaid://idq1...`) offline into its corresponding
+ * mainnet blockchain addresses (MVC, BTC Legacy/SegWit/Taproot, DOGE).
+ *
+ * Returns null when `input` is not a valid GlobalMetaID.
+ */
+export function convertGlobalMetaIdToAddresses(input: unknown): GlobalMetaIdAddressResolution | null {
+  const candidate = extractGlobalMetaIdCandidate(input);
+  if (!candidate) return null;
+  const decoded = decodeGlobalMetaIdPayload(candidate);
+  if (!decoded) return null;
+
+  const { version, payload } = decoded;
+  const payloadHex = Buffer.from(payload).toString('hex');
+
+  if (version === AddressVersion.P2PKH && payload.length === 20) {
+    const mvcAddress = base58CheckEncode(0x00, payload);
+    const btcSegwitAddress = bech32EncodeWitness('bc', 0, payload);
+    const dogeAddress = base58CheckEncode(0x1e, payload);
+    return {
+      globalMetaId: candidate,
+      version,
+      addressType: 'p2pkh',
+      payloadHex,
+      mvcAddress,
+      btcAddress: mvcAddress,
+      btcLegacyAddress: mvcAddress,
+      btcSegwitAddress,
+      dogeAddress,
+    };
+  }
+
+  if (version === AddressVersion.P2SH && payload.length === 20) {
+    const btcAddress = base58CheckEncode(0x05, payload);
+    const dogeAddress = base58CheckEncode(0x16, payload);
+    return {
+      globalMetaId: candidate,
+      version,
+      addressType: 'p2sh',
+      payloadHex,
+      btcAddress,
+      dogeAddress,
+      note: 'P2SH script-hash GlobalMetaID (idp1...); MVC P2PKH/MetaContract requires a 20-byte pubkey hash160 (idq1...).',
+    };
+  }
+
+  if (version === AddressVersion.P2WPKH && payload.length === 20) {
+    const mvcAddress = base58CheckEncode(0x00, payload);
+    const btcSegwitAddress = bech32EncodeWitness('bc', 0, payload);
+    const dogeAddress = base58CheckEncode(0x1e, payload);
+    return {
+      globalMetaId: candidate,
+      version,
+      addressType: 'p2wpkh',
+      payloadHex,
+      mvcAddress,
+      btcAddress: btcSegwitAddress,
+      btcLegacyAddress: mvcAddress,
+      btcSegwitAddress,
+      dogeAddress,
+    };
+  }
+
+  if (version === AddressVersion.P2WSH && payload.length === 32) {
+    const btcAddress = bech32EncodeWitness('bc', 0, payload);
+    return {
+      globalMetaId: candidate,
+      version,
+      addressType: 'p2wsh',
+      payloadHex,
+      btcAddress,
+      note: '32-byte BTC P2WSH GlobalMetaID (idr1...); cannot offline-derive a 20-byte MVC P2PKH address.',
+    };
+  }
+
+  if (version === AddressVersion.P2TR && payload.length === 32) {
+    const btcAddress = bech32EncodeWitness('bc', 1, payload);
+    return {
+      globalMetaId: candidate,
+      version,
+      addressType: 'p2tr',
+      payloadHex,
+      btcAddress,
+      note: '32-byte BTC Taproot GlobalMetaID (idt1... -> bc1p...); cannot offline-derive a 20-byte MVC P2PKH address without an on-chain profile lookup.',
+    };
+  }
+
+  return {
+    globalMetaId: candidate,
+    version,
+    addressType: 'p2ms',
+    payloadHex,
+    note: `Unsupported GlobalMetaID payload shape (version=${version}, bytes=${payload.length}).`,
+  };
+}
+

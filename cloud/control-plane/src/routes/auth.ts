@@ -12,9 +12,20 @@ import { maskPhone, sha256Hex } from '../crypto.js';
 import { checkPhoneLock, checkSmsSend, incrementCodeAttempts } from '../rateLimit.js';
 import { generateSmsCode, hashSmsCode } from '../sms.js';
 import { signup } from '../services/signup.js';
+import {
+  consumePartnerInvite,
+  fetchInvitePublicPreview,
+  mapInviteReasonToHttpError,
+  normalizeInviteCodeInput,
+  precheckPartnerInvite,
+} from '../services/invitePartnerClient.js';
+import {
+  isHibernatedTrialTenant,
+  triggerWakeHibernatedTenant,
+} from '../services/hibernation.js';
 import { markFailed, provisionTenant } from '../services/provisioning.js';
 import { sendAlert } from '../alerts.js';
-import { newSessionToken } from '../ids.js';
+import { newSessionToken, newTenantId, newUserId } from '../ids.js';
 import {
   SESSION_TTL_MS,
   clearSessionCookie,
@@ -23,15 +34,10 @@ import {
 } from '../cookies.js';
 
 /**
- * C3 auth endpoints (REQ-B-6, REQ-B-7): sms/send, sms/verify, me, logout.
- * Error codes and shapes follow contract C3 exactly; the session cookie is
- * the C3 idb_session (30-day sliding expiry, sha256 in the database).
- *
- * Decisions flagged in the delivery note:
- * - locale: C3's verify body has no locale field, so sign-up defaults to zh.
- * - fake SMS mode: listed CP_FAKE_SMS_NUMBERS receive the fixed code 246810;
- *   unlisted numbers get a random code whose (failed) delivery is only
- *   logged — verification of those numbers is impossible by design.
+ * C3 auth endpoints (REQ-B-6, REQ-B-7): sms/send, sms/verify, me, logout, plus
+ * additive invite preview (`GET /api/v1/auth/invite/preview`).
+ * Error codes and shapes follow contract C3; the session cookie is the C3
+ * idb_session (30-day sliding expiry, sha256 in the database).
  */
 
 const PHONE_RE = /^\+861\d{10}$/;
@@ -61,6 +67,14 @@ interface TenantRow {
   app_version: string | null;
   contract_version: string | null;
   last_error: string | null;
+}
+
+interface LocalInvitePreviewRow {
+  code: string;
+  max_uses: number;
+  used_count: number;
+  expires_at: number | null;
+  disabled: number;
 }
 
 /**
@@ -150,7 +164,10 @@ function getTenantByUserId(app: AppContext, userId: string): TenantRow | undefin
 /**
  * Shared SMS-code issuance (REQ-B-6/B-16): rate-limit gate, 6-digit code
  * (fixed 246810 for fake-listed numbers), hashed row with a 5-minute TTL.
- * Returns whether delivery succeeded (undeliverable is only logged).
+ * In `fake` mode, unlisted numbers only log a warning (anti-enumeration /
+ * test fixture design). In real provider modes (`aliyun`), delivery failures
+ * roll back the unverified SMS row so the 60 s cooldown does not trap the user
+ * and surface `502 SMS_SEND_FAILED`.
  */
 export async function issueSmsCode(
   app: AppContext,
@@ -169,23 +186,31 @@ export async function issueSmsCode(
   }
   const fakeListed = app.config.smsMode === 'fake' && app.config.fakeSmsNumbers.includes(phone);
   const code = fakeListed ? '246810' : generateSmsCode();
-  app.db
+  const inserted = app.db
     .prepare(
       `INSERT INTO sms_codes (phone_e164, purpose, code_hash, attempts, expires_at, consumed_at, ip, created_at)
        VALUES (?, ?, ?, 0, ?, NULL, ?, ?)`,
     )
     .run(phone, purpose, hashSmsCode(phone, purpose, code), now + SMS_CODE_TTL_MS, reqCtx.ip, now);
+  const smsRowId = Number(inserted.lastInsertRowid);
   let delivered = true;
   try {
     await app.sms.send(phone, purpose, code);
   } catch (err) {
     delivered = false;
-    // Undeliverable (fake mode with an unlisted number, provider outage):
-    // the code row exists but no SMS arrives, exactly like production.
     reqCtx.log('warn', 'sms delivery failed', {
       phone: maskPhone(phone),
       error: err instanceof Error ? err.message : String(err),
     });
+    if (app.sms.mode !== 'fake') {
+      app.db.prepare('DELETE FROM sms_codes WHERE id = ?').run(smsRowId);
+      app.metrics.smsSend(purpose, false);
+      throw new HttpError(
+        502,
+        'SMS_SEND_FAILED',
+        'failed to send SMS verification code; please retry shortly',
+      );
+    }
   }
   app.metrics.smsSend(purpose, delivered);
   return delivered;
@@ -245,15 +270,115 @@ export function consumeSmsCode(
   verifySmsCode(app, phone, purpose, code, true);
 }
 
+function previewLocalInvite(app: AppContext, rawCode: string) {
+  const normalized = normalizeInviteCodeInput(rawCode);
+  const now = Date.now();
+  const row = (app.db.prepare('SELECT * FROM invites WHERE code = ?').get(normalized) ??
+    app.db.prepare('SELECT * FROM invites WHERE code = ?').get(rawCode.trim())) as
+    | LocalInvitePreviewRow
+    | undefined;
+  if (!row || row.disabled === 1) {
+    return {
+      valid: false,
+      reasonCode: 'INVITE_INVALID_CODE',
+      code: normalized,
+      planId: 'me_pro',
+      planName: 'ID.Student',
+      planNameEn: 'ID.Student',
+      periodDays: 14,
+      dailyCapFull: false,
+    };
+  }
+  if (row.expires_at !== null && row.expires_at <= now) {
+    return {
+      valid: false,
+      reasonCode: 'INVITE_CODE_EXPIRED',
+      code: row.code,
+      planId: 'me_pro',
+      planName: 'ID.Student',
+      planNameEn: 'ID.Student',
+      periodDays: 14,
+      dailyCapFull: false,
+    };
+  }
+  if (row.used_count >= row.max_uses) {
+    return {
+      valid: false,
+      reasonCode: 'INVITE_CODE_EXHAUSTED',
+      code: row.code,
+      planId: 'me_pro',
+      planName: 'ID.Student',
+      planNameEn: 'ID.Student',
+      periodDays: 14,
+      dailyCapFull: false,
+    };
+  }
+  return {
+    valid: true,
+    code: row.code,
+    planId: 'me_pro',
+    planName: 'ID.Student',
+    planNameEn: 'ID.Student',
+    periodDays: 14,
+    dailyCapFull: false,
+  };
+}
+
+async function invitePreview(app: AppContext, reqCtx: RequestCtx): Promise<void> {
+  const url = new URL(reqCtx.req?.url ?? '/', 'http://localhost');
+  const rawCode = (url.searchParams.get('code') ?? '').trim();
+  if (!rawCode || rawCode.length > 32) {
+    throw new HttpError(400, 'INVALID_INVITE_CODE', 'code query parameter is required');
+  }
+  if (app.config.inviteService.baseUrl) {
+    const preview = await fetchInvitePublicPreview(app.config, rawCode);
+    writeJson(reqCtx.res, 200, preview);
+    return;
+  }
+  writeJson(reqCtx.res, 200, previewLocalInvite(app, rawCode));
+}
+
 async function smsSend(app: AppContext, reqCtx: RequestCtx, body: unknown): Promise<void> {
   const phone = requireStringField(body, 'phone');
   const purpose = requireStringField(body, 'purpose');
+  const inviteCode = optionalStringField(body, 'inviteCode');
   if (purpose !== LOGIN_PURPOSE) {
     throw new HttpError(400, 'INVALID_PURPOSE', `purpose must be "${LOGIN_PURPOSE}"`);
   }
   if (!PHONE_RE.test(phone)) {
     throw new HttpError(400, 'INVALID_PHONE', `expected a mainland China number like +861xxxxxxxxxx`);
   }
+
+  const existing = app.db.prepare('SELECT id, status FROM users WHERE phone_e164 = ?').get(phone) as
+    | { id: string; status: string }
+    | undefined;
+  if (existing?.status === 'disabled') {
+    throw new HttpError(403, 'USER_DISABLED', 'this account is disabled');
+  }
+
+  // Pre-validate invite + daily cap BEFORE sending SMS for unknown phones when
+  // the upstream ABS invite service is enabled (or when the caller explicitly
+  // supplied an inviteCode in standalone mode).
+  if (!existing) {
+    if (app.config.inviteService.baseUrl) {
+      if (!inviteCode?.trim()) {
+        throw new HttpError(403, 'INVITE_REQUIRED', 'an invite code is required to sign up');
+      }
+      const precheck = await precheckPartnerInvite(app.config, inviteCode);
+      if (!precheck.allowed) {
+        throw mapInviteReasonToHttpError(precheck.reasonCode);
+      }
+    } else if (inviteCode !== null) {
+      if (!inviteCode.trim()) {
+        throw new HttpError(403, 'INVITE_REQUIRED', 'an invite code is required to sign up');
+      }
+      const localPreview = previewLocalInvite(app, inviteCode);
+      if (!localPreview.valid) {
+        throw mapInviteReasonToHttpError(localPreview.reasonCode);
+      }
+    }
+  }
+
   await issueSmsCode(app, reqCtx, phone, LOGIN_PURPOSE);
   writeJson(reqCtx.res, 200, { resendAfterSec: 60 });
 }
@@ -292,33 +417,81 @@ async function smsVerify(app: AppContext, reqCtx: RequestCtx, body: unknown): Pr
     }
     user = existing;
     tenant = getTenantByUserId(app, existing.id);
+    if (isHibernatedTrialTenant(app.db, existing.id, tenant)) {
+      triggerWakeHibernatedTenant(app, existing.id, now);
+      tenant = getTenantByUserId(app, existing.id);
+    }
   } else {
     const host = app.db.prepare('SELECT id FROM hosts ORDER BY rowid LIMIT 1').get() as
       | { id: string }
       | undefined;
-    const result = signup(app.db, {
-      phone,
-      displayName,
-      locale: 'zh',
-      inviteCode,
-      now,
-      tenantDefaults: {
-        hostId: host?.id ?? 'host-unknown',
-        tenantImage: app.config.tenantImage,
-      },
-      masterKey: app.config.masterKey,
-    });
-    if (!result.ok) {
-      throw new HttpError(403, result.code, result.message);
+
+    if (app.config.inviteService.baseUrl) {
+      if (!inviteCode?.trim()) {
+        throw new HttpError(403, 'INVITE_REQUIRED', 'an invite code is required to sign up');
+      }
+      const preUserId = newUserId();
+      const preTenantId = newTenantId();
+      const consumed = await consumePartnerInvite(app.config, {
+        code: inviteCode,
+        cpUserId: preUserId,
+        cpTenantId: preTenantId,
+        phoneMasked: maskPhone(phone),
+      });
+      if (!consumed.allowed) {
+        throw mapInviteReasonToHttpError(consumed.reasonCode);
+      }
+      const result = signup(app.db, {
+        phone,
+        displayName,
+        locale: 'zh',
+        inviteCode: consumed.code,
+        now,
+        tenantDefaults: {
+          hostId: host?.id ?? 'host-unknown',
+          tenantImage: app.config.tenantImage,
+        },
+        masterKey: app.config.masterKey,
+        externalInviteGrant: {
+          userId: preUserId,
+          tenantId: preTenantId,
+          code: consumed.code,
+          redemptionId: consumed.redemptionId ?? null,
+          grantTicket: consumed.grantTicket ?? null,
+          planId: consumed.planId || 'me_pro',
+          planName: consumed.planName ?? null,
+          planNameEn: consumed.planNameEn ?? null,
+          periodDays: consumed.periodDays || 14,
+        },
+      });
+      if (!result.ok) {
+        throw new HttpError(403, result.code, result.message);
+      }
+      user = result.user;
+      tenant = result.tenant;
+      isNewUser = result.isNewUser;
+    } else {
+      const result = signup(app.db, {
+        phone,
+        displayName,
+        locale: 'zh',
+        inviteCode,
+        now,
+        tenantDefaults: {
+          hostId: host?.id ?? 'host-unknown',
+          tenantImage: app.config.tenantImage,
+        },
+        masterKey: app.config.masterKey,
+      });
+      if (!result.ok) {
+        throw new HttpError(403, result.code, result.message);
+      }
+      user = result.user;
+      tenant = result.tenant;
+      isNewUser = result.isNewUser;
     }
-    user = result.user;
-    tenant = result.tenant;
-    isNewUser = result.isNewUser;
+
     if (isNewUser && tenant) {
-      // Provisioning is asynchronous: the client polls GET /api/v1/me.
-      // provisionTenant marks failures itself; the .catch is the last line
-      // of defense so an unexpected throw can never become an unhandled
-      // rejection (Node 24 would crash the process).
       const newTenantId = tenant.id;
       void provisionTenant(app, newTenantId).catch((err: unknown) => {
         const message = `provisioning failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -352,7 +525,11 @@ async function smsVerify(app: AppContext, reqCtx: RequestCtx, body: unknown): Pr
 }
 
 async function me(app: AppContext, reqCtx: RequestCtx): Promise<void> {
-  const tenant = getTenantByUserId(app, reqCtx.user!.id);
+  let tenant = getTenantByUserId(app, reqCtx.user!.id);
+  if (isHibernatedTrialTenant(app.db, reqCtx.user!.id, tenant)) {
+    triggerWakeHibernatedTenant(app, reqCtx.user!.id);
+    tenant = getTenantByUserId(app, reqCtx.user!.id);
+  }
   writeJson(reqCtx.res, 200, { user: publicUser(reqCtx.user!), tenant: tenantShape(tenant) });
 }
 
@@ -366,6 +543,7 @@ async function logout(app: AppContext, reqCtx: RequestCtx): Promise<void> {
 }
 
 export const authRoutes: Route[] = [
+  { method: 'GET', path: '/api/v1/auth/invite/preview', handler: invitePreview },
   { method: 'POST', path: '/api/v1/auth/sms/send', handler: smsSend },
   { method: 'POST', path: '/api/v1/auth/sms/verify', handler: smsVerify },
   { method: 'GET', path: '/api/v1/me', auth: true, handler: me },

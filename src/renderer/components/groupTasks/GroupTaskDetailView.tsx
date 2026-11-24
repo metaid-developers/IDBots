@@ -85,6 +85,7 @@ interface GroupTaskDetailViewProps {
   onNewChat?: () => void;
   updateBadge?: React.ReactNode;
   onBack: () => void;
+  initialDetail?: GroupTaskDetail | null;
 }
 
 const GroupTaskDetailView: React.FC<GroupTaskDetailViewProps> = ({
@@ -93,13 +94,14 @@ const GroupTaskDetailView: React.FC<GroupTaskDetailViewProps> = ({
   onNewChat,
   updateBadge,
   onBack,
+  initialDetail,
 }) => {
   const isMac = window.electron.platform === 'darwin';
-  const [detail, setDetail] = useState<GroupTaskDetail | null>(null);
+  const [detail, setDetail] = useState<GroupTaskDetail | null>(initialDetail ?? null);
   // HITL: id of the currently open checkpoint (null when none) — drives the
   // pause banner and the summary collapse-on-change effect below.
   const openCheckpointId = detail?.checkpoints?.find((checkpoint) => checkpoint.status === 'open')?.id ?? null;
-  const [loadingDetail, setLoadingDetail] = useState(true);
+  const [loadingDetail, setLoadingDetail] = useState(initialDetail == null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [messages, setMessages] = useState<GroupChatTranscriptMessage[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(true);

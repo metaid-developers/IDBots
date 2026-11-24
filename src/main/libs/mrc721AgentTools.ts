@@ -6,10 +6,16 @@ import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssist
 import {
   appendNftCardBlock,
   appendNftCollectionCardBlock,
+  appendNftListingCardBlock,
+  appendNftMyListingsCardBlock,
+  appendNftPortfolioCardBlock,
   buildMrc721CardFields,
   buildMrc721CollectionCardFields,
   buildNftCardFence,
   NFT_CARD_RESULT_HINT,
+  normalizeMrc721Cover,
+  type NftPortfolioCollectionEmitRow,
+  type NftPortfolioPreviewEmitItem,
 } from './nftCardMarkdown';
 import { withNftCardHostStamp } from './tradeActivityStamp';
 import {
@@ -880,11 +886,26 @@ async function loadMrc721IssuerAddress(
   return collection?.createAddress || undefined;
 }
 
+export interface Mrc721AssetActionConfirmationInfo {
+  toolName:
+    | 'mrc721_transfer'
+    | 'mrc721_sell'
+    | 'mrc721_buy'
+    | 'mrc721_offer'
+    | 'mrc721_take_offer'
+    | 'mrc721_sell_intent';
+  summaryZh: string;
+  summaryEn: string;
+  details: Record<string, unknown>;
+}
+
 export function buildMrc721AgentTools(deps: {
   tool: SdkToolFactory;
   control: Mrc721ToolsControl;
   sessionId: string;
   resolveMetabotId: (sessionId: string) => number | undefined;
+  /** Renders the fail-closed owner approval dialog for MRC-721 asset transfers, listings, offers, and buys. */
+  confirmAssetAction?: (info: Mrc721AssetActionConfirmationInfo) => Promise<boolean>;
 }): unknown[] {
   const { tool, control, sessionId, resolveMetabotId } = deps;
 
@@ -1289,6 +1310,26 @@ export function buildMrc721AgentTools(deps: {
       if ('error' in target) {
         return textResult(`mrc721_transfer: ${target.error}`, true);
       }
+      if (target.metabotId == null && deps.confirmAssetAction) {
+        const fromAddress = control.getMetabotMvcAddress(owner) ?? '(unknown)';
+        const approved = await deps.confirmAssetAction({
+          toolName: 'mrc721_transfer',
+          summaryZh:
+            `Agent 将从本机 MetaBot 钱包向【外部地址】转移 MRC-721 NFT（不可撤销）：\n` +
+            `- from: ${fromAddress}\n- to: ${target.address}\n` +
+            `- item pinId: ${pinId}\n` +
+            `是否允许本次 MRC-721 NFT 转出？`,
+          summaryEn:
+            `The agent is about to transfer an MRC-721 NFT to an EXTERNAL address (irreversible):\n` +
+            `- from: ${fromAddress}\n- to: ${target.address}\n` +
+            `- item pinId: ${pinId}\n` +
+            `Allow this MRC-721 NFT transfer?`,
+          details: { from: fromAddress, to: target.address, pin_id: pinId },
+        });
+        if (!approved) {
+          return textResult('mrc721_transfer cancelled: owner did not confirm the external MRC-721 transfer.', true);
+        }
+      }
       try {
         // Pre-action snapshot: the item sits in the session bot's wallet right
         // now, so its display facts are the freshest they will ever be; the
@@ -1374,6 +1415,12 @@ export function buildMrc721AgentTools(deps: {
         return textResult('mrc721_balance requires metabot_ids, address, metaid (or a session bot).', true);
       }
       const lines: string[] = [];
+      let portfolioCardTarget: {
+        metabotId?: number;
+        address: string;
+        isThirdParty: boolean;
+        items: Mrc721ItemSummary[];
+      } | null = null;
       for (const target of targets) {
         const label = target.metabotId != null ? `metabot_id ${target.metabotId}` : 'address';
         if (!target.address) {
@@ -1383,11 +1430,58 @@ export function buildMrc721AgentTools(deps: {
         try {
           const items = await fetchMrc721AddressItems({ address: target.address, pinId: collectionPinId });
           lines.push(`# ${label} ${target.address}\n${formatMrc721Items(items)}`);
+          if (!portfolioCardTarget) {
+            portfolioCardTarget = {
+              metabotId: target.metabotId,
+              address: target.address,
+              isThirdParty: target.metabotId == null,
+              items,
+            };
+          }
         } catch (error) {
           lines.push(`# ${label} ${target.address}\n- lookup failed: ${errorMessage(error)}`);
         }
       }
-      return textResult(lines.join('\n'));
+      let out = lines.join('\n');
+      // Build P1 nft-portfolio-card strictly in-memory from already-fetched items (ZERO extra network fetches)
+      if (portfolioCardTarget && targets.length === 1) {
+        const grouped = new Map<string, NftPortfolioCollectionEmitRow>();
+        for (const it of portfolioCardTarget.items) {
+          const key = (it.collectionPinId || it.collectionName || 'mrc721').toLowerCase();
+          const prev = grouped.get(key);
+          if (prev) {
+            prev.count += 1;
+          } else {
+            grouped.set(key, {
+              collectionId: it.collectionPinId || undefined,
+              name: it.collectionName || 'MRC-721 Collection',
+              collectionName: it.collectionName || 'mrc721',
+              count: 1,
+              ...normalizeMrc721Cover(it.cover),
+            });
+          }
+        }
+        const previewItems: NftPortfolioPreviewEmitItem[] = portfolioCardTarget.items.slice(0, 4).map((it) => ({
+          format: 'mrc721' as const,
+          pinId: it.itemPinId,
+          number: it.number,
+          name: it.name,
+          ...normalizeMrc721Cover(it.cover),
+        }));
+        out = appendNftPortfolioCardBlock(out, {
+          metabotId: portfolioCardTarget.metabotId,
+          ownerAddress: portfolioCardTarget.address,
+          ownerGlobalMetaId: asString(args.metaid) || undefined,
+          isThirdParty: portfolioCardTarget.isThirdParty,
+          totalCount: portfolioCardTarget.items.length,
+          mrc721Count: portfolioCardTarget.items.length,
+          legacyCount: 0,
+          mrc721Collections: Array.from(grouped.values()).slice(0, 8),
+          previewItems: previewItems.length > 0 ? previewItems : undefined,
+          legacySeries: [],
+        });
+      }
+      return textResult(out);
     }
   );
 
@@ -1634,6 +1728,36 @@ export function buildMrc721AgentTools(deps: {
           true,
         );
       }
+      if (deps.confirmAssetAction) {
+        const sellerAddress = control.getMetabotMvcAddress(owner) ?? '(unknown)';
+        const spaceStr = `${args.price_sats} sats (${(args.price_sats / 100_000_000).toFixed(8)} SPACE)`;
+        const approved = await deps.confirmAssetAction({
+          toolName: 'mrc721_sell',
+          summaryZh:
+            `Agent 准备为本机 MetaBot 签署 MRC-721 原子交换卖单：\n` +
+            `- 卖家地址: ${sellerAddress}\n` +
+            `- 指定买家: ${args.buyer_address}\n` +
+            `- item pinId: ${args.item_pin_id}\n` +
+            `- 成交价格: ${spaceStr}\n` +
+            `买家拿到签名单后可随时在链上完成原子成交，是否允许签署？`,
+          summaryEn:
+            `The agent is about to sign an MRC-721 atomic-swap sell listing:\n` +
+            `- seller: ${sellerAddress}\n` +
+            `- buyer: ${args.buyer_address}\n` +
+            `- item pinId: ${args.item_pin_id}\n` +
+            `- price: ${spaceStr}\n` +
+            `Once handed to the buyer, they can complete the atomic swap on-chain. Allow signing?`,
+          details: {
+            seller: sellerAddress,
+            buyer_address: args.buyer_address,
+            item_pin_id: args.item_pin_id,
+            price_sats: args.price_sats,
+          },
+        });
+        if (!approved) {
+          return textResult('mrc721_sell cancelled: owner did not confirm signing this MRC-721 sell listing.', true);
+        }
+      }
       try {
         // Pre-action snapshot: the item still sits in the bot's wallet, so
         // the artwork/name facts survive even if the indexer lags behind the
@@ -1694,6 +1818,52 @@ export function buildMrc721AgentTools(deps: {
     async (args: { listing: unknown }) => {
       const owner = requireSessionMetabot('mrc721_buy');
       if (typeof owner === 'string') return textResult(owner, true);
+      if (deps.confirmAssetAction) {
+        let parsedListing: Record<string, unknown> | null = null;
+        if (typeof args.listing === 'string') {
+          try {
+            const p = JSON.parse(args.listing);
+            if (p && typeof p === 'object' && !Array.isArray(p)) parsedListing = p as Record<string, unknown>;
+          } catch {
+            // Let control.buy validate malformed JSON if approved or reject below
+          }
+        } else if (args.listing && typeof args.listing === 'object' && !Array.isArray(args.listing)) {
+          parsedListing = args.listing as Record<string, unknown>;
+        }
+        const buyerAddress = control.getMetabotMvcAddress(owner) ?? '(unknown)';
+        const itemPinId = typeof parsedListing?.itemPinId === 'string' ? parsedListing.itemPinId : '(from listing)';
+        const sellerAddress = typeof parsedListing?.sellerAddress === 'string' ? parsedListing.sellerAddress : '(from listing)';
+        const priceSats = Number(parsedListing?.priceSats);
+        const priceDesc = Number.isFinite(priceSats) && priceSats > 0
+          ? `${priceSats} sats (${(priceSats / 100_000_000).toFixed(8)} SPACE)`
+          : '(price in listing)';
+        const approved = await deps.confirmAssetAction({
+          toolName: 'mrc721_buy',
+          summaryZh:
+            `Agent 准备使用本机 MetaBot 钱包完成 MRC-721 原子购买（不可撤销）：\n` +
+            `- 买家地址: ${buyerAddress}\n` +
+            `- 卖家地址: ${sellerAddress}\n` +
+            `- item pinId: ${itemPinId}\n` +
+            `- 支付价格: ${priceDesc}\n` +
+            `是否允许支付 SPACE 并广播购买交易？`,
+          summaryEn:
+            `The agent is about to execute an MRC-721 atomic-swap purchase (irreversible):\n` +
+            `- buyer: ${buyerAddress}\n` +
+            `- seller: ${sellerAddress}\n` +
+            `- item pinId: ${itemPinId}\n` +
+            `- price: ${priceDesc}\n` +
+            `Allow spending SPACE and broadcasting this purchase?`,
+          details: {
+            buyer: buyerAddress,
+            seller_address: sellerAddress,
+            item_pin_id: itemPinId,
+            ...(Number.isFinite(priceSats) && priceSats > 0 ? { price_sats: priceSats } : {}),
+          },
+        });
+        if (!approved) {
+          return textResult('mrc721_buy cancelled: owner did not confirm this MRC-721 purchase.', true);
+        }
+      }
       try {
         const result = await control.buy({ metabotId: owner, listing: args.listing });
         // Post-action snapshot from the index doubles as the enrichment read;
@@ -1752,14 +1922,31 @@ export function buildMrc721AgentTools(deps: {
           orders = kept;
         }
         if (!orders.length) {
-          return textResult('No local MRC-721 listings. Create one with mrc721_sell and give the listing JSON to the buyer.');
+          const emptyMsg = 'No local MRC-721 listings. Create one with mrc721_sell and give the listing JSON to the buyer.';
+          return textResult(
+            appendNftMyListingsCardBlock(emptyMsg, {
+              metabotId: owner,
+              items: [],
+            }),
+          );
         }
         const lines = [`Local MRC-721 listings (${orders.length}):`];
         for (const order of orders) {
           lines.push(`- ${order.status} ${order.id} · ${order.itemPinId} · ${order.priceSats} sats → ${order.buyerAddress} · ${order.outpoint}`);
           if (order.reason) lines.push(`  reason: ${order.reason}`);
         }
-        return textResult(lines.join('\n'));
+        const activeOrders = orders.filter((o) => o.status === 'valid');
+        const out = appendNftMyListingsCardBlock(lines.join('\n'), {
+          metabotId: owner,
+          items: activeOrders.map((order) => ({
+            format: 'mrc721' as const,
+            pinId: order.itemPinId,
+            rail: 'onchain-sell' as const,
+            priceSats: order.priceSats,
+            sellUtxo: order.outpoint,
+          })),
+        });
+        return textResult(out);
       } catch (error) {
         return textResult(`mrc721_sell_orders failed: ${errorMessage(error)}`, true);
       }
@@ -1773,7 +1960,7 @@ export function buildMrc721AgentTools(deps: {
     'mrc721_sell_intent',
     [
       'Declare the intent to sell one MRC-721 digital item as an on-chain sell-intent pin (/protocols/mrc721sell v2.2) — the discoverable, currency-agnostic "I want to sell this" announcement.',
-      'Supports ME points pricing (price_me, min 1 ME), CNY fiat reference pricing (price_cny_yuan, min ¥1.00), and direct FT token pricing (price_tokens: array of { asset_key: "mrc20:<id>" | "mvc-ft:<codehash>:<genesis>", amount_display, symbol?, decimals? }), plus auto_fulfill_me / auto_fulfill_tokens (default true), negotiable (default true), and optional shop_metaapp_pin_id.',
+      'Supports ME points pricing (price_me, min 1 ME), CNY fiat reference pricing (price_cny_yuan, min ¥1.00), and direct FT token pricing (price_tokens: array of { asset_key: "mrc20:<id>" | "mvc-ft:<codehash>:<genesis>", amount_display, symbol?, decimals? }), plus auto_fulfill_me / auto_fulfill_tokens (default false — explicit opt-in with owner confirmation), negotiable (default true), and optional shop_metaapp_pin_id.',
       'The pin moves no funds and transfers nothing: settlement later runs over ME Escrow (goods_buy_with_me), direct Token settlement (goods_buy_with_token), atomic swap (mrc721_sell), or guarantor escrow. The item must currently be held by this bot.',
       'Broadcasts a declaration pin on /protocols/mrc721sell (append-only log, latest declaration per item wins) and appends an ```nft-card fence with action "selling" — include it verbatim in your announcement.',
     ].join(' '),
@@ -1787,8 +1974,8 @@ export function buildMrc721AgentTools(deps: {
         symbol: z.string().optional().describe('Optional token symbol override (auto-resolved when omitted).'),
         decimals: z.number().int().min(0).max(36).optional().describe('Optional token decimals override (auto-resolved when omitted).'),
       })).optional().describe('Optional accepted fungible token prices (MRC-20 or MVC MetaContract FT).'),
-      auto_fulfill_me: z.boolean().optional().describe('Allow SellerAutoFulfillDaemon to automatically transfer the item when a buyer locks ME escrow (default true).'),
-      auto_fulfill_tokens: z.boolean().optional().describe('Allow SellerAutoFulfillDaemon to automatically verify and settle direct token purchases (default true).'),
+      auto_fulfill_me: z.boolean().optional().describe('Allow SellerAutoFulfillDaemon to automatically transfer the item when a buyer locks ME escrow (default false; explicit opt-in requires owner confirmation).'),
+      auto_fulfill_tokens: z.boolean().optional().describe('Allow SellerAutoFulfillDaemon to automatically verify and settle direct token purchases (default false; explicit opt-in requires owner confirmation).'),
       negotiable: z.boolean().optional().describe('Whether buyers can send an inquiry/quote before buying (default true).'),
       shop_metaapp_pin_id: z.string().optional().describe('Optional seller MetaApp shop pinId to display on cards and link buyers to.'),
       price_hint_sats: z.number().int().positive().optional().describe('Reference price in native SPACE sats, display only. Omit for "make an offer".'),
@@ -1818,6 +2005,46 @@ export function buildMrc721AgentTools(deps: {
       if (typeof owner === 'string') return textResult(owner, true);
       if (args.network === 'btc') {
         return textResult('mrc721_sell_intent: BTC-side writes are not supported in this version — use network mvc.', true);
+      }
+      if ((args.auto_fulfill_me === true || args.auto_fulfill_tokens === true) && deps.confirmAssetAction) {
+        const sellerAddress = control.getMetabotMvcAddress(owner) ?? '(unknown)';
+        const enabledRails = [
+          args.auto_fulfill_me === true ? 'ME Escrow' : '',
+          args.auto_fulfill_tokens === true ? 'Token Direct/Atomic' : '',
+        ].filter(Boolean).join(' + ');
+        const priceSummary = [
+          args.price_me != null ? `${args.price_me} ME` : '',
+          args.price_cny_yuan != null ? `¥${args.price_cny_yuan}` : '',
+          ...(args.price_tokens ?? []).map((t) => `${t.amount_display} ${t.symbol || t.asset_key}`),
+        ].filter(Boolean).join(' / ') || '(make an offer)';
+        const approved = await deps.confirmAssetAction({
+          toolName: 'mrc721_sell_intent',
+          summaryZh:
+            `Agent 准备为该 MRC-721 NFT 开启【自动发货】挂单（开启后收到匹配付款将自动转出 NFT，不再逐笔弹窗）：\n` +
+            `- 卖家地址: ${sellerAddress}\n` +
+            `- item pinId: ${args.item_pin_id}\n` +
+            `- 报价: ${priceSummary}\n` +
+            `- 自动发货轨道: ${enabledRails}\n` +
+            `是否授权开启自动发货？`,
+          summaryEn:
+            `The agent is about to declare an MRC-721 sell intent with AUTO-FULFILL enabled (matching payments will trigger automatic NFT transfer without per-sale prompts):\n` +
+            `- seller: ${sellerAddress}\n` +
+            `- item pinId: ${args.item_pin_id}\n` +
+            `- pricing: ${priceSummary}\n` +
+            `- auto-fulfill rails: ${enabledRails}\n` +
+            `Allow enabling automatic fulfillment?`,
+          details: {
+            seller: sellerAddress,
+            item_pin_id: args.item_pin_id,
+            auto_fulfill_me: args.auto_fulfill_me === true,
+            auto_fulfill_tokens: args.auto_fulfill_tokens === true,
+            ...(args.price_me != null ? { price_me: args.price_me } : {}),
+            ...(args.price_tokens?.length ? { price_tokens: args.price_tokens } : {}),
+          },
+        });
+        if (!approved) {
+          return textResult('mrc721_sell_intent cancelled: owner did not confirm enabling auto-fulfill on this listing.', true);
+        }
       }
       try {
         const snapshot = await loadMrc721CardItem(control, args.item_pin_id);
@@ -1886,7 +2113,7 @@ export function buildMrc721AgentTools(deps: {
           `- item pinId: ${result.intent.itemPinId}`,
           `- sell-intent pin: pin://${result.sellPinId}`,
           `- pricing: ${priceParts.length ? priceParts.join(' / ') : 'make an offer'}`,
-          `- autoFulfillMe: ${result.intent.autoFulfillMe !== false ? 'enabled' : 'disabled'} | autoFulfillTokens: ${result.intent.autoFulfillTokens !== false ? 'enabled' : 'disabled'} | negotiable: ${result.intent.negotiable !== false ? 'yes' : 'no'}`,
+          `- autoFulfillMe: ${result.intent.autoFulfillMe === true ? 'enabled' : 'disabled'} | autoFulfillTokens: ${result.intent.autoFulfillTokens === true ? 'enabled' : 'disabled'} | negotiable: ${result.intent.negotiable !== false ? 'yes' : 'no'}`,
           `- accepted currencies: ${result.intent.acceptedCurrencies.join(', ')}`,
           `- settlement: ${result.intent.settlement.join(' / ')}`,
         ].join('\n'), withNftCardHostStamp(cardFields, sessionId)));
@@ -1914,11 +2141,31 @@ export function buildMrc721AgentTools(deps: {
       }
       try {
         const result = await control.sellIntentCancel({ metabotId: owner, itemPinId: args.item_pin_id, network: args.network });
-        return textResult([
+        const out = [
           'MRC-721 sell intent cancelled on-chain.',
           `- item pinId: ${result.intent.itemPinId}`,
           `- sell-intent pin: pin://${result.sellPinId} (modified, active=false)`,
-        ].join('\n'));
+        ].join('\n');
+        return textResult(
+          appendNftListingCardBlock(
+            out,
+            withNftCardHostStamp(
+              {
+                status: 'delisted',
+                rail: 'multi-intent',
+                format: 'mrc721',
+                pinId: result.intent.itemPinId,
+                series: result.intent.collectionName || undefined,
+                sellerAddress: result.intent.sellerAddress || undefined,
+                sellerGlobalMetaId: result.intent.sellerMetaId || undefined,
+                shopMetaAppPinId: result.intent.shopMetaAppPinId || undefined,
+                intentPinId: result.sellPinId || undefined,
+                cancelPinId: result.sellPinId || undefined,
+              },
+              sessionId,
+            ),
+          ),
+        );
       } catch (error) {
         return textResult(`mrc721_sell_intent_cancel failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
       }
@@ -1944,7 +2191,14 @@ export function buildMrc721AgentTools(deps: {
           collectionName: asString(args.collection_name) || undefined,
           collectionPinId: asString(args.collection_pinid) || undefined,
         });
-        if (!views.length) return textResult('No sell intents declared by this bot.');
+        if (!views.length) {
+          return textResult(
+            appendNftMyListingsCardBlock('No sell intents declared by this bot.', {
+              metabotId: owner,
+              items: [],
+            }),
+          );
+        }
         const lines = [`${views.length} sell intent(s):`];
         for (const view of views) {
           const priceTags: string[] = [];
@@ -1965,7 +2219,36 @@ export function buildMrc721AgentTools(deps: {
           if (view.reason) lines.push(`  reason: ${view.reason}`);
           if (view.intent.note) lines.push(`  note: ${view.intent.note}`);
         }
-        return textResult(lines.join('\n'));
+        const activeViews = views.filter((v) => v.status === 'active');
+        const firstActive = activeViews[0];
+        let totalMeMilli = 0;
+        let totalCnyCents = 0;
+        for (const v of activeViews) {
+          if (v.intent.prices?.me?.amountMilli != null) totalMeMilli += v.intent.prices.me.amountMilli;
+          if (v.intent.prices?.fiat?.amountCents != null) totalCnyCents += v.intent.prices.fiat.amountCents;
+        }
+        return textResult(
+          appendNftMyListingsCardBlock(lines.join('\n'), {
+            metabotId: owner,
+            sellerAddress: firstActive?.intent.sellerAddress || undefined,
+            sellerGlobalMetaId: firstActive?.intent.sellerMetaId || undefined,
+            shopMetaAppPinId: firstActive?.intent.shopMetaAppPinId || undefined,
+            totalMeMilli: totalMeMilli > 0 ? totalMeMilli : undefined,
+            totalCnyCents: totalCnyCents > 0 ? totalCnyCents : undefined,
+            items: activeViews.map((v) => ({
+              format: 'mrc721' as const,
+              pinId: v.itemPinId,
+              series: v.intent.collectionName || undefined,
+              rail: 'multi-intent' as const,
+              autoFulfill: v.intent.autoFulfillMe === true,
+              priceMeMilli: v.intent.prices?.me?.amountMilli,
+              priceCnyCents: v.intent.prices?.fiat?.amountCents,
+              priceSats: v.intent.priceHintSats,
+              priceTokens: v.intent.prices?.tokens,
+              intentPinId: v.sellPinId || undefined,
+            })),
+          }),
+        );
       } catch (error) {
         return textResult(`mrc721_sell_intents failed: ${errorMessage(error)}`, true);
       }
@@ -2439,6 +2722,33 @@ export function buildMrc721AgentTools(deps: {
       if (args.network === 'btc') {
         return textResult('mrc721_offer: BTC-side writes are not supported in this version — use network mvc.', true);
       }
+      if (deps.confirmAssetAction) {
+        const sellerAddress = control.getMetabotMvcAddress(owner) ?? '(unknown)';
+        const spaceStr = `${args.price_sats} sats (${(args.price_sats / 100_000_000).toFixed(8)} SPACE)`;
+        const approved = await deps.confirmAssetAction({
+          toolName: 'mrc721_offer',
+          summaryZh:
+            `Agent 准备发布 MRC-721【被动硬挂单】（无需本机配合，任意买家均可离线直接拍下）：\n` +
+            `- 卖家地址: ${sellerAddress}\n` +
+            `- item pinId: ${args.item_pin_id}\n` +
+            `- 锁定售价: ${spaceStr}\n` +
+            `是否允许签署并发布该公开挂单？`,
+          summaryEn:
+            `The agent is about to publish a PASSIVE MRC-721 open offer (first-taker-wins — ANY buyer can settle offline without further confirmation):\n` +
+            `- seller: ${sellerAddress}\n` +
+            `- item pinId: ${args.item_pin_id}\n` +
+            `- locked ask price: ${spaceStr}\n` +
+            `Allow signing and publishing this open offer?`,
+          details: {
+            seller: sellerAddress,
+            item_pin_id: args.item_pin_id,
+            price_sats: args.price_sats,
+          },
+        });
+        if (!approved) {
+          return textResult('mrc721_offer cancelled: owner did not confirm publishing this MRC-721 open offer.', true);
+        }
+      }
       try {
         const snapshot = await loadMrc721CardItem(control, args.item_pin_id);
         const result = await control.offerPublish({
@@ -2498,14 +2808,32 @@ export function buildMrc721AgentTools(deps: {
       }
       try {
         const result = await control.offerCancel({ metabotId: owner, itemPinId: args.item_pin_id, network: args.network });
-        return textResult([
+        const out = [
           'MRC-721 open offer cancelled.',
           `- item pinId: ${result.offer.itemPinId}`,
           result.revocation === 'revoked'
             ? `- on-chain revocation: self-transfer ${result.revokeTxId} moved the item to a fresh outpoint of this bot — the signed offer can never complete`
             : '- on-chain revocation: not needed — the item had already left the offered outpoint, so the signed offer was already dead',
           `- closing declaration: pin://${result.offerPinId} (active=false — the market stops listing it)`,
-        ].join('\n'));
+        ].join('\n');
+        return textResult(
+          appendNftListingCardBlock(
+            out,
+            withNftCardHostStamp(
+              {
+                status: 'delisted',
+                rail: 'open-offer',
+                format: 'mrc721',
+                pinId: result.offer.itemPinId,
+                priceSats: result.offer.priceSats,
+                intentPinId: result.offerPinId || undefined,
+                cancelPinId: result.offerPinId || undefined,
+                txId: result.revokeTxId || undefined,
+              },
+              sessionId,
+            ),
+          ),
+        );
       } catch (error) {
         return textResult(`mrc721_offer_cancel failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
       }
@@ -2577,6 +2905,34 @@ export function buildMrc721AgentTools(deps: {
           offer = { itemPinId: row.itemPinId, priceSats: row.priceSats, offerTx: row.offerTx };
         } else {
           return textResult('mrc721_take_offer: pass offer_payload (the full signed offer) or item_pin_id (indexer-resolved).', true);
+        }
+        if (deps.confirmAssetAction) {
+          const buyerAddress = control.getMetabotMvcAddress(owner) ?? '(unknown)';
+          const spaceStr = `${offer.priceSats} sats (${(offer.priceSats / 100_000_000).toFixed(8)} SPACE)`;
+          const approved = await deps.confirmAssetAction({
+            toolName: 'mrc721_take_offer',
+            summaryZh:
+              `Agent 准备使用本机 MetaBot 钱包拍下 MRC-721 公开挂单（不可撤销）：\n` +
+              `- 买家地址: ${buyerAddress}\n` +
+              `- item pinId: ${offer.itemPinId}\n` +
+              `- 支付金额: ${spaceStr}\n` +
+              `是否允许支付 SPACE 并立即成交？`,
+            summaryEn:
+              `The agent is about to take a passive MRC-721 open offer (irreversible):\n` +
+              `- buyer: ${buyerAddress}\n` +
+              `- item pinId: ${offer.itemPinId}\n` +
+              `- price: ${spaceStr}\n` +
+              `Allow spending SPACE to take this open offer?`,
+            details: {
+              buyer: buyerAddress,
+              item_pin_id: offer.itemPinId,
+              price_sats: offer.priceSats,
+              fee_rate: args.fee_rate ?? 1,
+            },
+          });
+          if (!approved) {
+            return textResult('mrc721_take_offer cancelled: owner did not confirm taking this MRC-721 open offer.', true);
+          }
         }
         const result = await control.takeOffer({
           metabotId: owner,

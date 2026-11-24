@@ -13,6 +13,7 @@ import {
   isFtBridgeCardFenceLanguage,
   isFtFillCardFenceLanguage,
   isFtMyOrdersCardFenceLanguage,
+  isFtOrderBookCardFenceLanguage,
   isFtOrderCardFenceLanguage,
   isFtPortfolioCardFenceLanguage,
   isFtQuoteCardFenceLanguage,
@@ -20,6 +21,7 @@ import {
   parseFtBridgeCardFence,
   parseFtFillCardFence,
   parseFtMyOrdersCardFence,
+  parseFtOrderBookCardFence,
   parseFtOrderCardFence,
   parseFtPortfolioCardFence,
   parseFtQuoteCardFence,
@@ -27,10 +29,50 @@ import {
   type FtBridgeCardData,
   type FtFillCardData,
   type FtMyOrdersCardData,
+  type FtOrderBookCardData,
   type FtOrderCardData,
   type FtPortfolioCardData,
   type FtQuoteCardData,
 } from './ftCardSyntax';
+import {
+  isNftCardFenceLanguage,
+  isNftCardGroupFenceLanguage,
+  isNftCollectionCardFenceLanguage,
+  parseNftCardFence,
+  parseNftCardGroupFence,
+  parseNftCollectionCardFence,
+  type NftCardData,
+  type NftCollectionCardData,
+} from './nftCardSyntax';
+import {
+  isAnyNftSuiteFenceLanguage,
+  isNftActionCardFenceLanguage,
+  isNftFillCardFenceLanguage,
+  isNftListingCardFenceLanguage,
+  isNftMyListingsCardFenceLanguage,
+  isNftNegotiateCardFenceLanguage,
+  isNftPortfolioCardFenceLanguage,
+  isNftSwapCardFenceLanguage,
+  parseNftActionCardFence,
+  parseNftFillCardFence,
+  parseNftListingCardFence,
+  parseNftMyListingsCardFence,
+  parseNftNegotiateCardFence,
+  parseNftPortfolioCardFence,
+  parseNftSwapCardFence,
+  type NftActionCardData,
+  type NftFillCardData,
+  type NftListingCardData,
+  type NftMyListingsCardData,
+  type NftNegotiateCardData,
+  type NftPortfolioCardData,
+  type NftSwapCardData,
+} from './nftSuiteSyntax';
+import {
+  isEscrowCardFenceLanguage,
+  parseEscrowCardFence,
+  type EscrowCardData,
+} from './escrowCardCore';
 
 export const TOKEN_CARD_FENCE_TAG = 'token-card';
 
@@ -135,6 +177,18 @@ export type TokenCardMessageSegment =
   | { kind: 'ft-portfolio-card'; data: FtPortfolioCardData; rawFence: string }
   | { kind: 'ft-bridge-card'; data: FtBridgeCardData; rawFence: string }
   | { kind: 'ft-action-card'; data: FtActionCardData; rawFence: string }
+  | { kind: 'ft-orderbook-card'; data: FtOrderBookCardData; rawFence: string }
+  | { kind: 'nft-card'; data: NftCardData; rawFence: string }
+  | { kind: 'nft-card-group'; data: NftCardData[]; rawFence: string }
+  | { kind: 'nft-collection-card'; data: NftCollectionCardData; rawFence: string }
+  | { kind: 'nft-listing-card'; data: NftListingCardData; rawFence: string }
+  | { kind: 'nft-fill-card'; data: NftFillCardData; rawFence: string }
+  | { kind: 'nft-my-listings-card'; data: NftMyListingsCardData; rawFence: string }
+  | { kind: 'nft-portfolio-card'; data: NftPortfolioCardData; rawFence: string }
+  | { kind: 'nft-swap-card'; data: NftSwapCardData; rawFence: string }
+  | { kind: 'nft-action-card'; data: NftActionCardData; rawFence: string }
+  | { kind: 'nft-negotiate-card'; data: NftNegotiateCardData; rawFence: string }
+  | { kind: 'escrow-card'; data: EscrowCardData; rawFence: string }
   | { kind: 'token-card-streaming' };
 
 function cleanStr(val: unknown, maxLen = 160): string {
@@ -343,7 +397,17 @@ export function serializeTokenCardFence(data: TokenCardData): string {
 }
 
 const FAST_HINT_RE =
-  /```[ \t]*(?:token-card|tokencard|ft-(?:quote|order|fill|my-orders|portfolio|bridge|action|receipt)(?:-card)?|ft(?:quote|order|fill|myorders|portfolio|bridge|action)card|token-(?:my-orders|portfolio|bridge|action)-card)\b/i;
+  /```[ \t]*(?:token-card|tokencard|ft-(?:quote|order|orderbook|orders|fill|my-orders|portfolio|bridge|action|receipt)(?:-card)?|ft(?:quote|order|orderbook|fill|myorders|portfolio|bridge|action)card|token-(?:orderbook|my-orders|portfolio|bridge|action)-card|nft-card-group|nft-collection-card|nft-(?:listing|fill|my-listings|portfolio|swap|action|negotiate)-card|nft(?:listing|fill|mylistings|portfolio|swap|action|negotiate)card|nft-card|nftcard|nft|escrow-card|escrowcard)\b/i;
+
+function isAnyStandaloneNftOrEscrowFence(lang: string): boolean {
+  return (
+    isNftCardFenceLanguage(lang) ||
+    isNftCardGroupFenceLanguage(lang) ||
+    isNftCollectionCardFenceLanguage(lang) ||
+    isAnyNftSuiteFenceLanguage(lang) ||
+    isEscrowCardFenceLanguage(lang)
+  );
+}
 
 function parseStandaloneTokenSuiteFence(
   fenceLang: string,
@@ -353,6 +417,10 @@ function parseStandaloneTokenSuiteFence(
   if (isTokenCardFenceLanguage(fenceLang)) {
     const data = parseTokenCardFence(rawBody);
     return data ? { kind: 'token-card', data, rawFence } : null;
+  }
+  if (isFtOrderBookCardFenceLanguage(fenceLang)) {
+    const data = parseFtOrderBookCardFence(rawBody);
+    return data ? { kind: 'ft-orderbook-card', data, rawFence } : null;
   }
   if (isFtOrderCardFenceLanguage(fenceLang)) {
     const data = parseFtOrderCardFence(rawBody);
@@ -382,15 +450,90 @@ function parseStandaloneTokenSuiteFence(
     const data = parseFtActionCardFence(rawBody);
     return data ? { kind: 'ft-action-card', data, rawFence } : null;
   }
+  if (isNftCardGroupFenceLanguage(fenceLang)) {
+    const data = parseNftCardGroupFence(rawBody);
+    return data ? { kind: 'nft-card-group', data, rawFence } : null;
+  }
+  if (isNftCollectionCardFenceLanguage(fenceLang)) {
+    const data = parseNftCollectionCardFence(rawBody);
+    return data ? { kind: 'nft-collection-card', data, rawFence } : null;
+  }
+  if (isNftListingCardFenceLanguage(fenceLang)) {
+    const data = parseNftListingCardFence(rawBody);
+    return data ? { kind: 'nft-listing-card', data, rawFence } : null;
+  }
+  if (isNftFillCardFenceLanguage(fenceLang)) {
+    const data = parseNftFillCardFence(rawBody);
+    return data ? { kind: 'nft-fill-card', data, rawFence } : null;
+  }
+  if (isNftMyListingsCardFenceLanguage(fenceLang)) {
+    const data = parseNftMyListingsCardFence(rawBody);
+    return data ? { kind: 'nft-my-listings-card', data, rawFence } : null;
+  }
+  if (isNftPortfolioCardFenceLanguage(fenceLang)) {
+    const data = parseNftPortfolioCardFence(rawBody);
+    return data ? { kind: 'nft-portfolio-card', data, rawFence } : null;
+  }
+  if (isNftSwapCardFenceLanguage(fenceLang)) {
+    const data = parseNftSwapCardFence(rawBody);
+    return data ? { kind: 'nft-swap-card', data, rawFence } : null;
+  }
+  if (isNftActionCardFenceLanguage(fenceLang)) {
+    const data = parseNftActionCardFence(rawBody);
+    return data ? { kind: 'nft-action-card', data, rawFence } : null;
+  }
+  if (isNftNegotiateCardFenceLanguage(fenceLang)) {
+    const data = parseNftNegotiateCardFence(rawBody);
+    return data ? { kind: 'nft-negotiate-card', data, rawFence } : null;
+  }
+  if (isNftCardFenceLanguage(fenceLang)) {
+    const data = parseNftCardFence(rawBody);
+    return data ? { kind: 'nft-card', data, rawFence } : null;
+  }
+  if (isEscrowCardFenceLanguage(fenceLang)) {
+    const data = parseEscrowCardFence(rawBody);
+    return data ? { kind: 'escrow-card', data, rawFence } : null;
+  }
   return null;
 }
 
+function coalesceAdjacentNftCardSegments(
+  segments: TokenCardMessageSegment[],
+): TokenCardMessageSegment[] {
+  if (segments.length < 2) return segments;
+  const out: TokenCardMessageSegment[] = [];
+  for (let i = 0; i < segments.length; i += 1) {
+    const current = segments[i];
+    if (current.kind === 'nft-card') {
+      const run: Array<Extract<TokenCardMessageSegment, { kind: 'nft-card' }>> = [current];
+      while (i + 1 < segments.length && segments[i + 1].kind === 'nft-card') {
+        i += 1;
+        run.push(segments[i] as Extract<TokenCardMessageSegment, { kind: 'nft-card' }>);
+      }
+      if (run.length >= 2) {
+        out.push({
+          kind: 'nft-card-group',
+          data: run.map((item) => item.data),
+          rawFence: run.map((item) => item.rawFence).join('\n\n'),
+        });
+      } else {
+        out.push(current);
+      }
+    } else {
+      out.push(current);
+    }
+  }
+  return out;
+}
+
 /**
- * Splits an assistant message's markdown into ordered segments so `token-card`
- * and all `ft-*-card` blocks render as standalone card bubbles rather than
- * nested inside a gray prose bubble.
+ * Splits a chat message's markdown into ordered segments so `token-card`,
+ * `ft-*-card`, `nft-card` / `nft-*-card`, and `escrow-card` blocks render as
+ * standalone card bubbles rather than nested inside a gray prose bubble.
  *
  * - Respects outer 4+ backtick / tilde fences so nested examples stay intact.
+ * - Coalesces runs of >=2 adjacent `nft-card` fences (blank lines only between
+ *   them) into one `{ kind: 'nft-card-group' }` horizontal scroller segment.
  * - Malformed JSON inside a closed card fence stays in markdown so
  *   `MarkdownContent` degrades cleanly to a code block instead of dropping text.
  * - When `options.isStreaming` is true, an unclosed trailing card fence
@@ -450,7 +593,9 @@ export function splitTokenCardMessageSegments(
 
     const isSuiteCandidate =
       fenceChar === '`' &&
-      (isTokenCardFenceLanguage(fenceLang) || isAnyFtSuiteFenceLanguage(fenceLang));
+      (isTokenCardFenceLanguage(fenceLang) ||
+        isAnyFtSuiteFenceLanguage(fenceLang) ||
+        isAnyStandaloneNftOrEscrowFence(fenceLang));
 
     if (isSuiteCandidate) {
       const closeRe = new RegExp(`^[ \\t]{0,3}\`{${fenceLen},}[ \\t]*$`);
@@ -467,7 +612,7 @@ export function splitTokenCardMessageSegments(
         if (options?.isStreaming) {
           flushMarkdown();
           segments.push({ kind: 'token-card-streaming' });
-          return segments;
+          return coalesceAdjacentNftCardSegments(segments);
         }
         for (let j = i; j < lines.length; j += 1) {
           mdBuffer.push(lines[j]);
@@ -500,7 +645,7 @@ export function splitTokenCardMessageSegments(
   if (segments.length === 0) {
     return [{ kind: 'markdown', content: source }];
   }
-  return segments;
+  return coalesceAdjacentNftCardSegments(segments);
 }
 
 export function hasStandaloneTokenCardSegment(segments: readonly TokenCardMessageSegment[]): boolean {

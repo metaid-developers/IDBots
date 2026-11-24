@@ -118,14 +118,15 @@ import { listenWithPortFallback, listenWithRetry } from './httpListenWithRetry';
 import {
   DEFAULT_METAID_RPC_HOST,
   METAID_RPC_PORT_ENV,
+  authorizeMetaidRpcRequest,
   getMetaidRpcBase,
   getMetaidRpcToken,
   isAllowedMetaidRpcOrigin,
-  isMetaidRpcTokenAuthorized,
   resolveMetaidRpcPort,
   setActiveMetaidRpcPort,
   writeMetaidRpcPortFile,
   writeMetaidRpcTokenFile,
+  type MetaidRpcAuthContext,
 } from './metaidRpcEndpoint';
 import { getMetabotAccountSummary } from './metabotAccountService';
 import {
@@ -223,7 +224,177 @@ const PRIVATE_HISTORY_PATH = '/api/idbots/chat/private-history';
 const GROUP_HISTORY_PATH = '/api/idbots/chat/group-history';
 const MEMORY_LIST_PATH = '/api/idbots/memory/list';
 const MEMORY_CREATE_PATH = '/api/idbots/memory/create';
+const NFT_SWAP_PILOT_CONFIG_PATH = '/api/metaid/config/nft-swap-pilot';
 const BOT_BROWSER_URI_SCHEMES = new Set(['metaid', 'pin', 'metaapp', 'map', 'metafile']);
+
+/**
+ * High-risk financial, signing, messaging, memory, and admin RPC routes
+ * blocked unconditionally for A2A (remote-triggered) session tokens.
+ */
+const A2A_FORBIDDEN_RPC_POST_PATHS = new Set<string>([
+  EXECUTE_TRANSFER_PATH,
+  WALLET_MVC_TRANSFER_PATH,
+  WALLET_TRANSFER_RECORDS_PATH,
+  EXECUTE_MRC20_TRANSFER_PATH,
+  SIGN_BTC_MESSAGE_PATH,
+  SIGN_BTC_PSBT_PATH,
+  BUILD_MVC_TRANSFER_RAW_TX_PATH,
+  BUILD_MVC_FT_TRANSFER_RAW_TX_PATH,
+  BUILD_MVC_RAW_TX_BUNDLE_PATH,
+  BUILD_MRC721_SELL_PARTIAL_TX_PATH,
+  COMPLETE_MRC721_BUY_TX_PATH,
+  FT_MANDATE_CONFIRM_PATH,
+  FT_MVC_SPLIT_PATH,
+  FT_MVC_TOKEN_SELL_LIST_PATH,
+  FT_MVC_TOKEN_SELL_BUY_PATH,
+  FT_MVC_TOKEN_SELL_CANCEL_PATH,
+  FT_ESCROW_BUY_PATH,
+  FT_MVC_ISSUE_PATH,
+  FT_MVC_MINT_PATH,
+  PAYBUZZ_PUBLISH_PATH,
+  PAYBUZZ_UNLOCK_PATH,
+  PRIVATE_SEND_PATH,
+  PRIVATE_HISTORY_PATH,
+  GROUP_HISTORY_PATH,
+  MEMORY_LIST_PATH,
+  MEMORY_CREATE_PATH,
+  SET_METABOT_HOMEPAGE_METAAPP_PATH,
+  ASSIGN_GROUP_CHAT_TASK_PATH,
+  GROUP_TASK_CREATE_PATH,
+  GROUP_TASK_PROPOSE_STAFFING_PATH,
+  GROUP_TASK_INVITE_PATH,
+  GROUP_TASK_INVITE_REMOTE_PATH,
+  GROUP_TASK_KICK_MEMBER_PATH,
+  GROUP_TASK_CLOSE_PATH,
+  GROUP_TASK_DELIVERABLE_DELETE_PATH,
+  GROUP_TASK_REWORK_PATH,
+  GROUP_TASK_SUPERVISE_PATH,
+  BOT_BROWSER_OPEN_PATH,
+  BOT_BROWSER_TABS_PATH,
+  BOT_BROWSER_ACT_PATH,
+  AGENT_GAME_SESSION_PATH,
+]);
+
+function isA2aForbiddenRpcRoute(method: string | undefined, pathname: string): boolean {
+  if (method === 'POST' && A2A_FORBIDDEN_RPC_POST_PATHS.has(pathname)) {
+    return true;
+  }
+  if (
+    method === 'GET'
+    && (pathname.startsWith(FT_ESCROW_ORDER_PREFIX) || pathname === PAYBUZZ_UNLOCKED_PATH)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function assertScopedMetabotIdAllowed(
+  rpcAuth: MetaidRpcAuthContext,
+  requestedMetabotId: number | null | undefined,
+  res: http.ServerResponse,
+): boolean {
+  if (!rpcAuth.authorized || rpcAuth.scope === 'master') {
+    return true;
+  }
+  if (rpcAuth.metabotId == null) {
+    res.writeHead(403);
+    res.end(
+      JSON.stringify({
+        success: false,
+        error: 'session_missing_metabot_binding: session RPC token is not bound to a metabot_id',
+      }),
+    );
+    return false;
+  }
+  if (
+    requestedMetabotId != null
+    && Number.isFinite(requestedMetabotId)
+    && Number(requestedMetabotId) !== rpcAuth.metabotId
+  ) {
+    res.writeHead(403);
+    res.end(
+      JSON.stringify({
+        success: false,
+        error: `metabot_id_mismatch: session RPC token is bound to metabot_id ${rpcAuth.metabotId} and cannot act as metabot_id ${Number(requestedMetabotId)}`,
+      }),
+    );
+    return false;
+  }
+  return true;
+}
+
+const SCOPED_BODY_METABOT_ID_KEYS = [
+  'metabot_id',
+  'metabotId',
+  'buyer_metabot_id',
+  'buyerMetabotId',
+  'seller_metabot_id',
+  'sellerMetabotId',
+  'from_metabot_id',
+  'fromMetabotId',
+  'issuer_metabot_id',
+  'issuerMetabotId',
+] as const;
+
+function assertScopedJsonBodyMetabotAllowed(
+  rpcAuth: MetaidRpcAuthContext,
+  rawJsonBody: string,
+  res: http.ServerResponse,
+  requireBinding: boolean = true,
+): boolean {
+  if (!rpcAuth.authorized || rpcAuth.scope === 'master') {
+    return true;
+  }
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    const value = JSON.parse(rawJsonBody || '{}');
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      parsed = value as Record<string, unknown>;
+    }
+  } catch {
+    return true;
+  }
+  if (!parsed) return true;
+  let sawNumericId = false;
+  for (const key of SCOPED_BODY_METABOT_ID_KEYS) {
+    const raw = parsed[key];
+    if (raw === undefined || raw === null || raw === '') continue;
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric)) continue;
+    sawNumericId = true;
+    if (!assertScopedMetabotIdAllowed(rpcAuth, numeric, res)) {
+      return false;
+    }
+  }
+  if (!sawNumericId && requireBinding) {
+    return assertScopedMetabotIdAllowed(rpcAuth, null, res);
+  }
+  return true;
+}
+
+function isLocalMetabotAddress(
+  metabotStore: MetabotStore,
+  chain: string,
+  toAddress: string,
+): boolean {
+  const normalizedTarget = toAddress.trim();
+  if (!normalizedTarget) return false;
+  const bots = metabotStore.listMetabots?.() ?? [];
+  for (const bot of bots) {
+    const candidate =
+      chain === 'mvc'
+        ? bot.mvc_address
+        : chain === 'btc'
+          ? bot.btc_address
+          : chain === 'doge'
+            ? bot.doge_address
+            : '';
+    if (typeof candidate === 'string' && candidate.trim() === normalizedTarget) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Field contract for POST /api/idbots/wallet/transfer.
@@ -497,7 +668,8 @@ export function startMetaidRpcServer(
       return;
     }
 
-    if (!isMetaidRpcTokenAuthorized(req.headers.authorization, getMetaidRpcToken())) {
+    const rpcAuth = authorizeMetaidRpcRequest(req.headers.authorization, getMetaidRpcToken());
+    if (!rpcAuth.authorized) {
       if (recordRpcAuthFailure(requestOrigin)) {
         res.writeHead(429);
         res.end(JSON.stringify({ success: false, error: 'Too many unauthorized attempts' }));
@@ -525,6 +697,39 @@ export function startMetaidRpcServer(
     const url = req.url ?? '';
     const [pathname, search] = url.split('?');
     const persist = new URLSearchParams(search || '').get('persist') === 'true';
+
+    if (
+      rpcAuth.scope === 'session'
+      && rpcAuth.sessionType === 'a2a'
+      && isA2aForbiddenRpcRoute(req.method, pathname)
+    ) {
+      res.writeHead(403);
+      res.end(
+        JSON.stringify({
+          success: false,
+          error: `a2a_session_forbidden: route ${pathname} is blocked for A2A sessions`,
+        }),
+      );
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === NFT_SWAP_PILOT_CONFIG_PATH) {
+      try {
+        const raw = getStore().get('nft_swap_pilot_config');
+        if (raw == null) {
+          res.writeHead(404);
+          res.end(JSON.stringify({ success: false, error: 'nft_swap_pilot_config not configured' }));
+          return;
+        }
+        const config = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        res.writeHead(200);
+        res.end(JSON.stringify({ success: true, config }));
+      } catch (err) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ success: false, error: String((err as Error)?.message || err) }));
+      }
+      return;
+    }
 
     if (req.method === 'POST' && pathname === BOT_BROWSER_OPEN_PATH) {
       const body = await readRpcJsonObjectBody(req, res, pathname, { emptyBody: 'object' });
@@ -610,6 +815,9 @@ export function startMetaidRpcServer(
 
       try {
         const metabotId = normalizeRequiredMetabotId(parsed.metabot_id);
+        if (!assertScopedMetabotIdAllowed(rpcAuth, metabotId, res)) {
+          return;
+        }
         const pinId = normalizeMetaappPinId(parsed.pin_id);
         const syncRequested = parsed.sync !== false;
         const store = getMetabotStore();
@@ -691,6 +899,10 @@ export function startMetaidRpcServer(
         return;
       }
 
+      if (!assertScopedMetabotIdAllowed(rpcAuth, Number(parsed.metabot_id), res)) {
+        return;
+      }
+
       const message = String(parsed.message || '');
       if (!message) {
         res.writeHead(400);
@@ -743,6 +955,10 @@ export function startMetaidRpcServer(
       } catch {
         res.writeHead(400);
         res.end(JSON.stringify({ success: false, error: 'Invalid JSON body' }));
+        return;
+      }
+
+      if (!assertScopedMetabotIdAllowed(rpcAuth, Number(parsed.metabot_id), res)) {
         return;
       }
 
@@ -838,6 +1054,9 @@ export function startMetaidRpcServer(
       if (!Number.isInteger(metabotId) || metabotId <= 0) {
         res.writeHead(400);
         res.end(JSON.stringify({ success: false, error: 'metabot_id is required' }));
+        return;
+      }
+      if (!assertScopedMetabotIdAllowed(rpcAuth, metabotId, res)) {
         return;
       }
       if (!mrc20Id) {
@@ -1147,10 +1366,27 @@ export function startMetaidRpcServer(
         res.end(JSON.stringify(walletTransferRejection('metabot_id is required', parsed)));
         return;
       }
+      if (!assertScopedMetabotIdAllowed(rpcAuth, metabotId, res)) {
+        return;
+      }
       const toAddress = String(parsed.to_address || '').trim();
       if (!toAddress) {
         res.writeHead(400);
         res.end(JSON.stringify(walletTransferRejection('to_address is required', parsed)));
+        return;
+      }
+      if (
+        rpcAuth.scope === 'session'
+        && !isLocalMetabotAddress(getMetabotStore(), chain, toAddress)
+      ) {
+        res.writeHead(403);
+        res.end(
+          JSON.stringify({
+            success: false,
+            error:
+              'external_transfer_not_allowed_via_session_rpc: external transfers require interactive owner confirmation via the wallet_transfer tool',
+          }),
+        );
         return;
       }
       const amountRaw = parsed.amount ?? '';
@@ -1296,6 +1532,10 @@ export function startMetaidRpcServer(
         return;
       }
 
+      if (!assertScopedMetabotIdAllowed(rpcAuth, Number(parsed.metabot_id), res)) {
+        return;
+      }
+
       try {
         const result = await executeWalletMvcTransfer(
           {
@@ -1309,7 +1549,10 @@ export function startMetaidRpcServer(
             to: String(parsed.to || '').trim(),
             amountSats: Number(parsed.amount_sats),
             memo: typeof parsed.memo === 'string' ? parsed.memo : undefined,
-            externalConfirmed: parsed.external_confirmed === true,
+            // Never trust client-supplied external_confirmed from session-scoped RPC
+            // tokens; external transfers from agent sessions must go through the
+            // host-confirmed wallet_transfer tool with interactive owner approval.
+            externalConfirmed: rpcAuth.scope === 'master' && parsed.external_confirmed === true,
             feeRate: Number.isFinite(Number(parsed.fee_rate)) && Number(parsed.fee_rate) > 0
               ? Number(parsed.fee_rate)
               : undefined,
@@ -1354,10 +1597,17 @@ export function startMetaidRpcServer(
         const limit = Number.isFinite(Number(parsed.limit)) && Number(parsed.limit) > 0
           ? Math.floor(Number(parsed.limit))
           : 50;
-        const metabotId = Number.isInteger(Number(parsed.metabot_id)) && Number(parsed.metabot_id) > 0
+        const requestedMetabotId = Number.isInteger(Number(parsed.metabot_id)) && Number(parsed.metabot_id) > 0
           ? Number(parsed.metabot_id)
           : undefined;
-        const records = getWalletTransferStore().list(limit, metabotId);
+        if (rpcAuth.scope === 'session') {
+          if (!assertScopedMetabotIdAllowed(rpcAuth, requestedMetabotId, res)) {
+            return;
+          }
+        }
+        const effectiveMetabotId =
+          rpcAuth.scope === 'session' ? (rpcAuth.metabotId ?? undefined) : requestedMetabotId;
+        const records = getWalletTransferStore().list(limit, effectiveMetabotId);
         res.writeHead(200);
         res.end(JSON.stringify({ success: true, records }));
       } catch (err) {
@@ -1391,6 +1641,10 @@ export function startMetaidRpcServer(
       } catch {
         res.writeHead(400);
         res.end(JSON.stringify({ success: false, error: 'Invalid JSON body' }));
+        return;
+      }
+
+      if (!assertScopedMetabotIdAllowed(rpcAuth, Number(parsed.metabot_id), res)) {
         return;
       }
 
@@ -1430,6 +1684,7 @@ export function startMetaidRpcServer(
           price_sats?: number;
           fee_rate?: number;
         };
+        if (!assertScopedMetabotIdAllowed(rpcAuth, Number(parsed.metabot_id), res)) return;
         const feeRate = parsed.fee_rate != null ? Number(parsed.fee_rate) : getGlobalFeeRate('mvc');
         const listing = await sellMrc721Item(
           { buildPartialTx: (store, params) => buildMvc721SellPartialTx(store, params) },
@@ -1461,6 +1716,7 @@ export function startMetaidRpcServer(
           listing?: unknown;
           fee_rate?: number;
         };
+        if (!assertScopedMetabotIdAllowed(rpcAuth, Number(parsed.metabot_id), res)) return;
         const feeRate = parsed.fee_rate != null ? Number(parsed.fee_rate) : getGlobalFeeRate('mvc');
         const result = await buyMrc721Listing(
           { completeBuy: (store, params) => completeMvc721BuyTx(store, params) },
@@ -1527,6 +1783,10 @@ export function startMetaidRpcServer(
         return;
       }
 
+      if (!assertScopedMetabotIdAllowed(rpcAuth, Number(parsed.metabot_id), res)) {
+        return;
+      }
+
       try {
         const result = await buildMvcTransferRawTx(getMetabotStore(), {
           metabotId: Number(parsed.metabot_id),
@@ -1589,6 +1849,10 @@ export function startMetaidRpcServer(
       } catch {
         res.writeHead(400);
         res.end(JSON.stringify({ success: false, error: 'Invalid JSON body' }));
+        return;
+      }
+
+      if (!assertScopedMetabotIdAllowed(rpcAuth, Number(parsed.metabot_id), res)) {
         return;
       }
 
@@ -1671,6 +1935,10 @@ export function startMetaidRpcServer(
       } catch {
         res.writeHead(400);
         res.end(JSON.stringify({ success: false, error: 'Invalid JSON body' }));
+        return;
+      }
+
+      if (!assertScopedMetabotIdAllowed(rpcAuth, Number(parsed.metabot_id), res)) {
         return;
       }
 
@@ -2973,6 +3241,9 @@ export function startMetaidRpcServer(
       if (body === null) {
         return;
       }
+      if (!assertScopedJsonBodyMetabotAllowed(rpcAuth, body, res)) {
+        return;
+      }
       try {
         const result = await handlePrivateSendRoute(chatGatewayDeps, body);
         res.writeHead(result.status);
@@ -2990,6 +3261,9 @@ export function startMetaidRpcServer(
       if (body === null) {
         return;
       }
+      if (!assertScopedJsonBodyMetabotAllowed(rpcAuth, body, res, false)) {
+        return;
+      }
       try {
         const result = await handlePrivateHistoryRoute(chatGatewayDeps, body);
         res.writeHead(result.status);
@@ -3005,6 +3279,9 @@ export function startMetaidRpcServer(
     if (req.method === 'POST' && pathname === GROUP_HISTORY_PATH) {
       const body = await readRpcJsonObjectBody(req, res, pathname, { emptyBody: 'object' });
       if (body === null) {
+        return;
+      }
+      if (!assertScopedJsonBodyMetabotAllowed(rpcAuth, body, res, false)) {
         return;
       }
       try {
@@ -3029,6 +3306,9 @@ export function startMetaidRpcServer(
       if (body === null) {
         return;
       }
+      if (!assertScopedJsonBodyMetabotAllowed(rpcAuth, body, res, false)) {
+        return;
+      }
       const result = handleMemoryListRoute(getMemoryBackend, body);
       res.writeHead(result.status);
       res.end(JSON.stringify(result.body));
@@ -3038,6 +3318,9 @@ export function startMetaidRpcServer(
     if (req.method === 'POST' && pathname === MEMORY_CREATE_PATH) {
       const body = await readRpcJsonObjectBody(req, res, pathname, { emptyBody: 'object' });
       if (body === null) {
+        return;
+      }
+      if (!assertScopedJsonBodyMetabotAllowed(rpcAuth, body, res, false)) {
         return;
       }
       const result = handleMemoryCreateRoute(getMemoryBackend, body);
@@ -3091,6 +3374,9 @@ export function startMetaidRpcServer(
       if (req.method === 'POST') {
         const body = await readRpcJsonObjectBody(req, res, pathname, { emptyBody: 'object' });
         if (body === null) {
+          return;
+        }
+        if (!assertScopedJsonBodyMetabotAllowed(rpcAuth, body, res, false)) {
           return;
         }
         let result;
@@ -3148,6 +3434,9 @@ export function startMetaidRpcServer(
       if (req.method === 'POST' && (pathname === FT_MVC_ISSUE_PATH || pathname === FT_MVC_MINT_PATH)) {
         const body = await readRpcJsonObjectBody(req, res, pathname, { emptyBody: 'object' });
         if (body === null) {
+          return;
+        }
+        if (!assertScopedJsonBodyMetabotAllowed(rpcAuth, body, res)) {
           return;
         }
         const result =
@@ -3208,6 +3497,9 @@ export function startMetaidRpcServer(
         if (body === null) {
           return;
         }
+        if (!assertScopedJsonBodyMetabotAllowed(rpcAuth, body, res)) {
+          return;
+        }
         const result =
           pathname === PAYBUZZ_PUBLISH_PATH
             ? await handlePaybuzzPublishRoute(paybuzzDeps, body)
@@ -3254,6 +3546,9 @@ export function startMetaidRpcServer(
       res.end(
         JSON.stringify({ success: false, error: 'metabot_id and metaidData required' })
       );
+      return;
+    }
+    if (!assertScopedMetabotIdAllowed(rpcAuth, metabot_id, res)) {
       return;
     }
 

@@ -99,16 +99,17 @@ test('desktop plan card renders the expiry line only when subscribed and only fr
   assert.match(source, /data-testid="idbots-plan-expiry"/);
 });
 
-test('mobile hero renders the expiry line and MeScreen feeds it from the subscription payload', () => {
+test('mobile hero renders the expiry line and UsageCreditsPage feeds it from the subscription payload', () => {
   const hero = read('src/mobile/app/components/MePointsHero.tsx');
   assert.match(hero, /expiryMs\?: number \| null/);
   assert.match(hero, /data-testid="me-points-expiry"/);
   assert.match(hero, /t\('mobile\.me\.points\.expiresIn'/);
+  const usage = read('src/mobile/app/screens/me/UsageCreditsPage.tsx');
+  assert.match(usage, /expiryMs=\{expiryMs\}/);
+  assert.match(usage, /meSubscriptionExpiryMs\(snapshot\.subscription\)/);
   const screen = read('src/mobile/app/screens/MeScreen.tsx');
-  assert.match(screen, /expiryMs=\{expiryMs\}/);
-  assert.match(screen, /meSubscriptionExpiryMs\(me\.subscription\)/);
-  // fa9c96e81 retired the home-page tier cards — the full catalog and its
-  // downgrade guard moved into the purchase screen (mirrors mobileMeIa).
+  // fa9c96e81 / A6 IA rework retired the home-page tier cards and moved the
+  // full ME hero into UsageCreditsPage while keeping MeCompactCreditsRow on MeScreen.
   assert.doesNotMatch(screen, /MeTierCards/);
   // The tier cards that DO render ride the same downgrade guard as before.
   const purchase = read('src/mobile/app/screens/MePurchaseScreen.tsx');

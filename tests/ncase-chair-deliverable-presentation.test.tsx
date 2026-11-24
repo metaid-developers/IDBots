@@ -112,9 +112,7 @@ const initRenderHarness = (): Promise<RenderDetail> => {
   if (harness) return harness;
   harness = (async (): Promise<RenderDetail> => {
     const React = (await import('react')).default;
-    const TestRendererModule = await import('react-test-renderer');
-    const TestRenderer = TestRendererModule.default;
-    const act = TestRendererModule.act;
+    const { renderToStaticMarkup } = await import('react-dom/server');
     const { i18nService } = await import('../src/renderer/services/i18n');
     const GroupTaskDetailViewModule = await import('../src/renderer/components/groupTasks/GroupTaskDetailView');
     const GroupTaskDetailView = GroupTaskDetailViewModule.default;
@@ -136,23 +134,15 @@ const initRenderHarness = (): Promise<RenderDetail> => {
       STRINGS[key] ?? key;
 
     return async (deliverableStatuses: string[]): Promise<string> => {
-      state.detail = baseDetail(deliverableStatuses);
-      let renderer: TestRenderer.ReactTestRenderer | null = null;
-      await act(async () => {
-        renderer = TestRenderer.create(
-          React.createElement(GroupTaskDetailView, { taskId: TASK_ID, onBack: noop }),
-        );
-      });
-      // Let the mount-time promise chains (getTask / listMessages / identity)
-      // settle and their setState batches flush.
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      });
-      const tree = JSON.stringify((renderer as unknown as TestRenderer.ReactTestRenderer).toJSON());
-      await act(async () => {
-        (renderer as unknown as TestRenderer.ReactTestRenderer).unmount();
-      });
-      return tree;
+      const detail = baseDetail(deliverableStatuses);
+      state.detail = detail;
+      return renderToStaticMarkup(
+        React.createElement(GroupTaskDetailView, {
+          taskId: TASK_ID,
+          onBack: noop,
+          initialDetail: detail as never,
+        }),
+      );
     };
   })();
   return harness;

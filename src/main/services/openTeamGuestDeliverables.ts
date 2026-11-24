@@ -26,6 +26,7 @@ import os from 'os';
 import path from 'path';
 import metaFileUploadShared from './metaFileUploadShared.js';
 import { buildMetafileUri } from './serviceDeliveryArtifacts.js';
+import { isSensitiveHostFilePath } from '../security/secretEgressGuard';
 
 const { DEFAULT_MAX_FILE_SIZE_BYTES, inferContentTypeFromFilePath } = metaFileUploadShared;
 
@@ -239,11 +240,37 @@ export function collectGuestDeliverableFiles(
   const maxFiles = Math.max(1, Math.trunc(input.maxFiles ?? DEFAULT_MAX_DELIVERABLE_FILES));
   const cwd = path.resolve(String(input.cwd || '') || process.cwd());
   const allowedRoot = path.resolve(String(input.allowedRoot ?? cwd) || cwd);
+  const canonicalAllowedRoot = (() => {
+    try {
+      return fs.realpathSync(allowedRoot);
+    } catch {
+      return allowedRoot;
+    }
+  })();
   const emitLog = input.emitLog ?? (() => undefined);
 
   const isInsideAllowedRoot = (filePath: string): boolean => {
     const relative = path.relative(allowedRoot, filePath);
-    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+    if (relative !== '' && (relative.startsWith('..') || path.isAbsolute(relative))) {
+      return false;
+    }
+    // Reject symlinks and verify canonical realpath stays inside canonicalAllowedRoot
+    // so a symlink placed inside cwd cannot exfiltrate host files like idbots.sqlite.
+    try {
+      const lstat = fs.lstatSync(filePath);
+      if (lstat.isSymbolicLink()) return false;
+      const realFile = fs.realpathSync(filePath);
+      const realRel = path.relative(canonicalAllowedRoot, realFile);
+      if (realRel !== '' && (realRel.startsWith('..') || path.isAbsolute(realRel))) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+    if (isSensitiveHostFilePath(filePath)) {
+      return false;
+    }
+    return true;
   };
 
   const collected: GuestDeliverableFile[] = [];

@@ -39,16 +39,18 @@ test('formatPosixEnvFile converts TMPDIR on Windows', () => {
   assert.match(body, /ARK_API_KEY='sk-secret'/)
 })
 
-test('formatPosixEnvFile quotes KEY names and apostrophes', () => {
+test('formatPosixEnvFile quotes KEY names and apostrophes and strips forbidden mnemonic keys', () => {
   const { formatPosixEnvFile, posixSingleQuote } = loadModule()
   assert.equal(posixSingleQuote("it's"), `'it'\\''s'`)
   const body = formatPosixEnvFile({
     ARK_API_KEY: 'sk-secret',
-    IDBOTS_METABOT_MNEMONIC: "alpha beta's gamma",
+    IDBOTS_TWIN_NAME: "alpha beta's gamma",
+    IDBOTS_METABOT_MNEMONIC: 'should never be written to env file',
     'not a key': 'nope',
   })
   assert.match(body, /^ARK_API_KEY='sk-secret'$/m)
-  assert.match(body, /IDBOTS_METABOT_MNEMONIC='alpha beta'\\''s gamma'/)
+  assert.match(body, /IDBOTS_TWIN_NAME='alpha beta'\\''s gamma'/)
+  assert.doesNotMatch(body, /IDBOTS_METABOT_MNEMONIC/)
   assert.doesNotMatch(body, /not a key/)
 })
 

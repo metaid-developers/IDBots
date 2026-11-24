@@ -111,6 +111,7 @@ button:disabled {
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
+  overflow-anchor: none;
   scrollbar-width: none;
 }
 

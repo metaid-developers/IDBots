@@ -15,7 +15,7 @@ interface TwinBadgeProps {
 const TwinBadge: React.FC<TwinBadgeProps> = ({ className = '' }) => (
   <span
     data-slot="metabot-twin-badge"
-    className={`inline-flex shrink-0 items-center rounded-full bg-[#FFDC51]/20 dark:bg-[#FFDC51]/25 border border-[#FFDC51]/40 dark:border-[#FFDC51]/50 px-1.5 py-0.5 text-[10px] font-semibold leading-3 text-[#A16207] dark:text-[#FFDC51] ${className}`}
+    className={`inline-flex shrink-0 items-center rounded-[5px] bg-[#FFDC51]/22 dark:bg-[#FFDC51]/15 border border-[#b48a00]/30 dark:border-[#FFDC51]/35 px-1.5 py-0.5 text-[10.5px] font-bold leading-3 text-[#856404] dark:text-[#FFDC51] ${className}`}
   >
     {i18nService.t('metabotTwinBadge')}
   </span>

@@ -268,16 +268,44 @@ export const PanelMessage: React.FC<{
       ? [sentQuoteBlock, sentQuoteRest].filter(Boolean).join('\n\n')
       : message.content;
     const bubbleClassName = "studio-user-bubble max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface dark:text-claude-darkText text-claude-text";
+    const userSegments = splitTokenCardMessageSegments(displayContent);
+    if (hasStandaloneTokenCardSegment(userSegments)) {
+      return (
+        <div data-panel-message-id={message.id} className="flex w-full min-w-0 flex-col items-end gap-1.5">
+          {userSegments.map((seg, segIdx) => {
+            const isLastSeg = segIdx === userSegments.length - 1;
+            if (seg.kind !== 'markdown') {
+              return (
+                <div
+                  key={`usr-ts-${seg.kind}-${segIdx}`}
+                  data-standalone-token-bubble="true"
+                  data-standalone-card-kind={seg.kind}
+                  data-standalone-user-side="true"
+                  onContextMenu={handleBubbleContextMenu}
+                  className={seg.kind === 'nft-card-group' ? 'flex w-full max-w-full justify-end' : 'flex w-full max-w-[364px] justify-end'}
+                >
+                  <div className="flex flex-col items-end">
+                    <TokenSuiteSegmentCard segment={seg} userSide />
+                    {isLastSeg ? bubbleFooter : null}
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div key={`usr-md-${segIdx}`} onContextMenu={handleBubbleContextMenu} className={bubbleClassName}>
+                <UserMessageBody content={seg.content} resolveLocalFilePath={resolveLocalFilePath} />
+                {isLastSeg ? bubbleFooter : null}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
     return (
       // data-panel-message-id lets the locator rail measure this row
       // (purity pass #2 ③) without touching the bubble chrome.
       <div data-panel-message-id={message.id} className="flex flex-col items-end">
         <div onContextMenu={handleBubbleContextMenu} className={bubbleClassName}>
-          {/* Same display-side body pipeline as the main cowork transcript:
-              the attachment marker lines split out at render time, image
-              files render as the shared thumbnail strip with the in-app
-              lightbox, and the rest renders as markdown. The panel keeps
-              its own bubble chrome. */}
           <UserMessageBody content={displayContent} resolveLocalFilePath={resolveLocalFilePath} />
           {bubbleFooter}
         </div>
@@ -393,7 +421,7 @@ export const PanelMessage: React.FC<{
                 onContextMenu={
                   seg.kind === 'token-card-streaming' ? undefined : handleBubbleContextMenu
                 }
-                className="w-full max-w-[364px]"
+                className={seg.kind === 'nft-card-group' ? 'w-full max-w-full' : 'w-full max-w-[364px]'}
               >
                 <TokenSuiteSegmentCard segment={seg} />
                 {renderSegmentFooter(isLastSeg)}
@@ -446,6 +474,12 @@ interface BotBrowserCoworkPanelProps {
   onOpenNewProject?: () => void;
   /** Switch the sidebar back to BotWorks (no-Twin bootstrap guidance). */
   onOpenBotHome?: () => void;
+  /**
+   * Switch the Studio right pane back to Bot Browser when a prompt is
+   * submitted while the user is viewing another Studio catalog (e.g. Tasks,
+   * MetaApps, My Bots). Returns true when Bot Browser was already visible.
+   */
+  onRevealBrowser?: () => boolean | void;
   /**
    * Session-records overlay state (owner spec 2026-11-08 21:31). The records
    * toggle lives in the shared surface header bar — beside the surface pill,
@@ -550,6 +584,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   onShowSkills,
   onOpenNewProject,
   onOpenBotHome,
+  onRevealBrowser,
   historyOpen,
   onHistoryOpenChange,
 }) => {
@@ -1151,6 +1186,16 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     if (!currentSession && selectedMetabotId == null) return; // botless machines never start sessions here
     setShowHistory(false);
     pinListToBottom();
+    const wasBrowserVisible = onRevealBrowser?.() === true;
+    if (currentSession && !currentSession.id.startsWith('optimistic-browser-')) {
+      void sessionTabBinding.revealSessionTab(currentSession.id, {
+        preserveActiveInteractiveTab: wasBrowserVisible,
+      });
+    } else if (!currentSession) {
+      void sessionTabBinding.prepareDraftTab(effectiveMetabotId, {
+        preserveActiveInteractiveTab: wasBrowserVisible,
+      });
+    }
     const captureOutgoingPrompt = async () => {
       // Element-picker capture (ABC v0.10.0): live marks first, then the
       // pre-navigation cache. First sends pass this preparation into start so

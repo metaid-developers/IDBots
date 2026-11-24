@@ -4,6 +4,7 @@ import type {
   UserIdentityInsert,
   UserIdentityUpdate,
 } from './types/userIdentity';
+import { decryptMnemonicAtRest, encryptMnemonicAtRest } from './security/mnemonicVault';
 
 const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0";
 /** The user_identity table is single-row by design; the row id is always 1. */
@@ -39,7 +40,7 @@ interface UserIdentityRow {
 function rowToUserIdentity(row: UserIdentityRow): UserIdentity {
   return {
     id: row.id,
-    mnemonic: row.mnemonic,
+    mnemonic: decryptMnemonicAtRest(row.mnemonic),
     path: row.path,
     mvc_address: row.mvc_address,
     btc_address: row.btc_address,
@@ -111,7 +112,7 @@ export class UserIdentityStore {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         USER_IDENTITY_ROW_ID,
-        data.mnemonic,
+        encryptMnemonicAtRest(data.mnemonic),
         data.path ?? DEFAULT_WALLET_PATH,
         data.mvc_address,
         data.btc_address,

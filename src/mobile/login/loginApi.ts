@@ -1,26 +1,18 @@
 import { MOCK_LOGIN_API } from '../buildFlags';
 
 /**
- * Login API seam (C3 control-plane auth endpoints).
+ * Login API seam (C3 control-plane auth endpoints + additive invite preview).
  *
  * The page talks ONLY to these functions. Under `VITE_MOBILE_MOCK=1`
  * (`pnpm dev:mobile`) the functions below serve the REQ-E-8 demo mocks; any
- * other build hits the real C3 endpoints per 01-interface-contracts.md:
- * `POST /api/v1/auth/sms/send`, `POST /api/v1/auth/sms/verify`,
- * `GET /api/v1/me`, `POST /api/v1/auth/logout` and
- * `POST /api/v1/account/deletion-request`. Request and response shapes mirror
- * C3 exactly, so swapping never touches the page.
+ * other build hits the real C3 endpoints per 01-interface-contracts.md and
+ * CR-WSE-005-mobile-invite-system.md:
+ * `GET /api/v1/auth/invite/preview`, `POST /api/v1/auth/sms/send`,
+ * `POST /api/v1/auth/sms/verify`, `GET /api/v1/me`,
+ * `POST /api/v1/auth/logout`, and `POST /api/v1/account/deletion-request`.
  *
- * The page is served from the same origin as the control plane (staging:
- * `https://staging.idbots.world`), so the fetches use origin-relative URLs
- * and `credentials: 'same-origin'` — the browser fills in the `Origin` header
- * itself and the `idb_session` cookie rides along (the control plane rejects
- * state-changing requests whose Origin does not match the deployment origin
- * with `403 ORIGIN_NOT_ALLOWED`; a hand-set Origin header is a forbidden
- * header name, so there is nothing to configure here).
- *
- * Logging never includes the phone number, the SMS code, or the invite code
- * (SEC-12).
+ * Logging never includes the phone number, the SMS code, the invite code, or
+ * the display name (SEC-12).
  */
 
 export interface LoginUser {
@@ -49,6 +41,22 @@ export interface LoginTenant {
 
 export interface SendCodeResult {
   resendAfterSec: number;
+}
+
+export interface SendCodeOptions {
+  inviteCode?: string;
+}
+
+export interface InvitePreviewResult {
+  valid: boolean;
+  code: string;
+  reasonCode?: string;
+  planId?: string;
+  planName?: string;
+  planNameEn?: string;
+  periodDays?: number;
+  dailyCapFull?: boolean;
+  registrationEnabled?: boolean;
 }
 
 export interface VerifyCodeResult {
@@ -127,27 +135,51 @@ async function requestJson<T>(
 // Real C3 implementation.
 // ---------------------------------------------------------------------------
 
-/** C3 `POST /api/v1/auth/sms/send` with `{ phone, purpose: 'login' }`. */
-export async function sendCode(phone: string, purpose = 'login'): Promise<SendCodeResult> {
-  if (MOCK_LOGIN_API) {
-    return mockSendCode(phone, purpose);
+/** Additive `GET /api/v1/auth/invite/preview?code=...` (CR-WSE-005). */
+export async function previewInvite(code: string): Promise<InvitePreviewResult> {
+  const normalized = code.trim().toUpperCase();
+  if (!normalized) {
+    return { valid: false, code: '' };
   }
-  console.info('[loginApi] sendCode', { purpose });
+  if (MOCK_LOGIN_API) {
+    return mockPreviewInvite(normalized);
+  }
+  console.info('[loginApi] previewInvite');
+  return requestJson<InvitePreviewResult>(
+    `/api/v1/auth/invite/preview?code=${encodeURIComponent(normalized)}`,
+  );
+}
+
+/**
+ * C3 `POST /api/v1/auth/sms/send` with `{ phone, purpose: 'login', inviteCode? }`.
+ * When `inviteCode` is omitted, the exact `{ phone, purpose }` body is sent.
+ */
+export async function sendCode(
+  phone: string,
+  purpose = 'login',
+  options?: SendCodeOptions,
+): Promise<SendCodeResult> {
+  const inviteCode = options?.inviteCode?.trim();
+  if (MOCK_LOGIN_API) {
+    return mockSendCode(phone, purpose, inviteCode);
+  }
+  console.info('[loginApi] sendCode', {
+    purpose,
+    ...(inviteCode ? { hasInviteCode: true } : {}),
+  });
   if (!/^\+86\d{11}$/.test(phone)) {
     throw errorWithCode('INVALID_PHONE');
   }
   return requestJson<SendCodeResult>('/api/v1/auth/sms/send', {
     method: 'POST',
-    jsonBody: { phone, purpose },
+    jsonBody: inviteCode ? { phone, purpose, inviteCode } : { phone, purpose },
   });
 }
 
 /**
  * C3 `POST /api/v1/auth/sms/verify` with
  * `{ phone, code, inviteCode?, displayName? }`. Success sets the
- * `idb_session` cookie; error codes pass through verbatim (`CODE_INVALID`,
- * `CODE_EXPIRED`, `INVITE_REQUIRED`, `INVITE_INVALID`, `INVITE_EXHAUSTED`,
- * `USER_DISABLED`, `TOO_MANY_ATTEMPTS`).
+ * `idb_session` cookie; error codes pass through verbatim.
  */
 export async function verifyCode(
   phone: string,
@@ -203,7 +235,7 @@ export async function logout(): Promise<LogoutResult> {
 }
 
 /**
- * C3 `POST /api/v1/account/deletion-request` (`{ reason? }` →
+ * C3 `POST /api/v1/account/deletion-request` (`{ reason? }` ->
  * `202 { requestId }`; the control plane keeps the account in a
  * pending-deletion grace period server-side).
  */
@@ -227,14 +259,6 @@ export async function requestAccountDeletion(reason?: string): Promise<AccountDe
 const MOCK_LATENCY_MS = 300;
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/**
- * Mock page-session state. `verifiedPhones` stands in for the account table
- * (a phone verified at least once is a returning user and needs no invite);
- * `mockSessionPhone` / `mockMePollCount` stand in for the session cookie and
- * the tenant provisioning progression that the control plane would drive.
- * The synthetic session marker uses tab sessionStorage so full-page mock
- * navigations can exercise the same returning-cookie path without a real token.
- */
 const MOCK_SESSION_STORAGE_KEY = 'idbots.mockLoginSession';
 
 function readMockSession(): string | null {
@@ -261,23 +285,108 @@ const verifiedPhones = new Set<string>();
 let mockSessionPhone: string | null = readMockSession();
 let mockMePollCount = 0;
 
-async function mockSendCode(phone: string, purpose: string): Promise<SendCodeResult> {
-  console.info('[loginApi] sendCode called (mock)', { purpose });
+async function mockPreviewInvite(normalized: string): Promise<InvitePreviewResult> {
+  console.info('[loginApi] previewInvite called (mock)');
+  await wait(120);
+  if (normalized === 'BAD') {
+    return {
+      valid: false,
+      code: normalized,
+      reasonCode: 'INVITE_INVALID_CODE',
+      planId: 'me_pro',
+      planName: 'ID.Student',
+      planNameEn: 'ID.Student',
+      periodDays: 14,
+      dailyCapFull: false,
+      registrationEnabled: true,
+    };
+  }
+  if (normalized === 'FULL') {
+    return {
+      valid: false,
+      code: normalized,
+      reasonCode: 'INVITE_CODE_EXHAUSTED',
+      planId: 'me_pro',
+      planName: 'ID.Student',
+      planNameEn: 'ID.Student',
+      periodDays: 14,
+      dailyCapFull: false,
+      registrationEnabled: true,
+    };
+  }
+  if (normalized === 'OFF') {
+    return {
+      valid: false,
+      code: normalized,
+      reasonCode: 'INVITE_DISABLED',
+      planId: 'me_pro',
+      planName: 'ID.Student',
+      planNameEn: 'ID.Student',
+      periodDays: 14,
+      dailyCapFull: false,
+      registrationEnabled: false,
+    };
+  }
+  if (normalized === 'CAPFULL') {
+    return {
+      valid: false,
+      code: normalized,
+      reasonCode: 'INVITE_DAILY_CAP_FULL',
+      planId: 'me_pro',
+      planName: 'ID.Student',
+      planNameEn: 'ID.Student',
+      periodDays: 14,
+      dailyCapFull: true,
+      registrationEnabled: true,
+    };
+  }
+  return {
+    valid: true,
+    code: normalized,
+    planId: 'me_pro',
+    planName: 'ID.Student',
+    planNameEn: 'ID.Student',
+    periodDays: 14,
+    dailyCapFull: false,
+    registrationEnabled: true,
+  };
+}
+
+function validateMockInviteCode(inviteCode: string): void {
+  const upper = inviteCode.trim().toUpperCase();
+  if (upper === 'FULL') {
+    throw errorWithCode('INVITE_EXHAUSTED');
+  }
+  if (upper === 'BAD') {
+    throw errorWithCode('INVITE_INVALID');
+  }
+  if (upper === 'CAPFULL') {
+    throw errorWithCode('INVITE_DAILY_CAP_FULL');
+  }
+  if (upper === 'OFF') {
+    throw errorWithCode('INVITE_DISABLED');
+  }
+}
+
+async function mockSendCode(
+  phone: string,
+  purpose: string,
+  inviteCode?: string,
+): Promise<SendCodeResult> {
+  console.info('[loginApi] sendCode called (mock)', {
+    purpose,
+    ...(inviteCode ? { hasInviteCode: true } : {}),
+  });
   await wait(MOCK_LATENCY_MS);
   if (!/^\+86\d{11}$/.test(phone)) {
     throw errorWithCode('INVALID_PHONE');
   }
+  if (inviteCode && !verifiedPhones.has(phone)) {
+    validateMockInviteCode(inviteCode);
+  }
   return { resendAfterSec: 60 };
 }
 
-/**
- * Mock rules (deterministic, so the demo can exercise every branch):
- * - empty code -> `CODE_INVALID`; code `000000` -> `CODE_EXPIRED`;
- * - a phone never verified in this page session is a new account: without
- *   `inviteCode` it fails `INVITE_REQUIRED`; invite `FULL`/`BAD` fail
- *   `INVITE_EXHAUSTED`/`INVITE_INVALID`; any other invite is accepted;
- * - a returning phone needs no invite.
- */
 async function mockVerifyCode(
   phone: string,
   code: string,
@@ -300,11 +409,8 @@ async function mockVerifyCode(
   if (!isReturningPhone && !inviteCode) {
     throw errorWithCode('INVITE_REQUIRED');
   }
-  if (inviteCode === 'FULL') {
-    throw errorWithCode('INVITE_EXHAUSTED');
-  }
-  if (inviteCode === 'BAD') {
-    throw errorWithCode('INVITE_INVALID');
+  if (inviteCode) {
+    validateMockInviteCode(inviteCode);
   }
   verifiedPhones.add(phone);
   writeMockSession(phone);
@@ -326,9 +432,6 @@ async function mockVerifyCode(
   };
 }
 
-// Roughly two `getMe` calls per stage so the preparing screen can demo the
-// provisioning -> booting -> onboarding -> ready progression; past the list
-// the tenant stays `ready`.
 const TENANT_PROGRESSION: LoginTenant['status'][] = [
   'provisioning',
   'provisioning',
@@ -338,7 +441,6 @@ const TENANT_PROGRESSION: LoginTenant['status'][] = [
   'onboarding',
 ];
 
-// Tenant /readyz-style phase strings while booting or onboarding (C3 Tenant).
 const TENANT_PHASE: Partial<Record<LoginTenant['status'], string>> = {
   booting: 'starting-services',
   onboarding: 'initializing-workspace',
@@ -378,10 +480,6 @@ async function mockLogout(): Promise<LogoutResult> {
   return { success: true };
 }
 
-/**
- * In the mock the request is accepted whenever a session exists and the
- * session is cleared immediately.
- */
 async function mockRequestAccountDeletion(reason?: string): Promise<AccountDeletionResult> {
   console.info('[loginApi] requestAccountDeletion called (mock)', {
     hasReason: Boolean(reason && reason.trim()),

@@ -23,16 +23,18 @@ import {
   type FtActiveOrderRecord,
 } from './ftOrderStore';
 import { parseRawTx } from '../libs/mvcTokenSellCore';
+import { formatFtFillCardFence } from '../../renderer/components/chat/ftCardSyntax';
 
 export const TOKEN_ORDER_WATCHER_INTERVAL_MS = 45_000;
 
 const METALET_HOST = 'https://www.metalet.space';
 const METAID_MARKET_HOST = 'https://api.metaid.market';
 const MEMPOOL_HOST = 'https://mempool.space';
+const SATOSHI_PER_COIN = 100_000_000;
 
 export type OutpointSpendResolution =
   | { state: 'unspent' }
-  | { state: 'filled'; filledTxId: string }
+  | { state: 'filled'; filledTxId: string; buyerAddress?: string }
   | { state: 'self_canceled'; cancelTxId?: string };
 
 export interface FtOrderFilledEvent {
@@ -54,11 +56,107 @@ export interface FtOrderFilledEvent {
 export interface TokenOrderWatcherDeps {
   emitToRenderer?: (channel: string, payload: unknown) => void;
   recordNotification?: (input: AgentNotificationInput) => void;
+  onOrderFilledPassive?: (
+    event: FtOrderFilledEvent,
+    order: FtActiveOrderRecord,
+    meta: { buyerAddress?: string },
+  ) => { sessionId?: string | null } | void;
   checkMvcTokenSellOrder?: (order: FtActiveOrderRecord) => Promise<OutpointSpendResolution>;
   checkBtcPsbtOrder?: (order: FtActiveOrderRecord) => Promise<OutpointSpendResolution>;
   fetchImpl?: typeof fetch;
   emitLog?: (msg: string) => void;
   now?: () => number;
+}
+
+function truncateMiddle(raw: string, head = 6, tail = 4): string {
+  const s = raw.trim();
+  if (s.length <= head + tail + 3) return s;
+  return `${s.slice(0, head)}...${s.slice(-tail)}`;
+}
+
+function formatTrimmedDecimal(value: number, maxDecimals: number): string {
+  if (!Number.isFinite(value)) return '0';
+  return value.toFixed(maxDecimals).replace(/\.?0+$/, '') || '0';
+}
+
+export interface PassiveSellFillCardParams {
+  assetKey: string;
+  symbol: string;
+  caVerified?: boolean;
+  rail: 'btc-psbt' | 'mvc-tokensell' | 'me-escrow';
+  chain: 'btc' | 'mvc';
+  amountDisplay: string;
+  priceSats?: number;
+  priceMeMilli?: number;
+  filledTxId: string;
+  buyerAddress?: string;
+  filledLots?: number;
+  totalLots?: number;
+}
+
+/**
+ * Build an assistant chat message containing a localized passive-sale summary
+ * plus a verbatim ```ft-fill-card (`side: 'sell'`, symmetric S-1 receipt).
+ */
+export function buildPassiveSellFillCardMessage(params: PassiveSellFillCardParams): string {
+  const symbol = String(params.symbol || 'TOKEN').trim().replace(/^\$+/, '').toUpperCase();
+  const qtyNum = Number(String(params.amountDisplay || '0').replace(/,/g, ''));
+  let totalPaidLabel = 'Settled';
+  let avgUnitPriceLabel: string | undefined;
+
+  if (params.rail === 'me-escrow' && params.priceMeMilli != null && params.priceMeMilli > 0) {
+    const lotMe = params.priceMeMilli / 1000;
+    totalPaidLabel = `${formatTrimmedDecimal(lotMe, 3)} ME`;
+    if (qtyNum > 0) {
+      avgUnitPriceLabel = `${formatTrimmedDecimal(lotMe / qtyNum, 4)} ME`;
+    }
+  } else if (params.priceSats != null && params.priceSats > 0) {
+    if (params.chain === 'btc' || params.rail === 'btc-psbt') {
+      const btcStr = formatTrimmedDecimal(params.priceSats / SATOSHI_PER_COIN, 8);
+      totalPaidLabel = `${btcStr} BTC (${Math.round(params.priceSats).toLocaleString('en-US')} sats)`;
+      if (qtyNum > 0) {
+        const unitSats = params.priceSats / qtyNum;
+        const unitSatsText =
+          unitSats >= 10
+            ? Math.round(unitSats).toLocaleString('en-US')
+            : formatTrimmedDecimal(unitSats, 4);
+        avgUnitPriceLabel = `${unitSatsText} sats`;
+      }
+    } else {
+      const spaceStr = formatTrimmedDecimal(params.priceSats / SATOSHI_PER_COIN, 6);
+      totalPaidLabel = `${spaceStr} SPACE`;
+      if (qtyNum > 0) {
+        avgUnitPriceLabel = `${formatTrimmedDecimal(params.priceSats / SATOSHI_PER_COIN / qtyNum, 6)} SPACE`;
+      }
+    }
+  }
+
+  const buyerShort = params.buyerAddress?.trim()
+    ? truncateMiddle(params.buyerAddress.trim(), 6, 4)
+    : '';
+  const counterpartyName = buyerShort ? `买家 ${buyerShort}` : undefined;
+  const lotBadge =
+    params.totalLots && params.totalLots > 1
+      ? `（本批进度 ${params.filledLots ?? 1}/${params.totalLots} 单）`
+      : '';
+
+  const fence = formatFtFillCardFence({
+    side: 'sell',
+    assetKey: params.assetKey,
+    symbol,
+    caVerified: params.caVerified,
+    rail: params.rail,
+    chain: params.chain,
+    totalTokenDisplay: String(params.amountDisplay),
+    filledOrderCount: 1,
+    totalPaidLabel,
+    ...(avgUnitPriceLabel ? { avgUnitPriceLabel } : {}),
+    ...(counterpartyName ? { counterpartyName } : {}),
+    txids: [params.filledTxId],
+    nextActions: [],
+  });
+
+  return `你的 **$${symbol}** 挂单已被买家成交（售出 ${params.amountDisplay} ${symbol}，入账 ${totalPaidLabel}）${lotBadge}：\n\n${fence}`;
 }
 
 function parseOutpointTuple(outpoint: string): { txid: string; vout: number } | null {
@@ -200,29 +298,48 @@ async function defaultCheckBtcPsbtOrder(
   order: FtActiveOrderRecord,
   fetchFn: typeof fetch,
 ): Promise<OutpointSpendResolution> {
-  // 1. If marketOrderId is recorded, check MetaID.market order status first
+  // 1. If marketOrderId is recorded, check MetaID.market order detail endpoint first
+  // (`/api/v1/market/mrc20/order/detail`, falling back to legacy `/common/mrc20/market/order/info`).
   if (order.marketOrderId) {
-    try {
-      const mktRes = await fetchFn(
-        `${METAID_MARKET_HOST}/api-market/api/v1/common/mrc20/market/order/info?orderId=${encodeURIComponent(order.marketOrderId)}`,
-      );
-      if (mktRes.ok) {
+    const encodedOrderId = encodeURIComponent(order.marketOrderId);
+    const marketEndpoints = [
+      `${METAID_MARKET_HOST}/api-market/api/v1/market/mrc20/order/detail?orderId=${encodedOrderId}`,
+      `${METAID_MARKET_HOST}/api-market/api/v1/common/mrc20/market/order/info?orderId=${encodedOrderId}`,
+    ];
+    for (const url of marketEndpoints) {
+      try {
+        const mktRes = await fetchFn(url);
+        if (!mktRes.ok) continue;
         const mktJson = (await mktRes.json()) as {
           code?: number;
-          data?: { orderState?: number; status?: string; txId?: string; dealTxId?: string };
+          data?: {
+            orderState?: number;
+            status?: string;
+            txId?: string;
+            dealTxId?: string;
+            buyerAddress?: string;
+            buyer?: string;
+          };
         };
+        if (mktJson?.code !== undefined && mktJson.code !== 0) continue;
         const stateNum = Number(mktJson?.data?.orderState ?? 0);
         const stateStr = String(mktJson?.data?.status ?? '').toLowerCase();
         const dealTxId = String(mktJson?.data?.dealTxId ?? mktJson?.data?.txId ?? '').trim();
+        const buyerAddress = String(
+          mktJson?.data?.buyerAddress ?? mktJson?.data?.buyer ?? '',
+        ).trim() || undefined;
         if (stateNum === 3 || stateStr === 'sold' || stateStr === 'filled') {
-          if (dealTxId) return { state: 'filled', filledTxId: dealTxId };
+          if (dealTxId) return { state: 'filled', filledTxId: dealTxId, buyerAddress };
         }
         if (stateNum === 2 || stateStr === 'canceled' || stateStr === 'cancelled') {
           return { state: 'self_canceled', cancelTxId: dealTxId || undefined };
         }
+        if (stateNum === 1 || stateStr === 'open' || stateStr === 'listed') {
+          break;
+        }
+      } catch {
+        // Try fallback endpoint or direct BTC outspend check
       }
-    } catch {
-      // Fall back to BTC outspend check
     }
   }
 
@@ -243,6 +360,7 @@ async function defaultCheckBtcPsbtOrder(
   // Inspect spending tx outputs on mempool API: if seller received >= priceSats
   // and another address also received an output, it's an external PSBT fill;
   // if every output belongs to sellerAddress, it's a self-cancel / UTXO consolidation.
+  let detectedBuyerAddress: string | undefined;
   if (order.sellerAddress) {
     try {
       const txRes = await fetchFn(`${MEMPOOL_HOST}/api/tx/${spendingTxId}`);
@@ -260,13 +378,20 @@ async function defaultCheckBtcPsbtOrder(
         ) {
           return { state: 'self_canceled', cancelTxId: spendingTxId };
         }
+        detectedBuyerAddress = addresses.find(
+          (addr) => addr.toLowerCase() !== order.sellerAddress!.toLowerCase(),
+        );
       }
     } catch {
       // Non-fatal
     }
   }
 
-  return { state: 'filled', filledTxId: spendingTxId };
+  return {
+    state: 'filled',
+    filledTxId: spendingTxId,
+    ...(detectedBuyerAddress ? { buyerAddress: detectedBuyerAddress } : {}),
+  };
 }
 
 export class TokenOrderWatcher {
@@ -370,6 +495,22 @@ export class TokenOrderWatcher {
 
           this.deps.emitToRenderer?.('ftTrade:orderFilled', fillEvent);
 
+          let resolvedSessionId = order.sessionId ?? null;
+          if (this.deps.onOrderFilledPassive) {
+            try {
+              const pushed = this.deps.onOrderFilledPassive(fillEvent, order, {
+                buyerAddress: resolution.buyerAddress,
+              });
+              if (!resolvedSessionId && pushed && typeof pushed === 'object' && pushed.sessionId) {
+                resolvedSessionId = pushed.sessionId;
+              }
+            } catch (pushErr) {
+              this.log(
+                `[TokenOrderWatcher] Passive fill card push failed for ${order.listingKey}: ${pushErr instanceof Error ? pushErr.message : String(pushErr)}`,
+              );
+            }
+          }
+
           const priceBadge =
             order.priceSats != null ? ` for ${order.priceSats.toLocaleString('en-US')} sats` : '';
           this.deps.recordNotification?.({
@@ -377,14 +518,14 @@ export class TokenOrderWatcher {
             type: 'ft.order.filled',
             category: 'work',
             metabotId: order.metabotId,
-            sessionId: order.sessionId ?? null,
+            sessionId: resolvedSessionId,
             taskId: null,
             runId: null,
             title: `${order.symbol} order filled (${filledLots}/${totalLots})`,
             body: `Sold ${order.amountDisplay} ${order.symbol}${priceBadge} on ${order.rail === 'btc-psbt' ? 'BTC PSBT' : 'MVC TokenSell'}.`,
             priority: 'normal',
-            target: order.sessionId
-              ? { kind: 'session', sessionId: order.sessionId }
+            target: resolvedSessionId
+              ? { kind: 'session', sessionId: resolvedSessionId }
               : { kind: 'bot_automation', metabotId: order.metabotId, section: 'surf' },
           });
         } catch (err) {

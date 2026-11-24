@@ -63,6 +63,41 @@ export const NFT_CA_SCHEMA_VERSION = 1;
 /** Process-lifetime cache TTL for the fetched registry. */
 export const NFT_CA_CACHE_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * Built-in CA trust root entries for the early official IDBots escrow
+ * guarantor bots (owner designation). On-chain CA pins signed by
+ * OFFICIAL_IDBOTS_METAID may still override or revoke (`active: false`) any
+ * entry here; entries not listed on-chain remain trusted from this root.
+ */
+export const BUILTIN_OFFICIAL_ESCROW_GUARANTORS: readonly NftCaOfficialBotEntry[] = Object.freeze([
+  Object.freeze({
+    globalMetaId: 'idq14hmv23j5fnlx4ccnmvlyldjd38xjsechzwg9xz',
+    metaId: '2eb21238314aca030b67ed7b7c4c613f2e8cb7e42ee9140589a4df9da3854aa2',
+    mvcAddress: '1GrqX7K9jdnUor8hAoAfDx99uFH2tT75Za',
+    role: 'escrow_guarantor' as const,
+    badgeType: 'official_escrow_guarantor',
+    badgeLabel: 'Official Escrow Guarantor',
+    escrowConfig: Object.freeze({
+      custodyAddress: '1GrqX7K9jdnUor8hAoAfDx99uFH2tT75Za',
+      supportedCurrencies: ['CNY'],
+    }),
+    active: true,
+  }),
+  Object.freeze({
+    globalMetaId: 'idq1d5m392ahkhp79wsy9ur79e3vhak7tg729dwdr5',
+    metaId: '3752b67637874d4886b7f0f27b6958c2b44f3e1795dfea42988aaa4be02b7859',
+    mvcAddress: '1AxUdSkVdDyDreYSYVoDRFeyS1pvQdvcJx',
+    role: 'escrow_guarantor' as const,
+    badgeType: 'official_escrow_guarantor',
+    badgeLabel: 'Official Escrow Guarantor',
+    escrowConfig: Object.freeze({
+      custodyAddress: '1AxUdSkVdDyDreYSYVoDRFeyS1pvQdvcJx',
+      supportedCurrencies: ['CNY'],
+    }),
+    active: true,
+  }),
+]);
+
 /** `<64hex>i<n>` pin id convention (same shape as mrc721Service.isMrc721PinId). */
 const PIN_ID_PATTERN = /^[0-9a-fA-F]{64}i\d+$/;
 

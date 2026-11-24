@@ -29,8 +29,8 @@ const ftProto = require('meta-contract/dist/mcp02/contract-proto/token.proto');
 const { TokenGenesisFactory } = require('meta-contract/dist/mcp02/contract-factory/tokenGenesis');
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
-const METALET_HOST = 'https://www.metalet.space';
-const APIMVC_HOST = 'https://api.microvisionchain.com/open-api-mvc';
+const METALET_HOST = (process.env.IDBOTS_METALET_HOST || 'https://www.metalet.space').replace(/\/+$/, '');
+const APIMVC_HOST = (process.env.IDBOTS_MVC_API_HOST || 'https://api.microvisionchain.com/open-api-mvc').replace(/\/+$/, '');
 
 export const MAX_MCP02_TOKEN_AMOUNT_BASE = 9_223_372_036_854_775_807n;
 export const MAX_MCP02_TOKEN_NAME_BYTES = 40;
@@ -226,7 +226,9 @@ async function defaultFetchFundingUtxos(address: string): Promise<RawMvcFundingC
       net: 'livenet',
       ...(flag ? { flag } : {}),
     });
-    const res = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`);
+    const res = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`, {
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!res.ok) {
       throw new Error(`Failed to fetch MVC UTXOs (HTTP ${res.status})`);
     }
@@ -266,7 +268,10 @@ async function defaultFetchRawTxHex(txId: string): Promise<string> {
   }
   const metaletUrl = `${METALET_HOST}/wallet-api/v4/mvc/tx/raw?txId=${clean}&net=mainnet`;
   try {
-    const res = await fetch(metaletUrl, { headers: { accept: 'application/json' } });
+    const res = await fetch(metaletUrl, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
+    });
     if (res.ok) {
       const json = (await res.json()) as { data?: { hex?: string } };
       const hex = String(json?.data?.hex || '').trim().toLowerCase();
@@ -278,7 +283,10 @@ async function defaultFetchRawTxHex(txId: string): Promise<string> {
     // fall through to APIMVC
   }
   const apiMvcUrl = `${APIMVC_HOST}/tx/${clean}/raw`;
-  const res2 = await fetch(apiMvcUrl, { headers: { accept: 'application/json' } });
+  const res2 = await fetch(apiMvcUrl, {
+    headers: { accept: 'application/json' },
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!res2.ok) {
     throw new Error(`Unable to fetch raw MVC transaction ${clean} (HTTP ${res2.status})`);
   }
@@ -298,18 +306,25 @@ async function defaultFetchGenesisUnspents(params: {
   const url =
     `${APIMVC_HOST}/contract/ft/address/${encodeURIComponent(params.address)}/utxo` +
     `?codeHash=${encodeURIComponent(params.codehash)}&genesis=${encodeURIComponent(params.genesis)}`;
-  const res = await fetch(url, { headers: { accept: 'application/json' } });
-  if (!res.ok) {
+  try {
+    const res = await fetch(url, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      return [];
+    }
+    const rows = (await res.json()) as Array<{ txid?: string; txId?: string; txIndex?: number; outputIndex?: number }>;
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .map((row) => ({
+        txId: String(row.txId ?? row.txid ?? '').trim().toLowerCase(),
+        outputIndex: Number(row.outputIndex ?? row.txIndex ?? -1),
+      }))
+      .filter((row) => /^[0-9a-f]{64}$/.test(row.txId) && Number.isInteger(row.outputIndex) && row.outputIndex >= 0);
+  } catch {
     return [];
   }
-  const rows = (await res.json()) as Array<{ txid?: string; txId?: string; txIndex?: number; outputIndex?: number }>;
-  if (!Array.isArray(rows)) return [];
-  return rows
-    .map((row) => ({
-      txId: String(row.txId ?? row.txid ?? '').trim().toLowerCase(),
-      outputIndex: Number(row.outputIndex ?? row.txIndex ?? -1),
-    }))
-    .filter((row) => /^[0-9a-f]{64}$/.test(row.txId) && Number.isInteger(row.outputIndex) && row.outputIndex >= 0);
 }
 
 function sumOutputsSatoshis(tx: any): number {
@@ -393,11 +408,14 @@ export async function buildMvcFtIssueRawTxLocally(
   const fetchRawTxHex = ioDeps.fetchRawTxHex ?? defaultFetchRawTxHex;
   const excludeOutpoints = normalizeExcludeOutpoints(params.excludeOutpoints);
 
-  const fetchedCandidates = await fetchFundingUtxos(senderAddress);
-  const combinedCandidates = [
-    ...(Array.isArray(params.preferredFundingUtxos) ? params.preferredFundingUtxos : []),
-    ...fetchedCandidates,
-  ];
+  const preferredList = Array.isArray(params.preferredFundingUtxos) ? params.preferredFundingUtxos : [];
+  let fetchedCandidates: RawMvcFundingCandidate[] = [];
+  try {
+    fetchedCandidates = await fetchFundingUtxos(senderAddress);
+  } catch (err) {
+    if (preferredList.length === 0) throw err;
+  }
+  const combinedCandidates = [...preferredList, ...fetchedCandidates];
   const seenCandidateKeys = new Set<string>();
   const filteredCandidates = combinedCandidates
     .filter((u) => {
@@ -802,11 +820,14 @@ export async function buildMvcFtMintRawTxLocally(
   // Exclude the genesis contract outpoint itself from P2PKH funding candidates
   excludeOutpoints.add(`${activeGenesisUtxo.txId.toLowerCase()}:${activeGenesisUtxo.outputIndex}`);
 
-  const fetchedCandidates = await fetchFundingUtxos(senderAddress);
-  const combinedCandidates = [
-    ...(Array.isArray(params.preferredFundingUtxos) ? params.preferredFundingUtxos : []),
-    ...fetchedCandidates,
-  ];
+  const preferredList = Array.isArray(params.preferredFundingUtxos) ? params.preferredFundingUtxos : [];
+  let fetchedCandidates: RawMvcFundingCandidate[] = [];
+  try {
+    fetchedCandidates = await fetchFundingUtxos(senderAddress);
+  } catch (err) {
+    if (preferredList.length === 0) throw err;
+  }
+  const combinedCandidates = [...preferredList, ...fetchedCandidates];
   const seenMintCandidateKeys = new Set<string>();
   const filteredCandidates = combinedCandidates
     .filter((u) => {

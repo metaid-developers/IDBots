@@ -2004,9 +2004,49 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
       raw: {},
     }));
   })();
+  let mockSubscriptionOverride: { statusText: string; raw: Record<string, unknown> } | null = null;
+  let mockWeeklyRefilled = false;
+  let mockInviteScenario: 'eligible_unissued' | 'eligible_issued' | 'locked_trial' | 'refill_ready' = 'refill_ready';
+  let mockInviteIssuedCodes: Array<{
+    code: string;
+    status: number;
+    maxUses: number;
+    usedCount: number;
+    activatedCount: number;
+    createdAt: number;
+    invitees: Array<{
+      status: number;
+      phoneMasked?: string;
+      reservedAt: number;
+      activatedAt?: number;
+      rewardGranted: boolean;
+    }>;
+  }> = [
+    {
+      code: 'IDB-8K3N9Q',
+      status: 1,
+      maxUses: 1,
+      usedCount: 1,
+      activatedCount: 1,
+      createdAt: (mockMeNow() - 2 * 86_400) * 1000,
+      invitees: [
+        {
+          status: 2,
+          phoneMasked: '+86 138****8001',
+          reservedAt: (mockMeNow() - 2 * 86_400) * 1000,
+          activatedAt: (mockMeNow() - 2 * 86_400 + 120) * 1000,
+          rewardGranted: true,
+        },
+      ],
+    },
+  ];
+  let mockRefillEarned = 1;
+  let mockRefillUsed = 0;
+
   const mockMeBalance = () => {
     const weeklyAmount = mockMeSubscribed ? 10_000_000 : 2_000_000;
-    const weeklyRemaining = mockMeSubscribed ? 6_240_000 : 1_480_000;
+    const baseRemaining = mockMeSubscribed ? 6_240_000 : 1_480_000;
+    const weeklyRemaining = mockWeeklyRefilled ? weeklyAmount : baseRemaining;
     const topup = 30_000_000;
     const bonus = 2_000_000;
     const earned = 1_250_000;
@@ -2027,6 +2067,55 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
       autoDeductFromPersistent: true,
     };
   };
+
+  const buildMockInviteStatus = () => {
+    const bal = mockMeBalance();
+    const isLocked = mockInviteScenario === 'locked_trial';
+    const totalQuota = isLocked ? 0 : 2;
+    const usedQuota = mockInviteIssuedCodes.length;
+    const remainingQuota = Math.max(0, totalQuota - usedQuota);
+    const availableCount = Math.max(0, mockRefillEarned - mockRefillUsed);
+    const planLabel = mockMeSubscribed
+      ? (mockMePlans.find((plan) => plan.planId === mockMeActivePlanId)?.name ?? 'ID.Pupil')
+      : 'Free';
+    return {
+      identityAddress: 'mock-mvc-address',
+      issueEnabled: true,
+      eligible: !isLocked,
+      eligibleReason: isLocked ? '' : (mockMeSubscribed ? 'paid_subscriber' : 'active_veteran'),
+      progress: {
+        accountAgeDays: isLocked ? 3 : 12,
+        requiredAgeDays: 7,
+        totalSpentMilli: isLocked ? 1_850_000 : 6_400_000,
+        requiredSpentMilli: 5_000_000,
+        paidBypassEnabled: true,
+        hasPaidSubscription: !isLocked && mockMeSubscribed,
+        isTrialSubscription: isLocked,
+      },
+      totalQuota,
+      usedQuota,
+      remainingQuota,
+      defaultGrant: {
+        planId: 'me_pro',
+        planName: 'ID.Student',
+        planNameEn: 'ID.Student',
+        periodDays: 14,
+      },
+      codes: mockInviteIssuedCodes.map((entry) => ({
+        ...entry,
+        invitees: entry.invitees.map((inv) => ({ ...inv })),
+      })),
+      refill: {
+        availableCount,
+        earnedTotal: mockRefillEarned,
+        usedTotal: mockRefillUsed,
+        weeklyGrant: { ...bal.weeklyGrant },
+        planId: mockMeSubscribed ? mockMeActivePlanId : 'me_free',
+        planName: planLabel,
+      },
+    };
+  };
+
   const mePointsImpl = {
     getPlans: () => guardOnline(async () => ({ success: true, plans: mockMePlans })),
     getRates: () => guardOnline(async () => ({ success: true, rates: mockMeRates })),
@@ -2035,12 +2124,14 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     getSubscription: () =>
       guardOnline(async () => ({
         success: true,
-        subscription: {
-          statusText: mockMeSubscribed ? 'active' : 'free',
-          raw: mockMeSubscribed
-            ? { planId: mockMeActivePlanId, planName: mockMePlans.find((plan) => plan.planId === mockMeActivePlanId)?.name }
-            : { planId: 'me_free' },
-        },
+        subscription: mockSubscriptionOverride
+          ? { statusText: mockSubscriptionOverride.statusText, raw: { ...mockSubscriptionOverride.raw } }
+          : {
+              statusText: mockMeSubscribed ? 'active' : 'free',
+              raw: mockMeSubscribed
+                ? { planId: mockMeActivePlanId, planName: mockMePlans.find((plan) => plan.planId === mockMeActivePlanId)?.name }
+                : { planId: 'me_free' },
+            },
       })),
     getHistory: (input?: { type?: string }) =>
       guardOnline(async () => {
@@ -2128,6 +2219,59 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     })),
     getPaymentInfo: () => ({ success: true, payment: { qrContent: 'https://example.com/me-pay/demo', payeeHint: 'Demo payee · ME top-up' } }),
     pickVoucher: () => Promise.resolve({ success: false }),
+    getInviteStatus: () => guardOnline(async () => ({
+      success: true,
+      inviteStatus: buildMockInviteStatus(),
+    })),
+    generateInviteCode: () => guardOnline(async () => {
+      const current = buildMockInviteStatus();
+      if (!current.eligible) {
+        return { success: false, error: 'invite eligibility requirements not met', errorCode: 'INVITE_NOT_ELIGIBLE' };
+      }
+      if (current.remainingQuota <= 0) {
+        return { success: false, error: 'invite code quota exhausted', errorCode: 'INVITE_QUOTA_EXHAUSTED' };
+      }
+      const suffix = String(100000 + mockInviteIssuedCodes.length * 7919).slice(-6);
+      mockInviteIssuedCodes = [
+        {
+          code: `IDB-${suffix}`,
+          status: 1,
+          maxUses: 1,
+          usedCount: 0,
+          activatedCount: 0,
+          createdAt: Date.now(),
+          invitees: [],
+        },
+        ...mockInviteIssuedCodes,
+      ];
+      return { success: true, inviteStatus: buildMockInviteStatus() };
+    }),
+    claimInviteRefill: () => guardOnline(async () => {
+      const available = mockRefillEarned - mockRefillUsed;
+      if (available <= 0) {
+        return { success: false, error: 'no weekly refill reward available', errorCode: 'INVITE_NO_REFILL_AVAILABLE' };
+      }
+      const beforeBal = mockMeBalance();
+      if (beforeBal.weeklyGrant.remainingMilli >= beforeBal.weeklyGrant.amountMilli) {
+        return { success: false, error: 'weekly quota is already full', errorCode: 'INVITE_WEEKLY_ALREADY_FULL' };
+      }
+      const beforeRemainingMilli = beforeBal.weeklyGrant.remainingMilli;
+      mockWeeklyRefilled = true;
+      mockRefillUsed += 1;
+      const afterBal = mockMeBalance();
+      return {
+        success: true,
+        refillResult: {
+          applied: true,
+          claimId: `irf_mock_${mockRefillUsed}`,
+          beforeRemainingMilli,
+          afterRemainingMilli: afterBal.weeklyGrant.remainingMilli,
+          refilledDeltaMilli: afterBal.weeklyGrant.remainingMilli - beforeRemainingMilli,
+          availableRefillsLeft: Math.max(0, mockRefillEarned - mockRefillUsed),
+          weeklyGrant: { ...afterBal.weeklyGrant },
+        },
+      };
+    }),
   };
 
   let surfRunSeq = 1;
@@ -2799,6 +2943,58 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     getOpenedUrls: () => [...openedUrls],
     setMeSubscribed: (value: boolean) => {
       mockMeSubscribed = value;
+      if (value) mockSubscriptionOverride = null;
+    },
+    setMeSubscriptionOverride: (subscription: { statusText: string; raw: Record<string, unknown> } | null) => {
+      mockSubscriptionOverride = subscription ? { statusText: subscription.statusText, raw: { ...subscription.raw } } : null;
+      if (subscription) {
+        mockMeSubscribed = subscription.statusText === 'active';
+      }
+    },
+    setMeInviteScenario: (scenario: 'eligible_unissued' | 'eligible_issued' | 'locked_trial' | 'refill_ready') => {
+      mockInviteScenario = scenario;
+      mockWeeklyRefilled = false;
+      if (scenario === 'eligible_unissued' || scenario === 'locked_trial') {
+        mockInviteIssuedCodes = [];
+        mockRefillEarned = 0;
+        mockRefillUsed = 0;
+      } else if (scenario === 'eligible_issued') {
+        mockInviteIssuedCodes = [
+          {
+            code: 'IDB-8K3N9Q',
+            status: 1,
+            maxUses: 1,
+            usedCount: 0,
+            activatedCount: 0,
+            createdAt: Date.now() - 3_600_000,
+            invitees: [],
+          },
+        ];
+        mockRefillEarned = 0;
+        mockRefillUsed = 0;
+      } else {
+        mockInviteIssuedCodes = [
+          {
+            code: 'IDB-8K3N9Q',
+            status: 2,
+            maxUses: 1,
+            usedCount: 1,
+            activatedCount: 1,
+            createdAt: Date.now() - 86_400_000,
+            invitees: [
+              {
+                status: 2,
+                phoneMasked: '+86 138****8001',
+                reservedAt: Date.now() - 86_400_000,
+                activatedAt: Date.now() - 86_300_000,
+                rewardGranted: true,
+              },
+            ],
+          },
+        ];
+        mockRefillEarned = 1;
+        mockRefillUsed = 0;
+      }
     },
     confirmMeOrder: (orderId: string) => {
       const subscriptionOrder = mockMeSubscriptionOrders.find((order) => order.orderId === orderId);

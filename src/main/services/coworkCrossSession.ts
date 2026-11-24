@@ -12,7 +12,9 @@ export const CROSS_SESSION_INSERT_MAX_CHARS = 12000;
 export type CoworkCrossSessionErrorCode =
   | 'INVALID_SESSION_ID'
   | 'SESSION_NOT_FOUND'
+  | 'READ_NOT_ALLOWED_FROM_A2A'
   | 'WRITE_NOT_ALLOWED_FOR_A2A'
+  | 'WRITE_NOT_ALLOWED_FROM_A2A'
   | 'SOURCE_TARGET_SAME_SESSION'
   | 'EMPTY_MESSAGE'
   | 'MESSAGE_TOO_LONG'
@@ -175,10 +177,29 @@ function isExternallyVisibleMessage(message: CoworkMessage): boolean {
 export class CoworkCrossSessionService {
   constructor(private readonly store: CoworkCrossSessionStore) {}
 
-  readAll(input: { sessionId: string }): CoworkCrossSessionReadAllResult {
+  private checkSourceReadAllowed(sourceSessionId: string | undefined, targetSessionId: string): CoworkCrossSessionError | null {
+    if (!sourceSessionId) return null;
+    const normalizedSource = normalizeIdbotsSessionId(sourceSessionId);
+    if (normalizedSource.ok === false) return null;
+    if (normalizedSource.sessionId === targetSessionId) return null;
+    const sourceSession = this.store.getSessionMetadata(normalizedSource.sessionId);
+    if (sourceSession?.sessionType === 'a2a') {
+      return error(
+        'READ_NOT_ALLOWED_FROM_A2A',
+        'A2A sessions are not allowed to read messages from other local sessions.',
+      );
+    }
+    return null;
+  }
+
+  readAll(input: { sessionId: string; sourceSessionId?: string }): CoworkCrossSessionReadAllResult {
     const resolved = this.getExistingSession(input.sessionId);
     if (resolved.ok === false) {
       return resolved;
+    }
+    const readBlocked = this.checkSourceReadAllowed(input.sourceSessionId, resolved.sessionId);
+    if (readBlocked) {
+      return readBlocked;
     }
 
     return {
@@ -188,10 +209,14 @@ export class CoworkCrossSessionService {
     };
   }
 
-  readLatest(input: { sessionId: string }): CoworkCrossSessionReadLatestResult {
+  readLatest(input: { sessionId: string; sourceSessionId?: string }): CoworkCrossSessionReadLatestResult {
     const resolved = this.getExistingSessionMetadata(input.sessionId);
     if (resolved.ok === false) {
       return resolved;
+    }
+    const readBlocked = this.checkSourceReadAllowed(input.sourceSessionId, resolved.sessionId);
+    if (readBlocked) {
+      return readBlocked;
     }
 
     const latestMessage = this.store.getSessionLatestVisibleMessage(resolved.sessionId);
@@ -249,6 +274,12 @@ export class CoworkCrossSessionService {
       const sourceSession = this.store.getSession(sourceId.sessionId);
       if (!sourceSession) {
         return error('SESSION_NOT_FOUND', `Source session not found: ${sourceId.sessionId}`);
+      }
+      if (sourceSession.sessionType === 'a2a') {
+        return error(
+          'WRITE_NOT_ALLOWED_FROM_A2A',
+          'A2A sessions are not allowed to insert user messages into other local sessions.',
+        );
       }
     }
 

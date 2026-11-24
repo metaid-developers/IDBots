@@ -220,8 +220,24 @@ export interface SellerAutoFulfillDeps {
   // WS-4 Token-for-Goods dependencies (optional with defaults)
   broadcastMvcRawTx?: (rawTx: string) => Promise<string>;
   fetchMrc20Utxos?: (params: { address: string; mrc20Id: string }) => Promise<AuthoritativeMrc20Utxo[]>;
+  fetchBtcTxStatus?: (txid: string) => Promise<{ found: boolean; confirmed?: boolean; confirmations?: number }>;
   tokenGoodsWaiters?: TokenGoodsWaiterRegistry;
   recordNotification?: (input: AgentNotificationInput) => void;
+  onFtEscrowPassiveSold?: (payload: {
+    orderId: string;
+    metabotId: number;
+    sessionId?: string | null;
+    listingKey: string;
+    assetKey: string;
+    chain: 'btc' | 'mvc';
+    symbol: string;
+    amountDisplay: string;
+    amountMilli: number;
+    deliveryTxId: string;
+    buyerAddress?: string;
+    filledLots: number;
+    totalLots: number;
+  }) => { sessionId?: string | null } | void;
   emitLog?: (msg: string) => void;
   now?: () => number;
 }
@@ -742,8 +758,13 @@ export class SellerAutoFulfillDaemon {
           skipTradeMessage,
         );
       }
-      if (!authorizedQuote && sellIntent && (sellIntent.autoFulfillMe === false || sellIntent.intent.autoFulfillMe === false)) {
-        // Explicit manual-fulfill preference: do not auto-transfer and do not auto-reject.
+      const autoFulfillMeEnabled =
+        sellIntent != null &&
+        sellIntent.autoFulfillMe !== false &&
+        sellIntent.intent.autoFulfillMe !== false &&
+        (sellIntent.autoFulfillMe === true || sellIntent.intent.autoFulfillMe === true);
+      if (!authorizedQuote && sellIntent && !autoFulfillMeEnabled) {
+        // Explicit opt-in required: do not auto-transfer and do not auto-reject.
         return { outcome: 'skipped', reason: 'auto_fulfill_disabled_by_seller' };
       }
 
@@ -1265,7 +1286,12 @@ export class SellerAutoFulfillDaemon {
           `Local seller MetaBot #${input.sellerMetabotId} has no active ME listing or authorized quote for item ${normalizedItemPinId}`,
         );
       }
-      if (!authorizedQuote && sellIntent && (sellIntent.autoFulfillMe === false || sellIntent.intent.autoFulfillMe === false)) {
+      const autoFulfillMeEnabled =
+        sellIntent != null &&
+        sellIntent.autoFulfillMe !== false &&
+        sellIntent.intent.autoFulfillMe !== false &&
+        (sellIntent.autoFulfillMe === true || sellIntent.intent.autoFulfillMe === true);
+      if (!authorizedQuote && sellIntent && !autoFulfillMeEnabled) {
         throw new Error(
           `Local seller MetaBot #${input.sellerMetabotId} has disabled automatic ME fulfillment for item ${normalizedItemPinId}`,
         );
@@ -1831,19 +1857,47 @@ export class SellerAutoFulfillDaemon {
       settledAt: now,
     });
 
+    let resolvedSessionId = localOrder?.sessionId ?? null;
+    if (this.deps.onFtEscrowPassiveSold) {
+      try {
+        const pushed = this.deps.onFtEscrowPassiveSold({
+          orderId: order.orderId,
+          metabotId: sellerMetabotId,
+          sessionId: localOrder?.sessionId ?? null,
+          listingKey: localOrder?.listingKey ?? order.listingKey ?? order.orderId,
+          assetKey: order.assetKey,
+          chain: order.assetKey.toLowerCase().startsWith('mrc20:') ? 'btc' : 'mvc',
+          symbol: localOrder?.symbol ?? order.tokenSymbol,
+          amountDisplay: localOrder?.amountDisplay ?? order.tokenAmountBase,
+          amountMilli: order.amountMilli,
+          deliveryTxId,
+          buyerAddress: order.buyerBotAddress,
+          filledLots,
+          totalLots,
+        });
+        if (!resolvedSessionId && pushed && typeof pushed === 'object' && pushed.sessionId) {
+          resolvedSessionId = pushed.sessionId;
+        }
+      } catch (pushErr) {
+        this.log(
+          `[SellerAutoFulfill/FT] Passive fill card push failed for ${order.orderId}: ${pushErr instanceof Error ? pushErr.message : String(pushErr)}`,
+        );
+      }
+    }
+
     this.deps.recordNotification?.({
       eventId: `ft-me-sold:${order.orderId}`,
       type: 'ft.escrow.sold',
       category: 'work',
       metabotId: sellerMetabotId,
-      sessionId: localOrder?.sessionId ?? null,
+      sessionId: resolvedSessionId,
       taskId: null,
       runId: null,
       title: `${localOrder?.symbol ?? order.tokenSymbol} auto-fulfilled (+${meDisplay} ME)`,
       body: `Delivered ${localOrder?.amountDisplay ?? order.tokenAmountBase} ${localOrder?.symbol ?? order.tokenSymbol} and settled ${meDisplay} ME (${filledLots}/${totalLots} lots).`,
       priority: 'normal',
-      target: localOrder?.sessionId
-        ? { kind: 'session', sessionId: localOrder.sessionId }
+      target: resolvedSessionId
+        ? { kind: 'session', sessionId: resolvedSessionId }
         : { kind: 'bot_automation', metabotId: sellerMetabotId, section: 'surf' },
     });
 
@@ -1895,7 +1949,11 @@ export class SellerAutoFulfillDaemon {
     if (!sellIntent) {
       return { ok: false, reason: 'no_active_sell_intent_for_item' };
     }
-    if (sellIntent.autoFulfillTokens === false || sellIntent.intent.autoFulfillTokens === false) {
+    const autoFulfillTokensEnabled =
+      sellIntent.autoFulfillTokens !== false &&
+      sellIntent.intent.autoFulfillTokens !== false &&
+      (sellIntent.autoFulfillTokens === true || sellIntent.intent.autoFulfillTokens === true);
+    if (!autoFulfillTokensEnabled) {
       return { ok: false, reason: 'auto_fulfill_tokens_disabled_by_seller' };
     }
     const tokens = sellIntent.intent.prices?.tokens ?? [];
@@ -2241,7 +2299,7 @@ export class SellerAutoFulfillDaemon {
         return { outcome: 'delivered', nftDeliveryTxId: claim.existing.nftDeliveryTxId };
       }
 
-      // Authoritative chain verification (S-01 + S-02)
+      // Authoritative chain verification (S-01 + S-02 + >=1 BTC confirmation anti-RBF)
       if (priceMatch.parsedKey.chain === 'btc' && priceMatch.parsedKey.mrc20Id) {
         const verified = await verifyMrc20GoodsPayment(
           {
@@ -2250,8 +2308,12 @@ export class SellerAutoFulfillDaemon {
             expectedMrc20Id: priceMatch.parsedKey.mrc20Id,
             expectedDecimals: priceMatch.tokenPrice.decimals,
             expectedAmountBase: reservation.amountBase,
+            minConfirmations: 1,
           },
-          { fetchUtxos: this.deps.fetchMrc20Utxos },
+          {
+            fetchUtxos: this.deps.fetchMrc20Utxos,
+            fetchBtcTxStatus: this.deps.fetchBtcTxStatus,
+          },
         );
         if (!verified.valid) {
           // Remove unused pending claim so legitimate retries with a valid paymentTxId remain possible

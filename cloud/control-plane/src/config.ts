@@ -79,6 +79,23 @@ export interface ControlPlaneConfig {
    * built-in placeholder under `static-login/`.
    */
   loginBundleDir: string;
+  /**
+   * Directory with static legal HTML documents (`terms.html`, `privacy.html`,
+   * `custody.html`, `support.html`) served at `/terms`, `/privacy`, `/custody`,
+   * `/support`, and `/disclosure` when reached directly at the control plane.
+   */
+  legalDir: string;
+  /**
+   * Optional upstream ABS invite service configuration (`CP_INVITE_SERVICE_URL`
+   * + `CP_INVITE_API_TOKEN`). When `baseUrl` is unset, sign-up falls back to
+   * the local SQLite `invites` table so existing standalone tests stay intact.
+   */
+  inviteService: {
+    baseUrl: string | null;
+    token: string | null;
+    hibernateAfterMs: number;
+    wakeGraceMs: number;
+  };
   /** ASR voice gateway (new capability; see docs/cloud-mobile/voice/asr-channel.md). */
   asr: AsrConfig;
   /**
@@ -131,6 +148,47 @@ function defaultLoginBundleDir(): string {
     return repoRootBundle;
   }
   return path.join(PACKAGE_ROOT, 'static-login');
+}
+
+function defaultLegalDir(): string {
+  return path.resolve(PACKAGE_ROOT, '..', '..', 'deploy', 'legal');
+}
+
+function parseInviteServiceConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig['inviteService'] {
+  const rawBase = env.CP_INVITE_SERVICE_URL?.trim() ?? '';
+  const rawToken = env.CP_INVITE_API_TOKEN?.trim() ?? '';
+  const hibernateDays = parsePositiveInt(env, 'CP_INVITE_HIBERNATE_AFTER_DAYS', 7);
+  const hibernateAfterMs = parsePositiveInt(
+    env,
+    'CP_INVITE_HIBERNATE_AFTER_MS',
+    hibernateDays * 24 * 60 * 60 * 1000,
+  );
+  const wakeGraceMs = parsePositiveInt(
+    env,
+    'CP_INVITE_WAKE_GRACE_MS',
+    24 * 60 * 60 * 1000,
+  );
+  if (!rawBase) {
+    return { baseUrl: null, token: null, hibernateAfterMs, wakeGraceMs };
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(rawBase);
+  } catch {
+    throw new ConfigError(`CP_INVITE_SERVICE_URL must be a valid URL, got "${rawBase}"`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new ConfigError(`CP_INVITE_SERVICE_URL must use http or https, got "${rawBase}"`);
+  }
+  if (!rawToken) {
+    throw new ConfigError('CP_INVITE_API_TOKEN is required when CP_INVITE_SERVICE_URL is set');
+  }
+  return {
+    baseUrl: rawBase.replace(/\/+$/, ''),
+    token: rawToken,
+    hibernateAfterMs,
+    wakeGraceMs,
+  };
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -257,6 +315,23 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
     throw new ConfigError('CP_SMS_MODE=fake but CP_FAKE_SMS_NUMBERS is empty');
   }
 
+  const sms = {
+    accessKeyId: env.CP_SMS_ACCESS_KEY_ID?.trim() || null,
+    accessKeySecret: env.CP_SMS_ACCESS_KEY_SECRET?.trim() || null,
+    signName: env.CP_SMS_SIGN_NAME?.trim() || null,
+    templateLogin: env.CP_SMS_TEMPLATE_LOGIN?.trim() || null,
+    templateReverify: env.CP_SMS_TEMPLATE_REVERIFY?.trim() || null,
+  };
+  if (smsMode === 'aliyun') {
+    if (!sms.accessKeyId || !sms.accessKeySecret || !sms.signName || !sms.templateLogin) {
+      throw new ConfigError(
+        'CP_SMS_MODE=aliyun requires CP_SMS_ACCESS_KEY_ID, CP_SMS_ACCESS_KEY_SECRET, ' +
+          'CP_SMS_SIGN_NAME, and CP_SMS_TEMPLATE_LOGIN',
+      );
+    }
+  }
+
+  const inviteService = parseInviteServiceConfig(env);
   const asr = parseAsrConfig(env);
 
   return {
@@ -273,16 +348,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
     tenantCpus: parsePositiveInt(env, 'CP_TENANT_CPUS', 2),
     tenantEnv,
     smsMode,
-    sms: {
-      accessKeyId: env.CP_SMS_ACCESS_KEY_ID ?? null,
-      accessKeySecret: env.CP_SMS_ACCESS_KEY_SECRET ?? null,
-      signName: env.CP_SMS_SIGN_NAME ?? null,
-      templateLogin: env.CP_SMS_TEMPLATE_LOGIN ?? null,
-      templateReverify: env.CP_SMS_TEMPLATE_REVERIFY ?? null,
-    },
+    sms,
     fakeSmsNumbers,
     alertWebhook: env.CP_ALERT_WEBHOOK ?? null,
     loginBundleDir: env.CP_LOGIN_BUNDLE_DIR ?? defaultLoginBundleDir(),
+    legalDir: env.CP_LEGAL_DIR ?? defaultLegalDir(),
+    inviteService,
     asr,
     adminApiToken: env.CP_ADMIN_API_TOKEN ? env.CP_ADMIN_API_TOKEN : null,
     push: parsePushConfig(env),

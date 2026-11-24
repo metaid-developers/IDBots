@@ -17,6 +17,7 @@
  * "ME 不可见 / 不可用" rather than throwing.
  */
 
+import crypto from 'node:crypto';
 import { signMvcAddressMessage } from './mvcSponsorClient';
 import type { UserIdentityStore } from '../userIdentityStore';
 import { getMePointSettings, mirrorMePointSettings } from './mePointSettings';
@@ -66,7 +67,12 @@ export type MeApiStage =
   | 'capture'
   | 'release'
   | 'pay'
-  | 'freezes';
+  | 'freezes'
+  // mobile invite center, bootstrap trial claim, and weekly quota refill.
+  | 'invite_status'
+  | 'invite_generate'
+  | 'invite_claim'
+  | 'invite_refill';
 
 export class MePointsApiError extends Error {
   readonly stage: MeApiStage;
@@ -959,6 +965,275 @@ export async function getMeTopupOrders(): Promise<MeTopupOrder[]> {
   return orders;
 }
 
+// ---------------------------------------------------------------------------
+// Invite center, bootstrap grant claim, and weekly quota refill (/v1/me/invite/*)
+// ---------------------------------------------------------------------------
+
+export const ME_INVITE_STATUS_PATH = '/v1/me/invite/status';
+export const ME_INVITE_GENERATE_PATH = '/v1/me/invite/generate';
+export const ME_INVITE_CLAIM_GRANT_PATH = '/v1/me/invite/claim-grant';
+export const ME_INVITE_CLAIM_REFILL_PATH = '/v1/me/invite/claim-refill';
+
+export const ME_INVITE_STATUS_ACTION = 'invite_status';
+export const ME_INVITE_GENERATE_ACTION = 'invite_generate';
+export const ME_INVITE_CLAIM_GRANT_ACTION = 'invite_claim';
+export const ME_INVITE_CLAIM_REFILL_ACTION = 'invite_refill';
+
+export interface MeInviteProgress {
+  accountAgeDays: number;
+  requiredAgeDays: number;
+  totalSpentMilli: number;
+  requiredSpentMilli: number;
+  paidBypassEnabled: boolean;
+  hasPaidSubscription: boolean;
+  isTrialSubscription: boolean;
+}
+
+export interface MeInviteInviteeBrief {
+  /** 1 = reserved, 2 = activated */
+  status: number;
+  phoneMasked?: string;
+  reservedAt: number;
+  activatedAt?: number;
+  rewardGranted: boolean;
+}
+
+export interface MeInviteCodeItem {
+  code: string;
+  status: number;
+  maxUses: number;
+  usedCount: number;
+  activatedCount: number;
+  createdAt: number;
+  invitees: MeInviteInviteeBrief[];
+}
+
+export interface MeInviteDefaultGrant {
+  planId: string;
+  planName: string;
+  planNameEn: string;
+  periodDays: number;
+}
+
+export interface MeInviteRefillInfo {
+  availableCount: number;
+  earnedTotal: number;
+  usedTotal: number;
+  weeklyGrant?: MeBalance['weeklyGrant'];
+  planId?: string;
+  planName?: string;
+}
+
+export interface MeInviteStatus {
+  identityAddress: string;
+  issueEnabled: boolean;
+  eligible: boolean;
+  eligibleReason: string;
+  progress: MeInviteProgress;
+  totalQuota: number;
+  usedQuota: number;
+  remainingQuota: number;
+  defaultGrant: MeInviteDefaultGrant;
+  codes: MeInviteCodeItem[];
+  refill: MeInviteRefillInfo;
+}
+
+export interface MeInviteClaimGrantResult {
+  applied: boolean;
+  redemptionId: string;
+  code: string;
+  planId: string;
+  periodDays: number;
+  subscription: MeSubscription | null;
+}
+
+export interface MeInviteClaimRefillResult {
+  applied: boolean;
+  claimId: string;
+  beforeRemainingMilli: number;
+  afterRemainingMilli: number;
+  refilledDeltaMilli: number;
+  availableRefillsLeft: number;
+  weeklyGrant?: MeBalance['weeklyGrant'];
+}
+
+function normalizeMeWeeklyGrant(raw: unknown): MeBalance['weeklyGrant'] | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const grant = raw as Record<string, unknown>;
+  return {
+    amountMilli: pickNumber(grant, 'amountMilli', 'amount_milli'),
+    remainingMilli: pickNumber(grant, 'remainingMilli', 'remaining_milli'),
+    cycleStart: pickNumber(grant, 'cycleStart', 'cycle_start'),
+    cycleEnd: pickNumber(grant, 'cycleEnd', 'cycle_end'),
+    isResidual: grant.isResidual === true || grant.is_residual === true,
+    nextResetAt: pickNumber(grant, 'nextResetAt', 'next_reset_at'),
+  };
+}
+
+function normalizeMeInviteStatus(record: Record<string, unknown>): MeInviteStatus {
+  const progressRaw = (record.progress && typeof record.progress === 'object' && !Array.isArray(record.progress))
+    ? (record.progress as Record<string, unknown>)
+    : {};
+  const defaultGrantRaw = (record.defaultGrant && typeof record.defaultGrant === 'object' && !Array.isArray(record.defaultGrant))
+    ? (record.defaultGrant as Record<string, unknown>)
+    : {};
+  const refillRaw = (record.refill && typeof record.refill === 'object' && !Array.isArray(record.refill))
+    ? (record.refill as Record<string, unknown>)
+    : {};
+  const codeRows = Array.isArray(record.codes) ? record.codes : [];
+  const codes: MeInviteCodeItem[] = [];
+  for (const row of codeRows) {
+    const item = (row && typeof row === 'object' && !Array.isArray(row)) ? (row as Record<string, unknown>) : {};
+    const code = pickText(item, 'code');
+    if (!code) continue;
+    const inviteeRows = Array.isArray(item.invitees) ? item.invitees : [];
+    const invitees: MeInviteInviteeBrief[] = inviteeRows
+      .filter((entry) => Boolean(entry && typeof entry === 'object' && !Array.isArray(entry)))
+      .map((entry) => {
+        const inv = entry as Record<string, unknown>;
+        return {
+          status: pickNumber(inv, 'status'),
+          phoneMasked: pickText(inv, 'phoneMasked', 'phone_masked') || undefined,
+          reservedAt: pickEpoch(inv, 'reservedAt', 'reserved_at'),
+          activatedAt: pickEpoch(inv, 'activatedAt', 'activated_at') || undefined,
+          rewardGranted: inv.rewardGranted === true || inv.reward_granted === true,
+        };
+      });
+    codes.push({
+      code,
+      status: pickNumber(item, 'status'),
+      maxUses: pickNumber(item, 'maxUses', 'max_uses'),
+      usedCount: pickNumber(item, 'usedCount', 'used_count'),
+      activatedCount: pickNumber(item, 'activatedCount', 'activated_count'),
+      createdAt: pickEpoch(item, 'createdAt', 'created_at'),
+      invitees,
+    });
+  }
+
+  return {
+    identityAddress: pickText(record, 'identityAddress', 'identity_address'),
+    issueEnabled: record.issueEnabled !== false && record.issue_enabled !== false,
+    eligible: record.eligible === true,
+    eligibleReason: pickText(record, 'eligibleReason', 'eligible_reason'),
+    progress: {
+      accountAgeDays: pickNumber(progressRaw, 'accountAgeDays', 'account_age_days'),
+      requiredAgeDays: pickNumber(progressRaw, 'requiredAgeDays', 'required_age_days'),
+      totalSpentMilli: pickNumber(progressRaw, 'totalSpentMilli', 'total_spent_milli'),
+      requiredSpentMilli: pickNumber(progressRaw, 'requiredSpentMilli', 'required_spent_milli'),
+      paidBypassEnabled: progressRaw.paidBypassEnabled !== false && progressRaw.paid_bypass_enabled !== false,
+      hasPaidSubscription: progressRaw.hasPaidSubscription === true || progressRaw.has_paid_subscription === true,
+      isTrialSubscription: progressRaw.isTrialSubscription === true || progressRaw.is_trial_subscription === true,
+    },
+    totalQuota: pickNumber(record, 'totalQuota', 'total_quota'),
+    usedQuota: pickNumber(record, 'usedQuota', 'used_quota'),
+    remainingQuota: pickNumber(record, 'remainingQuota', 'remaining_quota'),
+    defaultGrant: {
+      planId: pickText(defaultGrantRaw, 'planId', 'plan_id') || 'me_pro',
+      planName: pickText(defaultGrantRaw, 'planName', 'plan_name') || 'ID.Student',
+      planNameEn: pickText(defaultGrantRaw, 'planNameEn', 'plan_name_en') || 'ID.Student',
+      periodDays: pickNumber(defaultGrantRaw, 'periodDays', 'period_days') || 14,
+    },
+    codes,
+    refill: {
+      availableCount: pickNumber(refillRaw, 'availableCount', 'available_count'),
+      earnedTotal: pickNumber(refillRaw, 'earnedTotal', 'earned_total'),
+      usedTotal: pickNumber(refillRaw, 'usedTotal', 'used_total'),
+      weeklyGrant: normalizeMeWeeklyGrant(refillRaw.weeklyGrant ?? refillRaw.weekly_grant),
+      planId: pickText(refillRaw, 'planId', 'plan_id') || undefined,
+      planName: pickText(refillRaw, 'planName', 'plan_name') || undefined,
+    },
+  };
+}
+
+export async function getMeInviteStatus(): Promise<MeInviteStatus> {
+  const { identity } = await signedAuth('invite_status', ME_INVITE_STATUS_ACTION);
+  const data = (await meRequestJson({
+    stage: 'invite_status',
+    method: 'GET',
+    path: ME_INVITE_STATUS_PATH,
+    identity,
+  })) as Record<string, unknown>;
+  return normalizeMeInviteStatus(data);
+}
+
+export async function generateMeInviteCode(): Promise<MeInviteStatus> {
+  const { identity } = await signedAuth('invite_generate', ME_INVITE_GENERATE_ACTION);
+  const data = (await meRequestJson({
+    stage: 'invite_generate',
+    method: 'POST',
+    path: ME_INVITE_GENERATE_PATH,
+    body: {},
+    identity,
+  })) as Record<string, unknown>;
+  return normalizeMeInviteStatus(data);
+}
+
+export async function claimMeInviteGrantTicket(grantTicket: string): Promise<MeInviteClaimGrantResult> {
+  const normalizedTicket = normalizeText(grantTicket);
+  if (!normalizedTicket) {
+    throw new MePointsApiError({ stage: 'invite_claim', message: 'grantTicket is required' });
+  }
+  const { identity } = await signedAuth('invite_claim', ME_INVITE_CLAIM_GRANT_ACTION);
+  const data = (await meRequestJson({
+    stage: 'invite_claim',
+    method: 'POST',
+    path: ME_INVITE_CLAIM_GRANT_PATH,
+    body: { grantTicket: normalizedTicket },
+    identity,
+  })) as Record<string, unknown>;
+  state.balanceCache = null;
+  const subRaw = (data.subscription && typeof data.subscription === 'object' && !Array.isArray(data.subscription))
+    ? (data.subscription as Record<string, unknown>)
+    : null;
+  return {
+    applied: data.applied === true,
+    redemptionId: pickText(data, 'redemptionId', 'redemption_id'),
+    code: pickText(data, 'code'),
+    planId: pickText(data, 'planId', 'plan_id'),
+    periodDays: pickNumber(data, 'periodDays', 'period_days'),
+    subscription: subRaw
+      ? {
+          statusText: pickText(subRaw, 'statusText', 'status_text', 'status', 'stage'),
+          raw: subRaw,
+        }
+      : null,
+  };
+}
+
+export async function claimMeInviteRefill(input: { idempotencyKey?: string } = {}): Promise<MeInviteClaimRefillResult> {
+  const idempotencyKey = normalizeText(input.idempotencyKey) || `refill_${crypto.randomUUID()}`;
+  const { identity } = await signedAuth('invite_refill', ME_INVITE_CLAIM_REFILL_ACTION);
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const data = (await meRequestJson({
+        stage: 'invite_refill',
+        method: 'POST',
+        path: ME_INVITE_CLAIM_REFILL_PATH,
+        body: { idempotencyKey },
+        identity,
+      })) as Record<string, unknown>;
+      state.balanceCache = null;
+      return {
+        applied: data.applied === true,
+        claimId: pickText(data, 'claimId', 'claim_id'),
+        beforeRemainingMilli: pickNumber(data, 'beforeRemainingMilli', 'before_remaining_milli'),
+        afterRemainingMilli: pickNumber(data, 'afterRemainingMilli', 'after_remaining_milli'),
+        refilledDeltaMilli: pickNumber(data, 'refilledDeltaMilli', 'refilled_delta_milli'),
+        availableRefillsLeft: pickNumber(data, 'availableRefillsLeft', 'available_refills_left'),
+        weeklyGrant: normalizeMeWeeklyGrant(data.weeklyGrant ?? data.weekly_grant),
+      };
+    } catch (error) {
+      if (error instanceof MePointsApiError && (error.featureUnavailable || error.errorCode || error.status === 400)) {
+        throw error;
+      }
+      lastError = error;
+      await delayMs(400);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 // GET /v1/me/subscription/orders — the owner-scoped subscription order list
 // (Amendment v0.3). The server ships this after v0.2; until then the 404
 // surfaces as featureUnavailable and the usage page degrades to topup-only.
@@ -1155,6 +1430,13 @@ export function registerMePointsIpcHandlers(deps: {
   });
   wrap('me:getTopupOrders', async () => ({ orders: await getMeTopupOrders() }));
   wrap('me:getSubscriptionOrders', async () => ({ orders: await getMeSubscriptionOrders() }));
+  wrap('me:getInviteStatus', async () => ({ inviteStatus: await getMeInviteStatus() }));
+  wrap('me:generateInviteCode', async () => ({ inviteStatus: await generateMeInviteCode() }));
+  wrap('me:claimInviteRefill', async (input) => ({
+    refillResult: await claimMeInviteRefill({
+      idempotencyKey: normalizeText(input.idempotencyKey) || undefined,
+    }),
+  }));
   // 积分增量包 toggle: the server flag (/v1/me/settings) is authoritative;
   // the kvStore keeps a mirror for degraded reads (server unreachable / no
   // identity). Writes only mirror AFTER a server confirmation — see

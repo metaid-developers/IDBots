@@ -36,6 +36,9 @@ import {
 } from './metabotNftPresentation.js';
 import { NftArtworkImage } from './NftArtworkImage';
 import LegacyNftDepositGuideModal from './LegacyNftDepositGuideModal';
+import { serializeNftCardFence, type NftCardData } from '../chat/nftCardSyntax';
+import { dispatchSuiteComposerDraft } from '../chat/tokenSuiteUi';
+import { ct } from '../commerce/commerceTradeI18n';
 
 type NftKind = 'mrc721' | 'metacontract';
 
@@ -476,6 +479,52 @@ const MetaBotNftWalletModal: React.FC<MetaBotNftWalletModalProps> = ({ metabot, 
                       {i18nService.t('metabotNftSell')}
                     </button>
                   )}
+                  <button
+                    type="button"
+                    data-slot="metabot-nft-send-to-chat"
+                    onClick={() => {
+                      const rawPinId = typeof detailItem.raw?.pinId === 'string'
+                        ? detailItem.raw.pinId
+                        : detailItem.kind === 'mrc721'
+                          ? detailItem.key
+                          : undefined;
+                      const cardPayload: NftCardData =
+                        detailItem.kind === 'mrc721'
+                          ? {
+                              format: 'mrc721',
+                              pinId: rawPinId,
+                              number: detailItem.number,
+                              name: detailItem.name || undefined,
+                              series: detailItem.collectionName || undefined,
+                              icon: detailItem.imageRef,
+                              imgUrl: detailItem.imageUrl,
+                              owner: metabot.mvc_address || undefined,
+                              ownerLabel: metabot.name || undefined,
+                              action: 'info',
+                            }
+                          : {
+                              format: 'metacontract',
+                              genesis: typeof detailItem.raw?.genesis === 'string' ? detailItem.raw.genesis : undefined,
+                              codehash: typeof detailItem.raw?.codeHash === 'string' ? detailItem.raw.codeHash : undefined,
+                              tokenIndex: detailItem.tokenIndex || '0',
+                              name: detailItem.name || undefined,
+                              series: detailItem.collectionName || undefined,
+                              icon: detailItem.imageRef,
+                              imgUrl: detailItem.imageUrl,
+                              owner: metabot.mvc_address || undefined,
+                              ownerLabel: metabot.name || undefined,
+                              action: 'info',
+                            };
+                      const fence = serializeNftCardFence(cardPayload);
+                      if (fence) {
+                        dispatchSuiteComposerDraft(`${fence}\n`);
+                        onClose();
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg border dark:border-claude-darkBorder border-claude-border px-4 py-2 text-sm font-medium dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+                  >
+                    {ct('Send to Chat', '发送到对话')}
+                  </button>
                 </div>
               </div>
             </div>

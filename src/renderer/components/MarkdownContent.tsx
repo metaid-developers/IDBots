@@ -67,12 +67,36 @@ import {
   parseNftCardGroupFence,
   parseNftCollectionCardFence,
 } from './chat/nftCardSyntax';
+import NftListingCard from './chat/NftListingCard';
+import NftFillCard from './chat/NftFillCard';
+import NftMyListingsCard from './chat/NftMyListingsCard';
+import NftPortfolioCard from './chat/NftPortfolioCard';
+import NftSwapCard from './chat/NftSwapCard';
+import NftActionCard from './chat/NftActionCard';
+import NftNegotiateCard from './chat/NftNegotiateCard';
+import {
+  isNftActionCardFenceLanguage,
+  isNftFillCardFenceLanguage,
+  isNftListingCardFenceLanguage,
+  isNftMyListingsCardFenceLanguage,
+  isNftNegotiateCardFenceLanguage,
+  isNftPortfolioCardFenceLanguage,
+  isNftSwapCardFenceLanguage,
+  parseNftActionCardFence,
+  parseNftFillCardFence,
+  parseNftListingCardFence,
+  parseNftMyListingsCardFence,
+  parseNftNegotiateCardFence,
+  parseNftPortfolioCardFence,
+  parseNftSwapCardFence,
+} from './chat/nftSuiteSyntax';
 import PaymentCard from './chat/PaymentCard';
 import { isPayCardFenceLanguage, parsePayCardFence } from './chat/paymentCardSyntax';
 import EscrowCard from './chat/EscrowCard';
 import { isEscrowCardFenceLanguage, parseEscrowCardFence } from './chat/escrowCardSyntax';
 import FtQuoteCard from './chat/FtQuoteCard';
 import FtOrderCard from './chat/FtOrderCard';
+import FtOrderBookCard from './chat/FtOrderBookCard';
 import FtFillCard from './chat/FtFillCard';
 import FtMyOrdersCard from './chat/FtMyOrdersCard';
 import FtPortfolioCard from './chat/FtPortfolioCard';
@@ -83,6 +107,7 @@ import {
   isFtBridgeCardFenceLanguage,
   isFtFillCardFenceLanguage,
   isFtMyOrdersCardFenceLanguage,
+  isFtOrderBookCardFenceLanguage,
   isFtOrderCardFenceLanguage,
   isFtPortfolioCardFenceLanguage,
   isFtQuoteCardFenceLanguage,
@@ -90,6 +115,7 @@ import {
   parseFtBridgeCardFence,
   parseFtFillCardFence,
   parseFtMyOrdersCardFence,
+  parseFtOrderBookCardFence,
   parseFtOrderCardFence,
   parseFtPortfolioCardFence,
   parseFtQuoteCardFence,
@@ -549,6 +575,48 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
         return <NftCollectionCard data={collectionData} />;
       }
     }
+    if (isNftListingCardFenceLanguage(fenceLanguage)) {
+      const listingData = parseNftListingCardFence(trimmedCodeText);
+      if (listingData) {
+        return <NftListingCard data={listingData} />;
+      }
+    }
+    if (isNftFillCardFenceLanguage(fenceLanguage)) {
+      const fillData = parseNftFillCardFence(trimmedCodeText);
+      if (fillData) {
+        return <NftFillCard data={fillData} />;
+      }
+    }
+    if (isNftMyListingsCardFenceLanguage(fenceLanguage)) {
+      const myListingsData = parseNftMyListingsCardFence(trimmedCodeText);
+      if (myListingsData) {
+        return <NftMyListingsCard data={myListingsData} />;
+      }
+    }
+    if (isNftPortfolioCardFenceLanguage(fenceLanguage)) {
+      const portfolioData = parseNftPortfolioCardFence(trimmedCodeText);
+      if (portfolioData) {
+        return <NftPortfolioCard data={portfolioData} />;
+      }
+    }
+    if (isNftSwapCardFenceLanguage(fenceLanguage)) {
+      const swapData = parseNftSwapCardFence(trimmedCodeText);
+      if (swapData) {
+        return <NftSwapCard data={swapData} />;
+      }
+    }
+    if (isNftActionCardFenceLanguage(fenceLanguage)) {
+      const actionData = parseNftActionCardFence(trimmedCodeText);
+      if (actionData) {
+        return <NftActionCard data={actionData} />;
+      }
+    }
+    if (isNftNegotiateCardFenceLanguage(fenceLanguage)) {
+      const negotiateData = parseNftNegotiateCardFence(trimmedCodeText);
+      if (negotiateData) {
+        return <NftNegotiateCard data={negotiateData} />;
+      }
+    }
     if (isNftCardFenceLanguage(fenceLanguage)) {
       const cardData = parseNftCardFence(trimmedCodeText);
       if (cardData) {
@@ -619,6 +687,12 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
       const actionData = parseFtActionCardFence(trimmedCodeText);
       if (actionData) {
         return <FtActionCard data={actionData} />;
+      }
+    }
+    if (isFtOrderBookCardFenceLanguage(fenceLanguage)) {
+      const orderBookData = parseFtOrderBookCardFence(trimmedCodeText);
+      if (orderBookData) {
+        return <FtOrderBookCard data={orderBookData} />;
       }
     }
 

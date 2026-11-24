@@ -736,7 +736,7 @@ export function createLiveStageState(context: LiveStageSessionContext): LiveStag
 
 /** Tools that move value or tokens on-chain — the chain-transfer scene. */
 const CHAIN_TRANSFER_TOOLS = new Set([
-  'wallet_transfer', 'wallet_token_transfer', 'wallet_token_buy', 'wallet_token_sell',
+  'wallet_transfer', 'wallet_token_send', 'wallet_token_transfer', 'wallet_token_buy', 'wallet_token_sell',
   'wallet_token_take', 'wallet_token_cancel_sell', 'wallet_nft_transfer', 'wallet_nft_buy',
   'wallet_nft_sell', 'wallet_nft_cancel_sell', 'wallet_btc_build_multisig_psbt',
   'wallet_btc_sign_psbt', 'wallet_btc_combine_psbts', 'wallet_btc_finalize_psbt',
@@ -762,7 +762,7 @@ const CHAIN_READ_TOOLS = new Set([
   'search_qa', 'list_latest_questions', 'get_question_answers', 'search_social_posts',
   'social_post_detail', 'social_post_comments', 'metaid_profile', 'search_metaids',
   'list_online_bots', 'list_online_services', 'check_metafile_route', 'metaprotocol_registry',
-  'wallet_balance', 'wallet_mrc20_balance', 'wallet_token_card', 'wallet_token_portfolio', 'wallet_token_my_orders', 'wallet_token_bridge_card', 'wallet_nft_balance', 'wallet_token_balance', 'wallet_token_issued_list', 'wallet_nft_sell_orders',
+  'wallet_resolve_global_metaid', 'wallet_balance', 'wallet_mrc20_balance', 'wallet_token_card', 'wallet_token_orders', 'wallet_token_quote', 'wallet_token_portfolio', 'wallet_token_my_orders', 'wallet_token_bridge_card', 'wallet_nft_balance', 'wallet_token_balance', 'wallet_token_issued_list', 'wallet_nft_sell_orders',
   'wallet_token_sell_orders', 'wallet_btc_utxos', 'wallet_btc_pubkey', 'wallet_btc_multisig_address',
   'escrow_order_info', 'escrow_order_list', 'check_peer_relationship', 'list_social_connections',
   'preference_lessons_search', 'preference_round_status', 'preference_rounds_list',

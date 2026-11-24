@@ -46,6 +46,9 @@ export type TradeBadgeKind = 'p2p' | 'escrow';
 /** Fence tags that switch a code block into NFT card rendering (renderer contract). */
 const NFT_CARD_FENCE_TAGS = new Set(['nft-card', 'nftcard', 'nft']);
 const NFT_CARD_GROUP_FENCE_TAG = 'nft-card-group';
+const NFT_SUITE_LISTING_TAGS = new Set(['nft-listing-card', 'nftlistingcard']);
+const NFT_SUITE_FILL_TAGS = new Set(['nft-fill-card', 'nftfillcard']);
+const NFT_SUITE_ACTION_TAGS = new Set(['nft-action-card', 'nftactioncard']);
 
 /** Actions that count as peer-to-peer trade activity (sale/listing/transfer). */
 const P2P_ACTIONS = new Set(['listed', 'sold', 'bought', 'delisted', 'transferred', 'selling']);
@@ -194,7 +197,12 @@ const scanMessageTradeBadgeImpl = (
     const open = /^```([A-Za-z0-9_-]*)[ \t]*$/.exec(lines[i]);
     if (!open) continue;
     const tag = open[1].trim().toLowerCase();
-    if (!NFT_CARD_FENCE_TAGS.has(tag) && tag !== NFT_CARD_GROUP_FENCE_TAG) continue;
+    const isCard = NFT_CARD_FENCE_TAGS.has(tag);
+    const isGroup = tag === NFT_CARD_GROUP_FENCE_TAG;
+    const isSuiteListing = NFT_SUITE_LISTING_TAGS.has(tag);
+    const isSuiteFill = NFT_SUITE_FILL_TAGS.has(tag);
+    const isSuiteAction = NFT_SUITE_ACTION_TAGS.has(tag);
+    if (!isCard && !isGroup && !isSuiteListing && !isSuiteFill && !isSuiteAction) continue;
 
     // Collect the fence body.
     let j = i + 1;
@@ -215,7 +223,7 @@ const scanMessageTradeBadgeImpl = (
       continue; // analysis quote / truncated fence — not evidence
     }
 
-    if (tag === NFT_CARD_GROUP_FENCE_TAG) {
+    if (isGroup) {
       const rows = Array.isArray(parsed) ? parsed : [parsed];
       for (const row of rows) {
         if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
@@ -231,6 +239,30 @@ const scanMessageTradeBadgeImpl = (
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
     const record = parsed as Record<string, unknown>;
     if (!hasValidNftIdentity(record)) continue;
+
+    if (isSuiteListing) {
+      if (p2pMarkAllowed(record, bareEmit, context)) {
+        kind = mergeKind(kind, 'p2p');
+      }
+      continue;
+    }
+    if (isSuiteFill) {
+      const side = cleanAction(record.side);
+      if (
+        (side === 'sold' || side === 'bought' || side === 'token_bought') &&
+        p2pMarkAllowed(record, bareEmit, context)
+      ) {
+        kind = mergeKind(kind, 'p2p');
+      }
+      continue;
+    }
+    if (isSuiteAction) {
+      if (cleanAction(record.kind) === 'transfer' && p2pMarkAllowed(record, bareEmit, context)) {
+        kind = mergeKind(kind, 'p2p');
+      }
+      continue;
+    }
+
     const recordKind = cardTradeKind(record);
     if (recordKind === 'p2p' && !p2pMarkAllowed(record, bareEmit, context)) continue;
     kind = mergeKind(kind, recordKind);

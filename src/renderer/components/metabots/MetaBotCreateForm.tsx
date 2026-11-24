@@ -1,13 +1,11 @@
 /**
- * Minimal MetaBot creation form.
- * Only the essentials are collected at creation time: name (required),
- * primary LLM (required) and fallback LLM (optional, defaults to None).
- * All other profile fields (role/soul/goal/bio/avatar/owner/skills) are
- * filled in later through the edit view, after the bot exists on-chain.
- * Styling intentionally mirrors MetaBotForm (same row/label/input classes).
+ * Minimal MetaBot creation form (Studio Linear Style B).
+ * Collects essentials at creation time: name, primary LLM, optional archetype preseed,
+ * and optional fallback LLM.
  */
 
 import React, { useState } from 'react';
+import { CpuChipIcon, ShieldCheckIcon, SparklesIcon, UserIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { configService } from '../../services/config';
 import { isLlmEffortLevel, type LlmEffortLevel } from '../../services/modelCatalog';
@@ -18,6 +16,20 @@ import {
   DEFAULT_METABOT_ARCHETYPE_ID,
   resolveMetabotArchetype,
 } from './metabotArchetypes';
+import {
+  METABOT_BTN_FLAT_CLASS,
+  METABOT_BTN_PRIMARY_CLASS,
+  METABOT_CLEAN_INPUT_CLASS,
+  METABOT_COMPACT_SELECT_CLASS,
+  METABOT_GROUP_BOX_CLASS,
+  METABOT_GROUP_LABEL_CLASS,
+  METABOT_GROUP_LABEL_ROW_CLASS,
+  METABOT_GROUP_NOTE_CLASS,
+  METABOT_GROUP_ROW_CLASS,
+  METABOT_ROW_HINT_CLASS,
+  METABOT_ROW_ICON_CLASS,
+  METABOT_ROW_TITLE_CLASS,
+} from './metaBotCardPresentation.js';
 
 export interface MetaBotCreateFormValues {
   name: string;
@@ -76,9 +88,6 @@ const MetaBotCreateForm: React.FC<MetaBotCreateFormProps> = ({
     if (field === 'name') setNameDuplicate(false);
   };
 
-  // Archetype picker: selecting one preseeds role/soul/goal (kept in `values`
-  // so the save handler passes them to the create call); back on 'custom'
-  // clears the preseed, restoring the minimal-creation default.
   const handleArchetypeChange = (nextId: string) => {
     setArchetypeId(nextId);
     const archetype = resolveMetabotArchetype(nextId);
@@ -140,197 +149,215 @@ const MetaBotCreateForm: React.FC<MetaBotCreateFormProps> = ({
   const saveButtonLabel = saveLabel ?? i18nService.t('metabotCreate');
   const hasNoAvailableLlm = llmOptions.length === 0;
   const canSave = !hasNoAvailableLlm;
-  const rowClass = 'grid grid-cols-1 md:grid-cols-[152px_minmax(0,1fr)] gap-2 md:gap-4 items-start';
-  const labelClass = 'pt-2 text-sm font-medium dark:text-claude-darkText text-claude-text';
-  const hintClass = 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1';
-  const inputClass = 'w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent';
-  const clearActionClass = 'shrink-0 px-3 py-2 text-xs rounded-xl border dark:border-claude-darkBorder border-claude-border text-red-500 dark:text-red-400 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors whitespace-nowrap';
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
+    <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
-        <div className="text-sm text-red-500 dark:text-red-400 bg-red-500/10 dark:bg-red-500/10 rounded-lg px-3 py-2">
+        <div className="text-sm text-red-500 dark:text-red-400 bg-red-500/10 dark:bg-red-500/10 rounded-[8px] px-3.5 py-2.5">
           {error}
         </div>
       )}
 
-      <div className={rowClass}>
-        <label htmlFor="metabot-name" className={labelClass}>
-          {i18nService.t('metabotName')}
-          <span className="ml-1 text-red-500">*</span>
-        </label>
-        <div className="min-w-0">
-          <input
-            id="metabot-name"
-            type="text"
-            value={values.name}
-            onChange={(e) => handleChange('name', e.target.value)}
-            onBlur={handleNameBlur}
-            placeholder={i18nService.t('metabotNamePlaceholder')}
-            className={`${inputClass} ${nameDuplicate ? 'border-red-500 dark:border-red-500' : ''}`}
-          />
-          {nameDuplicate && (
-            <p className="text-xs text-red-500 mt-1">
-              {i18nService.t('metabotNameDuplicate')}
-            </p>
-          )}
+      <div>
+        <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+          <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('metabotGroupPublicProfile')}</span>
         </div>
-      </div>
-
-      <div className={rowClass}>
-        <label htmlFor="metabot-llm" className={labelClass}>
-          {i18nService.t('metabotLlmProvider')}
-          <span className="ml-1 text-red-500">*</span>
-        </label>
-        <div className="min-w-0">
-          {hasNoAvailableLlm ? (
-            <div
-              data-slot="metabot-no-llm-guidance"
-              className="rounded-xl border dark:border-claude-darkBorder border-claude-border px-3 py-3 dark:bg-claude-darkSurface/50 bg-claude-surface/50"
-            >
-              <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                {i18nService.t('metabotNoAvailableLlm')}
-              </p>
-              {onRequestModelSettings && (
-                <button
-                  type="button"
-                  onClick={onRequestModelSettings}
-                  className="mt-2 text-sm text-claude-accent hover:underline"
-                >
-                  {i18nService.t('metabotGoToModelSettings')}
-                </button>
+        <div className={METABOT_GROUP_BOX_CLASS}>
+          <div className={METABOT_GROUP_ROW_CLASS}>
+            <div className="flex items-start gap-2.5 min-w-[180px]">
+              <UserIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+              <div>
+                <label htmlFor="metabot-name" className={METABOT_ROW_TITLE_CLASS}>
+                  <span>{i18nService.t('metabotName')}</span>
+                  <span className="text-red-500">*</span>
+                </label>
+                <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotNameHint')}</p>
+              </div>
+            </div>
+            <div className="w-full sm:max-w-[380px]">
+              <input
+                id="metabot-name"
+                type="text"
+                value={values.name}
+                onChange={(e) => handleChange('name', e.target.value)}
+                onBlur={handleNameBlur}
+                placeholder={i18nService.t('metabotNamePlaceholder')}
+                className={`${METABOT_CLEAN_INPUT_CLASS} ${nameDuplicate ? '!border-red-500' : ''}`}
+              />
+              {nameDuplicate && (
+                <p className="text-xs text-red-500 mt-1">
+                  {i18nService.t('metabotNameDuplicate')}
+                </p>
               )}
             </div>
-          ) : (
-            <>
-              <ModelEffortPicker
-                id="metabot-llm"
-                variant="field"
-                value={{
-                  modelId: values.llm_id || null,
-                  providerKey: values.llm_provider || null,
-                  effort: isLlmEffortLevel(values.llm_effort) ? values.llm_effort : null,
-                }}
-                onChange={(selection) => {
-                  handleChange('llm_id', selection.modelId ?? '');
-                  handleChange('llm_provider', selection.providerKey ?? '');
-                  handleChange('llm_effort', selection.effort ?? '');
-                }}
-                placeholder={i18nService.t('metabotLlmIdPlaceholder')}
-                globalDefaultModel={configService.getConfig().model?.defaultModel ?? null}
-              />
-              <p className={hintClass}>
-                {i18nService.t('metabotLlmRequired')}
-              </p>
-            </>
+          </div>
+
+          <div className={METABOT_GROUP_ROW_CLASS}>
+            <div className="flex items-start gap-2.5 min-w-[180px]">
+              <SparklesIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+              <div>
+                <label htmlFor="metabot-archetype" className={METABOT_ROW_TITLE_CLASS}>
+                  {i18nService.t('metabotArchetypeLabel')}
+                </label>
+                <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotArchetypeHint')}</p>
+              </div>
+            </div>
+            <div className="w-full sm:max-w-[380px] flex sm:justify-end">
+              <select
+                id="metabot-archetype"
+                value={archetypeId}
+                onChange={(e) => handleArchetypeChange(e.target.value)}
+                className={`${METABOT_COMPACT_SELECT_CLASS} w-full`}
+                data-slot="metabot-archetype-select"
+              >
+                {METABOT_ARCHETYPES.map((archetype) => (
+                  <option key={archetype.id} value={archetype.id}>
+                    {i18nService.t(archetype.labelKey)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+          <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('metabotGroupBrain')}</span>
+          <span className={METABOT_GROUP_NOTE_CLASS}>{i18nService.t('metabotGroupBrainNote')}</span>
+        </div>
+        <div className={METABOT_GROUP_BOX_CLASS}>
+          <div className={METABOT_GROUP_ROW_CLASS}>
+            <div className="flex items-start gap-2.5 min-w-[180px]">
+              <CpuChipIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+              <div>
+                <label htmlFor="metabot-llm" className={METABOT_ROW_TITLE_CLASS}>
+                  <span>{i18nService.t('metabotLlmProvider')}</span>
+                  <span className="text-red-500">*</span>
+                </label>
+                <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotPrimaryLlmHint')}</p>
+              </div>
+            </div>
+            <div className="w-full sm:max-w-[380px]">
+              {hasNoAvailableLlm ? (
+                <div
+                  data-slot="metabot-no-llm-guidance"
+                  className="rounded-[8px] border border-slate-900/[0.095] dark:border-white/[0.09] px-3 py-2.5 bg-[#f8fafc] dark:bg-[#131d2c]"
+                >
+                  <p className="text-xs text-[#5a6577] dark:text-[#94a3b8]">
+                    {i18nService.t('metabotNoAvailableLlm')}
+                  </p>
+                  {onRequestModelSettings && (
+                    <button
+                      type="button"
+                      onClick={onRequestModelSettings}
+                      className="mt-1.5 text-xs font-semibold text-claude-accent hover:underline"
+                    >
+                      {i18nService.t('metabotGoToModelSettings')}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <ModelEffortPicker
+                  id="metabot-llm"
+                  variant="field"
+                  value={{
+                    modelId: values.llm_id || null,
+                    providerKey: values.llm_provider || null,
+                    effort: isLlmEffortLevel(values.llm_effort) ? values.llm_effort : null,
+                  }}
+                  onChange={(selection) => {
+                    handleChange('llm_id', selection.modelId ?? '');
+                    handleChange('llm_provider', selection.providerKey ?? '');
+                    handleChange('llm_effort', selection.effort ?? '');
+                  }}
+                  placeholder={i18nService.t('metabotLlmIdPlaceholder')}
+                  globalDefaultModel={configService.getConfig().model?.defaultModel ?? null}
+                />
+              )}
+            </div>
+          </div>
+
+          {!hasNoAvailableLlm && (
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-[180px]">
+                <ShieldCheckIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div>
+                  <label htmlFor="metabot-fallback-llm" className={METABOT_ROW_TITLE_CLASS}>
+                    {i18nService.t('metabotFallbackLlmLabel')}
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotFallbackLlmHint')}</p>
+                </div>
+              </div>
+              <div className="w-full sm:max-w-[380px] flex items-center sm:justify-end gap-2">
+                {values.fallback_llm_id.trim() ? (
+                  <>
+                    <div className="flex-1 min-w-0">
+                      <ModelEffortPicker
+                        id="metabot-fallback-llm"
+                        variant="field"
+                        value={{
+                          modelId: values.fallback_llm_id || null,
+                          providerKey: values.fallback_llm_provider || null,
+                          effort: (isLlmEffortLevel(values.fallback_llm_effort) ? values.fallback_llm_effort : null) as LlmEffortLevel | null,
+                        }}
+                        onChange={(selection) => {
+                          handleChange('fallback_llm_id', selection.modelId ?? '');
+                          handleChange('fallback_llm_provider', selection.providerKey ?? '');
+                          handleChange('fallback_llm_effort', selection.effort ?? '');
+                        }}
+                        globalDefaultModel={configService.getConfig().model?.defaultModel ?? null}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleChange('fallback_llm_id', '');
+                        handleChange('fallback_llm_provider', '');
+                        handleChange('fallback_llm_effort', '');
+                      }}
+                      className="text-xs font-semibold text-red-600 dark:text-rose-400 hover:underline px-1 shrink-0"
+                    >
+                      {i18nService.t('metabotClearOwner')}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    id="metabot-fallback-llm"
+                    onClick={() => {
+                      handleChange('fallback_llm_id', values.llm_id);
+                      handleChange('fallback_llm_provider', values.llm_provider);
+                      handleChange('fallback_llm_effort', values.llm_effort);
+                    }}
+                    disabled={!values.llm_id.trim()}
+                    className={METABOT_BTN_FLAT_CLASS}
+                  >
+                    {i18nService.t('metabotFallbackLlmSetup')}
+                  </button>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Creator archetype (P1d): optional persona preseed. */}
-      <div className={rowClass}>
-        <label htmlFor="metabot-archetype" className={labelClass}>
-          {i18nService.t('metabotArchetypeLabel')}
-        </label>
-        <div className="min-w-0">
-          <select
-            id="metabot-archetype"
-            value={archetypeId}
-            onChange={(e) => handleArchetypeChange(e.target.value)}
-            className={`w-full md:w-80 ${inputClass}`}
-            data-slot="metabot-archetype-select"
-          >
-            {METABOT_ARCHETYPES.map((archetype) => (
-              <option key={archetype.id} value={archetype.id}>
-                {i18nService.t(archetype.labelKey)}
-              </option>
-            ))}
-          </select>
-          <p className={hintClass}>
-            {i18nService.t('metabotArchetypeHint')}
-          </p>
-        </div>
-      </div>
-
-      {!hasNoAvailableLlm && (
-        <div className={rowClass}>
-          <label htmlFor="metabot-fallback-llm" className={labelClass}>
-            {i18nService.t('metabotFallbackLlmLabel')}
-          </label>
-          <div className="min-w-0">
-            {values.fallback_llm_id.trim() ? (
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <div className="flex-1 min-w-0">
-                  <ModelEffortPicker
-                    id="metabot-fallback-llm"
-                    variant="field"
-                    value={{
-                      modelId: values.fallback_llm_id || null,
-                      providerKey: values.fallback_llm_provider || null,
-                      effort: (isLlmEffortLevel(values.fallback_llm_effort) ? values.fallback_llm_effort : null) as LlmEffortLevel | null,
-                    }}
-                    onChange={(selection) => {
-                      handleChange('fallback_llm_id', selection.modelId ?? '');
-                      handleChange('fallback_llm_provider', selection.providerKey ?? '');
-                      handleChange('fallback_llm_effort', selection.effort ?? '');
-                    }}
-                    globalDefaultModel={configService.getConfig().model?.defaultModel ?? null}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleChange('fallback_llm_id', '');
-                    handleChange('fallback_llm_provider', '');
-                    handleChange('fallback_llm_effort', '');
-                  }}
-                  className={clearActionClass}
-                >
-                  {i18nService.t('metabotClearOwner')}
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                id="metabot-fallback-llm"
-                onClick={() => {
-                  // Seed the fallback with the primary brain as a starting point.
-                  handleChange('fallback_llm_id', values.llm_id);
-                  handleChange('fallback_llm_provider', values.llm_provider);
-                  handleChange('fallback_llm_effort', values.llm_effort);
-                }}
-                disabled={!values.llm_id.trim()}
-                className="px-3 py-1.5 rounded-xl border dark:border-claude-darkBorder border-claude-border text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {i18nService.t('metabotFallbackLlmSetup')}
-              </button>
-            )}
-            <p className={hintClass}>
-              {i18nService.t('metabotFallbackLlmHint')}
-            </p>
-          </div>
-        </div>
-      )}
-
-      <div className={rowClass}>
-        <div className="hidden md:block" />
-        <div className="flex items-center justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={saving}
-            className="px-3 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
-          >
-            {i18nService.t('cancel')}
-          </button>
-          <button
-            type="submit"
-            disabled={saving || !canSave}
-            className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] inline-flex items-center justify-center rounded-[var(--shape-radius-md)] px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {saving ? i18nService.t('saving') : saveButtonLabel}
-          </button>
-        </div>
+      <div className="flex items-center justify-end gap-2 pt-1">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={saving}
+          className={`${METABOT_BTN_FLAT_CLASS} !h-[34px] !px-3.5 !rounded-[8px]`}
+        >
+          {i18nService.t('cancel')}
+        </button>
+        <button
+          type="submit"
+          disabled={saving || !canSave}
+          className={METABOT_BTN_PRIMARY_CLASS}
+        >
+          {saving ? i18nService.t('saving') : saveButtonLabel}
+        </button>
       </div>
     </form>
   );

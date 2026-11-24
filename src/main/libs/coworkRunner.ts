@@ -58,8 +58,14 @@ import {
   copyDshSkillSessionEnvFile,
   ensureDshSkillEnvChannel,
   writeDshSkillSessionEnvFile,
+  writeDshSkillSessionRpcTokenFile,
 } from './dshSkillSessionEnv';
-import { METAID_RPC_AUTHFILE_ENV, getMetaidRpcTokenFilePath } from '../services/metaidRpcEndpoint';
+import { evaluateDshSensitiveAccess } from '../security/dshSensitiveAccessGuard';
+import {
+  METAID_RPC_AUTHFILE_ENV,
+  isScopedMetaidRpcToken,
+  issueScopedMetaidRpcToken,
+} from '../services/metaidRpcEndpoint';
 import { mapDshReasoningEffort } from './dshReasoningEffort';
 import { shouldIncludeMetawebDeepSections, nextMetawebPromptTier, type MetawebPromptMode, type MetawebPromptTier } from './metawebPromptTier';
 import { dshModelReasoningDeclaration, dshRouteReasoningEffort, isGlmFamilyModelId, undeclaredReasoningRouteWarning } from './dshModelReasoning';
@@ -364,6 +370,7 @@ import { buildOmniCasterAgentTools } from './omniCasterAgentTools';
 import { buildPostSimpleLogAgentTools } from './postSimpleLogAgentTools';
 import {
   buildWalletAgentTools,
+  type WalletAssetActionConfirmationInfo,
   type WalletToolsControl,
 } from './walletAgentTools';
 import {
@@ -376,11 +383,13 @@ import {
 } from './safetyGateSteer';
 import {
   buildMrc721AgentTools,
+  type Mrc721AssetActionConfirmationInfo,
   type Mrc721ToolsControl,
 } from './mrc721AgentTools';
 import {
   appendNftCardFencesToReply,
   extractEmittedNftCardFences,
+  extractEmittedSkillBashCardFences,
   isEligibleBackstopTargetMessage,
   recordCapturedNftCardFences,
   selectMissingNftCardFences,
@@ -5012,12 +5021,20 @@ export class CoworkRunner extends EventEmitter {
     return { ok: true, text };
   }
 
+  private isA2ASession(sessionId: string): boolean {
+    const session = this.store.getSession(sessionId);
+    return session?.sessionType === 'a2a';
+  }
+
   private async runConversationSearchTool(args: {
     query: string;
     max_results?: number;
     before?: string;
     after?: string;
   }, sessionId: string): Promise<string> {
+    if (this.isA2ASession(sessionId)) {
+      return this.formatChatSearchOutput([]);
+    }
     const metabotId = this.getMemoryBackend().resolveMetabotIdForMemory(sessionId);
     const chats = this.store.conversationSearch({
       query: args.query,
@@ -5062,6 +5079,9 @@ export class CoworkRunner extends EventEmitter {
     before?: string;
     after?: string;
   }, sessionId: string): string {
+    if (this.isA2ASession(sessionId)) {
+      return this.formatChatSearchOutput([]);
+    }
     const metabotId = this.getMemoryBackend().resolveMetabotIdForMemory(sessionId);
     const chats = this.store.recentChats({
       n: args.n,
@@ -5159,9 +5179,10 @@ export class CoworkRunner extends EventEmitter {
 
   private runIdbotsSessionReadAllTool(args: {
     sessionId?: string;
-  }): { success: boolean; text: string } {
+  }, sourceSessionId?: string): { success: boolean; text: string } {
     const result = this.getCrossSessionService().readAll({
       sessionId: String(args.sessionId ?? ''),
+      sourceSessionId,
     });
     return {
       success: result.ok,
@@ -5171,9 +5192,10 @@ export class CoworkRunner extends EventEmitter {
 
   private runIdbotsSessionReadLatestTool(args: {
     sessionId?: string;
-  }): { success: boolean; text: string } {
+  }, sourceSessionId?: string): { success: boolean; text: string } {
     const result = this.getCrossSessionService().readLatest({
       sessionId: String(args.sessionId ?? ''),
+      sourceSessionId,
     });
     return {
       success: result.ok,
@@ -9291,7 +9313,35 @@ export class CoworkRunner extends EventEmitter {
         estimated_fee_sats: info.estimatedFeeSats,
         ...(token ? { token: { symbol: token.symbol, amount: token.amount, genesis: token.genesis } } : {}),
       } as Record<string, unknown>,
-      'allow'
+      'deny',
+      { ownerOnly: true },
+    );
+    return outcome === 'approved';
+  }
+
+  /**
+   * Fail-closed owner confirmation gate for FT, MetaContract NFT, and MRC-721
+   * asset transfer / listing / offer / buy tools. Times out to 'deny' and sets
+   * ownerOnly: true so remote/A2A/sub-agent callers cannot silently drain assets.
+   */
+  private async confirmAssetAction(
+    sessionId: string,
+    info: WalletAssetActionConfirmationInfo | Mrc721AssetActionConfirmationInfo,
+  ): Promise<boolean> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (!activeSession) {
+      return false;
+    }
+    const question = tApp(info.summaryZh, info.summaryEn);
+    const outcome = await this.requestSafetyApproval(
+      sessionId,
+      activeSession.abortController.signal,
+      activeSession,
+      question,
+      info.toolName,
+      info.details,
+      'deny',
+      { ownerOnly: true },
     );
     return outcome === 'approved';
   }
@@ -11354,7 +11404,11 @@ export class CoworkRunner extends EventEmitter {
 
   private isMetabotTypeSession(sessionId: string, metabotType: 'twin' | 'welcome'): boolean {
     if (!this.getMetabotById) return false;
-    const metabotId = this.store.getSession(sessionId)?.metabotId;
+    const session = this.store.getSession(sessionId);
+    // Remote A2A sessions (external private chat / OpenTeam / group chat)
+    // must never receive elevated Twin/Welcome admin or orchestration tools.
+    if (!session || session.sessionType === 'a2a') return false;
+    const metabotId = session.metabotId;
     if (!Number.isInteger(metabotId) || Number(metabotId) <= 0) return false;
     const metabot = this.getMetabotById(Number(metabotId));
     return metabot?.enabled !== false && metabot?.metabot_type === metabotType;
@@ -11415,13 +11469,13 @@ export class CoworkRunner extends EventEmitter {
       if (toolName === 'idbots_session_read_all') {
         return this.runIdbotsSessionReadAllTool({
           sessionId: typeof toolInput.sessionId === 'string' ? toolInput.sessionId : undefined,
-        });
+        }, sessionId);
       }
 
       if (toolName === 'idbots_session_read_latest') {
         return this.runIdbotsSessionReadLatestTool({
           sessionId: typeof toolInput.sessionId === 'string' ? toolInput.sessionId : undefined,
-        });
+        }, sessionId);
       }
 
       if (toolName === 'idbots_session_insert_user_message') {
@@ -12742,19 +12796,27 @@ export class CoworkRunner extends EventEmitter {
     const userData = app.getPath('userData');
     ensureDshSkillEnvChannel(userData);
     const overrides = await this.getSkillSessionEnvOverrides?.(coworkSessionId) ?? {};
+    const session = this.store.getSessionWithoutMessages?.(coworkSessionId) ?? this.store.getSession(coworkSessionId);
+    const scopedToken =
+      typeof overrides.IDBOTS_RPC_TOKEN === 'string' && isScopedMetaidRpcToken(overrides.IDBOTS_RPC_TOKEN)
+        ? overrides.IDBOTS_RPC_TOKEN
+        : issueScopedMetaidRpcToken({
+            sessionId: coworkSessionId,
+            metabotId: session?.metabotId ?? null,
+            sessionType: session?.sessionType ?? 'standard',
+          });
+    const scopedAuthFile = writeDshSkillSessionRpcTokenFile(userData, dshSessionId, scopedToken);
     const tempDir = ensureCoworkTempDir(cwd);
     writeDshSkillSessionEnvFile(userData, dshSessionId, {
       // Instance-level channels every DSH session needs regardless of metabot
-      // identity: the scrub-proof RPC authfile (its IDBOTS_RPC_* siblings ride
-      // the identity overrides below), and the instance's own data dirs so a
-      // session can always locate ITS app instance's storage instead of
-      // guessing the default install path — a dev-fresh profile guessing
-      // ~/Library/Application Support/IDBots is how the 2026-10-27 OpenTeam
-      // test ended up editing the production app's SQLite directly.
-      [METAID_RPC_AUTHFILE_ENV]: getMetaidRpcTokenFilePath(userData),
+      // identity: the per-session scoped RPC authfile (never the global master
+      // token file), and the instance's own data dirs so a session can always
+      // locate ITS app instance's storage instead of guessing the default path.
       IDBOTS_USER_DATA_PATH: userData,
       IDBOTS_APP_DATA_PATH: app.getPath('appData'),
       ...overrides,
+      IDBOTS_RPC_TOKEN: scopedToken,
+      ...(scopedAuthFile ? { [METAID_RPC_AUTHFILE_ENV]: scopedAuthFile } : {}),
       TMPDIR: tempDir,
       TMP: tempDir,
       TEMP: tempDir,
@@ -13884,6 +13946,18 @@ export class CoworkRunner extends EventEmitter {
             const stored = this.store.addMessage(sessionId, message as Omit<CoworkMessage, 'id' | 'timestamp'>);
             if (stored.type === 'assistant') {
               turnAssistantMessageIds.push(stored.id);
+            } else if (
+              stored.type === 'tool_result' &&
+              messageMeta?.isError !== true &&
+              typeof stored.content === 'string'
+            ) {
+              const skillCards = extractEmittedSkillBashCardFences(stored.content);
+              if (skillCards.length > 0) {
+                activeSession.emittedNftCardFences = recordCapturedNftCardFences(
+                  activeSession.emittedNftCardFences ?? [],
+                  skillCards,
+                );
+              }
             }
             if (
               (message as { type?: string } | null)?.type === 'assistant'
@@ -15230,6 +15304,48 @@ export class CoworkRunner extends EventEmitter {
           }
         }
       }
+      // Security policy (Batch 2): unconditionally block DSH fs/bash access to
+      // sensitive IDBots wallet databases, master RPC tokens, other sessions'
+      // BASH_ENV files, and OS credential stores — BEFORE permissionMode
+      // ('acceptEdits' / 'bypassPermissions') or autoApprove skips.
+      {
+        const guardCwd = activeSession?.workspaceRoot ?? process.cwd();
+        let userDataPath: string | null = null;
+        try {
+          userDataPath = app.getPath('userData');
+        } catch {
+          userDataPath = null;
+        }
+        let sessionTypeForGuard: string = 'standard';
+        try {
+          sessionTypeForGuard =
+            this.store.getSessionWithoutMessages?.(sessionId)?.sessionType
+            ?? this.store.getSession(sessionId)?.sessionType
+            ?? 'standard';
+        } catch {
+          sessionTypeForGuard = 'standard';
+        }
+        const sensitiveCheck = evaluateDshSensitiveAccess({
+          toolName,
+          toolInput,
+          cwd: guardCwd,
+          userDataPath,
+          sessionType: sessionTypeForGuard,
+        });
+        if (sensitiveCheck.blocked) {
+          coworkLog('WARN', 'evaluateDshToolPolicy', 'Blocked sensitive host file/command access', {
+            sessionId,
+            toolName,
+            category: sensitiveCheck.category,
+          });
+          return {
+            decision: 'deny',
+            reason:
+              sensitiveCheck.reason
+              ?? 'Security policy: access to sensitive IDBots wallet/credential storage is blocked.',
+          };
+        }
+      }
       // Dream-RSI practice sessions (design §3.5): every tool call passes the
       // practice guard — reads are free, side effects count against the risk
       // class's budget (0 for read_only), the run caps at
@@ -15756,33 +15872,8 @@ export class CoworkRunner extends EventEmitter {
     const {
       economyRead: mountWorkerEconomyReadTools,
     } = resolveReadOnlyToolMountPolicy(conversationProfile, mobileExpansions);
+    const isA2ASession = this.isA2ASession(sessionId);
     const memoryTools: any[] = [
-      tool(
-        'conversation_search',
-        'Search the user\'s prior conversations across all sessions by keyword/phrase and return matching chats as Claude-style <chat> blocks (id, title, snippet, time). Use when the user references a past conversation ("我们之前聊过...", "the chat where we discussed X", "上次说的那个") or you need to recall what was decided/built before. When NOT to use: not for the current session — long conversations are summarized automatically, so for earlier turns of THIS conversation use conversation_recall instead; and not for on-chain posts/social content — use search_social_posts for that. Supports max_results (1-10) and before/after cursors for paging. Returns zero or more <chat> blocks; an empty result means no match, not an error.',
-        {
-          query: z.string().min(1),
-          max_results: z.number().int().min(1).max(10).optional(),
-          before: z.string().optional(),
-          after: z.string().optional(),
-        },
-        async (args: {
-          query: string;
-          max_results?: number;
-          before?: string;
-          after?: string;
-        }) => {
-          const text = await this.runConversationSearchTool(args, sessionId);
-          return {
-            content: [
-              {
-                type: 'text',
-                text,
-              },
-            ],
-          } as any;
-        }
-      ),
       tool(
         'conversation_recall',
         'Search THIS conversation\'s own earlier messages verbatim and return matching turns. Long conversations are summarized automatically, so earlier turns may no longer be visible to you — use this when the owner refers to something said earlier in this conversation, or before answering about an earlier decision, number, name or file. In Studio conversations this ALSO searches the session\'s closed CHAPTER CARDS (condensed decisions, artifacts, open loops per chapter); chapter hits are returned first. For other conversations use conversation_search instead. Args: query (required; pass 1-3 short keywords separated by spaces, such as a name, number or term, rather than a full sentence), max_results (1-20, default 8). Returns one block per hit with local time, speaker (owner / you / worker report), message id and a ~320-char snippet centred on the first match; an empty result means nothing matched, not an error.',
@@ -15800,72 +15891,105 @@ export class CoworkRunner extends EventEmitter {
           } as any;
         }
       ),
-      tool(
-        'recent_chats',
-        'List the user\'s most recent conversations as Claude-style <chat> blocks (id, title, time). Use when the user wants an overview of recent chats without a specific keyword ("最近有哪些对话", "what have I been working on lately", "show my recent sessions"). When NOT to use: if the user is looking for a specific topic, use conversation_search with a query instead — this tool is keyword-free and lists purely by recency. Supports n (1-20), sort_order (asc/desc), and before/after cursors.',
-        {
-          n: z.number().int().min(1).max(20).optional(),
-          sort_order: z.enum(['asc', 'desc']).optional(),
-          before: z.string().optional(),
-          after: z.string().optional(),
-        },
-        async (args: {
-          n?: number;
-          sort_order?: 'asc' | 'desc';
-          before?: string;
-          after?: string;
-        }) => {
-          const text = this.runRecentChatsTool(args, sessionId);
-          return {
-            content: [{ type: 'text', text }],
-          } as any;
-        }
-      ),
-      tool(
-        'idbots_session_read_all',
-        'Read ALL messages from another local IDBots Cowork or A2A session, given a raw session id or an IDBots:// link. Read-only — never modifies the target. Use when you need the full history of another session (reviewing what a delegated Worker did, catching up on an A2A task). When NOT to use: for just the last message use idbots_session_read_latest (cheaper); and not for the CURRENT session (already in context). Returns the session message log as text; an error if the session does not exist.',
-        {
-          sessionId: z.string().min(1),
-        },
-        async (args: { sessionId: string }) => {
-          const result = this.runIdbotsSessionReadAllTool(args);
-          return {
-            content: [{ type: 'text', text: result.text }],
-            isError: !result.success,
-          } as any;
-        }
-      ),
-      tool(
-        'idbots_session_read_latest',
-        'Read only the LATEST message from another local IDBots Cowork or A2A session, given a raw session id or an IDBots:// link. Read-only. Use for a quick status check on another session ("did the Worker finish?", "what is the latest in that task") without pulling the whole history. When NOT to use: if you need full context/decisions, use idbots_session_read_all instead. Returns the single latest message as text; an error if the session does not exist.',
-        {
-          sessionId: z.string().min(1),
-        },
-        async (args: { sessionId: string }) => {
-          const result = this.runIdbotsSessionReadLatestTool(args);
-          return {
-            content: [{ type: 'text', text: result.text }],
-            isError: !result.success,
-          } as any;
-        }
-      ),
-      tool(
-        'idbots_session_insert_user_message',
-        'Send an instruction (as a user message) into ANOTHER local IDBots Cowork session and queue that session to continue processing it. Use to steer or hand off work to a parallel session the user has open, e.g. delegating a work order to a Worker session. Loop guarantee: by default (notify_source unset or true) the host automatically reports back into THIS session with a [DISPATCH-REPORT] (outcome + final reply excerpt) once the triggered turn ends — do NOT tell the target to "reply back to my session" and do NOT poll idbots_session_read_latest; wait for the report. Pass notify_source=false only for fire-and-forget notices. When NOT to use: do not write into the CURRENT session (reply normally instead), and never use this to spam or loop messages between sessions. A2A sessions are read-only targets — writes to them are rejected. Returns a confirmation with the reportBack contract, or an error if the target is missing or not a Cowork session.',
-        {
-          targetSessionId: z.string().min(1),
-          message: z.string().min(1),
-          notify_source: z.boolean().optional(),
-        },
-        async (args: { targetSessionId: string; message: string; notify_source?: boolean }) => {
-          const result = this.runIdbotsSessionInsertUserMessageTool(args, sessionId);
-          return {
-            content: [{ type: 'text', text: result.text }],
-            isError: !result.success,
-          } as any;
-        }
-      ),
     ];
+    // Cross-session read/search/write tools are strictly local-owner / worker
+    // orchestration tools: never mount them in remote A2A sessions so an
+    // external prompt injection cannot inspect or steer local owner sessions.
+    if (!isA2ASession) {
+      memoryTools.push(
+        tool(
+          'conversation_search',
+          'Search the user\'s prior conversations across all sessions by keyword/phrase and return matching chats as Claude-style <chat> blocks (id, title, snippet, time). Use when the user references a past conversation ("我们之前聊过...", "the chat where we discussed X", "上次说的那个") or you need to recall what was decided/built before. When NOT to use: not for the current session — long conversations are summarized automatically, so for earlier turns of THIS conversation use conversation_recall instead; and not for on-chain posts/social content — use search_social_posts for that. Supports max_results (1-10) and before/after cursors for paging. Returns zero or more <chat> blocks; an empty result means no match, not an error.',
+          {
+            query: z.string().min(1),
+            max_results: z.number().int().min(1).max(10).optional(),
+            before: z.string().optional(),
+            after: z.string().optional(),
+          },
+          async (args: {
+            query: string;
+            max_results?: number;
+            before?: string;
+            after?: string;
+          }) => {
+            const text = await this.runConversationSearchTool(args, sessionId);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text,
+                },
+              ],
+            } as any;
+          }
+        ),
+        tool(
+          'recent_chats',
+          'List the user\'s most recent conversations as Claude-style <chat> blocks (id, title, time). Use when the user wants an overview of recent chats without a specific keyword ("最近有哪些对话", "what have I been working on lately", "show my recent sessions"). When NOT to use: if the user is looking for a specific topic, use conversation_search with a query instead — this tool is keyword-free and lists purely by recency. Supports n (1-20), sort_order (asc/desc), and before/after cursors.',
+          {
+            n: z.number().int().min(1).max(20).optional(),
+            sort_order: z.enum(['asc', 'desc']).optional(),
+            before: z.string().optional(),
+            after: z.string().optional(),
+          },
+          async (args: {
+            n?: number;
+            sort_order?: 'asc' | 'desc';
+            before?: string;
+            after?: string;
+          }) => {
+            const text = this.runRecentChatsTool(args, sessionId);
+            return {
+              content: [{ type: 'text', text }],
+            } as any;
+          }
+        ),
+        tool(
+          'idbots_session_read_all',
+          'Read ALL messages from another local IDBots Cowork or A2A session, given a raw session id or an IDBots:// link. Read-only — never modifies the target. Use when you need the full history of another session (reviewing what a delegated Worker did, catching up on an A2A task). When NOT to use: for just the last message use idbots_session_read_latest (cheaper); and not for the CURRENT session (already in context). Returns the session message log as text; an error if the session does not exist.',
+          {
+            sessionId: z.string().min(1),
+          },
+          async (args: { sessionId: string }) => {
+            const result = this.runIdbotsSessionReadAllTool(args, sessionId);
+            return {
+              content: [{ type: 'text', text: result.text }],
+              isError: !result.success,
+            } as any;
+          }
+        ),
+        tool(
+          'idbots_session_read_latest',
+          'Read only the LATEST message from another local IDBots Cowork or A2A session, given a raw session id or an IDBots:// link. Read-only. Use for a quick status check on another session ("did the Worker finish?", "what is the latest in that task") without pulling the whole history. When NOT to use: if you need full context/decisions, use idbots_session_read_all instead. Returns the single latest message as text; an error if the session does not exist.',
+          {
+            sessionId: z.string().min(1),
+          },
+          async (args: { sessionId: string }) => {
+            const result = this.runIdbotsSessionReadLatestTool(args, sessionId);
+            return {
+              content: [{ type: 'text', text: result.text }],
+              isError: !result.success,
+            } as any;
+          }
+        ),
+        tool(
+          'idbots_session_insert_user_message',
+          'Send an instruction (as a user message) into ANOTHER local IDBots Cowork session and queue that session to continue processing it. Use to steer or hand off work to a parallel session the user has open, e.g. delegating a work order to a Worker session. Loop guarantee: by default (notify_source unset or true) the host automatically reports back into THIS session with a [DISPATCH-REPORT] (outcome + final reply excerpt) once the triggered turn ends — do NOT tell the target to "reply back to my session" and do NOT poll idbots_session_read_latest; wait for the report. Pass notify_source=false only for fire-and-forget notices. When NOT to use: do not write into the CURRENT session (reply normally instead), and never use this to spam or loop messages between sessions. A2A sessions are read-only targets — writes to them are rejected. Returns a confirmation with the reportBack contract, or an error if the target is missing or not a Cowork session.',
+          {
+            targetSessionId: z.string().min(1),
+            message: z.string().min(1),
+            notify_source: z.boolean().optional(),
+          },
+          async (args: { targetSessionId: string; message: string; notify_source?: boolean }) => {
+            const result = this.runIdbotsSessionInsertUserMessageTool(args, sessionId);
+            return {
+              content: [{ type: 'text', text: result.text }],
+              isError: !result.success,
+            } as any;
+          }
+        ),
+      );
+    }
     if (this.listLocalWorkers && this.isTwinSession(sessionId)) {
       memoryTools.push(
         tool(
@@ -16616,7 +16740,7 @@ export class CoworkRunner extends EventEmitter {
         })
       );
     }
-    if (this.studioChiefOfStaffTools && !isServerMode()) {
+    if (this.studioChiefOfStaffTools && !isServerMode() && !isA2ASession) {
       memoryTools.push(
         ...buildStudioChiefOfStaffAgentTools({
           tool,
@@ -16704,6 +16828,7 @@ export class CoworkRunner extends EventEmitter {
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
           confirmExternalTransfer: (info) => this.confirmExternalTransfer(sessionId, info),
           confirmTokenIssue: (info) => this.confirmMvcFtIssue(sessionId, info),
+          confirmAssetAction: (info) => this.confirmAssetAction(sessionId, info),
         })
       );
     }
@@ -16732,6 +16857,7 @@ export class CoworkRunner extends EventEmitter {
           control: this.mrc721Tools,
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+          confirmAssetAction: (info) => this.confirmAssetAction(sessionId, info),
         })
       );
     }

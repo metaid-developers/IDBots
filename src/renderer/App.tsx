@@ -1083,6 +1083,12 @@ const App: React.FC = () => {
     botBrowserShell.selectInternetPane('metaapps');
   }, [botBrowserShell.selectInternetPane]);
 
+  const handleRevealStudioBrowser = useCallback((): boolean => {
+    const wasBrowserVisible = botBrowserShell.internetPane === 'browser';
+    botBrowserShell.selectInternetPane('browser');
+    return wasBrowserVisible;
+  }, [botBrowserShell.internetPane, botBrowserShell.selectInternetPane]);
+
   // Bot Home destinations: the left rail is the ONLY entry point into the three
   // record types (the middle column's old type drawer was removed as a second
   // selector). It switches the surface and the right column's view together.
@@ -2454,6 +2460,7 @@ const App: React.FC = () => {
                 }
               }}
               onSelectBrowserSession={handleSelectBrowserSession}
+              onRevealBrowser={handleRevealStudioBrowser}
               isCollapsed={isSidebarCollapsed}
               width={sidebarWidth}
               isResizing={isSidebarResizing || isSidebarTweening}

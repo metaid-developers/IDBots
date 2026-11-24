@@ -1,5 +1,10 @@
 import type { SqliteDatabase as Database } from './sqliteTypes';
 import { normalizeA2AAutoReplyEnabled, normalizeA2AByeCooldownMs, normalizeA2AMaxIncomingTurns } from './services/a2aChatLimits';
+import {
+  decryptMnemonicAtRest,
+  encryptMnemonicAtRest,
+  tryDecryptMnemonicAtRest,
+} from './security/mnemonicVault';
 import type {
   Metabot,
   MetabotInsert,
@@ -174,7 +179,7 @@ function rowToMetabot(row: MetabotRow): Metabot {
 function rowToMetabotWallet(row: MetabotWalletRow): MetabotWallet {
   return {
     id: row.id,
-    mnemonic: row.mnemonic,
+    mnemonic: decryptMnemonicAtRest(row.mnemonic),
     path: row.path,
     created_at: row.created_at,
   };
@@ -518,15 +523,24 @@ export class MetabotStore {
   /**
    * Find an append-only wallet row by mnemonic phrase (case/outer whitespace insensitive).
    * Used when restoring after metabot delete: the wallet row may still exist.
+   * Supports both at-rest encrypted rows (`enc:v1:...`) and legacy plaintext rows.
    */
   getMetabotWalletByMnemonicNormalized(normalizedMnemonic: string): MetabotWallet | null {
     const phrase = normalizedMnemonic.trim().toLowerCase();
     if (!phrase) return null;
-    const row = this.getOne<MetabotWalletRow>(
-      'SELECT * FROM metabot_wallets WHERE lower(trim(mnemonic)) = ? LIMIT 1',
-      [phrase]
-    );
-    return row ? rowToMetabotWallet(row) : null;
+    const rows = this.getAll<MetabotWalletRow>('SELECT * FROM metabot_wallets');
+    for (const row of rows) {
+      const plain = tryDecryptMnemonicAtRest(row.mnemonic);
+      if (plain && plain.trim().toLowerCase() === phrase) {
+        return {
+          id: row.id,
+          mnemonic: plain,
+          path: row.path,
+          created_at: row.created_at,
+        };
+      }
+    }
+    return null;
   }
 
   /** Get MetaBot by globalmetaid (e.g. for private chat daemon: message to_global_metaid). */
@@ -827,10 +841,11 @@ export class MetabotStore {
   insertMetabotWallet(input: MetabotWalletInsert): MetabotWallet {
     const now = Date.now();
     const path = input.path ?? DEFAULT_WALLET_PATH;
+    const encryptedMnemonic = encryptMnemonicAtRest(input.mnemonic);
 
     this.db.run(
       `INSERT INTO metabot_wallets (mnemonic, path, created_at) VALUES (?, ?, ?)`,
-      sanitizeBindParams([input.mnemonic, path, now])
+      sanitizeBindParams([encryptedMnemonic, path, now])
     );
     // Must read last_insert_rowid immediately, before any other DB operation (e.g. saveDb)
     const result = this.db.exec('SELECT last_insert_rowid() as id');
@@ -853,28 +868,52 @@ export class MetabotStore {
 
   /**
    * Find wallet row by mnemonic. Append-only wallets survive MetaBot deletion, so restore must reuse the row
-   * instead of INSERT (UNIQUE on mnemonic). Tries exact match first, then case-insensitive trimmed match.
+   * instead of INSERT (UNIQUE on mnemonic). Handles both at-rest encrypted rows (`enc:v1:...`)
+   * and legacy plaintext rows, matching exact first then case-insensitive trimmed.
    */
   getMetabotWalletByMnemonic(mnemonic: string): MetabotWallet | null {
     const trimmed = mnemonic.trim();
     if (!trimmed) return null;
-    const exact = this.getOne<MetabotWalletRow>(
-      'SELECT * FROM metabot_wallets WHERE mnemonic = ? LIMIT 1',
-      [trimmed]
-    );
-    if (exact) return rowToMetabotWallet(exact);
     const norm = trimmed.toLowerCase();
-    const row = this.getOne<MetabotWalletRow>(
-      `SELECT * FROM metabot_wallets WHERE LOWER(TRIM(mnemonic)) = ? LIMIT 1`,
-      [norm]
-    );
-    return row ? rowToMetabotWallet(row) : null;
+    const rows = this.getAll<MetabotWalletRow>('SELECT * FROM metabot_wallets');
+    let caseInsensitiveMatch: MetabotWallet | null = null;
+    for (const row of rows) {
+      const plain = tryDecryptMnemonicAtRest(row.mnemonic);
+      if (!plain) continue;
+      if (plain === trimmed) {
+        return {
+          id: row.id,
+          mnemonic: plain,
+          path: row.path,
+          created_at: row.created_at,
+        };
+      }
+      if (!caseInsensitiveMatch && plain.trim().toLowerCase() === norm) {
+        caseInsensitiveMatch = {
+          id: row.id,
+          mnemonic: plain,
+          path: row.path,
+          created_at: row.created_at,
+        };
+      }
+    }
+    return caseInsensitiveMatch;
   }
 
   /** Get wallet for a metabot by metabot id (looks up metabot.wallet_id). */
   getMetabotWalletByMetabotId(metabot_id: number): MetabotWallet | null {
     const metabot = this.getMetabotById(metabot_id);
     return metabot ? this.getMetabotWalletById(metabot.wallet_id) : null;
+  }
+
+  /** Return all non-empty wallet mnemonics for in-memory egress fingerprinting (never logged). */
+  listAllMetabotWalletMnemonics(): string[] {
+    const rows = this.getAll<{ mnemonic?: string | null }>(
+      "SELECT mnemonic FROM metabot_wallets WHERE mnemonic IS NOT NULL AND TRIM(mnemonic) != ''"
+    );
+    return rows
+      .map((row) => tryDecryptMnemonicAtRest(row.mnemonic) ?? '')
+      .filter((value) => value.length > 0);
   }
 
   listRecentPinTransactionsByAddress(address: string, limit = 8): Array<{ txid: string; timestamp: number }> {

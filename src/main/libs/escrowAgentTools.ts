@@ -2,6 +2,14 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { EscrowOrderStore } from '../services/escrowOrderStore';
 import {
+  convertGlobalMetaIdToAddresses,
+  extractGlobalMetaIdCandidate,
+} from '../services/globalMetaid';
+import type {
+  VerifyEscrowOnChainCustodyTxInput,
+  VerifyEscrowOnChainCustodyTxResult,
+} from '../services/walletTxStatusService';
+import {
   applyEscrowReminder,
   applyEscrowTransition,
   assertEscrowInvariants,
@@ -65,6 +73,24 @@ export type EscrowAgentToolsControl = {
   getMetabotMvcAddress(metabotId: number): string | null;
   /** Display name for party rendering (optional — tests may omit). */
   getMetabotDisplayName?(metabotId: number): string | null;
+  /** GlobalMetaID for a local MetaBot (optional — tests may omit). */
+  getMetabotGlobalMetaId?(metabotId: number): string | null;
+  /**
+   * Official CA verification for the escrow guarantor (wired in main.ts to
+   * verifyOfficialEscrowGuarantor). Fail-closed when wired: rejects orders or
+   * custody transitions whose guarantor is not an active CA-certified bot.
+   */
+  verifyEscrowGuarantor?: (input: {
+    guarantorGlobalMetaId?: string;
+    custodyAddress?: string;
+  }) => Promise<{ verified: boolean; reason?: string; badgeLabel?: string }>;
+  /**
+   * On-chain MVC txid + recipient verification for chain goods custody legs
+   * (wired in main.ts to verifyEscrowOnChainCustodyTx). Fail-closed when wired.
+   */
+  verifyOnChainCustodyTx?: (
+    input: VerifyEscrowOnChainCustodyTxInput,
+  ) => Promise<VerifyEscrowOnChainCustodyTxResult>;
 };
 
 /** One resolved escrow party: canonical identity = MVC address. */
@@ -75,6 +101,8 @@ export interface EscrowPartyRef {
   address: string;
   /** Local bot display name when known. */
   name?: string;
+  /** GlobalMetaID when supplied or resolved from the local roster. */
+  globalMetaId?: string;
 }
 
 /**
@@ -307,28 +335,37 @@ export function buildEscrowAgentTools(deps: {
   const sessionIdentityStrings = (bot: { metabotId: number; address: string | null }): string[] =>
     [String(bot.metabotId), bot.address ?? ''].map((identity) => identity.trim()).filter(Boolean);
 
-  /** Resolve one party input: metabot id | local bot name | raw MVC address. */
+  /** Resolve one party input: metabot id | GlobalMetaID | raw MVC address | local bot name. */
   const resolvePartyInput = (raw: string): { ref: EscrowPartyRef } | { error: string } => {
     const value = asString(raw);
-    if (!value) return { error: 'party is empty (accepts a metabot id, a local bot name, or an MVC address)' };
+    if (!value) return { error: 'party is empty (accepts a metabot id, local bot name, GlobalMetaID idq1..., or MVC address)' };
     if (/^\d+$/.test(value)) {
       const id = Number(value);
       const address = control.getMetabotMvcAddress(id);
       if (!address) return { error: `local MetaBot ${value} not found or has no MVC address` };
       const name = control.getMetabotDisplayName?.(id) ?? undefined;
-      return { ref: { metabotId: id, address, ...(name ? { name } : {}) } };
+      const globalMetaId = control.getMetabotGlobalMetaId?.(id) ?? undefined;
+      return { ref: { metabotId: id, address, ...(name ? { name } : {}), ...(globalMetaId ? { globalMetaId } : {}) } };
+    }
+    if (extractGlobalMetaIdCandidate(value)) {
+      const decoded = convertGlobalMetaIdToAddresses(value);
+      if (!decoded?.mvcAddress) {
+        return { error: `GlobalMetaID "${value}" is invalid or cannot be offline-converted to an MVC address.` };
+      }
+      return { ref: { metabotId: null, address: decoded.mvcAddress, globalMetaId: decoded.globalMetaId } };
     }
     if (isMvcAddressLocal(value)) {
       return { ref: { metabotId: null, address: value } };
     }
     const id = control.resolveMetabotIdByName(value);
     if (id == null) {
-      return { error: `"${value}" is neither a local MetaBot id/name nor an MVC address. For an external party pass the full MVC address.` };
+      return { error: `"${value}" is neither a local MetaBot id/name, a GlobalMetaID (idq1...), nor an MVC address. For an external party pass the GlobalMetaID or full MVC address.` };
     }
     const address = control.getMetabotMvcAddress(id);
     if (!address) return { error: `MetaBot "${value}" has no MVC address` };
     const name = control.getMetabotDisplayName?.(id) ?? value;
-    return { ref: { metabotId: id, address, name } };
+    const globalMetaId = control.getMetabotGlobalMetaId?.(id) ?? undefined;
+    return { ref: { metabotId: id, address, name, ...(globalMetaId ? { globalMetaId } : {}) } };
   };
 
   const resolveParties = (input: { seller: string; buyer: string; agent: string }):
@@ -457,6 +494,21 @@ export function buildEscrowAgentTools(deps: {
         );
       }
 
+      if (control.verifyEscrowGuarantor) {
+        const guarantorVerdict = await control.verifyEscrowGuarantor({
+          ...(parties.parties.escrowAgent.globalMetaId
+            ? { guarantorGlobalMetaId: parties.parties.escrowAgent.globalMetaId }
+            : {}),
+          custodyAddress: parties.parties.escrowAgent.address,
+        });
+        if (!guarantorVerdict.verified) {
+          return textResult(
+            `escrow_order_create refused: escrow agent/guarantor ${partyDisplay(parties.parties.escrowAgent)} is not an official CA-certified escrow guarantor — ${guarantorVerdict.reason || 'unverified guarantor'}.`,
+            true,
+          );
+        }
+      }
+
       const itemPinId = asString(args.item_pin_id);
       if (itemPinId && !isMrc721PinIdLocal(itemPinId)) {
         return textResult(`escrow_order_create: item_pin_id "${itemPinId}" is not a valid MRC-721 item pinId (64-hex txid + "i" + output index).`, true);
@@ -576,6 +628,63 @@ export function buildEscrowAgentTools(deps: {
       // not by truthiness — `!result.ok` does not narrow the failure branch.
       if (result.ok === false) {
         return textResult(`escrow_order_act refused by the state machine: ${result.reason}`, true);
+      }
+
+      // Security gate 1: re-verify official CA guarantor status on custody/release/ruling actions.
+      const guarantorGatedActions: EscrowAction[] = [
+        'escrow_goods',
+        'release_goods',
+        'ruling_release',
+        'ruling_rollback',
+      ];
+      if (control.verifyEscrowGuarantor && guarantorGatedActions.includes(args.action)) {
+        const agentRef = doc.parties?.escrowAgent;
+        const guarantorVerdict = await control.verifyEscrowGuarantor({
+          ...(agentRef?.globalMetaId ? { guarantorGlobalMetaId: agentRef.globalMetaId } : {}),
+          custodyAddress: agentRef?.address || doc.roles.escrowAgent,
+        });
+        if (!guarantorVerdict.verified) {
+          return textResult(
+            `escrow_order_act refused: escrow guarantor ${partyDisplay(agentRef)} failed official CA verification — ${guarantorVerdict.reason || 'unverified or revoked guarantor'}. State unchanged.`,
+            true,
+          );
+        }
+      }
+
+      // Security gate 2: verify on-chain MVC txid + recipient for chain goods legs
+      // BEFORE persisting the state transition (blocks fabricated 64-hex proofs).
+      const onChainGoodsActions: Array<'escrow_goods' | 'release_goods' | 'timeout_t2_return_goods' | 'ruling_release' | 'ruling_rollback'> = [
+        'escrow_goods',
+        'release_goods',
+        'timeout_t2_return_goods',
+        'ruling_release',
+        'ruling_rollback',
+      ];
+      if (
+        control.verifyOnChainCustodyTx &&
+        (doc.goodsKind === 'mrc721' || doc.goodsKind === 'metacontract') &&
+        (onChainGoodsActions as string[]).includes(args.action)
+      ) {
+        const chainAction = args.action as 'escrow_goods' | 'release_goods' | 'timeout_t2_return_goods' | 'ruling_release' | 'ruling_rollback';
+        const expectedRecipientAddress =
+          chainAction === 'escrow_goods'
+            ? (doc.parties?.escrowAgent?.address || doc.roles.escrowAgent)
+            : (chainAction === 'release_goods' || chainAction === 'ruling_release')
+              ? (doc.parties?.buyer?.address || doc.roles.buyer)
+              : (doc.parties?.seller?.address || doc.roles.seller);
+        const txVerdict = await control.verifyOnChainCustodyTx({
+          action: chainAction,
+          goodsKind: doc.goodsKind,
+          txid: asString(args.proof),
+          expectedRecipientAddress,
+          ...(doc.itemPinId ? { itemPinId: doc.itemPinId } : {}),
+        });
+        if (txVerdict.verified === false) {
+          return textResult(
+            `escrow_order_act refused: on-chain custody tx verification failed for ${chainAction} — ${txVerdict.reason}. State unchanged.`,
+            true,
+          );
+        }
       }
 
       const stored = persist(result.order);

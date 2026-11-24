@@ -29,9 +29,14 @@ npm install        # 仅装两个公网包：meta-contract@0.4.16 + @metalet/utx
 - 启动时的 `ExperimentalWarning: localStorage is not available` 来自
   @metalet/utxo-wallet-service，无害，可忽略。
 - 只读模式 `sell-orders` **零依赖**，npm install 都可以跳过。
-- 签名模式（transfer/sell/cancel-sell/buy）需要环境变量 `IDBOTS_METABOT_MNEMONIC`
-  （BIP39 助记词；只从环境读，绝不写进命令行/文件/聊天）。
-  可选 `IDBOTS_METABOT_PATH`，默认 `m/44'/10001'/0'/0/0`。
+- **IDBots 宿主内运行（推荐）**：请直接调用内置宿主签名工具
+  `wallet_nft_balance` / `wallet_nft_sell_orders` / `wallet_nft_transfer` /
+  `wallet_nft_sell` / `wallet_nft_cancel_sell` / `wallet_nft_buy` 完成查询与
+  签名交易。出于钱包安全策略，IDBots 不会向 agent bash 环境注入
+  `IDBOTS_METABOT_MNEMONIC`。
+- **外部独立 bot 运行本 CLI**：签名模式（transfer/sell/cancel-sell/buy）需要
+  外部自行在本地环境提供 `IDBOTS_METABOT_MNEMONIC`（BIP39 助记词；只从环境读，
+  绝不写进命令行/文件/聊天）。可选 `IDBOTS_METABOT_PATH`，默认 `m/44'/10001'/0'/0/0`。
 - 钱包需留手续费余量：transfer 一笔 tx、sell/cancel-sell/buy 各两笔 tx
   （feeb 默认 1，可 `fee_rate=<n>` 覆盖）；地址需有 value ≥ 600 sats 的普通 UTXO。
 

@@ -1,28 +1,38 @@
 /**
- * Tabbed MetaBot edit form (replaces the old single-page MetaBotForm edit mode).
+ * Tabbed MetaBot edit form (Studio Linear Style B).
  *
  * Six tabs — Basic / Persona / Chat Settings / Knowledge Base / Surf /
- * Advanced. The four profile tabs each have their own save button, per-tab
- * dirty tracking and per-tab on-chain sync grouping, so a user can iterate on
- * one slice of the profile without publishing unrelated edits. The Knowledge
- * Base and Surf tabs are different: Knowledge Base manages the bot's document
- * corpora through the knowledgeBase:* IPC surface, and Surf hosts the
- * immediate-effect MetaWeb surf switches plus the surf reports panel, so
- * neither owns MetaBotEditValues fields, dirty tracking nor on-chain sync
- * (deliberately absent from EDIT_TAB_FIELDS / EDIT_TAB_SYNC_GROUPS). All
- * panels stay mounted (inactive
- * ones are CSS-hidden) so unsaved edits in other tabs survive tab switches;
- * switching away from a dirty tab asks for confirmation and reverts that tab's
- * fields on confirm.
- *
- * Field state is a single MetaBotEditValues object plus a `baseline` snapshot
- * of the last saved/loaded values; dirty = tab fields differ from baseline.
- * After a tab saves successfully the baseline adopts that tab's fields only,
- * keeping unsaved edits in the other tabs intact.
+ * Advanced. Profile tabs keep scoped dirty tracking and per-tab on-chain sync
+ * grouping; Knowledge Base and Surf apply via immediate IPC channels. All
+ * panels stay mounted (inactive ones are CSS-hidden) so unsaved edits in other
+ * tabs survive tab switches.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { PhotoIcon, PlusIcon, QuestionMarkCircleIcon, WrenchScrewdriverIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import {
+  ChartBarIcon,
+  ChatBubbleLeftRightIcon,
+  ClockIcon,
+  ComputerDesktopIcon,
+  CpuChipIcon,
+  DocumentTextIcon,
+  FlagIcon,
+  GlobeAltIcon,
+  HeartIcon,
+  IdentificationIcon,
+  LinkIcon,
+  PhotoIcon,
+  PlusIcon,
+  QuestionMarkCircleIcon,
+  ShieldCheckIcon,
+  SparklesIcon,
+  Squares2X2Icon,
+  StarIcon,
+  UserGroupIcon,
+  UserIcon,
+  WrenchScrewdriverIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { configService } from '../../services/config';
 import {
@@ -48,27 +58,41 @@ import { parseNftAvatarReference } from './nftAvatarPresentation.js';
 import KnowledgeBasePanel from './KnowledgeBasePanel';
 import SurfSection from './SurfSection';
 import DailyReportSection from './DailyReportSection';
-import { buildMetaBotToggleViewModel, canShowMetabotTwinSwitch } from './metaBotCardPresentation.js';
+import {
+  buildMetaBotToggleViewModel,
+  canShowMetabotTwinSwitch,
+  formatGlobalMetaIdShort,
+  METABOT_BTN_FLAT_CLASS,
+  METABOT_BTN_PRIMARY_CLASS,
+  METABOT_CLEAN_INPUT_CLASS,
+  METABOT_COMPACT_SELECT_CLASS,
+  METABOT_GROUP_BOX_CLASS,
+  METABOT_GROUP_LABEL_CLASS,
+  METABOT_GROUP_LABEL_ROW_CLASS,
+  METABOT_GROUP_NOTE_CLASS,
+  METABOT_GROUP_ROW_CLASS,
+  METABOT_GROUP_ROW_TOP_CLASS,
+  METABOT_MICRO_BADGE_CLASS,
+  METABOT_ROW_HINT_CLASS,
+  METABOT_ROW_ICON_CLASS,
+  METABOT_ROW_TITLE_CLASS,
+} from './metaBotCardPresentation.js';
 import Tooltip from '../ui/Tooltip';
 
 const AVATAR_MAX_SIZE_BYTES = 200 * 1024; // 200KB
 
 // A2A private-chat limits; keep in sync with src/main/services/a2aChatLimits.ts
-// (pinned by tests/quotaRendererSync.test.mjs — the quota audit 2026-09-17
-// raised the main default and this copy lagged, silently downgrading every
-// edited bot back to the old cap).
+// (pinned by tests/quotaRendererSync.test.mjs).
 const A2A_MAX_INCOMING_TURNS_OPTIONS: readonly number[] = [20, 30, 50, 80, 100, 150, 200];
 const A2A_BYE_COOLDOWN_MS_OPTIONS: readonly number[] = [60_000, 300_000, 600_000, 1_800_000, 3_600_000];
 const DEFAULT_A2A_MAX_INCOMING_TURNS = 50;
 const DEFAULT_A2A_BYE_COOLDOWN_MS = 300_000;
-// Pinned to src/main/services/a2aChatLimits.ts by tests/quotaRendererSync.test.mjs.
 export const DEFAULT_A2A_AUTO_REPLY_ENABLED = true;
 
 export const normalizeA2AMaxIncomingTurnsOption = (value: unknown): number =>
   A2A_MAX_INCOMING_TURNS_OPTIONS.includes(Number(value)) ? Number(value) : DEFAULT_A2A_MAX_INCOMING_TURNS;
 export const normalizeA2AByeCooldownMsOption = (value: unknown): number =>
   A2A_BYE_COOLDOWN_MS_OPTIONS.includes(Number(value)) ? Number(value) : DEFAULT_A2A_BYE_COOLDOWN_MS;
-// NULL/undefined means "use default" (on); accepts booleans and the 1/0 integer form.
 export const normalizeA2AAutoReplyEnabledOption = (value: unknown): boolean =>
   value == null
     ? DEFAULT_A2A_AUTO_REPLY_ENABLED
@@ -94,31 +118,21 @@ export interface MetaBotEditValues {
   bio: string;
   boss_global_metaid: string;
   boss_id: string;
-  /** Primary brain: model id (legacy provider-key values still resolve at call time). */
   llm_id: string;
-  /** Provider key the primary brain model was picked from; '' = unset. */
   llm_provider: string;
-  /** Primary brain reasoning effort (off/low/high/max); '' = model default. */
   llm_effort: string;
-  /** First-class edit field (Basic tab); empty string means "no fallback". */
   fallback_llm_id: string;
   fallback_llm_provider: string;
-  /** Fallback brain reasoning effort; '' = model default. */
   fallback_llm_effort: string;
   allow_chat_skills: string[];
-  /** Max incoming turns per active A2A private-chat session before forcing "bye". */
   a2a_max_incoming_turns: number;
-  /** Cooldown after an auto-bye before the A2A conversation may reopen. */
   a2a_bye_cooldown_ms: number;
-  /** Whether this bot auto-replies in A2A private chats. */
   a2a_auto_reply_enabled: boolean;
   homepage_source: 'default' | 'metafile' | 'metaapp';
   homepage_metafile_uri: string;
   homepage_metafile_content_type: string;
   homepage_metaapp_pin: string;
-  /** DB homepage JSON at form open (for diff in the parent save pipeline). */
   homepage_initial: string | null;
-  /** Composed final homepage JSON string (or null) set on Advanced-tab save. */
   homepage?: string | null;
 }
 
@@ -129,11 +143,6 @@ export interface LlmOption {
 
 export type MetaBotEditTabKey = 'basic' | 'persona' | 'chatSettings' | 'knowledgeBase' | 'surf' | 'advanced';
 
-/** Editable fields owned by each tab; drives dirty tracking and save scoping. */
-// 'knowledgeBase' and 'surf' are deliberately absent: Knowledge Base manages
-// the bot's document corpora via the knowledgeBase:* IPC surface and Surf
-// hosts the immediate-effect metabot_settings surf switches, so neither owns
-// MetaBotEditValues fields nor needs dirty tracking.
 export const EDIT_TAB_FIELDS: Partial<Record<MetaBotEditTabKey, readonly (keyof MetaBotEditValues)[]>> = {
   basic: ['name', 'avatar', 'bio', 'metabot_type', 'boss_global_metaid', 'llm_id', 'llm_provider', 'llm_effort', 'fallback_llm_id', 'fallback_llm_provider', 'fallback_llm_effort'],
   persona: ['role', 'soul', 'goal'],
@@ -141,11 +150,6 @@ export const EDIT_TAB_FIELDS: Partial<Record<MetaBotEditTabKey, readonly (keyof 
   advanced: ['homepage_source', 'homepage_metafile_uri', 'homepage_metafile_content_type', 'homepage_metaapp_pin'],
 };
 
-// metabot_type is deliberately absent from EDIT_TAB_SYNC_GROUPS: the Twin/Worker
-// role is a local-only setting and is never published on-chain.
-// 'knowledgeBase' and 'surf' are likewise absent: nothing in those panels
-// syncs on-chain on save.
-/** On-chain sync step groups each tab is allowed to publish on save. */
 export const EDIT_TAB_SYNC_GROUPS: Partial<Record<MetaBotEditTabKey, readonly SyncStepKey[]>> = {
   basic: ['name', 'avatar', 'bio', 'owner', 'llm'],
   persona: ['persona'],
@@ -155,7 +159,10 @@ export const EDIT_TAB_SYNC_GROUPS: Partial<Record<MetaBotEditTabKey, readonly Sy
 
 const EDIT_TAB_ORDER: readonly MetaBotEditTabKey[] = ['basic', 'persona', 'chatSettings', 'knowledgeBase', 'surf', 'advanced'];
 
-const EDIT_TAB_LABEL_KEYS: Record<MetaBotEditTabKey, 'metabotTabBasic' | 'metabotTabPersona' | 'metabotTabDirectives' | 'metabotTabChatSettings' | 'metabotTabKnowledgeBase' | 'metabotTabSurf' | 'metabotTabAdvanced'> = {
+const EDIT_TAB_LABEL_KEYS: Record<
+  MetaBotEditTabKey,
+  'metabotTabBasic' | 'metabotTabPersona' | 'metabotTabChatSettings' | 'metabotTabKnowledgeBase' | 'metabotTabSurf' | 'metabotTabAdvanced'
+> = {
   basic: 'metabotTabBasic',
   persona: 'metabotTabPersona',
   chatSettings: 'metabotTabChatSettings',
@@ -214,41 +221,27 @@ const editFieldEquals = (a: MetaBotEditValues[keyof MetaBotEditValues], b: MetaB
 };
 
 interface MetaBotEditTabsProps {
+  /** Optional identity header rendered inside the Studio Linear top bar card above the underline tabs. */
+  headerSlot?: React.ReactNode;
   initialValues?: Partial<MetaBotEditValues> | null;
-  /** Metabot being edited; also used for name-check exclusion and homepage upload. */
   metabotId: number;
   onCancel: () => void;
-  /** Save one tab. Receives the full values object; the parent scopes persistence and chain sync to the tab. */
   onSaveTab: (tab: MetaBotEditTabKey, values: MetaBotEditValues) => Promise<void>;
-  /** Available LLM providers for selection. Multiple MetaBots may share the same LLM. Empty = none available. */
   llmOptions: LlmOption[];
-  /** Available local skills for private-chat allowlist selection. */
   skillOptions: Skill[];
-  /** Called when user clicks "Go to Model Settings" (e.g. to open Settings tab). */
   onRequestModelSettings?: () => void;
-  /** Check if name already exists (for uniqueness). Returns true if duplicate. */
   onCheckNameExists?: (name: string, excludeId?: number) => Promise<boolean>;
-  /** True when some other bot already holds the Twin role (not the one being edited). */
   hasOtherTwin?: boolean;
-  /** Signed /info/owner binding pin id of the bot being edited. */
   ownerBindingPinId?: string | null;
-  /** Open the current Bot's default template homepage in Bot Browser. */
   onOpenDefaultHomepage?: () => void;
-  /** Open a MetaApp homepage preview by its pin id (best-effort; browser may fail to resolve). */
   onPreviewMetaAppHomepage?: (pin: string) => Promise<boolean> | boolean;
-  /** Open the MetaApps surface so the user can publish a MetaApp for this Bot. */
   onRequestMetaApps?: () => void;
-  /**
-   * Full Metabot row for the Advanced-tab Wallet / Backup / Delete actions.
-   * Optional so SSR/unit renders can mount the editor without a live row; when
-   * absent the Advanced actions section is hidden.
-   */
   metabot?: Metabot | null;
-  /** Open the manager-level safe-delete flow from the Advanced tab. */
   onDelete?: () => void;
 }
 
 const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
+  headerSlot,
   initialValues,
   metabotId,
   onCancel,
@@ -268,26 +261,22 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [values, setValues] = useState<MetaBotEditValues>(() => buildInitialValues(initialValues));
   const [baseline, setBaseline] = useState<MetaBotEditValues>(() => buildInitialValues(initialValues));
-  const [activeTab, setActiveTab] = useState<MetaBotEditTabKey>('basic');  const [savingTab, setSavingTab] = useState<MetaBotEditTabKey | null>(null);
+  const [activeTab, setActiveTab] = useState<MetaBotEditTabKey>('basic');
+  const [savingTab, setSavingTab] = useState<MetaBotEditTabKey | null>(null);
   const [tabErrors, setTabErrors] = useState<Partial<Record<MetaBotEditTabKey, string>>>({});
   const [nameDuplicate, setNameDuplicate] = useState(false);
   const [selectedAllowChatSkillId, setSelectedAllowChatSkillId] = useState('');
+
   const loadAvatarNfts = useCallback(async (): Promise<AvatarPickerNftItem[]> => {
     const response = await window.electron.idbots.getMetabotNfts({ metabotId, kind: 'mrc721' });
     if (!response.success) throw new Error(response.error || i18nService.t('metabotNftLoadFailed'));
     return (response.items ?? []) as unknown as AvatarPickerNftItem[];
   }, [metabotId]);
-  // The OpenTeam remote-collaboration switch lives in the metabot_settings kv
-  // store (not in the metabot:update column whitelist), so it applies
-  // immediately on toggle instead of joining this tab's dirty/save flow.
+
   const [openTeamRemoteCollab, setOpenTeamRemoteCollab] = useState(true);
   const [openTeamRemoteCollabLoaded, setOpenTeamRemoteCollabLoaded] = useState(false);
   const [openTeamRemoteCollabSaving, setOpenTeamRemoteCollabSaving] = useState(false);
-  // Cowork capability switches: same metabot_settings kv channel as OpenTeam.
-  // Defaults mirror the main process: all three are per-bot opt-in (no
-  // record = OFF; an explicit '1' turns the switch on). Pre-existing bots
-  // carry a pinned '1' from the MetabotStore legacy migration, so only bots
-  // created after the default flip start off.
+
   const [coworkMcpTools, setCoworkMcpTools] = useState(false);
   const [coworkMcpToolsLoaded, setCoworkMcpToolsLoaded] = useState(false);
   const [coworkMcpToolsSaving, setCoworkMcpToolsSaving] = useState(false);
@@ -299,9 +288,6 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
   const [coworkComputerUseSaving, setCoworkComputerUseSaving] = useState(false);
   const [twinDemoteConfirmOpen, setTwinDemoteConfirmOpen] = useState(false);
 
-  // Re-initialize when a different bot is loaded into the same mounted editor.
-  // Saves only update the baseline (see handleSaveTab), so unsaved edits in
-  // other tabs are not clobbered by the parent refreshing its list state.
   useEffect(() => {
     const next = buildInitialValues(initialValues);
     setValues(next);
@@ -312,11 +298,8 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
     setNameDuplicate(false);
     setSelectedAllowChatSkillId('');
     setTwinDemoteConfirmOpen(false);
-    // initialValues is re-created by the parent on every list refresh; key off metabotId only.
   }, [metabotId]);
 
-  // Load the OpenTeam remote-collab switch for the bot being edited. The kv
-  // default (no record) means "allowed", so a missing/failed read falls back to on.
   useEffect(() => {
     let cancelled = false;
     setOpenTeamRemoteCollab(true);
@@ -336,10 +319,6 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
     return () => { cancelled = true; };
   }, [metabotId]);
 
-  // Load the cowork MCP-tools / browser-automation / computer-use switches
-  // for the bot being edited. A missing or failed read falls back to the
-  // per-switch default, matching the main process: all three are per-bot
-  // opt-in (no record = OFF). An explicit '1'/'0' always wins.
   useEffect(() => {
     let cancelled = false;
     const resetters = [
@@ -383,7 +362,6 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
     if (tab === activeTab) return;
     if (isTabDirty(activeTab)) {
       if (!window.confirm(i18nService.t('metabotUnsavedChangesConfirm'))) return;
-      // Discard the outgoing tab's unsaved edits.
       setValues((prev) => {
         const next = { ...prev };
         for (const field of EDIT_TAB_FIELDS[activeTab] ?? []) {
@@ -418,8 +396,6 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
     }
   };
 
-  // Assignment model: bundled skills are implicitly available to every bot,
-  // so only external (installed) skills are assignable here.
   const availableSkillOptions = useMemo(
     () => skillOptions.filter((skill) => skill.enabled && !skill.isBuiltIn),
     [skillOptions],
@@ -456,8 +432,6 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
     handleChange('allow_chat_skills', removeAllowChatSkill(values.allow_chat_skills, skillId));
   };
 
-  // Immediate-effect toggle: optimistic flip, persisted via metabot:setSetting;
-  // a failed write reverts the switch and surfaces a toast.
   const handleOpenTeamRemoteCollabToggle = () => {
     if (!openTeamRemoteCollabLoaded || openTeamRemoteCollabSaving) return;
     const next = !openTeamRemoteCollab;
@@ -475,7 +449,6 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
       .finally(() => setOpenTeamRemoteCollabSaving(false));
   };
 
-  // Same immediate-effect pattern as the OpenTeam toggle above.
   const makeSettingToggle = (
     key: string,
     value: boolean,
@@ -553,8 +526,6 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
         allow_chat_skills: normalizeAllowChatSkills(values.allow_chat_skills),
         ...(tab === 'advanced' ? { homepage: homepageForSave } : {}),
       });
-      // Success: this tab's fields become the new clean baseline; other tabs
-      // keep their unsaved edits and stay dirty.
       setBaseline((prev) => {
         const next = { ...prev };
         for (const field of EDIT_TAB_FIELDS[tab] ?? []) {
@@ -597,8 +568,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
   const fallbackSeedEffort = values.llm_id.trim() ? values.llm_effort : '';
   const brainEffortOf = (value: string): LlmEffortLevel | null =>
     isLlmEffortLevel(value) ? value : null;
-  // Twin switch: the current Twin can turn itself off; Workers see it only
-  // when no Twin exists. The Welcome Bot never gets this control.
+
   const isTwin = values.metabot_type === 'twin';
   const showTwinSwitch = canShowMetabotTwinSwitch({
     metabotType: baseline.metabot_type,
@@ -622,178 +592,215 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
     enabled: coworkComputerUse,
     disabled: !coworkComputerUseLoaded || coworkComputerUseSaving,
   });
-  const rowClass = 'grid grid-cols-1 md:grid-cols-[152px_minmax(0,1fr)] gap-2 md:gap-4 items-start';
-  const labelClass = 'pt-2 text-sm font-medium dark:text-claude-darkText text-claude-text';
-  const hintClass = 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1';
-  // Keep primary and fallback brain pickers the same half-column width.
-  const llmPickerWidthClass = 'w-1/2 min-w-0 shrink-0';
-  const inputChromeClass = 'px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent';
-  const inputClass = `w-full ${inputChromeClass}`;
-  const clearActionClass = 'shrink-0 px-3 py-2 text-xs rounded-xl border dark:border-claude-darkBorder border-claude-border text-red-500 dark:text-red-400 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors whitespace-nowrap';
 
   const renderPanelError = (tab: MetaBotEditTabKey) => {
     const message = tabErrors[tab];
     if (!message) return null;
     return (
-      <div className="text-sm text-red-500 dark:text-red-400 bg-red-500/10 dark:bg-red-500/10 rounded-lg px-3 py-2">
+      <div className="text-sm text-red-500 dark:text-red-400 bg-red-500/10 dark:bg-red-500/10 rounded-[8px] px-3.5 py-2.5">
         {message}
       </div>
     );
   };
 
   const renderPanelSaveRow = (tab: MetaBotEditTabKey) => (
-    <div className={rowClass}>
-      <div className="hidden md:block" />
-      <div className="flex items-center justify-end gap-2 pt-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={savingTab !== null}
-          className="px-3 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
-        >
-          {i18nService.t('cancel')}
-        </button>
-        <button
-          type="button"
-          data-slot={`metabot-edit-save-${tab}`}
-          onClick={() => void handleSaveTab(tab)}
-          disabled={savingTab !== null}
-          className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] inline-flex items-center justify-center rounded-[var(--shape-radius-md)] px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {savingTab === tab ? i18nService.t('saving') : i18nService.t('metabotSaveAndSyncChain')}
-        </button>
-      </div>
+    <div className="flex items-center justify-end gap-2 pt-1">
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={savingTab !== null}
+        className={`${METABOT_BTN_FLAT_CLASS} !h-[34px] !px-3.5 !rounded-[8px]`}
+      >
+        {i18nService.t('cancel')}
+      </button>
+      <button
+        type="button"
+        data-slot={`metabot-edit-save-${tab}`}
+        onClick={() => void handleSaveTab(tab)}
+        disabled={savingTab !== null}
+        className={METABOT_BTN_PRIMARY_CLASS}
+      >
+        {savingTab === tab ? i18nService.t('saving') : i18nService.t('metabotSaveAndSyncChain')}
+      </button>
     </div>
   );
 
+  const ownerMetaIdTrimmed = values.boss_global_metaid.trim();
+
   return (
-    <div className="space-y-4">
-      {/* Tab bar */}
-      <div className="flex flex-wrap items-center gap-1 border-b dark:border-claude-darkBorder border-claude-border" role="tablist">
-        {EDIT_TAB_ORDER.map((tab) => {
-          const isActive = tab === activeTab;
-          return (
-            <button
-              key={tab}
-              type="button"
-              role="tab"
-              aria-selected={isActive}
-              data-slot={`metabot-edit-tab-${tab}`}
-              onClick={() => handleTabClick(tab)}
-              className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                isActive
-                  ? 'border-claude-accent text-claude-accent'
-                  : 'border-transparent dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText'
-              }`}
-            >
-              {i18nService.t(EDIT_TAB_LABEL_KEYS[tab])}
-              {isTabDirty(tab) ? <span className="ml-1 text-claude-accent">•</span> : null}
-            </button>
-          );
-        })}
+    <div className="space-y-5">
+      {/* Studio Linear Header Card + Underline Tab Bar */}
+      <div className="rounded-[10px] border border-slate-900/[0.095] dark:border-white/[0.085] bg-white dark:bg-[#182538] px-4 pt-3.5 pb-0">
+        {headerSlot}
+        <div
+          className="flex items-center gap-5 overflow-x-auto border-t border-slate-900/[0.06] dark:border-white/[0.06] pt-0.5"
+          role="tablist"
+        >
+          {EDIT_TAB_ORDER.map((tab) => {
+            const isActive = tab === activeTab;
+            return (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                data-slot={`metabot-edit-tab-${tab}`}
+                onClick={() => handleTabClick(tab)}
+                className={`relative py-2.5 px-0.5 text-[13px] whitespace-nowrap transition-colors ${
+                  isActive
+                    ? 'font-bold text-[#181d25] dark:text-[#f3f5f8]'
+                    : 'font-semibold text-[#5a6577] dark:text-[#94a3b8] hover:text-[#181d25] dark:hover:text-[#f3f5f8]'
+                }`}
+              >
+                <span>{i18nService.t(EDIT_TAB_LABEL_KEYS[tab])}</span>
+                {isTabDirty(tab) ? <span className="ml-1 text-claude-accent">•</span> : null}
+                {isActive && (
+                  <span
+                    aria-hidden
+                    className="absolute inset-x-0 bottom-[-1px] h-[2px] rounded-full bg-claude-accent"
+                  />
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Basic tab: identity + owner + LLM brain */}
+      {/* 1. Basic tab: Public Profile + Seat/Owner + Language Model Brain */}
       <div
         role="tabpanel"
         data-slot="metabot-edit-panel-basic"
-        className={`space-y-3 ${activeTab === 'basic' ? '' : 'hidden'}`}
+        className={`space-y-5 ${activeTab === 'basic' ? '' : 'hidden'}`}
       >
         {renderPanelError('basic')}
 
-        <div className={rowClass}>
-          <label htmlFor="metabot-name" className={labelClass}>
-            {i18nService.t('metabotName')}
-          </label>
-          <div className="min-w-0">
-            <input
-              id="metabot-name"
-              type="text"
-              value={values.name}
-              onChange={(e) => handleChange('name', e.target.value)}
-              onBlur={handleNameBlur}
-              placeholder={i18nService.t('metabotNamePlaceholder')}
-              className={`${inputClass} ${nameDuplicate ? 'border-red-500 dark:border-red-500' : ''}`}
-            />
-            {nameDuplicate && (
-              <p className="text-xs text-red-500 mt-1">
-                {i18nService.t('metabotNameDuplicate')}
-              </p>
-            )}
+        {/* Group 1: Public Profile */}
+        <div>
+          <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+            <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('metabotGroupPublicProfile')}</span>
+            <span className={METABOT_GROUP_NOTE_CLASS}>{i18nService.t('metabotGroupPublicProfileNote')}</span>
           </div>
-        </div>
+          <div className={METABOT_GROUP_BOX_CLASS}>
+            {/* Avatar Row */}
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="w-12 h-12 shrink-0">
+                  <NftAvatarFrame
+                    avatar={values.avatar}
+                    fallbackSource={values.avatar === metabot?.avatar ? metabot?.avatar_fallback : null}
+                    frameClassName="w-12 h-12 rounded-[10px] ring-1 ring-black/[0.08] dark:ring-white/[0.1]"
+                    fallback={(
+                      <div className="w-12 h-12 rounded-[10px] bg-[#eef1f5] dark:bg-white/[0.05] ring-1 ring-black/[0.08] dark:ring-white/[0.1] overflow-hidden flex items-center justify-center">
+                        <PhotoIcon className="h-6 w-6 text-[#5a6577] dark:text-[#94a3b8]" />
+                      </div>
+                    )}
+                  />
+                </div>
+                <div className="min-w-0">
+                  <div className={METABOT_ROW_TITLE_CLASS}>{i18nService.t('metabotAvatar')}</div>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotAvatarPlaceholder')}</p>
+                  {parseNftAvatarReference(values.avatar) && (
+                    <p className="mt-0.5 text-[11px] text-[#8c96a6] dark:text-[#64748b]">
+                      {i18nService.t('metabotNftAvatarSyncHint')}
+                    </p>
+                  )}
+                </div>
+              </div>
 
-        <div className={rowClass}>
-          <label className={labelClass}>
-            {i18nService.t('metabotAvatar')}
-          </label>
-          <div className="min-w-0 flex flex-col sm:flex-row sm:items-center gap-3">
-            <div className="w-16 h-16 flex-shrink-0">
-              <NftAvatarFrame
-                avatar={values.avatar}
-                fallbackSource={values.avatar === metabot?.avatar ? metabot?.avatar_fallback : null}
-                frameClassName="w-16 h-16 rounded-xl"
-                imgClassName="border dark:border-claude-darkBorder border-claude-border"
-                fallback={(
-                  <div className="w-16 h-16 rounded-xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border overflow-hidden flex items-center justify-center">
-                    <PhotoIcon className="h-8 w-8 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-                  </div>
-                )}
-              />
-            </div>
-            <div className="flex-1 min-w-0">
-              <button
-                type="button"
-                data-slot="metabot-avatar-set"
-                onClick={() => setAvatarPickerOpen(true)}
-                className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
-              >
-                {i18nService.t('metabotAvatarSet')}
-              </button>
-              <p className={hintClass}>
-                {i18nService.t('metabotAvatarPlaceholder')}
-              </p>
-              {parseNftAvatarReference(values.avatar) && (
-                <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                  {i18nService.t('metabotNftAvatarSyncHint')}
-                </p>
-              )}
-              {values.avatar && (
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
-                  onClick={() => handleChange('avatar', '')}
-                  className="mt-1 text-xs text-red-500 dark:text-red-400 hover:underline"
+                  data-slot="metabot-avatar-set"
+                  onClick={() => setAvatarPickerOpen(true)}
+                  className={METABOT_BTN_FLAT_CLASS}
                 >
-                  {i18nService.t('metabotAvatarClear')}
+                  {i18nService.t('metabotAvatarSet')}
                 </button>
-              )}
+                {values.avatar && (
+                  <button
+                    type="button"
+                    onClick={() => handleChange('avatar', '')}
+                    className="text-xs font-semibold text-red-600 dark:text-rose-400 hover:underline px-1"
+                  >
+                    {i18nService.t('metabotAvatarClear')}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Name Row */}
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-[180px]">
+                <UserIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div>
+                  <label htmlFor="metabot-name" className={METABOT_ROW_TITLE_CLASS}>
+                    {i18nService.t('metabotName')}
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotNameHint')}</p>
+                </div>
+              </div>
+              <div className="w-full sm:max-w-[420px]">
+                <input
+                  id="metabot-name"
+                  type="text"
+                  value={values.name}
+                  onChange={(e) => handleChange('name', e.target.value)}
+                  onBlur={handleNameBlur}
+                  placeholder={i18nService.t('metabotNamePlaceholder')}
+                  className={`${METABOT_CLEAN_INPUT_CLASS} ${nameDuplicate ? '!border-red-500' : ''}`}
+                />
+                {nameDuplicate && (
+                  <p className="text-xs text-red-500 mt-1">
+                    {i18nService.t('metabotNameDuplicate')}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Bio Row */}
+            <div className={METABOT_GROUP_ROW_TOP_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-[180px]">
+                <DocumentTextIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div>
+                  <label htmlFor="metabot-bio" className={METABOT_ROW_TITLE_CLASS}>
+                    {i18nService.t('metabotBio')}
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotBioHint')}</p>
+                </div>
+              </div>
+              <div className="w-full sm:max-w-[420px]">
+                <textarea
+                  id="metabot-bio"
+                  value={values.bio}
+                  onChange={(e) => handleChange('bio', e.target.value)}
+                  placeholder={i18nService.t('metabotBioPlaceholder')}
+                  rows={2}
+                  className={`${METABOT_CLEAN_INPUT_CLASS} resize-y leading-relaxed`}
+                />
+              </div>
             </div>
           </div>
         </div>
 
-        <div className={rowClass}>
-          <label htmlFor="metabot-bio" className={labelClass}>
-            {i18nService.t('metabotBio')}
-          </label>
-          <div className="min-w-0">
-            <textarea
-              id="metabot-bio"
-              value={values.bio}
-              onChange={(e) => handleChange('bio', e.target.value)}
-              placeholder={i18nService.t('metabotBioPlaceholder')}
-              rows={2}
-              className={`${inputClass} resize-y`}
-            />
+        {/* Group 2: Seat & Ownership */}
+        <div>
+          <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+            <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('metabotGroupSeatAndOwner')}</span>
           </div>
-        </div>
-
-        {showTwinSwitch && (
-          <div className={rowClass} data-slot="metabot-twin-switch-row">
-            <label id="metabot-twin-switch-label" className={labelClass}>
-              {i18nService.t('metabotTwinSwitchLabel')}
-            </label>
-            <div className="min-w-0">
-              <div className="flex items-center gap-3 pt-1">
+          <div className={METABOT_GROUP_BOX_CLASS}>
+            {showTwinSwitch && (
+              <div className={METABOT_GROUP_ROW_CLASS} data-slot="metabot-twin-switch-row">
+                <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                  <StarIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                  <div>
+                    <label id="metabot-twin-switch-label" className={METABOT_ROW_TITLE_CLASS}>
+                      {i18nService.t('metabotTwinSwitchLabel')}
+                    </label>
+                    <p className={METABOT_ROW_HINT_CLASS}>
+                      {isTwin ? i18nService.t('metabotTwinSwitchHintCurrent') : i18nService.t('metabotTwinSwitchHint')}
+                    </p>
+                  </div>
+                </div>
                 <div
                   role="switch"
                   aria-checked={isTwin}
@@ -812,280 +819,322 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                   <div className={twinToggleView.knobClass} />
                 </div>
               </div>
-              <p className={hintClass}>
-                {isTwin ? i18nService.t('metabotTwinSwitchHintCurrent') : i18nService.t('metabotTwinSwitchHint')}
-              </p>
-            </div>
-          </div>
-        )}
+            )}
 
-        <div className={rowClass}>
-          <label htmlFor="metabot-boss-metaid" className={labelClass}>
-            {i18nService.t('metabotBossMetaId')}
-            <span className="ml-1 font-normal opacity-60">{i18nService.t('metabotBossMetaIdOptional')}</span>
-          </label>
-          <div className="min-w-0">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-              <input
-                id="metabot-boss-metaid"
-                type="text"
-                value={values.boss_global_metaid}
-                readOnly
-                placeholder={i18nService.t('metabotBossMetaIdPlaceholder')}
-                className={`${inputClass} flex-1 min-w-0 font-mono opacity-80`}
-              />
-              <button
-                type="button"
-                onClick={() => { void handleGetOwnerMetaId(); }}
-                className="shrink-0 px-3 py-2 text-xs rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors whitespace-nowrap"
-              >
-                {i18nService.t('metabotGetOwnerMetaId')}
-              </button>
-                  {values.boss_global_metaid.trim() && (
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                <LinkIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <label htmlFor="metabot-boss-metaid" className={METABOT_ROW_TITLE_CLASS}>
+                    {i18nService.t('metabotBossMetaId')}
+                  </label>
+                  <input
+                    id="metabot-boss-metaid"
+                    type="text"
+                    value={values.boss_global_metaid}
+                    readOnly
+                    className="sr-only"
+                    tabIndex={-1}
+                  />
+                  {ownerMetaIdTrimmed ? (
+                    <p className={METABOT_ROW_HINT_CLASS}>
+                      <span
+                        className={
+                          ownerBindingPinId
+                            ? 'font-semibold text-[#0f9d68] dark:text-[#34d399]'
+                            : 'font-semibold text-amber-600 dark:text-amber-400'
+                        }
+                      >
+                        {ownerBindingPinId ? `✓ ${i18nService.t('metabotOwnerSigned')}` : i18nService.t('metabotOwnerUnsigned')}
+                      </span>
+                      {' · '}
+                      <span className="font-mono tabular-nums" title={ownerMetaIdTrimmed}>
+                        {formatGlobalMetaIdShort(ownerMetaIdTrimmed)}
+                      </span>
+                    </p>
+                  ) : (
+                    <p className={METABOT_ROW_HINT_CLASS}>
+                      {i18nService.t('metabotBossMetaIdHint')}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
-                  onClick={() => handleChange('boss_global_metaid', '')}
-                  className={clearActionClass}
+                  onClick={() => { void handleGetOwnerMetaId(); }}
+                  className={METABOT_BTN_FLAT_CLASS}
                 >
-                  {i18nService.t('metabotClearOwner')}
+                  {i18nService.t('metabotGetOwnerMetaId')}
                 </button>
-              )}
-            </div>
-            {values.boss_global_metaid.trim() ? (
-              ownerBindingPinId ? (
-                <p className="text-xs mt-1 text-green-600 dark:text-green-400">
-                  {i18nService.t('metabotOwnerSigned')}
-                </p>
-              ) : (
-                <p className="text-xs mt-1 text-amber-600 dark:text-amber-400">
-                  {i18nService.t('metabotOwnerUnsigned')}
-                </p>
-              )
-            ) : (
-              <p className={`${hintClass} opacity-70`}>
-                {i18nService.t('metabotBossMetaIdHint')}
-              </p>
-            )}
-          </div>
-        </div>
-
-        <div className={rowClass}>
-          <label htmlFor="metabot-llm" className={labelClass}>
-            {i18nService.t('metabotLlmProvider')}
-          </label>
-          <div className="min-w-0">
-            {hasNoAvailableLlm ? (
-              <div className="rounded-xl border dark:border-claude-darkBorder border-claude-border px-3 py-3 dark:bg-claude-darkSurface/50 bg-claude-surface/50">
-                <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                  {i18nService.t('metabotNoAvailableLlm')}
-                </p>
-                {onRequestModelSettings && (
+                {ownerMetaIdTrimmed && (
                   <button
                     type="button"
-                    onClick={onRequestModelSettings}
-                    className="mt-2 text-sm text-claude-accent hover:underline"
-                  >
-                    {i18nService.t('metabotGoToModelSettings')}
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <div className={llmPickerWidthClass}>
-                  <ModelEffortPicker
-                    id="metabot-llm"
-                    variant="field"
-                    value={{
-                      modelId: values.llm_id || null,
-                      providerKey: values.llm_provider || null,
-                      effort: brainEffortOf(values.llm_effort),
-                    }}
-                    onChange={(selection) => {
-                      handleChange('llm_id', selection.modelId ?? '');
-                      handleChange('llm_provider', selection.providerKey ?? '');
-                      handleChange('llm_effort', selection.effort ?? '');
-                    }}
-                    placeholder={primaryFollowGlobalPlaceholder}
-                    globalDefaultModel={globalDefaultModel}
-                    onManageModels={onRequestModelSettings}
-                  />
-                </div>
-                {values.llm_id.trim() && (
-                  <button
-                    type="button"
-                    data-slot="metabot-clear-primary-llm"
-                    onClick={() => {
-                      handleChange('llm_id', '');
-                      handleChange('llm_provider', '');
-                      handleChange('llm_effort', '');
-                    }}
-                    className={clearActionClass}
-                  >
-                    {i18nService.t('metabotPrimaryLlmFollowGlobalAction')}
-                  </button>
-                )}
-                <span className="relative inline-flex shrink-0 group">
-                  <button
-                    type="button"
-                    className="rounded-[var(--shape-radius-md)] p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent transition-colors"
-                    aria-label={i18nService.t('metabotPrimaryLlmHint')}
-                  >
-                    <QuestionMarkCircleIcon className="h-4 w-4" />
-                  </button>
-                  <span
-                    role="tooltip"
-                    className="pointer-events-none absolute left-0 bottom-full mb-1.5 z-50 w-56 rounded-md border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-2.5 py-1.5 text-[11px] leading-relaxed dark:text-claude-darkText text-claude-text shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 whitespace-normal"
-                  >
-                    {i18nService.t('metabotPrimaryLlmHint')}
-                  </span>
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {!hasNoAvailableLlm && (
-          <div className={rowClass}>
-            <label htmlFor="metabot-fallback-llm" className={labelClass}>
-              {i18nService.t('metabotFallbackLlmLabel')}
-            </label>
-            <div className="min-w-0">
-              {values.fallback_llm_id.trim() ? (
-                <div className="flex items-center gap-2">
-                  <div className={llmPickerWidthClass}>
-                    <ModelEffortPicker
-                      id="metabot-fallback-llm"
-                      variant="field"
-                      value={{
-                        modelId: values.fallback_llm_id || null,
-                        providerKey: values.fallback_llm_provider || null,
-                        effort: brainEffortOf(values.fallback_llm_effort),
-                      }}
-                      onChange={(selection) => {
-                        handleChange('fallback_llm_id', selection.modelId ?? '');
-                        handleChange('fallback_llm_provider', selection.providerKey ?? '');
-                        handleChange('fallback_llm_effort', selection.effort ?? '');
-                      }}
-                      globalDefaultModel={globalDefaultModel}
-                      onManageModels={onRequestModelSettings}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleChange('fallback_llm_id', '');
-                      handleChange('fallback_llm_provider', '');
-                      handleChange('fallback_llm_effort', '');
-                    }}
-                    className={clearActionClass}
+                    onClick={() => handleChange('boss_global_metaid', '')}
+                    className="text-xs font-semibold text-red-600 dark:text-rose-400 hover:underline px-1"
                   >
                     {i18nService.t('metabotClearOwner')}
                   </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  id="metabot-fallback-llm"
-                  onClick={() => {
-                    // Seed the fallback with the primary brain (or global default)
-                    // so the picker has a concrete starting selection.
-                    handleChange('fallback_llm_id', fallbackSeedModelId);
-                    handleChange('fallback_llm_provider', fallbackSeedProvider);
-                    handleChange('fallback_llm_effort', fallbackSeedEffort);
-                  }}
-                  disabled={!fallbackSeedModelId}
-                  className="px-3 py-1.5 rounded-xl border dark:border-claude-darkBorder border-claude-border text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {i18nService.t('metabotFallbackLlmSetup')}
-                </button>
-              )}
-              <p className={hintClass}>
-                {i18nService.t('metabotFallbackLlmHint')}
-              </p>
+                )}
+              </div>
             </div>
           </div>
-        )}
+        </div>
+
+        {/* Group 3: Language Model Brain */}
+        <div>
+          <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+            <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('metabotGroupBrain')}</span>
+            <span className={METABOT_GROUP_NOTE_CLASS}>{i18nService.t('metabotGroupBrainNote')}</span>
+          </div>
+          <div className={METABOT_GROUP_BOX_CLASS}>
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-[180px]">
+                <CpuChipIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div>
+                  <label htmlFor="metabot-llm" className={METABOT_ROW_TITLE_CLASS}>
+                    {i18nService.t('metabotLlmProvider')}
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotPrimaryLlmHint')}</p>
+                </div>
+              </div>
+
+              <div className="w-full sm:max-w-[420px] flex items-center sm:justify-end gap-2">
+                {hasNoAvailableLlm ? (
+                  <div className="w-full rounded-[8px] border border-slate-900/[0.095] dark:border-white/[0.09] px-3 py-2.5 bg-[#f8fafc] dark:bg-[#131d2c]">
+                    <p className="text-xs text-[#5a6577] dark:text-[#94a3b8]">
+                      {i18nService.t('metabotNoAvailableLlm')}
+                    </p>
+                    {onRequestModelSettings && (
+                      <button
+                        type="button"
+                        onClick={onRequestModelSettings}
+                        className="mt-1.5 text-xs font-semibold text-claude-accent hover:underline"
+                      >
+                        {i18nService.t('metabotGoToModelSettings')}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex-1 min-w-0">
+                      <ModelEffortPicker
+                        id="metabot-llm"
+                        variant="field"
+                        value={{
+                          modelId: values.llm_id || null,
+                          providerKey: values.llm_provider || null,
+                          effort: brainEffortOf(values.llm_effort),
+                        }}
+                        onChange={(selection) => {
+                          handleChange('llm_id', selection.modelId ?? '');
+                          handleChange('llm_provider', selection.providerKey ?? '');
+                          handleChange('llm_effort', selection.effort ?? '');
+                        }}
+                        placeholder={primaryFollowGlobalPlaceholder}
+                        globalDefaultModel={globalDefaultModel}
+                        onManageModels={onRequestModelSettings}
+                      />
+                    </div>
+                    {values.llm_id.trim() && (
+                      <button
+                        type="button"
+                        data-slot="metabot-clear-primary-llm"
+                        onClick={() => {
+                          handleChange('llm_id', '');
+                          handleChange('llm_provider', '');
+                          handleChange('llm_effort', '');
+                        }}
+                        className={METABOT_BTN_FLAT_CLASS}
+                      >
+                        {i18nService.t('metabotPrimaryLlmFollowGlobalAction')}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {!hasNoAvailableLlm && (
+              <div className={METABOT_GROUP_ROW_CLASS}>
+                <div className="flex items-start gap-2.5 min-w-[180px]">
+                  <ShieldCheckIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                  <div>
+                    <label htmlFor="metabot-fallback-llm" className={METABOT_ROW_TITLE_CLASS}>
+                      {i18nService.t('metabotFallbackLlmLabel')}
+                    </label>
+                    <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotFallbackLlmHint')}</p>
+                  </div>
+                </div>
+
+                <div className="w-full sm:max-w-[420px] flex items-center sm:justify-end gap-2">
+                  {values.fallback_llm_id.trim() ? (
+                    <>
+                      <div className="flex-1 min-w-0">
+                        <ModelEffortPicker
+                          id="metabot-fallback-llm"
+                          variant="field"
+                          value={{
+                            modelId: values.fallback_llm_id || null,
+                            providerKey: values.fallback_llm_provider || null,
+                            effort: brainEffortOf(values.fallback_llm_effort),
+                          }}
+                          onChange={(selection) => {
+                            handleChange('fallback_llm_id', selection.modelId ?? '');
+                            handleChange('fallback_llm_provider', selection.providerKey ?? '');
+                            handleChange('fallback_llm_effort', selection.effort ?? '');
+                          }}
+                          globalDefaultModel={globalDefaultModel}
+                          onManageModels={onRequestModelSettings}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleChange('fallback_llm_id', '');
+                          handleChange('fallback_llm_provider', '');
+                          handleChange('fallback_llm_effort', '');
+                        }}
+                        className="text-xs font-semibold text-red-600 dark:text-rose-400 hover:underline px-1 shrink-0"
+                      >
+                        {i18nService.t('metabotClearOwner')}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      id="metabot-fallback-llm"
+                      onClick={() => {
+                        handleChange('fallback_llm_id', fallbackSeedModelId);
+                        handleChange('fallback_llm_provider', fallbackSeedProvider);
+                        handleChange('fallback_llm_effort', fallbackSeedEffort);
+                      }}
+                      disabled={!fallbackSeedModelId}
+                      className={METABOT_BTN_FLAT_CLASS}
+                    >
+                      {i18nService.t('metabotFallbackLlmSetup')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
 
         {renderPanelSaveRow('basic')}
       </div>
 
-      {/* Persona tab: role / soul / goal — all optional in edit mode */}
+      {/* 2. Persona tab: Role / Soul / Goal */}
       <div
         role="tabpanel"
         data-slot="metabot-edit-panel-persona"
-        className={`space-y-3 ${activeTab === 'persona' ? '' : 'hidden'}`}
+        className={`space-y-5 ${activeTab === 'persona' ? '' : 'hidden'}`}
       >
         {renderPanelError('persona')}
 
-        <p className={hintClass}>
-          {i18nService.t('metabotPersonaOptionalHint')}
-        </p>
-
-        <div className={rowClass}>
-          <label htmlFor="metabot-role" className={labelClass}>
-            {i18nService.t('metabotRole')}
-          </label>
-          <div className="min-w-0">
-            <input
-              id="metabot-role"
-              type="text"
-              value={values.role}
-              onChange={(e) => handleChange('role', e.target.value)}
-              placeholder={i18nService.t('metabotRolePlaceholder')}
-              className={inputClass}
-            />
+        <div>
+          <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+            <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('metabotGroupPersona')}</span>
+            <span className={METABOT_GROUP_NOTE_CLASS}>{i18nService.t('metabotPersonaOptionalHint')}</span>
           </div>
-        </div>
 
-        <div className={rowClass}>
-          <label htmlFor="metabot-soul" className={labelClass}>
-            {i18nService.t('metabotSoul')}
-          </label>
-          <div className="min-w-0">
-            <textarea
-              id="metabot-soul"
-              value={values.soul}
-              onChange={(e) => handleChange('soul', e.target.value)}
-              placeholder={i18nService.t('metabotSoulPlaceholder')}
-              rows={4}
-              className={`${inputClass} resize-y`}
-            />
-          </div>
-        </div>
+          <div className={METABOT_GROUP_BOX_CLASS}>
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-[180px]">
+                <IdentificationIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div>
+                  <label htmlFor="metabot-role" className={METABOT_ROW_TITLE_CLASS}>
+                    {i18nService.t('metabotRole')}
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotRoleHint')}</p>
+                </div>
+              </div>
+              <div className="w-full sm:max-w-[420px]">
+                <input
+                  id="metabot-role"
+                  type="text"
+                  value={values.role}
+                  onChange={(e) => handleChange('role', e.target.value)}
+                  placeholder={i18nService.t('metabotRolePlaceholder')}
+                  className={METABOT_CLEAN_INPUT_CLASS}
+                />
+              </div>
+            </div>
 
-        <div className={rowClass}>
-          <label htmlFor="metabot-goal" className={labelClass}>
-            {i18nService.t('metabotGoal')}
-          </label>
-          <div className="min-w-0">
-            <textarea
-              id="metabot-goal"
-              value={values.goal}
-              onChange={(e) => handleChange('goal', e.target.value)}
-              placeholder={i18nService.t('metabotGoalPlaceholder')}
-              rows={2}
-              className={`${inputClass} resize-y`}
-            />
+            <div className={METABOT_GROUP_ROW_TOP_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-[180px]">
+                <HeartIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div>
+                  <label htmlFor="metabot-soul" className={METABOT_ROW_TITLE_CLASS}>
+                    {i18nService.t('metabotSoul')}
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotSoulHint')}</p>
+                </div>
+              </div>
+              <div className="w-full sm:max-w-[420px]">
+                <textarea
+                  id="metabot-soul"
+                  value={values.soul}
+                  onChange={(e) => handleChange('soul', e.target.value)}
+                  placeholder={i18nService.t('metabotSoulPlaceholder')}
+                  rows={4}
+                  className={`${METABOT_CLEAN_INPUT_CLASS} resize-y leading-relaxed`}
+                />
+              </div>
+            </div>
+
+            <div className={METABOT_GROUP_ROW_TOP_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-[180px]">
+                <FlagIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div>
+                  <label htmlFor="metabot-goal" className={METABOT_ROW_TITLE_CLASS}>
+                    {i18nService.t('metabotGoal')}
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotGoalHint')}</p>
+                </div>
+              </div>
+              <div className="w-full sm:max-w-[420px]">
+                <textarea
+                  id="metabot-goal"
+                  value={values.goal}
+                  onChange={(e) => handleChange('goal', e.target.value)}
+                  placeholder={i18nService.t('metabotGoalPlaceholder')}
+                  rows={2}
+                  className={`${METABOT_CLEAN_INPUT_CLASS} resize-y leading-relaxed`}
+                />
+              </div>
+            </div>
           </div>
         </div>
 
         {renderPanelSaveRow('persona')}
       </div>
 
-      {/* Chat Settings tab: private/group chat skill allowlist */}
+      {/* 3. Chat Settings tab: Response & Collab / Session Limits / Skill Permissions */}
       <div
         role="tabpanel"
         data-slot="metabot-edit-panel-chatSettings"
-        className={`space-y-3 ${activeTab === 'chatSettings' ? '' : 'hidden'}`}
+        className={`space-y-5 ${activeTab === 'chatSettings' ? '' : 'hidden'}`}
       >
         {renderPanelError('chatSettings')}
 
-        <div className={rowClass}>
-          <label id="metabot-a2a-auto-reply-label" className={labelClass}>
-            {i18nService.t('metabotA2aAutoReply')}
-          </label>
-          <div className="min-w-0">
-            <div className="flex items-center gap-3 pt-1">
+        {/* Group 1: Chat & Collaboration */}
+        <div>
+          <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+            <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('metabotGroupResponseCollab')}</span>
+          </div>
+          <div className={METABOT_GROUP_BOX_CLASS}>
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                <ChatBubbleLeftRightIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div>
+                  <label id="metabot-a2a-auto-reply-label" className={METABOT_ROW_TITLE_CLASS}>
+                    {i18nService.t('metabotA2aAutoReply')}
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotA2aAutoReplyHint')}</p>
+                </div>
+              </div>
               <div
                 role="switch"
                 aria-checked={values.a2a_auto_reply_enabled}
@@ -1098,19 +1147,18 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                 <div className={a2aAutoReplyToggleView.knobClass} />
               </div>
             </div>
-            <p className={hintClass}>
-              {i18nService.t('metabotA2aAutoReplyHint')}
-            </p>
-          </div>
-        </div>
 
-        {/* OpenTeam remote collab: immediate-effect kv switch, outside this tab's dirty/save flow. */}
-        <div className={rowClass}>
-          <label id="metabot-openteam-remote-collab-label" className={labelClass}>
-            {i18nService.t('metabotOpenTeamRemoteCollab')}
-          </label>
-          <div className="min-w-0">
-            <div className="flex items-center gap-3 pt-1">
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                <UserGroupIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div>
+                  <label id="metabot-openteam-remote-collab-label" className={METABOT_ROW_TITLE_CLASS}>
+                    <span>{i18nService.t('metabotOpenTeamRemoteCollab')}</span>
+                    <span className={METABOT_MICRO_BADGE_CLASS}>{i18nService.t('metabotBadgeImmediate')}</span>
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotOpenTeamRemoteCollabHint')}</p>
+                </div>
+              </div>
               <div
                 role="switch"
                 aria-checked={openTeamRemoteCollab}
@@ -1123,188 +1171,202 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                 <div className={openTeamRemoteCollabToggleView.knobClass} />
               </div>
             </div>
-            <p className={hintClass}>
-              {i18nService.t('metabotOpenTeamRemoteCollabHint')}
-            </p>
           </div>
         </div>
 
-        <div className={rowClass}>
-          <label htmlFor="metabot-allow-chat-skills" className={labelClass}>
-            {i18nService.t('metabotAllowChatSkills')}
-          </label>
-          <div className="min-w-0 space-y-2">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+        {/* Group 2: A2A Session Throttling */}
+        <div>
+          <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+            <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('metabotGroupThrottle')}</span>
+            <span className={METABOT_GROUP_NOTE_CLASS}>{i18nService.t('metabotGroupThrottleNote')}</span>
+          </div>
+          <div className={METABOT_GROUP_BOX_CLASS}>
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                <ChartBarIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div>
+                  <label htmlFor="metabot-a2a-max-turns" className={METABOT_ROW_TITLE_CLASS}>
+                    {i18nService.t('metabotA2aMaxTurns')}
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotA2aMaxTurnsHint')}</p>
+                </div>
+              </div>
               <select
-                id="metabot-allow-chat-skills"
-                value={selectedAllowChatSkillId}
-                onChange={(e) => setSelectedAllowChatSkillId(e.target.value)}
-                className={inputClass}
-                disabled={availableSkillOptions.length === 0}
+                id="metabot-a2a-max-turns"
+                value={values.a2a_max_incoming_turns}
+                onChange={(e) => handleChange('a2a_max_incoming_turns', normalizeA2AMaxIncomingTurnsOption(e.target.value))}
+                className={`${METABOT_COMPACT_SELECT_CLASS} tabular-nums shrink-0`}
               >
-                <option value="">{i18nService.t('metabotAllowChatSkillsPlaceholder')}</option>
-                {availableSkillOptions.map((skill) => (
-                  <option key={skill.id} value={skill.id}>
-                    {skill.name}
+                {A2A_MAX_INCOMING_TURNS_OPTIONS.map((turns) => (
+                  <option key={turns} value={turns}>
+                    {turns}
                   </option>
                 ))}
               </select>
-              <button
-                type="button"
-                onClick={handleAddAllowChatSkill}
-                disabled={!canAddSelectedAllowChatSkill}
-                className="shrink-0 px-3 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                <PlusIcon className="h-4 w-4" />
-                <span>{i18nService.t('metabotAdd')}</span>
-              </button>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {normalizedAllowChatSkills.length > 0 ? (
-                normalizedAllowChatSkills.map((skillId) => (
-                  <span
-                    key={skillId}
-                    className="inline-flex max-w-full items-center gap-1 rounded-full border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-2 py-1 text-xs dark:text-claude-darkText text-claude-text"
+
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                <ClockIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div>
+                  <label htmlFor="metabot-a2a-bye-cooldown" className={METABOT_ROW_TITLE_CLASS}>
+                    {i18nService.t('metabotA2aByeCooldown')}
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotA2aByeCooldownHint')}</p>
+                </div>
+              </div>
+              <select
+                id="metabot-a2a-bye-cooldown"
+                value={values.a2a_bye_cooldown_ms}
+                onChange={(e) => handleChange('a2a_bye_cooldown_ms', normalizeA2AByeCooldownMsOption(e.target.value))}
+                className={`${METABOT_COMPACT_SELECT_CLASS} tabular-nums shrink-0`}
+              >
+                {A2A_BYE_COOLDOWN_MS_OPTIONS.map((cooldownMs) => (
+                  <option key={cooldownMs} value={cooldownMs}>
+                    {`${cooldownMs / 60_000} ${i18nService.t('metabotA2aByeCooldownMinutes')}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Group 3: Skill Permissions */}
+        <div>
+          <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+            <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('metabotGroupSkills')}</span>
+            <span className={METABOT_GROUP_NOTE_CLASS}>{i18nService.t('metabotGroupSkillsNote')}</span>
+          </div>
+          <div className={METABOT_GROUP_BOX_CLASS}>
+            <div className="px-4 py-3.5 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                  <SparklesIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                  <div>
+                    <label htmlFor="metabot-allow-chat-skills" className={METABOT_ROW_TITLE_CLASS}>
+                      {i18nService.t('metabotAllowChatSkills')}
+                    </label>
+                    <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotAllowChatSkillsHint')}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <select
+                    id="metabot-allow-chat-skills"
+                    value={selectedAllowChatSkillId}
+                    onChange={(e) => setSelectedAllowChatSkillId(e.target.value)}
+                    className={`${METABOT_COMPACT_SELECT_CLASS} max-w-[220px]`}
+                    disabled={availableSkillOptions.length === 0}
                   >
-                    <span className="max-w-[10rem] truncate" title={skillId}>
-                      {skillNameById.get(skillId) || skillId}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveAllowChatSkill(skillId)}
-                      className="inline-flex h-4 w-4 items-center justify-center rounded-[var(--shape-radius-md)] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-black/10 dark:hover:bg-white/10"
-                      aria-label={i18nService.t('metabotDelete')}
-                      title={i18nService.t('metabotDelete')}
+                    <option value="">{i18nService.t('metabotAllowChatSkillsPlaceholder')}</option>
+                    {availableSkillOptions.map((skill) => (
+                      <option key={skill.id} value={skill.id}>
+                        {skill.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleAddAllowChatSkill}
+                    disabled={!canAddSelectedAllowChatSkill}
+                    className={METABOT_BTN_FLAT_CLASS}
+                  >
+                    <PlusIcon className="h-3.5 w-3.5" />
+                    <span>{i18nService.t('metabotAdd')}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5 sm:pl-[28px]">
+                {normalizedAllowChatSkills.length > 0 ? (
+                  normalizedAllowChatSkills.map((skillId) => (
+                    <span
+                      key={skillId}
+                      className="inline-flex max-w-full items-center gap-1 rounded-[6px] border border-slate-900/[0.095] dark:border-white/[0.09] bg-[#eef1f5] dark:bg-white/[0.05] pl-2.5 pr-1.5 py-1 text-[12px] font-semibold text-[#181d25] dark:text-[#f3f5f8]"
                     >
-                      <XMarkIcon className="h-3 w-3" />
-                    </button>
+                      <span className="max-w-[12rem] truncate" title={skillId}>
+                        {skillNameById.get(skillId) || skillId}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveAllowChatSkill(skillId)}
+                        className="inline-flex h-4 w-4 items-center justify-center rounded text-[#8c96a6] dark:text-[#64748b] hover:text-[#181d25] dark:hover:text-[#f3f5f8] hover:bg-black/5 dark:hover:bg-white/10"
+                        aria-label={i18nService.t('metabotDelete')}
+                        title={i18nService.t('metabotDelete')}
+                      >
+                        <XMarkIcon className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-[12px] text-[#8c96a6] dark:text-[#64748b]">
+                    {i18nService.t('metabotAllowChatSkillsDefault')}
                   </span>
-                ))
-              ) : (
-                <p className={hintClass}>
-                  {i18nService.t('metabotAllowChatSkillsDefault')}
+                )}
+              </div>
+
+              {availableSkillOptions.length === 0 && (
+                <p className="text-[11.5px] text-amber-600 dark:text-amber-400 sm:pl-[28px]">
+                  {i18nService.t('metabotNoAvailableSkills')}
                 </p>
               )}
             </div>
-            <p className={hintClass}>
-              {i18nService.t('metabotAllowChatSkillsHint')}
-            </p>
-            {availableSkillOptions.length === 0 && (
-              <p className={`${hintClass} text-amber-500 dark:text-amber-400`}>
-                {i18nService.t('metabotNoAvailableSkills')}
-              </p>
-            )}
-          </div>
-        </div>
 
-        {/* Bundled skills are implicitly available to every bot (work sessions
-            plus every chat-routing surface since the routing-baseline change);
-            a collapsed read-only list keeps that discoverable without implying
-            they are assignable here. */}
-        {bundledSkillOptions.length > 0 && (
-          <div className={rowClass} data-slot="metabot-bundled-skills">
-            <label className={labelClass}>
-              {i18nService.t('metabotBundledSkills')}
-            </label>
-            <div className="min-w-0">
-              <details className="group">
-                <summary className="cursor-pointer select-none text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText">
-                  {i18nService.t('metabotBundledSkillsSummary').replace('{count}', String(bundledSkillOptions.length))}
-                </summary>
-                <div className="mt-2 flex flex-wrap gap-2" data-slot="metabot-bundled-skills-list">
-                  {bundledSkillOptions.map((skill) => (
-                    <span
-                      key={skill.id}
-                      title={skill.id}
-                      className="inline-flex max-w-full items-center rounded-full border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-2 py-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary"
-                    >
-                      <span className="max-w-[10rem] truncate">{skill.name}</span>
+            {bundledSkillOptions.length > 0 && (
+              <div className="px-4 py-3" data-slot="metabot-bundled-skills">
+                <details className="group">
+                  <summary className="cursor-pointer list-none select-none flex items-center justify-between gap-2 text-[12.5px] font-semibold text-[#5a6577] dark:text-[#94a3b8] hover:text-[#181d25] dark:hover:text-[#f3f5f8]">
+                    <span className="inline-flex items-center gap-2.5">
+                      <Squares2X2Icon className="h-[18px] w-[18px] shrink-0" aria-hidden />
+                      <span>
+                        {i18nService.t('metabotBundledSkillsSummary').replace('{count}', String(bundledSkillOptions.length))}
+                      </span>
                     </span>
-                  ))}
-                </div>
-              </details>
-              <p className={hintClass}>
-                {i18nService.t('metabotBundledSkillsHint')}
-              </p>
-            </div>
-          </div>
-        )}
-
-        <div className={rowClass}>
-          <label htmlFor="metabot-a2a-max-turns" className={labelClass}>
-            {i18nService.t('metabotA2aMaxTurns')}
-          </label>
-          <div className="min-w-0">
-            <select
-              id="metabot-a2a-max-turns"
-              value={values.a2a_max_incoming_turns}
-              onChange={(e) => handleChange('a2a_max_incoming_turns', normalizeA2AMaxIncomingTurnsOption(e.target.value))}
-              className={inputClass}
-            >
-              {A2A_MAX_INCOMING_TURNS_OPTIONS.map((turns) => (
-                <option key={turns} value={turns}>
-                  {turns}
-                </option>
-              ))}
-            </select>
-            <p className={hintClass}>
-              {i18nService.t('metabotA2aMaxTurnsHint')}
-            </p>
-          </div>
-        </div>
-
-        <div className={rowClass}>
-          <label htmlFor="metabot-a2a-bye-cooldown" className={labelClass}>
-            {i18nService.t('metabotA2aByeCooldown')}
-          </label>
-          <div className="min-w-0">
-            <select
-              id="metabot-a2a-bye-cooldown"
-              value={values.a2a_bye_cooldown_ms}
-              onChange={(e) => handleChange('a2a_bye_cooldown_ms', normalizeA2AByeCooldownMsOption(e.target.value))}
-              className={inputClass}
-            >
-              {A2A_BYE_COOLDOWN_MS_OPTIONS.map((cooldownMs) => (
-                <option key={cooldownMs} value={cooldownMs}>
-                  {`${cooldownMs / 60_000} ${i18nService.t('metabotA2aByeCooldownMinutes')}`}
-                </option>
-              ))}
-            </select>
-            <p className={hintClass}>
-              {i18nService.t('metabotA2aByeCooldownHint')}
-            </p>
+                    <span className="text-[11.5px] text-[#8c96a6] dark:text-[#64748b] group-open:rotate-180 transition-transform">▾</span>
+                  </summary>
+                  <div className="mt-2.5 flex flex-wrap gap-1.5 sm:pl-[28px]" data-slot="metabot-bundled-skills-list">
+                    {bundledSkillOptions.map((skill) => (
+                      <span
+                        key={skill.id}
+                        title={skill.id}
+                        className="inline-flex max-w-full items-center rounded-[5px] bg-[#eef1f5] dark:bg-white/[0.05] px-2 py-0.5 text-[11px] text-[#5a6577] dark:text-[#94a3b8]"
+                      >
+                        <span className="max-w-[11rem] truncate">{skill.name}</span>
+                      </span>
+                    ))}
+                  </div>
+                </details>
+              </div>
+            )}
           </div>
         </div>
 
         {renderPanelSaveRow('chatSettings')}
       </div>
 
-      {/* Knowledge Base tab: per-bot document corpora, IPC-managed (no save row). */}
+      {/* 4. Knowledge Base tab */}
       <div
         role="tabpanel"
         data-slot="metabot-edit-panel-knowledgeBase"
-        className={`space-y-3 ${activeTab === 'knowledgeBase' ? '' : 'hidden'}`}
+        className={`space-y-5 ${activeTab === 'knowledgeBase' ? '' : 'hidden'}`}
       >
         <KnowledgeBasePanel metabotId={metabotId} />
       </div>
 
-      {/* Surf tab: MetaWeb surf settings, "Surf now" trigger and the
-          run-history reports panel — immediate effects (no save row). */}
+      {/* 5. Surf tab */}
       <div
         role="tabpanel"
         data-slot="metabot-edit-panel-surf"
-        className={`space-y-3 ${activeTab === 'surf' ? '' : 'hidden'}`}
+        className={`space-y-5 ${activeTab === 'surf' ? '' : 'hidden'}`}
       >
-        {/* Persisted type (baseline, not the edited value): the surf
-            before-dream toggle's unset default is twin-only. */}
         <SurfSection metabotId={metabotId} metabotType={baseline.metabot_type} />
       </div>
 
-      {/* Advanced tab: on-chain homepage source */}
+      {/* 6. Advanced tab: Homepage / Capabilities & Daily Briefing / Assets & Security */}
       <div
         role="tabpanel"
         data-slot="metabot-edit-panel-advanced"
-        className={`space-y-3 ${activeTab === 'advanced' ? '' : 'hidden'}`}
+        className={`space-y-5 ${activeTab === 'advanced' ? '' : 'hidden'}`}
       >
         {renderPanelError('advanced')}
 
@@ -1315,126 +1377,134 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
           onOpenDefaultHomepage={onOpenDefaultHomepage}
           onPreviewMetaAppHomepage={onPreviewMetaAppHomepage}
           onRequestMetaApps={onRequestMetaApps}
+          saveAction={(
+            <button
+              type="button"
+              data-slot="metabot-edit-save-advanced"
+              onClick={() => void handleSaveTab('advanced')}
+              disabled={savingTab !== null}
+              className={`${METABOT_BTN_PRIMARY_CLASS} !h-8 !px-3 !rounded-[7px] !text-[12px]`}
+            >
+              {savingTab === 'advanced' ? i18nService.t('saving') : i18nService.t('metabotSaveHomepageChain')}
+            </button>
+          )}
         />
 
-        {renderPanelSaveRow('advanced')}
-
-        {/* Cowork capability switches (moved here from the Chat Settings tab,
-            into the slot the Surf section used to occupy before Surf got its
-            own tab): immediate-effect kv switches, kept out of the homepage
-            save above. */}
-        <div
-          className="space-y-3 pt-4 mt-4 border-t dark:border-claude-darkBorder border-claude-border"
-          data-slot="metabot-cowork-capabilities-section"
-        >
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            <WrenchScrewdriverIcon className="h-3.5 w-3.5" aria-hidden />
-            <span>{i18nService.t('metabotCoworkCapabilitiesTitle')}</span>
+        {/* Group 2: Cowork Capabilities + Twin Daily Briefing */}
+        <div data-slot="metabot-cowork-capabilities-section">
+          <div className={METABOT_GROUP_LABEL_ROW_CLASS}>
+            <span className={METABOT_GROUP_LABEL_CLASS}>{i18nService.t('metabotGroupCapabilities')}</span>
+            <span className={METABOT_GROUP_NOTE_CLASS}>{i18nService.t('metabotGroupImmediateNote')}</span>
           </div>
 
-          {/* Cowork MCP tools: immediate-effect kv switch, default off (per-bot opt-in). */}
-          <div className={rowClass}>
-            <label id="metabot-cowork-mcp-tools-label" className={labelClass}>
-              {i18nService.t('metabotCoworkMcpTools')}
-              <Tooltip content={i18nService.t('metabotCoworkMcpToolsTooltip')}>
-                <QuestionMarkCircleIcon
-                  className="h-4 w-4 inline ml-1.5 cursor-help dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-accent hover:text-claude-accent transition-colors"
-                  aria-label={i18nService.t('metabotCoworkMcpToolsTooltip')}
-                />
-              </Tooltip>
-            </label>
-            <div className="min-w-0">
-              <div className="flex items-center gap-3 pt-1">
-                <div
-                  role="switch"
-                  aria-checked={coworkMcpTools}
-                  aria-labelledby="metabot-cowork-mcp-tools-label"
-                  data-slot="metabot-cowork-mcp-tools-switch"
-                  title={i18nService.t('metabotCoworkMcpToolsTooltip')}
-                  className={coworkMcpToolsToggleView.trackClass}
-                  onClick={handleCoworkMcpToolsToggle}
-                >
-                  <div className={coworkMcpToolsToggleView.knobClass} />
+          <div className={METABOT_GROUP_BOX_CLASS}>
+            {/* MCP Tools */}
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                <WrenchScrewdriverIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div className="min-w-0">
+                  <label id="metabot-cowork-mcp-tools-label" className={METABOT_ROW_TITLE_CLASS}>
+                    <span>{i18nService.t('metabotCoworkMcpTools')}</span>
+                    <Tooltip content={i18nService.t('metabotCoworkMcpToolsTooltip')}>
+                      <QuestionMarkCircleIcon
+                        className="h-3.5 w-3.5 cursor-help text-[#8c96a6] dark:text-[#64748b] hover:text-[#181d25] dark:hover:text-[#f3f5f8] transition-colors"
+                        aria-label={i18nService.t('metabotCoworkMcpToolsTooltip')}
+                      />
+                    </Tooltip>
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotCoworkMcpToolsHint')}</p>
                 </div>
               </div>
+              <div
+                role="switch"
+                aria-checked={coworkMcpTools}
+                aria-labelledby="metabot-cowork-mcp-tools-label"
+                data-slot="metabot-cowork-mcp-tools-switch"
+                title={i18nService.t('metabotCoworkMcpToolsTooltip')}
+                className={coworkMcpToolsToggleView.trackClass}
+                onClick={handleCoworkMcpToolsToggle}
+              >
+                <div className={coworkMcpToolsToggleView.knobClass} />
+              </div>
             </div>
-          </div>
 
-          {/* Browser automation (experimental): ships enabled, explicit '0' opts out; immediate effect. */}
-          <div className={rowClass}>
-            <label id="metabot-cowork-browser-automation-label" className={labelClass}>
-              {i18nService.t('metabotCoworkBrowserAutomation')}
-              <Tooltip content={i18nService.t('metabotCoworkBrowserAutomationTooltip')}>
-                <QuestionMarkCircleIcon
-                  className="h-4 w-4 inline ml-1.5 cursor-help dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-accent hover:text-claude-accent transition-colors"
-                  aria-label={i18nService.t('metabotCoworkBrowserAutomationTooltip')}
-                />
-              </Tooltip>
-            </label>
-            <div className="min-w-0">
-              <div className="flex items-center gap-3 pt-1">
-                <div
-                  role="switch"
-                  aria-checked={coworkBrowserAutomation}
-                  aria-labelledby="metabot-cowork-browser-automation-label"
-                  data-slot="metabot-cowork-browser-automation-switch"
-                  title={i18nService.t('metabotCoworkBrowserAutomationTooltip')}
-                  className={coworkBrowserAutomationToggleView.trackClass}
-                  onClick={handleCoworkBrowserAutomationToggle}
-                >
-                  <div className={coworkBrowserAutomationToggleView.knobClass} />
+            {/* Browser Automation */}
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                <GlobeAltIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div className="min-w-0">
+                  <label id="metabot-cowork-browser-automation-label" className={METABOT_ROW_TITLE_CLASS}>
+                    <span>{i18nService.t('metabotCoworkBrowserAutomation')}</span>
+                    <span className={METABOT_MICRO_BADGE_CLASS}>{i18nService.t('metabotBadgeExperimentalShort')}</span>
+                    <Tooltip content={i18nService.t('metabotCoworkBrowserAutomationTooltip')}>
+                      <QuestionMarkCircleIcon
+                        className="h-3.5 w-3.5 cursor-help text-[#8c96a6] dark:text-[#64748b] hover:text-[#181d25] dark:hover:text-[#f3f5f8] transition-colors"
+                        aria-label={i18nService.t('metabotCoworkBrowserAutomationTooltip')}
+                      />
+                    </Tooltip>
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotCoworkBrowserAutomationHint')}</p>
                 </div>
               </div>
+              <div
+                role="switch"
+                aria-checked={coworkBrowserAutomation}
+                aria-labelledby="metabot-cowork-browser-automation-label"
+                data-slot="metabot-cowork-browser-automation-switch"
+                title={i18nService.t('metabotCoworkBrowserAutomationTooltip')}
+                className={coworkBrowserAutomationToggleView.trackClass}
+                onClick={handleCoworkBrowserAutomationToggle}
+              >
+                <div className={coworkBrowserAutomationToggleView.knobClass} />
+              </div>
             </div>
-          </div>
 
-          {/* Desktop computer use (experimental): ships enabled, explicit '0' opts out; immediate effect. */}
-          <div className={rowClass}>
-            <label id="metabot-cowork-computer-use-label" className={labelClass}>
-              {i18nService.t('metabotCoworkComputerUse')}
-              <Tooltip content={i18nService.t('metabotCoworkComputerUseTooltip')}>
-                <QuestionMarkCircleIcon
-                  className="h-4 w-4 inline ml-1.5 cursor-help dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-accent hover:text-claude-accent transition-colors"
-                  aria-label={i18nService.t('metabotCoworkComputerUseTooltip')}
-                />
-              </Tooltip>
-            </label>
-            <div className="min-w-0">
-              <div className="flex items-center gap-3 pt-1">
-                <div
-                  role="switch"
-                  aria-checked={coworkComputerUse}
-                  aria-labelledby="metabot-cowork-computer-use-label"
-                  data-slot="metabot-cowork-computer-use-switch"
-                  title={i18nService.t('metabotCoworkComputerUseTooltip')}
-                  className={coworkComputerUseToggleView.trackClass}
-                  onClick={handleCoworkComputerUseToggle}
-                >
-                  <div className={coworkComputerUseToggleView.knobClass} />
+            {/* Desktop Computer Use */}
+            <div className={METABOT_GROUP_ROW_CLASS}>
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                <ComputerDesktopIcon className={METABOT_ROW_ICON_CLASS} aria-hidden />
+                <div className="min-w-0">
+                  <label id="metabot-cowork-computer-use-label" className={METABOT_ROW_TITLE_CLASS}>
+                    <span>{i18nService.t('metabotCoworkComputerUse')}</span>
+                    <span className={METABOT_MICRO_BADGE_CLASS}>{i18nService.t('metabotBadgeExperimentalShort')}</span>
+                    <Tooltip content={i18nService.t('metabotCoworkComputerUseTooltip')}>
+                      <QuestionMarkCircleIcon
+                        className="h-3.5 w-3.5 cursor-help text-[#8c96a6] dark:text-[#64748b] hover:text-[#181d25] dark:hover:text-[#f3f5f8] transition-colors"
+                        aria-label={i18nService.t('metabotCoworkComputerUseTooltip')}
+                      />
+                    </Tooltip>
+                  </label>
+                  <p className={METABOT_ROW_HINT_CLASS}>{i18nService.t('metabotCoworkComputerUseHint')}</p>
                 </div>
               </div>
+              <div
+                role="switch"
+                aria-checked={coworkComputerUse}
+                aria-labelledby="metabot-cowork-computer-use-label"
+                data-slot="metabot-cowork-computer-use-switch"
+                title={i18nService.t('metabotCoworkComputerUseTooltip')}
+                className={coworkComputerUseToggleView.trackClass}
+                onClick={handleCoworkComputerUseToggle}
+              >
+                <div className={coworkComputerUseToggleView.knobClass} />
+              </div>
             </div>
+
+            {/* Daily Report (Twin-only) */}
+            {isTwin && (
+              <div data-slot="metabot-daily-report-panel">
+                <DailyReportSection metabotId={metabotId} />
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Daily Report ("每日汇报"): Twin-only proactive daily briefing —
-            immediate-effect kv settings, gated by the global experimental
-            automation switch inside the section. */}
-        {isTwin && (
-          <div
-            className="space-y-3 pt-4 mt-4 border-t dark:border-claude-darkBorder border-claude-border"
-            data-slot="metabot-daily-report-panel"
-          >
-            <DailyReportSection metabotId={metabotId} />
-          </div>
-        )}
-
-        {/* Wallet / Backup / Delete — OAC-aligned Advanced actions. Immediate
-            effects (panels / delete flow), kept out of the homepage save above. */}
+        {/* Group 3: Wallet / NFT / Backup / Delete */}
         {metabot && onDelete && (
           <MetaBotAdvancedActionsSection metabot={metabot} onDelete={onDelete} />
         )}
       </div>
+
       {showTwinSwitch && twinDemoteConfirmOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -1457,7 +1527,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                 <button
                   type="button"
                   onClick={() => setTwinDemoteConfirmOpen(false)}
-                  className="px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text hover:opacity-90"
+                  className={METABOT_BTN_FLAT_CLASS}
                 >
                   {i18nService.t('cancel')}
                 </button>
@@ -1468,7 +1538,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                     handleChange('metabot_type', 'worker');
                     setTwinDemoteConfirmOpen(false);
                   }}
-                  className="btn-idchat-primary-filled px-4 py-2 text-sm"
+                  className={METABOT_BTN_PRIMARY_CLASS}
                 >
                   {i18nService.t('metabotTwinDemoteConfirmAction')}
                 </button>
@@ -1500,7 +1570,6 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
           onClose={() => setAvatarPickerOpen(false)}
         />
       )}
-
     </div>
   );
 };

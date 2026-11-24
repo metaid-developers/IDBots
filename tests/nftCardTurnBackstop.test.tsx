@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   appendNftCardFencesToReply,
   extractEmittedNftCardFences,
+  extractEmittedSkillBashCardFences,
   isEligibleBackstopTargetMessage,
   isNftCardBackstopTool,
   recordCapturedNftCardFences,
@@ -245,4 +246,84 @@ test('mrc721_sell_intent enriches emitted nft-card with caVerified, sellerName, 
   assert.match(html, /¥19\.90/);
   assert.match(html, /AI_Sunny/);
   assert.ok(z);
+});
+
+test('nftCardTurnBackstop captures wallet_token_orders and structured bash skill JSON card envelopes while ignoring plain docs', () => {
+  assert.equal(isNftCardBackstopTool('wallet_token_orders'), true);
+  const sampleObFence = [
+    '```ft-orderbook-card',
+    JSON.stringify({
+      assetKey: `mrc20:${'44'.repeat(32)}i0`,
+      symbol: 'METAID',
+      chain: 'btc',
+      standard: 'idcoin',
+      rail: 'btc-psbt',
+      totalOrdersCount: 12,
+      pageSize: 6,
+      orders: [
+        {
+          rank: 1,
+          orderId: 'ord_1',
+          rail: 'btc-psbt',
+          amountDisplay: '500',
+          unitPricePrimary: '1,440 sat',
+          totalPriceLabel: '0.0072 BTC',
+        },
+      ],
+    }),
+    '```',
+  ].join('\n');
+
+  const hostCaptured = extractEmittedNftCardFences(
+    'wallet_token_orders',
+    `$METAID order book:\n\n${sampleObFence}`,
+  );
+  assert.equal(hostCaptured.length, 1);
+  assert.equal(hostCaptured[0].tag, 'ft-orderbook-card');
+
+  // Structured skill JSON stdout via bash (`broker.bundle.mjs` / `metabot-trade-metaidmarket-v2`)
+  const skillStdout = JSON.stringify(
+    {
+      success: true,
+      cardType: 'ft-orderbook-card',
+      message: `Found 12 active orders.\n\n${sampleObFence}`,
+    },
+    null,
+    2,
+  );
+  const bashCaptured = extractEmittedSkillBashCardFences(skillStdout);
+  assert.equal(bashCaptured.length, 1);
+  assert.equal(bashCaptured[0].tag, 'ft-orderbook-card');
+
+  // Mode-keyed skill JSON stdout without `success: true` (`metabot-trade-metaidmarket-v2` legacy v2.2.0)
+  const modeEnvelopeStdout = JSON.stringify({
+    mode: 'orders',
+    message: `METAID 当前在售挂单:\n${sampleObFence}`,
+    cardType: 'ft-orderbook-card',
+    data: { totalOrdersCount: 206 },
+  });
+  const modeCaptured = extractEmittedSkillBashCardFences(modeEnvelopeStdout);
+  assert.equal(modeCaptured.length, 1);
+  assert.equal(modeCaptured[0].tag, 'ft-orderbook-card');
+
+  // Tail-truncated skill JSON stdout (e.g. DSH tool-result trimmer or `| head` cutting trailing `data` after an intact `message`)
+  const fullWithHeavyTail = JSON.stringify({
+    mode: 'orders',
+    message: `METAID 当前在售挂单:\n${sampleObFence}`,
+    cardType: 'ft-orderbook-card',
+    data: { orders: [{ orderId: 'ord_1', takePsbt: '70736274ff01'.repeat(200) }] },
+  });
+  const cutIdx = fullWithHeavyTail.indexOf('"takePsbt"') + 25;
+  const tailTruncatedStdout = `${fullWithHeavyTail.slice(0, cutIdx)}\n[idbots: tool result trimmed, 64139 chars total]`;
+  const truncatedCaptured = extractEmittedSkillBashCardFences(tailTruncatedStdout);
+  assert.equal(truncatedCaptured.length, 1);
+  assert.equal(truncatedCaptured[0].tag, 'ft-orderbook-card');
+
+  // Mid-card truncated skill JSON stdout (`| head -c` slicing inside the card fence) must NEVER emit a torn card
+  const tornMidFenceStdout = fullWithHeavyTail.slice(0, fullWithHeavyTail.indexOf('"unitPricePrimary"') + 10);
+  assert.equal(extractEmittedSkillBashCardFences(tornMidFenceStdout).length, 0);
+
+  // Reading SKILL.md or grepping source files (non-JSON envelope) must NEVER trigger false captures
+  const docReadOutput = `# SKILL.md\nInclude verbatim:\n\n${sampleObFence}\n"cardType": "ft-orderbook-card" "message": "example"`;
+  assert.equal(extractEmittedSkillBashCardFences(docReadOutput).length, 0);
 });

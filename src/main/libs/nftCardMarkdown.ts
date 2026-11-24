@@ -261,6 +261,21 @@ export const buildMrc721CardFields = (input: {
 
 export const NFT_COLLECTION_CARD_FENCE_TAG = 'nft-collection-card';
 
+export interface NftCollectionPreviewEmitItem {
+  pinId: string;
+  tokenIndex?: string;
+  number?: number;
+  name?: string;
+  icon?: string;
+  imgUrl?: string;
+  priceMeMilli?: number;
+  priceCnyCents?: number;
+  priceSats?: number;
+  sellerAddress?: string;
+  sellerGlobalMetaId?: string;
+  sellerName?: string;
+}
+
 export interface NftCollectionCardEmitFields {
   /** The collectionid (= the collection_desc pinId) — the album's identity. */
   collectionId?: string;
@@ -271,17 +286,29 @@ export interface NftCollectionCardEmitFields {
   website?: string;
   /** metafile:// cover pinId (normalized; bare pinIds accepted). */
   icon?: string;
+  imgUrl?: string;
   totalSupply?: number;
   minted?: number;
   royaltyRate?: number;
   issuer?: string;
   issuerLabel?: string;
   action?: string;
+  caVerified?: boolean;
+  listedCount?: number;
+  holderCount?: number;
+  floorPriceMeMilli?: number;
+  floorPriceCnyCents?: number;
+  medianPriceMeMilli?: number;
+  tradeCount24h?: number;
+  shopMetaAppPinId?: string;
+  previewItems?: NftCollectionPreviewEmitItem[];
 }
 
 const NFT_COLLECTION_CARD_KEY_ORDER: Array<keyof NftCollectionCardEmitFields> = [
   'collectionId', 'collectionName', 'name', 'desc', 'website', 'icon',
   'totalSupply', 'minted', 'royaltyRate', 'issuer', 'issuerLabel', 'action',
+  'imgUrl', 'caVerified', 'listedCount', 'holderCount', 'floorPriceMeMilli',
+  'floorPriceCnyCents', 'medianPriceMeMilli', 'tradeCount24h', 'shopMetaAppPinId', 'previewItems',
 ];
 
 const cleanOptionalNumber = (value: number | undefined, min: number, max: number): number | undefined => {
@@ -351,3 +378,301 @@ export const buildMrc721CollectionCardFields = (input: {
   if (action) fields.action = action.toLowerCase();
   return fields;
 };
+
+// ---------------------------------------------------------------------------
+// Expanded NFT & Digital Goods Suite Card Builders (L2, F1, O1, P1, S2, A1, Q1)
+// ---------------------------------------------------------------------------
+
+export const NFT_LISTING_CARD_FENCE_TAG = 'nft-listing-card';
+export const NFT_FILL_CARD_FENCE_TAG = 'nft-fill-card';
+export const NFT_MY_LISTINGS_CARD_FENCE_TAG = 'nft-my-listings-card';
+export const NFT_PORTFOLIO_CARD_FENCE_TAG = 'nft-portfolio-card';
+export const NFT_SWAP_CARD_FENCE_TAG = 'nft-swap-card';
+export const NFT_ACTION_CARD_FENCE_TAG = 'nft-action-card';
+export const NFT_NEGOTIATE_CARD_FENCE_TAG = 'nft-negotiate-card';
+
+export interface NftListingCardEmitFields {
+  status: 'active' | 'delisted';
+  rail: 'multi-intent' | 'mvc-contract' | 'onchain-sell' | 'open-offer';
+  format: NftCardEmitFormat;
+  pinId?: string;
+  genesis?: string;
+  codehash?: string;
+  tokenIndex?: string;
+  number?: number;
+  name?: string;
+  series?: string;
+  imgUrl?: string;
+  icon?: string;
+  caVerified?: boolean;
+  autoFulfill?: boolean;
+  priceMeMilli?: number;
+  priceCnyCents?: number;
+  priceSats?: number;
+  priceTokens?: NftCardPriceToken[];
+  floorPriceMeMilli?: number;
+  rankLabel?: string;
+  sellerAddress?: string;
+  sellerName?: string;
+  sellerGlobalMetaId?: string;
+  shopMetaAppPinId?: string;
+  intentPinId?: string;
+  txId?: string;
+  cancelPinId?: string;
+  hostStamp?: string;
+}
+
+export interface NftFillCardEmitFields {
+  side: 'sold' | 'bought' | 'token_bought';
+  rail?: 'me-escrow' | 'token-for-goods' | 'mvc-contract';
+  format: NftCardEmitFormat;
+  pinId?: string;
+  genesis?: string;
+  codehash?: string;
+  tokenIndex?: string;
+  number?: number;
+  name?: string;
+  series?: string;
+  imgUrl?: string;
+  icon?: string;
+  caVerified?: boolean;
+  priceMeMilli?: number;
+  priceCnyCents?: number;
+  priceSats?: number;
+  tokenSymbol?: string;
+  tokenAmountDisplay?: string;
+  tokenChain?: 'btc' | 'mvc';
+  tokenAssetKey?: string;
+  paymentTxId?: string;
+  counterpartyName?: string;
+  counterpartyAddress?: string;
+  counterpartyGlobalMetaId?: string;
+  txId?: string;
+  deliveryTxId?: string;
+  tradePinId?: string;
+  orderId?: string;
+  shopMetaAppPinId?: string;
+  hostStamp?: string;
+}
+
+export interface NftMyListingEmitItem {
+  format: NftCardEmitFormat;
+  pinId?: string;
+  genesis?: string;
+  codehash?: string;
+  tokenIndex?: string;
+  number?: number;
+  name?: string;
+  series?: string;
+  imgUrl?: string;
+  icon?: string;
+  caVerified?: boolean;
+  rail: 'multi-intent' | 'mvc-contract' | 'onchain-sell' | 'open-offer';
+  autoFulfill?: boolean;
+  priceMeMilli?: number;
+  priceCnyCents?: number;
+  priceSats?: number;
+  priceTokens?: NftCardPriceToken[];
+  intentPinId?: string;
+  sellUtxo?: string;
+  txId?: string;
+}
+
+export interface NftMyListingsCardEmitFields {
+  metabotId?: number;
+  botName?: string;
+  sellerName?: string;
+  sellerAddress?: string;
+  sellerGlobalMetaId?: string;
+  shopMetaAppPinId?: string;
+  items: NftMyListingEmitItem[];
+  totalMeMilli?: number;
+  totalCnyCents?: number;
+  heldMrc721Count?: number;
+}
+
+export interface NftPortfolioPreviewEmitItem {
+  format: NftCardEmitFormat;
+  pinId?: string;
+  tokenIndex?: string;
+  number?: number;
+  name?: string;
+  icon?: string;
+  imgUrl?: string;
+}
+
+export interface NftPortfolioCollectionEmitRow {
+  collectionId?: string;
+  name: string;
+  collectionName: string;
+  count: number;
+  floorPriceMeMilli?: number;
+  estimatedMeMilli?: number;
+  caVerified?: boolean;
+  icon?: string;
+  imgUrl?: string;
+}
+
+export interface NftPortfolioLegacyEmitSeries {
+  name: string;
+  seriesName: string;
+  genesis: string;
+  codehash: string;
+  count: number;
+  collectionSlug?: string;
+  swappable?: boolean;
+  sampleIndexes: string[];
+  previewItems?: NftPortfolioPreviewEmitItem[];
+}
+
+export interface NftPortfolioCardEmitFields {
+  metabotId?: number;
+  ownerName?: string;
+  ownerAddress?: string;
+  ownerGlobalMetaId?: string;
+  isThirdParty?: boolean;
+  totalCount: number;
+  mrc721Count: number;
+  legacyCount: number;
+  estimatedFloorMeMilli?: number;
+  estimatedFloorCnyCents?: number;
+  mrc721Collections: NftPortfolioCollectionEmitRow[];
+  previewItems?: NftPortfolioPreviewEmitItem[];
+  legacySeries: NftPortfolioLegacyEmitSeries[];
+}
+
+export interface NftSwapItemEmitRow {
+  tokenIndex: string;
+  name?: string;
+  icon?: string;
+  imgUrl?: string;
+  status: 'pending' | 'confirming' | 'completed' | 'failed';
+  confirmations?: number;
+  depositTxId?: string;
+  newItemPinId?: string;
+  deliveryTxId?: string;
+  error?: string;
+}
+
+export interface NftSwapCardEmitFields {
+  requestId: string;
+  status: 'confirming' | 'completed' | 'partial' | 'failed';
+  collectionSlug: string;
+  collectionName?: string;
+  targetCollectionPinId?: string;
+  stationGlobalMetaId?: string;
+  stationName?: string;
+  caVerified?: boolean;
+  medianPriceMeMilli?: number;
+  totalCount?: number;
+  completedCount?: number;
+  items: NftSwapItemEmitRow[];
+}
+
+export interface NftActionCardEmitFields {
+  kind: 'avatar' | 'mint' | 'transfer';
+  format: NftCardEmitFormat;
+  pinId?: string;
+  genesis?: string;
+  codehash?: string;
+  tokenIndex?: string;
+  number?: number;
+  name?: string;
+  series?: string;
+  imgUrl?: string;
+  icon?: string;
+  caVerified?: boolean;
+  txId?: string;
+  feeSats?: number;
+  senderLabel?: string;
+  senderAddress?: string;
+  recipientLabel?: string;
+  recipientAddress?: string;
+  recipientGlobalMetaId?: string;
+  avatarPath?: string;
+  hostStamp?: string;
+}
+
+export interface NftNegotiateCardEmitFields {
+  kind: 'quote_accepted' | 'inquiry_received' | 'inquiry_sent' | 'open_offer';
+  format?: NftCardEmitFormat;
+  inquiryId?: string;
+  pinId: string;
+  tokenIndex?: string;
+  number?: number;
+  name?: string;
+  series?: string;
+  imgUrl?: string;
+  icon?: string;
+  caVerified?: boolean;
+  originalPriceMeMilli?: number;
+  listedPriceCnyCents?: number;
+  proposedPriceMeMilli?: number;
+  agreedPriceMeMilli?: number;
+  agreedPriceCnyCents?: number;
+  offerPriceSats?: number;
+  quoteExpiresAt?: number;
+  offerPinId?: string;
+  txId?: string;
+  sellerName?: string;
+  sellerAddress?: string;
+  sellerGlobalMetaId?: string;
+  sellerOnline?: boolean;
+  buyerName?: string;
+  buyerAddress?: string;
+  buyerGlobalMetaId?: string;
+  note?: string;
+  shopMetaAppPinId?: string;
+}
+
+function compactObject<T extends object>(input: T): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (v !== undefined && v !== null && v !== '') {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+export const buildNftListingCardFence = (fields: NftListingCardEmitFields): string =>
+  `\`\`\`${NFT_LISTING_CARD_FENCE_TAG}\n${JSON.stringify(compactObject(fields))}\n\`\`\``;
+
+export const appendNftListingCardBlock = (resultText: string, fields: NftListingCardEmitFields): string =>
+  `${resultText}\n\n${NFT_CARD_RESULT_HINT}\n${buildNftListingCardFence(fields)}`;
+
+export const buildNftFillCardFence = (fields: NftFillCardEmitFields): string =>
+  `\`\`\`${NFT_FILL_CARD_FENCE_TAG}\n${JSON.stringify(compactObject(fields))}\n\`\`\``;
+
+export const appendNftFillCardBlock = (resultText: string, fields: NftFillCardEmitFields): string =>
+  `${resultText}\n\n${NFT_CARD_RESULT_HINT}\n${buildNftFillCardFence(fields)}`;
+
+export const buildNftMyListingsCardFence = (fields: NftMyListingsCardEmitFields): string =>
+  `\`\`\`${NFT_MY_LISTINGS_CARD_FENCE_TAG}\n${JSON.stringify(compactObject(fields))}\n\`\`\``;
+
+export const appendNftMyListingsCardBlock = (resultText: string, fields: NftMyListingsCardEmitFields): string =>
+  `${resultText}\n\n${NFT_CARD_RESULT_HINT}\n${buildNftMyListingsCardFence(fields)}`;
+
+export const buildNftPortfolioCardFence = (fields: NftPortfolioCardEmitFields): string =>
+  `\`\`\`${NFT_PORTFOLIO_CARD_FENCE_TAG}\n${JSON.stringify(compactObject(fields))}\n\`\`\``;
+
+export const appendNftPortfolioCardBlock = (resultText: string, fields: NftPortfolioCardEmitFields): string =>
+  `${resultText}\n\n${NFT_CARD_RESULT_HINT}\n${buildNftPortfolioCardFence(fields)}`;
+
+export const buildNftSwapCardFence = (fields: NftSwapCardEmitFields): string =>
+  `\`\`\`${NFT_SWAP_CARD_FENCE_TAG}\n${JSON.stringify(compactObject(fields))}\n\`\`\``;
+
+export const appendNftSwapCardBlock = (resultText: string, fields: NftSwapCardEmitFields): string =>
+  `${resultText}\n\n${NFT_CARD_RESULT_HINT}\n${buildNftSwapCardFence(fields)}`;
+
+export const buildNftActionCardFence = (fields: NftActionCardEmitFields): string =>
+  `\`\`\`${NFT_ACTION_CARD_FENCE_TAG}\n${JSON.stringify(compactObject(fields))}\n\`\`\``;
+
+export const appendNftActionCardBlock = (resultText: string, fields: NftActionCardEmitFields): string =>
+  `${resultText}\n\n${NFT_CARD_RESULT_HINT}\n${buildNftActionCardFence(fields)}`;
+
+export const buildNftNegotiateCardFence = (fields: NftNegotiateCardEmitFields): string =>
+  `\`\`\`${NFT_NEGOTIATE_CARD_FENCE_TAG}\n${JSON.stringify(compactObject(fields))}\n\`\`\``;
+
+export const appendNftNegotiateCardBlock = (resultText: string, fields: NftNegotiateCardEmitFields): string =>
+  `${resultText}\n\n${NFT_CARD_RESULT_HINT}\n${buildNftNegotiateCardFence(fields)}`;

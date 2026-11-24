@@ -543,13 +543,18 @@ test('S-06: paymentTxId can settle one item once; replaying same paymentTxId aga
         {
           txId: paymentTxId,
           address: SELLER_BTC,
-          status: 'TransferPendingIn',
+          status: 'Available',
           mrc20Id: REAL_MRC20_ID,
           tick: 'METAID',
           decimals: 8,
           amount: '200',
         },
       ],
+      fetchBtcTxStatus: async () => ({
+        found: true,
+        confirmed: true,
+        confirmations: 1,
+      }),
       now: () => 1_700_000_020_000,
     });
 

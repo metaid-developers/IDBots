@@ -57,11 +57,38 @@ import {
 } from './walletRawTxService';
 
 type BuildMvcFtSplitRawTxResult = Awaited<ReturnType<typeof buildMvcFtTransferRawTx>>;
-import { broadcastMvcFtTransferBundle } from './mvcFtService';
+import { broadcastMvcFtTransferBundle, recordMvcFtBundleSpendSession } from './mvcFtService';
 import { resolveBroadcastTxResult } from '../libs/mvcSpend';
 import { getRate as getGlobalFeeRate } from './feeRateStore';
 import { createPin, type MetaidDataPayload } from './metaidCore';
 import { formatGoodsTradeWireMessage } from './goodsTradeWireProtocol';
+import { listMvcFtIssuances } from './mvcFtIssueService';
+
+function resolveChainGenesisFromIssuances(
+  db: Database,
+  metabotId: number,
+  codehash: string,
+  genesis: string,
+): string {
+  const clean = genesis.trim().toLowerCase();
+  if (clean.length === 40) return clean;
+  if (clean.length === 64 || clean.length === 72) {
+    try {
+      const issued = listMvcFtIssuances(db, { metabotId, limit: 100 });
+      const hit = issued.find(
+        (r) =>
+          r.codehash.toLowerCase() === codehash.toLowerCase() &&
+          (r.genesisTxId.toLowerCase() === clean ||
+            r.sensibleId.toLowerCase() === clean ||
+            r.sensibleId.toLowerCase().startsWith(clean)),
+      );
+      if (hit?.genesis) return hit.genesis.toLowerCase();
+    } catch {
+      // Fall back to caller genesis if issuance table lookup fails
+    }
+  }
+  return clean;
+}
 
 export const FT_MANDATE_CONFIRM_PATH = '/api/idbots/commerce/ft-mandate-confirm';
 export const FT_MVC_SPLIT_PATH = '/api/idbots/wallet/mvc/ft-split';
@@ -314,10 +341,12 @@ export async function handleMvcFtSplitRoute(
     const lotOutpoints: Array<{ outpoint: string; amountBase: string }> = [];
     const protectedLotOutpoints: string[] = [];
 
+    const chainGenesis = resolveChainGenesisFromIssuances(deps.getDb(), metabotId, codehash, genesis);
+
     for (const amountBase of lotAmountsBase) {
       const built = await buildFn(store, {
         metabotId,
-        token: { codeHash: codehash, genesisHash: genesis },
+        token: { codeHash: codehash, genesisHash: chainGenesis },
         toAddress: bot.mvc_address,
         amount: amountBase,
         feeRate,
@@ -330,6 +359,13 @@ export async function handleMvcFtSplitRoute(
         },
         broadcastFn,
       );
+      recordMvcFtBundleSpendSession({
+        metabotId,
+        walletAddress: bot.mvc_address,
+        amountCheckRawTx: built.amount_check_raw_tx,
+        rawTx: built.raw_tx,
+        txId: broadcasted.txId,
+      });
       const outpoint = `${broadcasted.txId.toLowerCase()}:${built.output_index}`;
       txids.push(broadcasted.txId);
       lotOutpoints.push({ outpoint, amountBase });
@@ -471,12 +507,13 @@ export async function handleMvcTokenSellListRoute(
       fundingTxIds: string[];
       listing?: MvcTokenSellListing;
     };
+    const chainGenesis = resolveChainGenesisFromIssuances(deps.getDb(), metabotId, codehash, genesis);
     try {
       tradeResult = await execTrade(store, {
         metabotId,
         action: 'sell',
         codehash,
-        genesis,
+        genesis: chainGenesis,
         tokenTxid: outpointParsed?.txid,
         tokenVout: outpointParsed?.vout,
         tokenAmount: amountBase,
@@ -1021,18 +1058,24 @@ export async function handleFtWatchRegisterRoute(
   }
   const gate = deps.mandateGate ?? defaultFtMandateGate;
   try {
-    const metabotId = Number(body.metabotId ?? body.metabot_id);
-    const mandateToken = String(body.mandateToken ?? body.mandate_token ?? '').trim();
-    const assetKey = normalizeFtAssetKey(body.assetKey ?? body.asset_key);
-    const chain: 'mvc' | 'btc' = String(body.chain ?? (assetKey.startsWith('mrc20:') ? 'btc' : 'mvc')).toLowerCase() === 'btc' ? 'btc' : 'mvc';
-    const rail = String(body.rail ?? '') as FtMandateRail;
-    const symbol = String(body.symbol ?? 'TOKEN').trim();
-    const decimals = Number(body.decimals ?? 0) || 0;
-
     // Support both single-lot and batch `lots` array registration
     const rawLots: Array<Record<string, unknown>> = Array.isArray(body.lots)
       ? (body.lots as Array<Record<string, unknown>>)
       : [body];
+    const firstLot = rawLots[0] ?? {};
+
+    const metabotId = Number(body.metabotId ?? body.metabot_id ?? firstLot.metabotId ?? firstLot.metabot_id);
+    const mandateToken = String(body.mandateToken ?? body.mandate_token ?? '').trim();
+    const assetKey = normalizeFtAssetKey(
+      body.assetKey ?? body.asset_key ?? firstLot.assetKey ?? firstLot.asset_key,
+    );
+    const chain: 'mvc' | 'btc' =
+      String(body.chain ?? firstLot.chain ?? (assetKey.startsWith('mrc20:') ? 'btc' : 'mvc')).toLowerCase() === 'btc'
+        ? 'btc'
+        : 'mvc';
+    const rail = String(body.rail ?? firstLot.rail ?? '') as FtMandateRail;
+    const symbol = String(body.symbol ?? firstLot.symbol ?? 'TOKEN').trim();
+    const decimals = Number(body.decimals ?? firstLot.decimals ?? 0) || 0;
 
     if (mandateToken) {
       gate.consumeMandate({
@@ -1077,7 +1120,7 @@ export async function handleFtWatchRegisterRoute(
             : undefined;
       const autoFulfillMe =
         rail === 'me-escrow'
-          ? (lot.autoFulfillMe ?? lot.auto_fulfill_me ?? body.autoFulfillMe ?? true) !== false
+          ? (lot.autoFulfillMe ?? lot.auto_fulfill_me ?? body.autoFulfillMe ?? false) === true
           : false;
 
       let sellPinId = String(lot.sellPinId ?? lot.sell_pin_id ?? '').trim() || undefined;
@@ -1179,7 +1222,12 @@ export async function handleFtWatchRegisterRoute(
           ...(lot.marketOrderId ? { marketOrderId: String(lot.marketOrderId) } : {}),
           ...(lot.tokenSellJson ? { tokenSellJson: String(lot.tokenSellJson) } : {}),
           sellerAddress: chain === 'btc' ? bot?.btc_address : bot?.mvc_address,
-          ...(typeof body.sessionId === 'string' ? { sessionId: body.sessionId } : {}),
+          ...(() => {
+            const rawSessionId = String(
+              lot.sessionId ?? lot.session_id ?? body.sessionId ?? body.session_id ?? '',
+            ).trim();
+            return rawSessionId ? { sessionId: rawSessionId } : {};
+          })(),
         },
         deps.saveDb,
       );

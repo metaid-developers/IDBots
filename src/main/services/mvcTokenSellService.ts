@@ -6,6 +6,12 @@ import {
   type MvcTokenSellListingRef,
 } from './walletRawTxService';
 import { isRetryableMvcBroadcastError, resolveBroadcastTxResult } from '../libs/mvcSpend';
+import {
+  getMvcRecentRawTx,
+  getMvcSpendSessionSnapshot,
+  recordMvcRecentRawTx,
+  recordMvcSpentOutpoints,
+} from './mvcSpendSessionState';
 import { mvc } from 'meta-contract';
 import {
   decodeTokenSellSeedLock,
@@ -216,6 +222,7 @@ export async function executeMvcTokenSellTrade(
     codehash?: string;
     tokenTxid?: string;
     tokenVout?: number;
+    tokenTxHex?: string;
     tokenAmount?: string;
     priceSats?: number;
     seedSats?: number;
@@ -227,9 +234,16 @@ export async function executeMvcTokenSellTrade(
   },
   deps: MvcTokenSellServiceDeps = defaultDeps,
 ): Promise<{ action: string; txId: string; rawTx: string; fundingTxIds: string[]; listing?: MvcTokenSellListing }> {
-  const excludedOutpoints = new Set<string>();
+  const sessionSnapshot = getMvcSpendSessionSnapshot(input.metabotId);
+  const excludedOutpoints = new Set<string>(sessionSnapshot.excludeOutpoints);
+  const tokenTxHexHint =
+    input.tokenTxHex ?? (input.tokenTxid ? getMvcRecentRawTx(input.tokenTxid) : undefined);
 
   for (let attempt = 1; attempt <= RETRYABLE_MVC_TOKEN_SELL_BUILD_ATTEMPTS; attempt += 1) {
+    const latestSnapshot = getMvcSpendSessionSnapshot(input.metabotId);
+    for (const outpoint of latestSnapshot.excludeOutpoints) {
+      excludedOutpoints.add(outpoint);
+    }
     const built: BuildMvcTokenSellRawTxResult = await deps.buildTradeRawTx(store, {
       metabotId: input.metabotId,
       action: input.action,
@@ -237,6 +251,7 @@ export async function executeMvcTokenSellTrade(
       codehash: input.codehash,
       tokenTxid: input.tokenTxid,
       tokenVout: input.tokenVout,
+      tokenTxHex: tokenTxHexHint,
       tokenAmount: input.tokenAmount,
       priceSats: input.priceSats,
       seedSats: input.seedSats,
@@ -246,6 +261,7 @@ export async function executeMvcTokenSellTrade(
       prevTokenInputIndex: input.prevTokenInputIndex,
       feeRate: input.feeRate,
       excludeOutpoints: Array.from(excludedOutpoints),
+      preferredFundingUtxos: latestSnapshot.preferredFundingUtxos,
     });
 
     try {
@@ -270,6 +286,8 @@ export async function executeMvcTokenSellTrade(
 
     try {
       await deps.broadcastTx(built.raw_tx);
+      recordMvcSpentOutpoints(input.metabotId, built.spent_outpoints);
+      recordMvcRecentRawTx(built.txid, built.raw_tx);
       return {
         action: input.action,
         txId: built.txid,

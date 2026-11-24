@@ -21,6 +21,7 @@ import {
   meSpendableMilli,
   refreshMeBalance,
   refreshMeCatalog,
+  refreshMeInviteStatus,
   refreshMeSubscription,
   useMeStore,
 } from '../me/mePointsStore';
@@ -42,6 +43,7 @@ import { ModelPage } from './me/ModelPage';
 import { GeneralPage } from './me/GeneralPage';
 import { AccountPage } from './me/AccountPage';
 import { WeixinBindPage } from './me/WeixinBindPage';
+import { InvitePage, countUsableInviteCodes } from './me/InvitePage';
 import { AboutPage } from './me/AboutPage';
 import NotificationsScreen from './NotificationsScreen';
 import type { AgentNotification } from '@/types/notification';
@@ -152,6 +154,7 @@ export default function MeScreen(props: {
     void refreshMeBalance({ forceRefresh: true });
     void refreshMeSubscription();
     void refreshMeCatalog();
+    void refreshMeInviteStatus();
   }, []);
 
   useEffect(() => {
@@ -280,6 +283,20 @@ export default function MeScreen(props: {
     ),
     appVersion: nativeApp?.versionName ?? appVersion,
     meTotal,
+    inviteSummary: (() => {
+      const inv = me.inviteStatus;
+      if (!inv) return null;
+      if (inv.refill.availableCount > 0) {
+        return t('mobile.me.summary.inviteRefillReady', { count: inv.refill.availableCount });
+      }
+      if (inv.eligible) {
+        const available = countUsableInviteCodes(inv.codes) + Math.max(0, inv.remainingQuota);
+        if (available > 0) {
+          return t('mobile.me.summary.inviteAvailable', { count: available });
+        }
+      }
+      return null;
+    })(),
   };
 
   const openUpgrade = useCallback((planId?: string) => {
@@ -341,6 +358,13 @@ export default function MeScreen(props: {
         );
       case 'weixinBind':
         return <WeixinBindPage onBack={requestBack} />;
+      case 'invite':
+        return (
+          <>
+            <InvitePage onBack={requestBack} onOpenSubscribe={() => openUpgrade()} />
+            {iosOpen ? <IosGuidanceSheet onClose={() => setIosOpen(false)} /> : null}
+          </>
+        );
       case 'botEdit':
         return (
           <>
@@ -353,10 +377,12 @@ export default function MeScreen(props: {
                 dirtyRef.current = dirty;
               }}
               onOpenSession={props.onOpenWorkSession}
+              onOpenSubscribe={() => openUpgrade()}
               initialTab={props.automationRequest ? 'automation' : 'basic'}
               initialSurfRunId={props.automationRequest?.section === 'surf' ? props.automationRequest.runId : undefined}
             />
             {confirmDiscard ? <DiscardConfirmSheet onCancel={() => setConfirmDiscard(false)} onDiscard={discardAndBack} /> : null}
+            {iosOpen ? <IosGuidanceSheet onClose={() => setIosOpen(false)} /> : null}
           </>
         );
       case 'skills':

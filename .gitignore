@@ -151,6 +151,8 @@ tests/*
 !tests/serverMode.test.mjs
 !tests/serverBootstrap.test.mjs
 !tests/creditPullService.test.mjs
+!tests/inviteGrantPullService.test.mjs
+!tests/mobileInviteSystem.test.tsx
 !tests/relayCatalogFreshness.test.mjs
 !tests/mobileSettings.test.ts
 !tests/mobileModelSettings.test.tsx
@@ -1186,4 +1188,16 @@ blob-report/
 
 # Native Token Visualization Card (S1 Simple + D1 Detailed, wallet_token_card, standalone bubbles)
 !tests/tokenCard.test.tsx
+!tests/tokenCardsE2ePolish.test.tsx
 !tests/panelAutoScroll.test.ts
+
+# NFT / Digital Goods 9-Scenario Card Suite (N1, C2, L2, F1, O1, P1, S2, A1, Q1)
+!tests/nftSuiteCards.test.tsx
+
+# Batch 1 P0 wallet & secret security hardening
+!tests/walletSecurityP0.test.mjs
+!tests/walletSecurityBatch2.test.mjs
+!tests/walletSecurityBatch3.test.mjs
+
+# Mobile smooth streaming & jitter-free auto-scroll
+!tests/mobileSmoothStreaming.test.ts

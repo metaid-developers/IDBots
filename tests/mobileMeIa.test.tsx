@@ -23,6 +23,7 @@ import { GeneralPage } from '../src/mobile/app/screens/me/GeneralPage.tsx';
 import { ModelPage } from '../src/mobile/app/screens/me/ModelPage.tsx';
 import { AccountDeleteSheet, AccountPage } from '../src/mobile/app/screens/me/AccountPage.tsx';
 import { WeixinBindPage, classifyWeixinPoll } from '../src/mobile/app/screens/me/WeixinBindPage.tsx';
+import { InvitePage } from '../src/mobile/app/screens/me/InvitePage.tsx';
 import { AboutPage } from '../src/mobile/app/screens/me/AboutPage.tsx';
 import { mobileI18n } from '../src/mobile/i18n.ts';
 import type { MobileUserIdentity } from '../src/mobile/app/hooks/useIdentity.ts';
@@ -34,15 +35,15 @@ import type { MobileUserIdentity } from '../src/mobile/app/hooks/useIdentity.ts'
  * (e2e/mobile/me-ia.spec.ts) — renderToStaticMarkup never runs effects.
  */
 
-test('registry: eleven list entries in three groups, profile rides the card', () => {
+test('registry: twelve list entries in three groups, profile rides the card', () => {
   assert.deepEqual(
     ME_ENTRIES.map((entry) => entry.id),
-    ['notifications', 'bots', 'nfts', 'weixinBind', 'usage', 'skills', 'memory', 'model', 'general', 'account', 'about'],
+    ['notifications', 'bots', 'nfts', 'weixinBind', 'invite', 'usage', 'skills', 'memory', 'model', 'general', 'account', 'about'],
   );
   assert.deepEqual(ME_ENTRY_GROUPS.map((group) => group.group), ['bots', 'general', 'account']);
-  // The bots group renders without a heading (My Bots + NFTs + WeChat bot rows on top).
+  // The bots group renders without a heading (My Bots + NFTs + WeChat bot + Invite rows on top).
   assert.equal(ME_ENTRY_GROUPS[0].titleKey, null);
-  assert.deepEqual(meEntriesForGroup('bots').map((entry) => entry.id), ['notifications', 'bots', 'nfts', 'weixinBind']);
+  assert.deepEqual(meEntriesForGroup('bots').map((entry) => entry.id), ['notifications', 'bots', 'nfts', 'weixinBind', 'invite']);
   assert.deepEqual(meEntriesForGroup('general').map((entry) => entry.id), ['usage', 'skills', 'memory', 'model', 'general']);
   assert.deepEqual(meEntriesForGroup('account').map((entry) => entry.id), ['account', 'about']);
   // profile is NOT a registry row (card entry, IA-PLAN §2.1); the retired
@@ -258,6 +259,10 @@ test('remaining secondary pages render their shells', () => {
   assert.match(
     renderToStaticMarkup(React.createElement(AccountPage, { onBack: () => undefined })),
     /data-testid="account-logout"/,
+  );
+  assert.match(
+    renderToStaticMarkup(React.createElement(InvitePage, { onBack: () => undefined, onOpenSubscribe: () => undefined })),
+    /data-testid="me-page-invite"/,
   );
   assert.match(
     renderToStaticMarkup(React.createElement(AccountPage, { onBack: () => undefined })),

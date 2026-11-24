@@ -210,11 +210,20 @@ export interface BuildMvcTokenSellTradeParams {
   action: 'sell' | 'take' | 'cancel' | 'transfer';
   feeRate: number;
   excludeOutpoints?: string[];
+  preferredFundingUtxos?: Array<{
+    txId: string;
+    outputIndex: number;
+    satoshis: number;
+    address?: string;
+    height?: number;
+  }>;
   /** sell / transfer */
   genesis?: string;
   codehash?: string;
   tokenTxid?: string;
   tokenVout?: number;
+  /** Optional raw tx hex hint for 0-conf split/mint UTXOs before indexer catch-up. */
+  tokenTxHex?: string;
   /** full-utxo listing only; omit to list the whole utxo (amount gates apply) */
   tokenAmount?: string;
   priceSats?: number;
@@ -736,6 +745,12 @@ export async function buildMvcFtTransferRawTx(
     throw new Error('MetaBot wallet not found');
   }
 
+  const sessionExcluded = getMvcSpendSessionSnapshot(params.metabotId).excludeOutpoints;
+  const mergedExclusions =
+    sessionExcluded.length > 0
+      ? Array.from(new Set([...excludeOutpoints, ...sessionExcluded]))
+      : excludeOutpoints;
+
   const runner = deps.runMvcFtTransferRawTxWorker ?? runMvcFtTransferRawTxWorker;
   const workerResult = await runner({
     mnemonic: wallet.mnemonic,
@@ -747,7 +762,7 @@ export async function buildMvcFtTransferRawTx(
     toAddress: params.toAddress.trim(),
     amount: params.amount,
     feeRate: params.feeRate,
-    excludeOutpoints,
+    excludeOutpoints: mergedExclusions,
     fundingRawTx,
     fundingOutpoint,
   });
@@ -1021,6 +1036,7 @@ async function runMvcTokenSellRawTxWorker(params: BuildMvcTokenSellTradeParams &
       codehash: params.codehash,
       tokenTxid: params.tokenTxid,
       tokenVout: params.tokenVout,
+      tokenTxHex: params.tokenTxHex,
       tokenAmount: params.tokenAmount,
       sellPriceSats: params.priceSats,
       seedSats: params.seedSats,
@@ -1030,6 +1046,7 @@ async function runMvcTokenSellRawTxWorker(params: BuildMvcTokenSellTradeParams &
       prevTokenInputIndex: params.prevTokenInputIndex,
       feeRate: params.feeRate,
       excludeOutpoints: params.excludeOutpoints,
+      preferredFundingUtxos: params.preferredFundingUtxos,
     },
     {
       IDBOTS_METABOT_MNEMONIC: params.mnemonic,
@@ -1050,8 +1067,10 @@ export async function buildMvcTokenSellRawTx(
   if (!Number.isFinite(params.feeRate) || params.feeRate <= 0) {
     throw new Error('feeRate must be positive');
   }
+  const isHexGenesis = (val: unknown): boolean =>
+    /^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$/.test(String(val || '').trim());
   if (params.action === 'sell') {
-    if (!/^[0-9a-fA-F]{64}$/.test(String(params.genesis || '').trim())) throw new Error('genesis (64 hex) is required for sell');
+    if (!isHexGenesis(params.genesis)) throw new Error('genesis (40 or 64 hex) is required for sell');
     if (!/^[0-9a-fA-F]{40}$/.test(String(params.codehash || '').trim())) throw new Error('codehash (40 hex) is required for sell');
     if (!Number.isSafeInteger(params.priceSats) || (params.priceSats as number) <= 0) {
       throw new Error('priceSats must be a positive integer (sats; 1 SPACE = 1e8 sats)');
@@ -1069,7 +1088,7 @@ export async function buildMvcTokenSellRawTx(
       throw new Error('receiverAddress is required for take');
     }
   } else if (params.action === 'transfer') {
-    if (!/^[0-9a-fA-F]{64}$/.test(String(params.genesis || '').trim())) throw new Error('genesis (64 hex) is required for transfer');
+    if (!isHexGenesis(params.genesis)) throw new Error('genesis (40 or 64 hex) is required for transfer');
     if (!/^[0-9a-fA-F]{40}$/.test(String(params.codehash || '').trim())) throw new Error('codehash (40 hex) is required for transfer');
     if (!String(params.receiverAddress || '').trim()) {
       throw new Error('receiverAddress is required for transfer (raw MVC address)');

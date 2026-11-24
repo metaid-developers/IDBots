@@ -18,6 +18,7 @@ import { createPin, createPinForIdentity } from './metaidCore';
 import { encryptGroupMessageECB } from './metaWebCrypto';
 import { getRate as getGlobalFeeRate } from './feeRateStore';
 import { recordOutgoingGroupSend } from './groupSendLedger';
+import { assertNoSecretEgressText } from '../security/secretEgressGuard';
 
 export interface CreateGroupChatOptions {
   groupName: string;
@@ -242,6 +243,10 @@ export async function sendGroupChatMessageAsIdentity(
   opts: SendGroupChatMessageAsIdentityOptions
 ): Promise<{ pinId: string }> {
   const identity = getUserIdentity();
+  assertNoSecretEgressText(opts.content, {
+    channel: 'group_chat_identity',
+    extraMnemonics: identity?.mnemonic ? [identity.mnemonic] : undefined,
+  });
   const encryptedContent = encryptGroupMessageECB(opts.content, groupId);
   const body = {
     groupId,
@@ -277,6 +282,22 @@ export async function sendGroupChatMessage(
   groupId: string,
   opts: SendGroupChatMessageOptions
 ): Promise<{ pinId: string }> {
+  let extraMnemonics: string[] | undefined;
+  try {
+    const store = getMetabotStore();
+    const wallet = typeof store?.getMetabotWalletByMetabotId === 'function'
+      ? store.getMetabotWalletByMetabotId(metabotId)
+      : null;
+    if (wallet?.mnemonic?.trim()) {
+      extraMnemonics = [wallet.mnemonic.trim()];
+    }
+  } catch {
+    // Best-effort local wallet lookup; global secret registry still applies.
+  }
+  assertNoSecretEgressText(opts.content, {
+    channel: 'group_chat',
+    extraMnemonics,
+  });
   const encryptedContent = encryptGroupMessageECB(opts.content, groupId);
   const body = {
     groupId,

@@ -706,8 +706,8 @@ export async function declareMrc721SellIntent(
   // Pin content timestamps are epoch SECONDS (doc schema §2.2, manapi
   // convention); the local book's updatedAt stays ms (local bookkeeping only).
   const nowSeconds = Math.floor(nowMs / 1000);
-  const autoFulfillMe = input.autoFulfillMe ?? true;
-  const autoFulfillTokens = input.autoFulfillTokens ?? true;
+  const autoFulfillMe = input.autoFulfillMe === true;
+  const autoFulfillTokens = input.autoFulfillTokens === true;
   const negotiable = input.negotiable ?? true;
   const mergedTerms = mergeTermsWithPrices(
     prices,

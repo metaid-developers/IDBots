@@ -133,6 +133,45 @@ export function replaceMvcPendingFundingUtxos(metabotId: number, utxo: unknown):
   }];
 }
 
+const mvcRecentRawTxByTxid = new Map<string, { rawTx: string; createdAt: number }>();
+const MVC_RECENT_RAW_TX_MAX_ENTRIES = 64;
+
+function pruneMvcRecentRawTxCache(): void {
+  const cutoff = Date.now() - MVC_SPEND_SESSION_TTL_MS;
+  for (const [txid, entry] of mvcRecentRawTxByTxid.entries()) {
+    if (entry.createdAt < cutoff) {
+      mvcRecentRawTxByTxid.delete(txid);
+    }
+  }
+  while (mvcRecentRawTxByTxid.size > MVC_RECENT_RAW_TX_MAX_ENTRIES) {
+    const oldestKey = mvcRecentRawTxByTxid.keys().next().value;
+    if (!oldestKey) break;
+    mvcRecentRawTxByTxid.delete(oldestKey);
+  }
+}
+
+export function recordMvcRecentRawTx(txId: unknown, rawTx: unknown): void {
+  const normalizedTxid = String(txId || '').trim().toLowerCase();
+  const normalizedHex = String(rawTx || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalizedTxid) || !/^[0-9a-f]+$/.test(normalizedHex)) {
+    return;
+  }
+  pruneMvcRecentRawTxCache();
+  mvcRecentRawTxByTxid.delete(normalizedTxid);
+  mvcRecentRawTxByTxid.set(normalizedTxid, {
+    rawTx: normalizedHex,
+    createdAt: Date.now(),
+  });
+}
+
+export function getMvcRecentRawTx(txId: unknown): string | undefined {
+  const normalizedTxid = String(txId || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalizedTxid)) return undefined;
+  pruneMvcRecentRawTxCache();
+  return mvcRecentRawTxByTxid.get(normalizedTxid)?.rawTx;
+}
+
 export function resetMvcSpendSessionStateForTests(): void {
   mvcSpendSessionState.clear();
+  mvcRecentRawTxByTxid.clear();
 }

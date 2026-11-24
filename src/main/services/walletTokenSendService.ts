@@ -32,6 +32,7 @@ import { getMetabotAccountSummary } from './metabotAccountService';
 import { BotWalletTransferStore } from './botWalletTransferStore';
 import { listMvcFtAssets, type MvcFtAsset } from './mvcFtService';
 import { executeTokenTransfer } from './metabotTokenTransferService';
+import { convertGlobalMetaIdToAddresses, extractGlobalMetaIdCandidate } from './globalMetaid';
 import {
   isExternalTransferConfirmEnabled,
   resolveLocalTransferTarget,
@@ -81,6 +82,7 @@ export type WalletTokenSendResult =
       txid: string;
       token_symbol: string;
       token_genesis: string;
+      token_codehash: string;
       /** Amount echoed in display units (normalized to the token decimal). */
       amount: string;
       channel: WalletTransferChannel;
@@ -134,9 +136,19 @@ export async function executeWalletTokenSend(
     return invalid('genesis must be the token genesis: 40-hex contract genesis or 64-hex genesis txid');
   }
   const codehash = String(params.codehash || '').trim().toLowerCase() || undefined;
-  const toAddress = String(params.to || '').trim();
+  let toAddress = String(params.to || '').trim();
   if (!toAddress) {
-    return invalid('to is required (MVC address; resolve a local bot via wallet_metabots/wallet_balance)');
+    return invalid('to is required (MVC address or GlobalMetaID idq1...; resolve a local bot via wallet_balance)');
+  }
+  if (extractGlobalMetaIdCandidate(toAddress)) {
+    const resolvedGlobal = convertGlobalMetaIdToAddresses(toAddress);
+    if (!resolvedGlobal?.mvcAddress) {
+      return invalid(
+        resolvedGlobal?.note ||
+          `GlobalMetaID "${toAddress}" cannot be offline-converted to an MVC address`,
+      );
+    }
+    toAddress = resolvedGlobal.mvcAddress;
   }
   const rawAmount = String(params.amount ?? '').trim();
   if (!rawAmount) {
@@ -171,11 +183,16 @@ export async function executeWalletTokenSend(
       error_code: 'transfer_failed',
     };
   }
-  const candidates = assets.filter(
-    (asset) =>
-      String(asset.genesis || '').toLowerCase() === genesis &&
-      (!codehash || String(asset.codeHash || '').toLowerCase() === codehash),
-  );
+  const candidates = assets.filter((asset) => {
+    const assetGenesis = String(asset.genesis || '').toLowerCase();
+    const assetSensibleId = String(asset.sensibleId || '').toLowerCase();
+    const matchesGenesis =
+      assetGenesis === genesis ||
+      ((genesis.length === 64 || genesis.length === 72) &&
+        assetSensibleId.length >= 64 &&
+        (assetSensibleId === genesis || assetSensibleId.startsWith(genesis)));
+    return matchesGenesis && (!codehash || String(asset.codeHash || '').toLowerCase() === codehash);
+  });
   if (candidates.length === 0) {
     return {
       success: false,
@@ -309,6 +326,7 @@ export async function executeWalletTokenSend(
     txid: result.txId,
     token_symbol: asset.symbol,
     token_genesis: asset.genesis,
+    token_codehash: asset.codeHash,
     amount,
     channel,
     to_metabot_id: localTarget?.metabotId ?? null,

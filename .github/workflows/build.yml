@@ -282,6 +282,15 @@ jobs:
       - name: Run MetaID RPC body-guard tests
         run: pnpm run test:rpc-body-guard
 
+      # On-chain commerce, FT/NFT escrow & atomic-swap, Token/FT/NFT card suites,
+      # and PayBuzz dual-track unlock verification gates.
+      - name: Run commerce, goods-trade, FT-commerce, and PayBuzz tests
+        run: |
+          pnpm run test:commerce
+          pnpm run test:goods-trade
+          pnpm run test:ft-commerce
+          pnpm run test:paybuzz
+
       - name: Install web-search skill dependencies
         working-directory: SKILLs/web-search
         run: pnpm install --frozen-lockfile

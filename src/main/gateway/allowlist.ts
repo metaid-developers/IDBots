@@ -442,6 +442,9 @@ const POST_FREEZE_INVOKE: Record<string, AllowlistEntry> = {
   'paybuzz:getUnlocked': { tier: 'P1', note: 'WS-5 PayBuzz local decrypted article cache read.' },
   'paybuzz:unlock': { tier: 'P1', note: 'WS-5 PayBuzz dual-track article unlock (VIP MRC-721 or FT micropayment).' },
   'paybuzz:publish': { tier: 'N', note: 'WS-5 PayBuzz desktop encrypted publishing; denied on mobile gateway.' },
+  'me:getInviteStatus': { tier: 'P1', note: 'CR-WSE-005: read user invite eligibility, issued codes, and weekly quota refill rewards.' },
+  'me:generateInviteCode': { tier: 'P1', note: 'CR-WSE-005: issue an invite code for an eligible identity via main-process BSMA signing.' },
+  'me:claimInviteRefill': { tier: 'P1', note: 'CR-WSE-005: redeem one earned weekly quota refill reward via main-process BSMA signing.' },
 };
 
 export const INVOKE_ALLOWLIST: Record<string, AllowlistEntry> = {

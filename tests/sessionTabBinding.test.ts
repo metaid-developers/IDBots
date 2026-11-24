@@ -1303,3 +1303,104 @@ test('Studio restart: restoreLastSession restores BOTH the Live Stage tab and th
     storage.restore();
   }
 });
+
+test('Studio submit tab switch: revealSessionTab activates Live Stage tab from showcase/MetaApp tab', async () => {
+  const storage = installStageEntry(STAGE_ENTRY_URI);
+  try {
+    const bridge = createFakeTabBridge();
+    const fakeHost = createFakeHost(bridge);
+    fakeHost.sessions.set('session-a', sessionOf('session-a'));
+    fakeHost.setOpen('session-a');
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+
+    const stageRes = await binding.controlSessionTab({
+      action: 'open-tab',
+      sessionId: 'session-a',
+      role: 'stage',
+      uri: STAGE_ENTRY_URI,
+      activate: true,
+    });
+    const stageTabId = stageRes.sessionTab!.id;
+
+    // User opens a MetaApp / showcase tab (taking focus away from Live Stage).
+    await bridge.controlTabs({ action: 'open-tab', uri: 'metaapp://demo-app' });
+    assert.notEqual(bridge.activeTabId, stageTabId);
+
+    // Submitting a prompt calls revealSessionTab -> Live Stage becomes active again.
+    await binding.revealSessionTab('session-a');
+    assert.equal(bridge.activeTabId, stageTabId);
+  } finally {
+    storage.restore();
+  }
+});
+
+test('Studio submit tab switch: prepareDraftTab activates prewarmed draft Live Stage tab when another tab is active', async () => {
+  const storage = installStageEntry(STAGE_ENTRY_URI);
+  try {
+    const bridge = createFakeTabBridge();
+    const fakeHost = createFakeHost(bridge);
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+
+    // Prewarm draft stage tab on mount.
+    const draftTabId = await binding.prepareDraftTab(1);
+    assert.ok(draftTabId != null);
+    assert.equal(bridge.activeTabId, draftTabId);
+
+    // User switches to MetaApps/My Bots and opens another tab.
+    await bridge.controlTabs({ action: 'open-tab', uri: 'metaid://bot/demo' });
+    assert.notEqual(bridge.activeTabId, draftTabId);
+
+    // Submitting a draft prompt calls prepareDraftTab -> draft Live Stage tab becomes active again.
+    const resumedDraftTabId = await binding.prepareDraftTab(1);
+    assert.equal(resumedDraftTabId, draftTabId);
+    assert.equal(bridge.activeTabId, draftTabId);
+  } finally {
+    storage.restore();
+  }
+});
+
+test('Studio submit tab switch: preserveActiveInteractiveTab keeps an open MetaApp focused while still switching away from /reports/ projections', async () => {
+  const storage = installStageEntry(STAGE_ENTRY_URI);
+  try {
+    const bridge = createFakeTabBridge();
+    const fakeHost = createFakeHost(bridge);
+    fakeHost.sessions.set('session-a', sessionOf('session-a'));
+    fakeHost.setOpen('session-a');
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+
+    const stageRes = await binding.controlSessionTab({
+      action: 'open-tab',
+      sessionId: 'session-a',
+      role: 'stage',
+      uri: STAGE_ENTRY_URI,
+      activate: true,
+    });
+    const stageTabId = stageRes.sessionTab!.id;
+
+    // 1. User opens an interactive MetaApp while Bot Browser is visible on screen -> submit MUST NOT yank focus away!
+    const appRes = await bridge.controlTabs({ action: 'open-tab', uri: 'metaapp://personal-shop' });
+    const appTabId = appRes.openedTabId!;
+    assert.equal(bridge.activeTabId, appTabId);
+    await binding.revealSessionTab('session-a', { preserveActiveInteractiveTab: true });
+    assert.equal(bridge.activeTabId, appTabId, 'interactive MetaApp stays focused on submit');
+
+    // 2. When right pane was showing Tasks / MetaApps catalog / My Bots (preserveActiveInteractiveTab: false), submit switches back to Live Stage!
+    await binding.revealSessionTab('session-a', { preserveActiveInteractiveTab: false });
+    assert.equal(bridge.activeTabId, stageTabId, 'switching back from catalog activates Live Stage');
+
+    // 3. When active tab is a previous turn HTML projection under /reports/, submit switches to Live Stage even when Browser was visible!
+    const reportRes = await bridge.controlTabs({
+      action: 'open-tab',
+      uri: 'preview-metaapp://localhost/Users/demo/reports/2026-11-24-digest.html',
+    });
+    assert.equal(bridge.activeTabId, reportRes.openedTabId);
+    await binding.revealSessionTab('session-a', { preserveActiveInteractiveTab: true });
+    assert.equal(bridge.activeTabId, stageTabId, 'previous turn /reports/ projection yields to Live Stage on new turn');
+  } finally {
+    storage.restore();
+  }
+});
+

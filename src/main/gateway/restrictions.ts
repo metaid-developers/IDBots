@@ -19,6 +19,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { AllowlistEntry } from './allowlist';
 import { makeError, type GatewayError } from './protocol';
+import { isBlockedDshFilePath } from '../security/dshSensitiveAccessGuard';
 
 export interface GatewayPaths {
   dataRoot: string;
@@ -116,6 +117,9 @@ function checkCwd(args: unknown[], workspaceRoot: string, channel: string): Gate
       if (!isPathInside(resolved, root)) {
         return argRestricted(`${source} resolves outside the workspace root`);
       }
+      if (isBlockedDshFilePath(resolved, root)) {
+        return argRestricted(`${source} points to a protected host credential/database path`);
+      }
     }
   }
   return null;
@@ -157,6 +161,9 @@ function checkFilePaths(args: unknown[], roots: string[]): GatewayError | null {
       const resolved = resolveConfinementPath(trimmed);
       if (!canonicals.some((canonical) => isPathInside(resolved, canonical))) {
         return argRestricted(`arg[${index}] path resolves outside the allowed root`);
+      }
+      if (isBlockedDshFilePath(resolved, canonicals[0] ?? path.dirname(resolved))) {
+        return argRestricted(`arg[${index}] path targets a protected host credential/database file`);
       }
     }
   }

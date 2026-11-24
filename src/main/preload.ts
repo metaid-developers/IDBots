@@ -918,6 +918,9 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('me:setPointsSettings', input ?? {}),
     pickVoucher: (input?: Record<string, never>) => ipcRenderer.invoke('me:pickVoucher', input ?? {}),
     getPaymentInfo: () => ipcRenderer.invoke('me:getPaymentInfo'),
+    getInviteStatus: () => ipcRenderer.invoke('me:getInviteStatus'),
+    generateInviteCode: () => ipcRenderer.invoke('me:generateInviteCode'),
+    claimInviteRefill: (input?: { idempotencyKey?: string }) => ipcRenderer.invoke('me:claimInviteRefill', input ?? {}),
   },
   // Mobile gateway channels (REQ-A-24); desktop callers use the same
   // handlers the C2 gateway dispatches to.

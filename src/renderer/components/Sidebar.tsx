@@ -77,6 +77,8 @@ interface SidebarProps {
    * ends), but they run in the Bot Browser panel — selecting one must return
    * the user there instead of the home chat view. */
   onSelectBrowserSession?: (sessionId: string) => void | Promise<void>;
+  /** Switch the Studio right pane back to Bot Browser (returns true when it was already showing `'browser'`). */
+  onRevealBrowser?: () => boolean | void;
   isCollapsed: boolean;
   /** Expanded middle-column width in px (resizable by the user). */
   width?: number;
@@ -164,6 +166,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onSelectHome,
   onSelectSurface,
   onSelectBrowserSession,
+  onRevealBrowser,
   isCollapsed,
   width = defaultSidebarWidth('home'),
   isResizing = false,
@@ -1178,6 +1181,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             onShowSkills={onShowSkills}
             onOpenNewProject={() => onShowSettings({ initialTab: 'projects', openNewProjectForm: true })}
             onOpenBotHome={onSelectHome}
+            onRevealBrowser={onRevealBrowser}
             historyOpen={panelHistoryOpen}
             onHistoryOpenChange={setPanelHistoryOpen}
           />

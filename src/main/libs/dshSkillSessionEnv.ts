@@ -45,6 +45,20 @@ fi
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SESSION_ID_RE = /^[A-Za-z0-9._:-]{1,180}$/;
 
+/**
+ * Env keys that must NEVER be persisted to DSH session `.env` files or
+ * exposed to model-visible bash via BASH_ENV. Host-spawned signing workers
+ * receive wallet key material directly from the Electron main process.
+ */
+export const FORBIDDEN_DSH_SKILL_ENV_KEYS = new Set([
+  'IDBOTS_METABOT_MNEMONIC',
+  'MNEMONIC',
+  'WALLET_MNEMONIC',
+  'SEED_PHRASE',
+  'PRIVATE_KEY',
+  'WIF',
+]);
+
 export function isSafeDshSessionId(id: string): boolean {
   return SESSION_ID_RE.test(id);
 }
@@ -55,6 +69,10 @@ export function dshSkillEnvDir(userDataPath: string): string {
 
 export function dshSkillEnvFilePath(userDataPath: string, dshSessionId: string): string {
   return join(dshSkillEnvDir(userDataPath), `${dshSessionId}.env`);
+}
+
+export function dshSkillRpcTokenFilePath(userDataPath: string, dshSessionId: string): string {
+  return join(dshSkillEnvDir(userDataPath), `${dshSessionId}.rpc-token`);
 }
 
 export function posixSingleQuote(value: string): string {
@@ -74,12 +92,13 @@ function looksLikeWindowsAbsPath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value);
 }
 
-const BASH_PATH_ENV_KEYS = new Set(['TMPDIR', 'TMP', 'TEMP', DSH_SKILL_ENV_DIR_ENV]);
+const BASH_PATH_ENV_KEYS = new Set(['TMPDIR', 'TMP', 'TEMP', DSH_SKILL_ENV_DIR_ENV, 'IDBOTS_RPC_AUTHFILE']);
 
 export function formatPosixEnvFile(env: Record<string, string>, platform: NodeJS.Platform = process.platform): string {
   const lines: string[] = [];
   for (const [key, value] of Object.entries(env)) {
     if (!ENV_KEY_RE.test(key)) continue;
+    if (FORBIDDEN_DSH_SKILL_ENV_KEYS.has(key.toUpperCase())) continue;
     const raw = String(value);
     const next = BASH_PATH_ENV_KEYS.has(key) || looksLikeWindowsAbsPath(raw)
       ? toGitBashPath(raw, platform)
@@ -130,6 +149,41 @@ export function writeDshSkillSessionEnvFile(
   return dest;
 }
 
+/** Write a 0600 per-session RPC authfile holding only that session's scoped bearer token. */
+export function writeDshSkillSessionRpcTokenFile(
+  userDataPath: string,
+  dshSessionId: string,
+  token: string,
+): string | null {
+  const trimmed = String(token ?? '').trim();
+  if (!trimmed || !isSafeDshSessionId(dshSessionId)) return null;
+  const dir = dshSkillEnvDir(userDataPath);
+  mkdirSync(dir, { recursive: true });
+  tryChmod(dir, 0o700);
+  const dest = dshSkillRpcTokenFilePath(userDataPath, dshSessionId);
+  const tmp = `${dest}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${trimmed}\n`, { encoding: 'utf8' });
+  tryChmod(tmp, 0o600);
+  renameSync(tmp, dest);
+  tryChmod(dest, 0o600);
+  return dest;
+}
+
+/** Best-effort removal of a session's `.env` and `.rpc-token` files. */
+export function removeDshSkillSessionEnvFiles(userDataPath: string, dshSessionId: string): void {
+  if (!isSafeDshSessionId(dshSessionId)) return;
+  for (const target of [
+    dshSkillEnvFilePath(userDataPath, dshSessionId),
+    dshSkillRpcTokenFilePath(userDataPath, dshSessionId),
+  ]) {
+    try {
+      if (existsSync(target)) unlinkSync(target);
+    } catch {
+      // Best-effort cleanup.
+    }
+  }
+}
+
 /** Copy a parent session env file onto a subagent DSH session id. */
 export function copyDshSkillSessionEnvFile(
   userDataPath: string,
@@ -159,8 +213,14 @@ export function pruneStaleDshSkillEnvFiles(
   let removed = 0;
   try {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.endsWith('.env')) continue;
-      const sessionId = entry.name.slice(0, -4);
+      if (!entry.isFile()) continue;
+      let sessionId: string | null = null;
+      if (entry.name.endsWith('.env')) {
+        sessionId = entry.name.slice(0, -4);
+      } else if (entry.name.endsWith('.rpc-token')) {
+        sessionId = entry.name.slice(0, -10);
+      }
+      if (!sessionId) continue;
       if (activeIds?.has(sessionId)) continue;
       const fullPath = join(dir, entry.name);
       try {
