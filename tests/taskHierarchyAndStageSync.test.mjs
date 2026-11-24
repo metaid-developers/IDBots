@@ -314,6 +314,8 @@ test('Issue 3 (19d9aafd Transcript Audit): <instant_ack> opening rule avoids rej
       resolveTwinMetabotId: () => 1,
       resolveTwinWorkspace: () => dir,
       listOpenSiblingDelegations: () => openWorkers,
+      generateWaitingReassurance: async (input) =>
+        `${input.workers.map((w) => w.workerName).join('、')}还在后台推进，已经约 ${input.waitedMinutes} 分钟，有结果我马上核验。`,
       now: () => clockMs,
     });
 

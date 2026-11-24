@@ -125,6 +125,11 @@ test('Phase 3 cross-channel radar + zero-token Worker liveness pulse + 5s SQLite
       ],
       getTaskWatermark: () => computeActiveTaskWatermark(world.taskStore.listActiveTasksCompact(20)),
       getTaskProgressNote: (id) => world.taskStore.getTask(id)?.currentProgressNote ?? null,
+      generateWaitingReassurance: async (input) => {
+        const w = input.workers[0];
+        const note = w?.progressNote ? `，最新进展：${w.progressNote}` : '';
+        return `${w?.workerName ?? '同事'}正在后台处理已约 ${input.waitedMinutes} 分钟${note}，完成后我会第一时间核验汇报。`;
+      },
       onStateChanged: (reason) => stateChanges.push(reason),
       now: () => clockMs,
     });

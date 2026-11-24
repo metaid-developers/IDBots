@@ -27,6 +27,7 @@ const { LongTermTaskStore } = require('../dist-electron/main/longTermTaskStore.j
 const { OrchestrationStore } = require('../dist-electron/main/orchestrationStore.js');
 const { TwinOrchestrationService } = require('../dist-electron/main/services/twinOrchestrationService.js');
 const { createLiveStageState, waitingLiveStage } = require('../dist-electron/main/services/studioLiveStageModel.js');
+const { buildStudioWaitReassuranceMessages } = require('../dist-electron/main/libs/turnAckReply.js');
 Module._load = originalLoad;
 
 function disposeTempStore(sqliteStore, dir) {
@@ -90,6 +91,7 @@ test('Issue 3: Progressive waiting reassurance fires on 5m -> +10m (15m) -> +15m
       { attemptId: 'att-1', workerMetabotId: 22, workerName: 'Eleven', title: 'IDBots 贡献者徽章', status: 'running', startedAt: clock },
     ];
 
+    const reassuranceInputs = [];
     const cos = new StudioChiefOfStaffService({
       decisionQueueStore: () => queue,
       coworkStore: () => ({
@@ -119,6 +121,20 @@ test('Issue 3: Progressive waiting reassurance fires on 5m -> +10m (15m) -> +15m
       resolveTwinWorkspace: () => dir,
       getPreferredStudioSessionId: () => 'studio-1',
       listOpenSiblingDelegations: () => workers,
+      generateWaitingReassurance: async (input) => {
+        reassuranceInputs.push(input);
+        const name = input.workers[0]?.workerName ?? '同事';
+        const parallelNote = input.includeParallelHint
+          ? '你不用干等，有别的想法随时聊或让我并行派其他任务。'
+          : '';
+        const variants = [
+          `${name}还在继续画图和自检，到现在大约 ${input.waitedMinutes} 分钟，整体推进正常。${parallelNote}`,
+          `跟进一下，${name}那头已经运行约 ${input.waitedMinutes} 分钟，细节步骤比较多所以耗时长一点。${parallelNote}`,
+          `${name}这边累计处理大约 ${input.waitedMinutes} 分钟了，后台一切正常，交回来我就立刻核验。${parallelNote}`,
+          `同步一声，${name}已持续跑了约 ${input.waitedMinutes} 分钟，出图后我会先帮你核对完再呈报。${parallelNote}`,
+        ];
+        return variants[(reassuranceInputs.length - 1) % variants.length];
+      },
       now: () => clock,
       idleDebounceMs: 0,
     });
@@ -131,8 +147,10 @@ test('Issue 3: Progressive waiting reassurance fires on 5m -> +10m (15m) -> +15m
     clock += 1 * 60_000;
     const r1 = await cos.runHeartbeatTick(clock);
     assert.ok(r1.reassuranceMessageId, '1st reassurance fires at 5 minutes');
-    assert.match(messages.at(-1).content, /Eleven 仍在后台处理/);
+    assert.match(messages.at(-1).content, /Eleven/);
     assert.match(messages.at(-1).content, /5 分钟/);
+    assert.equal(reassuranceInputs[0].includeParallelHint, true, '1st check-in encourages parallel tasks/chat');
+    assert.deepEqual(reassuranceInputs[0].priorMessages, []);
 
     // At +10m total (5m after r1): MUST STAY SILENT (2nd rung requires +10m = 15m total)!
     clock += 5 * 60_000;
@@ -143,6 +161,8 @@ test('Issue 3: Progressive waiting reassurance fires on 5m -> +10m (15m) -> +15m
     const r2 = await cos.runHeartbeatTick(clock);
     assert.ok(r2.reassuranceMessageId, '2nd reassurance fires at 15 minutes (+10m)');
     assert.match(messages.at(-1).content, /15 分钟/);
+    assert.equal(reassuranceInputs[1].includeParallelHint, false, 'parallel hint is occasional, not repeated back-to-back');
+    assert.equal(reassuranceInputs[1].priorMessages.length, 1, 'prior reassurance passed to avoid repetition');
 
     // At +25m total (10m after r2): silent (3rd rung requires +15m = 30m total)!
     clock += 10 * 60_000;
@@ -153,6 +173,8 @@ test('Issue 3: Progressive waiting reassurance fires on 5m -> +10m (15m) -> +15m
     const r3 = await cos.runHeartbeatTick(clock);
     assert.ok(r3.reassuranceMessageId, '3rd reassurance fires at 30 minutes (+15m)');
     assert.match(messages.at(-1).content, /30 分钟/);
+    assert.equal(reassuranceInputs[2].includeParallelHint, true, 'parallel hint returns occasionally at rung 2');
+    assert.equal(reassuranceInputs[2].priorMessages.length, 2);
 
     // At +45m total (15m after r3): silent (4th rung requires +20m = 50m total)!
     clock += 15 * 60_000;
@@ -163,6 +185,7 @@ test('Issue 3: Progressive waiting reassurance fires on 5m -> +10m (15m) -> +15m
     const r4 = await cos.runHeartbeatTick(clock);
     assert.ok(r4.reassuranceMessageId, '4th reassurance fires at 50 minutes (+20m)');
     assert.match(messages.at(-1).content, /50 分钟/);
+    assert.equal(new Set(messages.filter((m) => m.metadata?.waitingReassurance).map((m) => m.content)).size, 4, 'all 4 reassurance messages are distinct');
 
     // Also verify queued decisions DO NOT pop mid-flight while workers are running:
     queue.enqueue({
@@ -290,3 +313,214 @@ test('Issue 5: Mid-flight direction adjustment to the SAME Worker in Studio auto
     disposeTempStore(sqliteStore, dir);
   }
 });
+
+test('Session 0bf9184a regressions: continuous wait timing survives retries & verification, LLM output rejects duplicates/failures without canned templates, and cross-session stale presenting items auto-defer so new Studio decisions pop immediately', async () => {
+  const { dir, sqliteStore, db, saveDb } = await createSqliteHarness();
+  try {
+    // 1. Prompt builder contract check
+    const msgs = buildStudioWaitReassuranceMessages({
+      language: 'zh',
+      phase: 'verifying',
+      waitedMinutes: 30,
+      priorCount: 2,
+      workers: [{ workerName: 'Builder阿码', title: '修复批读回执三处 bug', progressNote: '单测全部通过' }],
+      priorMessages: ['阿码还在处理中，大约过了 5 分钟。', '阿码已经跑了 15 分钟了。'],
+      includeParallelHint: true,
+    });
+    assert.equal(msgs.length, 2);
+    assert.match(msgs[0].content, /NEVER use canned status templates/);
+    assert.match(msgs[0].content, /~30 minute\(s\)/);
+    assert.match(msgs[0].content, /chat with you about other topics or assign another parallel task/i);
+    assert.match(msgs[1].content, /Builder阿码/);
+    assert.match(msgs[1].content, /单测全部通过/);
+    assert.match(msgs[1].content, /Earlier waiting check-ins/);
+
+    // 2. Continuous wait timer across Attempt 1 -> fail/supervision -> Attempt 2 -> supervision verify + anti-duplicate + cross-session queue deadlock fix
+    const queue = new StudioDecisionQueueStore(db, saveDb);
+
+    // Older Studio session left an item stuck in `presenting`!
+    const oldItem = queue.enqueue({
+      dedupeKey: 'old-session-stale-item',
+      twinMetabotId: 1,
+      originStudioSessionId: 'old-studio-7131445e',
+      kind: 'decision',
+      priority: 50,
+      title: '《Avatar 兑换站引擎停转问题报告》',
+      backgroundSummary: 'old bg',
+      progressSummary: 'old prog',
+      question: 'old q',
+      recommendation: 'old r',
+      nextStep: 'old next',
+    }).item;
+    const claimedOld = queue.claimNextForPresentation(1, 'old-studio-7131445e', '2026-11-23T13:59:31.000Z');
+    assert.equal(claimedOld?.id, oldItem.id);
+    assert.equal(claimedOld?.status, 'presenting');
+
+    let clock = Date.parse('2026-11-25T00:53:20.000Z');
+    const studioMessages = [
+      { id: 'u0', type: 'user', content: '批读回执有三个问题要修', timestamp: clock - 2000 },
+      { id: 'a0', type: 'assistant', content: '我已经派 Builder阿码 开始处理了', timestamp: clock },
+    ];
+    let openWorkers = [
+      {
+        attemptId: 'att-1',
+        workerMetabotId: 2,
+        workerName: 'Builder阿码',
+        title: '修复批读回执三个问题',
+        status: 'running',
+        startedAt: clock + 1000,
+      },
+    ];
+    const startedBriefingPrompts = [];
+    const seenInputs = [];
+    let emitEmptyOnce = false;
+    let emitDuplicateOnce = false;
+
+    const sessions = new Map([
+      ['old-studio-7131445e', { id: 'old-studio-7131445e', title: 'Old', sessionType: 'browser', assistantMode: true, metabotId: 1, status: 'idle', messages: [] }],
+      ['new-studio-0bf9184a', { id: 'new-studio-0bf9184a', title: 'Batch Receipt', sessionType: 'browser', assistantMode: true, metabotId: 1, status: 'idle', messages: studioMessages }],
+    ]);
+
+    const cos = new StudioChiefOfStaffService({
+      decisionQueueStore: () => queue,
+      coworkStore: () => ({
+        getSession: (id) => sessions.get(id) ?? null,
+        listSessions: () => [...sessions.values()],
+        createSession: () => ({ id: 'sup-3c9062f2' }),
+        updateSession: () => {},
+        addMessage: (sid, msg) => {
+          const target = sessions.get(sid);
+          const full = { id: `m-${(target?.messages?.length ?? 0) + 1}`, timestamp: clock, ...msg };
+          target?.messages?.push(full);
+          return full;
+        },
+      }),
+      coworkRunner: () => ({
+        isSessionActive: () => false,
+        startSession: async (_sid, prompt) => {
+          startedBriefingPrompts.push(prompt);
+        },
+      }),
+      resolveTwinMetabotId: () => 1,
+      resolveTwinWorkspace: () => dir,
+      getPreferredStudioSessionId: () => 'new-studio-0bf9184a',
+      listOpenSiblingDelegations: () => openWorkers,
+      generateWaitingReassurance: async (input) => {
+        seenInputs.push(input);
+        if (emitEmptyOnce) {
+          emitEmptyOnce = false;
+          return '';
+        }
+        if (emitDuplicateOnce) {
+          emitDuplicateOnce = false;
+          return input.priorMessages?.[0] ?? '';
+        }
+        return input.phase === 'verifying'
+          ? `阿码刚把修复代码交回来了，我已经在后台逐项核验，整件事前前后后大约进行了 ${input.waitedMinutes} 分钟，验完立刻请你拍板。`
+          : `阿码在后台推进这次修复大约有 ${input.waitedMinutes} 分钟了，你不用干等，有别的安排也可以先跟我并行聊。`;
+      },
+      now: () => clock,
+      idleDebounceMs: 0,
+    });
+
+    // Even with old-studio item in 'presenting', volatile context & presence for new-studio MUST NOT show old-studio's briefing!
+    assert.doesNotMatch(cos.buildVolatileTurnContext('new-studio-0bf9184a'), /<active_studio_briefing>/);
+
+    // T + 5m: 1st reassurance fires for Attempt 1
+    clock += 5 * 60_000 + 2_000;
+    const t1 = await cos.runHeartbeatTick(clock);
+    assert.ok(t1.reassuranceMessageId);
+    assert.equal(seenInputs[0].waitedMinutes, 5);
+
+    // T + 11m: Attempt 1 fails -> back-office [督办] starts with a newer startedAt!
+    clock += 6 * 60_000;
+    openWorkers = [];
+    cos['activeSupervisionsBySession'].set('new-studio-0bf9184a', {
+      attemptId: 'att-1',
+      workerMetabotId: 2,
+      workerName: 'Builder阿码',
+      title: '修复批读回执三个问题',
+      startedAt: clock,
+    });
+    assert.equal((await cos.runHeartbeatTick(clock)).reassuranceMessageId ?? null, null);
+
+    // T + 13m: [督办] re-delegates Attempt 2 with startedAt = T + 13m!
+    clock += 2 * 60_000;
+    cos['activeSupervisionsBySession'].delete('new-studio-0bf9184a');
+    openWorkers = [
+      {
+        attemptId: 'att-2',
+        workerMetabotId: 2,
+        workerName: 'Builder阿码',
+        title: '修复批读回执三个问题',
+        status: 'running',
+        startedAt: clock,
+      },
+    ];
+    assert.equal((await cos.runHeartbeatTick(clock)).reassuranceMessageId ?? null, null);
+
+    // T + 15m02s (10m after 1st reassurance): MUST fire at ~15 minutes, NOT reset to 5 minutes!
+    clock += 2 * 60_000 + 2_000;
+    const t2 = await cos.runHeartbeatTick(clock);
+    assert.ok(t2.reassuranceMessageId, '2nd reassurance fires on progressive schedule despite retry');
+    assert.equal(seenInputs[1].waitedMinutes, 15, 'elapsed wait remains 15m across Attempt 1 -> [督办] -> Attempt 2');
+    assert.equal(seenInputs[1].priorMessages.length, 1);
+
+    // T + 25m: Attempt 2 finishes -> [督办] verification starts with startedAt = T + 25m!
+    clock += 10 * 60_000;
+    openWorkers = [];
+    cos['activeSupervisionsBySession'].set('new-studio-0bf9184a', {
+      attemptId: 'att-2',
+      workerMetabotId: 2,
+      workerName: 'Builder阿码',
+      title: '修复批读回执三个问题',
+      startedAt: clock,
+    });
+
+    // T + 30m02s (15m after 2nd reassurance): 3rd reassurance fires in 'verifying' phase with waitedMinutes === 30!
+    clock += 5 * 60_000 + 2_000;
+    const t3 = await cos.runHeartbeatTick(clock);
+    assert.ok(t3.reassuranceMessageId, '3rd reassurance fires at 30m during verification');
+    assert.equal(seenInputs[2].phase, 'verifying');
+    assert.equal(seenInputs[2].waitedMinutes, 30, 'elapsed wait reports 30m instead of resetting to 5m on verification start');
+
+    // Empty LLM response or exact duplicate MUST NOT fall back to canned templates!
+    clock += 20 * 60_000;
+    emitEmptyOnce = true;
+    const beforeEmptyCount = studioMessages.length;
+    assert.equal((await cos.runHeartbeatTick(clock)).reassuranceMessageId ?? null, null);
+    assert.equal(studioMessages.length, beforeEmptyCount, 'empty LLM generation emits no canned bubble');
+
+    clock += 20 * 60_000;
+    emitDuplicateOnce = true;
+    assert.equal((await cos.runHeartbeatTick(clock)).reassuranceMessageId ?? null, null);
+    assert.equal(studioMessages.length, beforeEmptyCount, 'duplicate LLM output is dropped');
+
+    // 3. [督办] finishes verification and enqueues decision for new-studio-0bf9184a!
+    cos['activeSupervisionsBySession'].delete('new-studio-0bf9184a');
+    const newItem = queue.enqueue({
+      dedupeKey: 'batch-receipt-fix-acceptance',
+      twinMetabotId: 1,
+      originStudioSessionId: 'new-studio-0bf9184a',
+      kind: 'acceptance',
+      priority: 50,
+      title: '批读回执三处修复已核验，请拍板合并发版',
+      backgroundSummary: '三处修复已核验',
+      progressSummary: '测试全绿',
+      question: '是否合并发版？',
+      recommendation: '合并到 main 并构建',
+      nextStep: '合并并发布',
+    }).item;
+
+    clock += 1_000;
+    const tickPop = await cos.runHeartbeatTick(clock);
+    assert.equal(tickPop.presentedItemId, newItem.id, 'cross-session stale presenting item auto-deferred and current session decision popped immediately!');
+    assert.equal(queue.getById(oldItem.id)?.status, 'queued', 'stale old-session item safely returned to queued');
+    assert.equal(queue.getById(newItem.id)?.status, 'presenting', 'current-session item claimed into presenting');
+    assert.equal(startedBriefingPrompts.length, 1);
+    assert.match(startedBriefingPrompts[0], /批读回执三处修复已核验/);
+  } finally {
+    disposeTempStore(sqliteStore, dir);
+  }
+});
+
