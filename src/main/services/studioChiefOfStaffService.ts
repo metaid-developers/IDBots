@@ -125,6 +125,8 @@ export interface StudioChiefOfStaffDeps {
   getAppLanguage?: () => 'zh' | 'en';
   getPreferredStudioSessionId?: () => string | null;
   getStudioContinuity?: (twinMetabotId: number) => StudioContinuitySnapshot | null;
+  /** Terminal-stage tasks (done/cancelled) resolved after a given epoch ms — feeds the dream-brief reconciliation block. */
+  listTasksResolvedSince?: (sinceMs: number) => StudioResolvedTaskRef[];
   listPendingTwinTodos?: (twinMetabotId: number) => TwinTodoItem[];
   hasDefiningDraftForSession?: (sessionId: string) => boolean;
   listOpenSiblingDelegations?: (studioSessionId: string, longtermTaskId?: string | null) => StudioSiblingDelegationSummary[];
@@ -214,6 +216,55 @@ function clipCleanTitle(raw: string, maxChars: number = 36): string {
     sliced = sliced.slice(0, lastAsciiOpen).trimEnd();
   }
   return `${sliced}…`;
+}
+
+export interface StudioResolvedTaskRef {
+  id: string;
+  title: string;
+  stage: 'done' | 'cancelled';
+  resolvedAtIso: string;
+}
+
+const DREAM_BRIEF_RECONCILIATION_TITLE_MAX_CHARS = 80;
+const DREAM_BRIEF_RECONCILIATION_MAX_ITEMS = 8;
+
+/** Local-midnight epoch ms for a `YYYY-MM-DD` dreamDate label (NaN when malformed). */
+export function dreamDateLocalMidnightMs(dreamDate: string): number {
+  return Date.parse(`${dreamDate}T00:00:00`);
+}
+
+/**
+ * The dream-brief reconciliation block. The nightly <studio_continuity_brief>
+ * is a static distillation: a workstream it lists as open may already be
+ * resolved hours later (2026-11-19 incident — two tasks were closed at 02:47
+ * while the brief still asked the owner to green-light the fix, and the Twin
+ * copied the stale line into a "waiting owner decision" list). Reconciling at
+ * injection time keeps the snapshot immutable, works regardless of when the
+ * dream actually ran, and makes the live task table authoritative without
+ * parsing free-text workstream lines. Null when nothing resolved — no block,
+ * no tokens.
+ */
+export function buildDreamBriefTaskReconciliation(
+  dreamDate: string,
+  resolved: readonly StudioResolvedTaskRef[],
+): string | null {
+  const usable = resolved
+    .map((task) => ({
+      id: String(task?.id ?? '').trim(),
+      title: clipCleanTitle(String(task?.title ?? ''), DREAM_BRIEF_RECONCILIATION_TITLE_MAX_CHARS),
+      stage: task?.stage === 'cancelled' ? ('cancelled' as const) : ('done' as const),
+      resolvedAtIso: String(task?.resolvedAtIso ?? '').trim(),
+    }))
+    .filter((task) => task.id && task.title)
+    .slice(0, DREAM_BRIEF_RECONCILIATION_MAX_ITEMS);
+  if (usable.length === 0) return null;
+  return [
+    `<dream_brief_task_reconciliation dreamDate="${escapeHtml(dreamDate)}">`,
+    `Tasks RESOLVED (done/cancelled) since ${escapeHtml(dreamDate)} — the live <active_tasks_radar> is authoritative and no longer lists them:`,
+    ...usable.map((task) => `- [${task.stage}] "${task.title}" (taskId=${task.id}, resolvedAt=${task.resolvedAtIso})`),
+    'Rule: if a workstream line in <studio_continuity_brief> corresponds to a task listed here, that workstream is ALREADY RESOLVED — never re-surface it as pending and never fold it into a waiting-for-owner list. For ANY brief line whose topic is absent from <active_tasks_radar>, verify with `task_search` before presenting it as open work.',
+    '</dream_brief_task_reconciliation>',
+  ].join('\n');
 }
 
 function buildSupervisionPrompt(params: {
@@ -794,6 +845,17 @@ export class StudioChiefOfStaffService {
         '</studio_continuity_brief>',
       );
       blocks.push(continuityLines.join('\n'));
+      // Owner ruling 2026-11-19: the brief is a static snapshot — reconcile it
+      // against the live task table so workstreams resolved after the dream
+      // (e.g. tasks closed overnight) are never re-surfaced as pending.
+      try {
+        const sinceMs = dreamDateLocalMidnightMs(continuity.dreamDate);
+        const resolved = Number.isFinite(sinceMs) ? (this.deps.listTasksResolvedSince?.(sinceMs) ?? []) : [];
+        const reconciliation = buildDreamBriefTaskReconciliation(continuity.dreamDate, resolved);
+        if (reconciliation) blocks.push(reconciliation);
+      } catch {
+        // Reconciliation is best-effort; never break volatile-context assembly.
+      }
     }
 
     try {

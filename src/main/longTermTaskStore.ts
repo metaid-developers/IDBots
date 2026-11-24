@@ -37,6 +37,14 @@ import type {
 } from '../renderer/types/longTermTask';
 import { LONG_TERM_COLUMN_ORDER } from '../renderer/types/longTermTask';
 
+/** A task that reached a terminal stage, as consumed by the dream-brief reconciliation block. */
+export interface LongTermResolvedTaskRef {
+  id: string;
+  title: string;
+  stage: 'done' | 'cancelled';
+  resolvedAtIso: string;
+}
+
 /**
  * Long-term task board — first-class store (redesign, owner-ruled 2026-09-22).
  *
@@ -1676,6 +1684,28 @@ export class LongTermTaskStore {
   }
 
   // ── reads ────────────────────────────────────────────────────────────────
+
+  /**
+   * Tasks that reached a terminal stage (done/cancelled) after `sinceMs`,
+   * newest first. Feeds the Chief-of-Staff dream-brief reconciliation block:
+   * the nightly <studio_continuity_brief> is a static distillation and can
+   * still list workstreams the machine closed hours later, so the injection
+   * layer needs the authoritative "resolved since then" delta.
+   */
+  listTasksResolvedSince(sinceMs: number, limit = 8): LongTermResolvedTaskRef[] {
+    const cap = Math.max(1, Math.min(25, Math.trunc(limit)));
+    const sinceIso = new Date(Number.isFinite(sinceMs) ? Math.max(0, Math.trunc(sinceMs)) : 0).toISOString();
+    const rows = this.getAll<{ id: string; title: string; stage: string; done_at: string | null; updated_at: string }>(
+      "SELECT id, title, stage, done_at, updated_at FROM long_term_tasks WHERE stage IN ('done', 'cancelled') AND COALESCE(done_at, updated_at) > ? ORDER BY COALESCE(done_at, updated_at) DESC LIMIT ?",
+      [sinceIso, cap],
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      stage: row.stage === 'cancelled' ? ('cancelled' as const) : ('done' as const),
+      resolvedAtIso: (row.done_at ?? '').trim() || row.updated_at,
+    }));
+  }
 
   getTask(taskId: string): LongTermTaskDetail | null {
     const row = this.getTaskRow(taskId);
