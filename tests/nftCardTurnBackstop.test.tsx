@@ -281,7 +281,7 @@ test('nftCardTurnBackstop captures wallet_token_orders and structured bash skill
   assert.equal(hostCaptured.length, 1);
   assert.equal(hostCaptured[0].tag, 'ft-orderbook-card');
 
-  // Structured skill JSON stdout via bash (`trade.js` / `broker.js`)
+  // Structured skill JSON stdout via bash (`broker.bundle.mjs` / `metabot-trade-metaidmarket-v2`)
   const skillStdout = JSON.stringify(
     {
       success: true,
@@ -294,6 +294,34 @@ test('nftCardTurnBackstop captures wallet_token_orders and structured bash skill
   const bashCaptured = extractEmittedSkillBashCardFences(skillStdout);
   assert.equal(bashCaptured.length, 1);
   assert.equal(bashCaptured[0].tag, 'ft-orderbook-card');
+
+  // Mode-keyed skill JSON stdout without `success: true` (`metabot-trade-metaidmarket-v2` legacy v2.2.0)
+  const modeEnvelopeStdout = JSON.stringify({
+    mode: 'orders',
+    message: `METAID 当前在售挂单:\n${sampleObFence}`,
+    cardType: 'ft-orderbook-card',
+    data: { totalOrdersCount: 206 },
+  });
+  const modeCaptured = extractEmittedSkillBashCardFences(modeEnvelopeStdout);
+  assert.equal(modeCaptured.length, 1);
+  assert.equal(modeCaptured[0].tag, 'ft-orderbook-card');
+
+  // Tail-truncated skill JSON stdout (e.g. DSH tool-result trimmer or `| head` cutting trailing `data` after an intact `message`)
+  const fullWithHeavyTail = JSON.stringify({
+    mode: 'orders',
+    message: `METAID 当前在售挂单:\n${sampleObFence}`,
+    cardType: 'ft-orderbook-card',
+    data: { orders: [{ orderId: 'ord_1', takePsbt: '70736274ff01'.repeat(200) }] },
+  });
+  const cutIdx = fullWithHeavyTail.indexOf('"takePsbt"') + 25;
+  const tailTruncatedStdout = `${fullWithHeavyTail.slice(0, cutIdx)}\n[idbots: tool result trimmed, 64139 chars total]`;
+  const truncatedCaptured = extractEmittedSkillBashCardFences(tailTruncatedStdout);
+  assert.equal(truncatedCaptured.length, 1);
+  assert.equal(truncatedCaptured[0].tag, 'ft-orderbook-card');
+
+  // Mid-card truncated skill JSON stdout (`| head -c` slicing inside the card fence) must NEVER emit a torn card
+  const tornMidFenceStdout = fullWithHeavyTail.slice(0, fullWithHeavyTail.indexOf('"unitPricePrimary"') + 10);
+  assert.equal(extractEmittedSkillBashCardFences(tornMidFenceStdout).length, 0);
 
   // Reading SKILL.md or grepping source files (non-JSON envelope) must NEVER trigger false captures
   const docReadOutput = `# SKILL.md\nInclude verbatim:\n\n${sampleObFence}\n"cardType": "ft-orderbook-card" "message": "example"`;
