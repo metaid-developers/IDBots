@@ -581,6 +581,7 @@ export async function handleMvcTokenSellListRoute(
             tokenSellJson,
           },
         },
+        negotiable: typeof body.negotiable === 'boolean' ? body.negotiable : false,
       };
       validateFtSellPinPayload(pinPayload);
       const pinWriter =
@@ -1174,6 +1175,12 @@ export async function handleFtWatchRegisterRoute(
                     },
                   }
                 : {},
+          negotiable:
+            typeof lot.negotiable === 'boolean'
+              ? lot.negotiable
+              : typeof body.negotiable === 'boolean'
+                ? body.negotiable
+                : false,
         };
         validateFtSellPinPayload(pinPayload);
         const pinWriter =

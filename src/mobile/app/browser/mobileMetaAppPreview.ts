@@ -345,6 +345,26 @@ export function createMobileMetaAppPreviewSession(
     const entryPath = normalizePackagePath(input.indexFile);
     if (!normalizedEntries.some((item) => item.path === entryPath)) throw new Error('MetaApp entry file is missing from the package.');
 
+    const entryDir = entryPath.includes('/') ? entryPath.slice(0, entryPath.lastIndexOf('/') + 1) : '';
+    const shopConfigEntry = normalizedEntries.find((item) => item.path === `${entryDir}shop-config.json`);
+    let shopOverlayByPath: ReadonlyMap<string, string> | null = null;
+    if (shopConfigEntry) {
+      try {
+        const parsedCfg = JSON.parse(await shopConfigEntry.entry.async('string')) as Record<string, unknown>;
+        const ownerGlobalMetaId = typeof parsedCfg?.ownerGlobalMetaId === 'string' ? parsedCfg.ownerGlobalMetaId.trim() : '';
+        if (/^idq1[a-z0-9]{30,64}$/iu.test(ownerGlobalMetaId)) {
+          const { PERSONAL_GOODS_SHOP_OVERLAY_FILES } = await import('./personalGoodsShopOverlayAssets');
+          const map = new Map<string, string>();
+          for (const [assetName, assetSource] of Object.entries(PERSONAL_GOODS_SHOP_OVERLAY_FILES)) {
+            map.set(`${entryDir}${assetName}`, assetSource);
+          }
+          shopOverlayByPath = map;
+        }
+      } catch {
+        shopOverlayByPath = null;
+      }
+    }
+
     const urlByPath = new Map<string, string>();
     let uncompressedBytes = 0;
     await forEachWithConcurrency(normalizedEntries, 4, async (item) => {
@@ -359,7 +379,10 @@ export function createMobileMetaAppPreviewSession(
     await forEachWithConcurrency(normalizedEntries, 4, async (item) => {
       const path = item.path;
       if (!['js', 'mjs'].includes(extensionOf(path))) return;
-      const content = await item.entry.async('uint8array');
+      const overlaidText = shopOverlayByPath?.get(path);
+      const content = overlaidText !== undefined
+        ? new TextEncoder().encode(overlaidText)
+        : await item.entry.async('uint8array');
       uncompressedBytes += content.byteLength;
       if (uncompressedBytes > MAX_PACKAGE_BYTES * 2) throw new Error('MetaApp package expands beyond the mobile preview limit.');
       urlByPath.set(path, '');
@@ -368,7 +391,7 @@ export function createMobileMetaAppPreviewSession(
       await forEachWithConcurrency(normalizedEntries, 4, async (item) => {
         const path = item.path;
         if (extensionOf(path) !== extension) return;
-        const text = await item.entry.async('string');
+        const text = shopOverlayByPath?.get(path) ?? await item.entry.async('string');
         if (!['js', 'mjs'].includes(extension)) uncompressedBytes += new TextEncoder().encode(text).byteLength;
         if (uncompressedBytes > MAX_PACKAGE_BYTES * 2) throw new Error('MetaApp package expands beyond the mobile preview limit.');
         let rewritten: string;

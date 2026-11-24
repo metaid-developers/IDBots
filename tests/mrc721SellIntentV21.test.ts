@@ -310,3 +310,47 @@ test('goods_market_summary, goods_market_search, and goods_holder_lookup tools f
   assert.match(holderOut.content[0].text, /SellerBot/);
   assert.match(holderOut.content[0].text, /count=2/);
 });
+
+test('declareMrc721SellIntent defaults negotiable to false when omitted', async () => {
+  const kv = makeKv();
+  const pins: any[] = [];
+  const store = {
+    getMetabotById: () => ({ mvc_address: SELLER_ADDR, globalmetaid: SELLER_METAID }),
+  };
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    code: 1,
+    data: {
+      itemPinId: ITEM_PIN_ID_2,
+      collectionPinId: COLLECTION_PIN_ID,
+      collectionName: 'digital-passes',
+      ownerAddress: SELLER_ADDR,
+      output: `${'22'.repeat(32)}:0`,
+      outputValue: 1,
+    },
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+
+  try {
+    const res = await declareMrc721SellIntent(
+      {
+        createPin: async (metabotId: number, data: unknown) => {
+          pins.push({ metabotId, data });
+          return { pinId: `${'dd'.repeat(32)}i0`, txids: ['tx_sell_default_nonneg'], totalCost: 400 };
+        },
+      },
+      {
+        metabotId: 1,
+        itemPinId: ITEM_PIN_ID_2,
+        priceMeMilli: 5000,
+        store,
+        intents: kv,
+      },
+    );
+
+    assert.equal(res.intent.negotiable, false);
+    const payload = JSON.parse(pins[0].data.payload);
+    assert.equal(payload.negotiable, false);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});

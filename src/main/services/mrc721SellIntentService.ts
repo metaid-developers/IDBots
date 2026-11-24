@@ -708,7 +708,7 @@ export async function declareMrc721SellIntent(
   const nowSeconds = Math.floor(nowMs / 1000);
   const autoFulfillMe = input.autoFulfillMe === true;
   const autoFulfillTokens = input.autoFulfillTokens === true;
-  const negotiable = input.negotiable ?? true;
+  const negotiable = input.negotiable ?? false;
   const mergedTerms = mergeTermsWithPrices(
     prices,
     input.acceptedCurrencies ?? [],

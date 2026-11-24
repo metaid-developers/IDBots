@@ -11022,6 +11022,10 @@ const getBotBrowserMetaAppCacheService = () => {
   if (!botBrowserMetaAppCacheService) {
     botBrowserMetaAppCacheService = createBotBrowserMetaAppCacheService({
       cacheRoot: path.join(app.getPath('userData'), 'browser-cache', 'metaapps'),
+      personalGoodsShopTemplateDir: path.join(
+        getMetaAppManager().getBundledMetaAppsRoot(),
+        'personal-goods-shop',
+      ),
     });
   }
   return botBrowserMetaAppCacheService;

@@ -201,7 +201,7 @@ export const NftListingCard: React.FC<NftListingCardProps> = ({ data, className 
             <span className="inline-flex items-center rounded-full bg-[#0f9d68]/15 px-2 py-0.5 text-[10.5px] font-bold text-[#0f9d68] dark:bg-[#34d399]/18 dark:text-[#34d399]">
               {data.autoFulfill === false
                 ? ct('On-chain Atomic', '合约原子交割')
-                : ct('⚡ AI 24h Auto-Send', '⚡ AI 24h 秒发')}
+                : ct('⚡ Escrow Auto-Settle', '⚡ 担保自动交割')}
             </span>
             {data.floorPriceMeMilli != null && data.floorPriceMeMilli > 0 && (
               <div className="mt-1 text-[10.5px] tabular-nums text-[#5b6472] dark:text-[#9aa3b2]">
@@ -244,8 +244,8 @@ export const NftListingCard: React.FC<NftListingCardProps> = ({ data, className 
             onClick={() =>
               dispatchSuiteComposerDraft(
                 ct(
-                  `Publish a MetaWeb Buzz announcing my listed collectible ${title} (${primaryAskDisplay}, AI 24h auto-delivery).`,
-                  `帮我发一条广场动态（Buzz），推广我刚上架的数字藏品 ${title}（售价 ${primaryAskDisplay}，AI 分身 24 小时自动秒发）。`,
+                  `Publish a MetaWeb Buzz announcing my listed collectible ${title} (${primaryAskDisplay}).`,
+                  `帮我发一条广场动态（Buzz），推广我刚上架的数字藏品 ${title}（售价 ${primaryAskDisplay}）。`,
                 ),
               )
             }

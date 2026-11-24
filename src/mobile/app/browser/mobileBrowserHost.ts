@@ -39,10 +39,27 @@ export function createMobileBrowserHost(): {
     previewFileLocalResolve: async ({ path }) => ({
       localPreviewUrl: await resolveLocalFileUrl(path, { disposition: 'inline' }),
     }),
-    resolveMetaAppPin: (pinId) => resolveMetaAppPinToRecord({
-      pinId,
-      createPreviewSession: preview.createPreviewSession,
-    }),
+    resolveMetaAppPin: async (pinId) => {
+      const resolved = await resolveMetaAppPinToRecord({
+        pinId,
+        createPreviewSession: preview.createPreviewSession,
+      });
+      if (!resolved.ok || !resolved.data) return resolved;
+      const currentTitle = typeof resolved.data.title === 'string' ? resolved.data.title.trim() : '';
+      if (/精选头像铺|头像铺|老藏家|清仓小铺|个人数字商品小店|数字商品小店/iu.test(currentTitle)) {
+        const inferredOwner = currentTitle
+          .replace(/\s*(?:的)?(?:精选头像铺|头像铺|老藏家清仓小铺|清仓小铺|个人数字商品小店|数字商品小店).*$/iu, '')
+          .trim();
+        return {
+          ...resolved,
+          data: {
+            ...resolved.data,
+            title: inferredOwner ? `${inferredOwner} 的 NFT 橱窗` : 'NFT 橱窗',
+          },
+        };
+      }
+      return resolved;
+    },
     resolveMetaAppUrl: async () => {
       throw new Error('Local desktop MetaApp packages are unavailable on mobile.');
     },

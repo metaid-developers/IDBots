@@ -151,6 +151,7 @@ export interface FtSellPinPayloadV1 {
       autoFulfill: boolean;
     };
   };
+  negotiable?: boolean;
   expiresAt?: number;
   memo?: string;
 }

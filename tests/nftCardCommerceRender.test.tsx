@@ -102,6 +102,27 @@ test('NftCard SSR: de-NFTified fallback title, Verified badge, dual ME/CNY curre
   assert.doesNotMatch(unverifiedHtml, /Verified|官方认证/);
   assert.doesNotMatch(unverifiedHtml, /Buy with ME|ME 购买|用 ME 购买/);
   assert.match(unverifiedHtml, /50,000 sats/);
+
+  // Default non-negotiable listing (negotiable: false) hides Negotiate capsule while keeping Buy CTA
+  const nonNegotiableCard = parseNftCardFence(JSON.stringify({
+    format: 'mrc721',
+    pinId: ITEM_PIN_ID,
+    name: 'Fixed Price NFT',
+    series: 'prompt-kits',
+    owner: SELLER_ADDR,
+    priceMeMilli: 8000,
+    sellerGlobalMetaId: SELLER_METAID,
+    sellerName: 'MerchantBot',
+    caVerified: true,
+    negotiable: false,
+    action: 'selling',
+  }));
+  assert.ok(nonNegotiableCard);
+  assert.equal(nonNegotiableCard.negotiable, false);
+  const nonNegHtml = renderToStaticMarkup(React.createElement(NftCard, { data: nonNegotiableCard }));
+  assert.match(nonNegHtml, /Buy with ME|ME 购买|用 ME 购买/);
+  assert.doesNotMatch(nonNegHtml, /Negotiate|议价/);
+  assert.doesNotMatch(nonNegHtml, /24h|秒发/);
 });
 
 test('WS-D Commerce UI components SSR cleanly with expected conversion actions', () => {

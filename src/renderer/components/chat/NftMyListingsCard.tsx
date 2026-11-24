@@ -179,7 +179,7 @@ export const NftMyListingsCard: React.FC<NftMyListingsCardProps> = ({ data, clas
                       {title}
                     </span>
                     <span className="shrink-0 rounded-[5px] bg-slate-900/[0.06] px-1.5 py-px text-[9.5px] font-semibold text-[#5b6472] dark:bg-white/[0.08] dark:text-[#9aa3b2]">
-                      {item.rail === 'onchain-sell' || item.rail === 'mvc-contract' ? ct('Chain', '链上') : ct('Intent', '秒发')}
+                      {item.rail === 'onchain-sell' || item.rail === 'mvc-contract' ? ct('Chain', '链上') : ct('Intent', '意向挂牌')}
                     </span>
                   </div>
                   <div className="mt-0.5 truncate text-[11.5px] font-bold tabular-nums text-[#9a7300] dark:text-[#ffdc51]">

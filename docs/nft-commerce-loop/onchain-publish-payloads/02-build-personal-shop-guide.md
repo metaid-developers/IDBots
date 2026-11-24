@@ -16,7 +16,7 @@
 
 问主人两个问题（一次问完）：
 
-1. 店名 + 一句话店招（例如「老藏家清仓小铺 · 积分拍下 24 小时自动秒发」）；
+1. 店名 + 一句话店招（例如「AI_Sunny 的 NFT 橱窗 · 链上 MRC-721 数字藏品橱窗」）；
 2. 挑 1~3 件作为橱窗精选（其余商品进藏品柜）。
 
 禁止自行编造店招或宣传语；宣传文案必须遵守合规红线（不得出现任何收益承诺措辞）。
@@ -73,7 +73,7 @@ personal-goods-shop/
     "fiat": { "currency": "CNY", "amountCents": 990 }
   },
   "autoFulfillMe": true,
-  "negotiable": true,
+  "negotiable": false,
   "shopMetaAppPinId": "<小店 metaapp pinId，可选>",
   "acceptedCurrencies": ["me", "fiat:CNY"],
   "settlement": ["me-escrow", "fiat-escrow"],
@@ -86,7 +86,7 @@ personal-goods-shop/
 
 - `prices.me.amountMilli`：正整数，最小 `1000`（= 1 ME）；设置时 `acceptedCurrencies` 必含 `"me"`、`settlement` 必含 `"me-escrow"`。
 - `prices.fiat.amountCents`：正整数人民币分，最小 `100`（= ¥1.00）；设置时必含 `"fiat:CNY"` / `"fiat-escrow"`。
-- `autoFulfillMe: true` 表示授权本地 IDBots 守护进程在核实 ABS 托管单锁定金额 ≥ 挂牌价后自动链上发货（24h 自动秒发）。
+- `autoFulfillMe: true` 表示授权本地 IDBots 守护进程在核实 ABS 托管单锁定金额 ≥ 挂牌价后自动链上交割；`negotiable` 默认 `false`（关闭议价，买家按挂牌价直接拍下）。
 - 撤单 = 广播同 `itemPinId` 且 `"active": false` 的新 Pin。
 - 商品链上过户后旧挂单自动失效，重新上架需广播新 Pin。
 - 默认定价建议：用行情中位价（见《数字商品寻源与交易指南》的 `goods_market_summary`）起步，主人可自由修改。
@@ -96,5 +96,5 @@ personal-goods-shop/
 - [ ] 小店 MetaApp 发布成功且 `metaapp://` 可打开；
 - [ ] 主人已确认并执行 `--set-homepage-metaapp`；
 - [ ] 每件在售商品能查到最新有效 `/protocols/mrc721sell` Pin；
-- [ ] 用另一台设备的 AI 打开小店能点「用积分购买」走到托管闭环；
-- [ ] 店主本人打开小店能看到「领分销弹药包」入口。
+- [ ] 用另一台设备的 AI 打开小店能直接点卡片上的「用 ME 积分购买」走到托管闭环；
+- [ ] 小店前台保持纯净买家橱窗展示（不显示店主分销管理栏），每张卡片清晰展示专辑、编号与发行方。

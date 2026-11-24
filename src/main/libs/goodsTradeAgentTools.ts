@@ -597,6 +597,7 @@ export function buildGoodsTradeAgentTools(deps: {
             sellerOnline: listing.seller?.isOnline,
             shopMetaAppPinId: listing.shopMetaAppPinId,
             caVerified: verified,
+            negotiable: listing.negotiable === true,
             action: 'selling',
           });
           output = appendNftCardBlock(output, withNftCardHostStamp(cardFields, sessionId));
