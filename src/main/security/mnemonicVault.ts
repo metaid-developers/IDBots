@@ -34,7 +34,6 @@ function getElectronSafeStorage(): MnemonicVaultBackend | null {
     return cachedElectronSafeStorage;
   }
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const electron = require('electron') as { safeStorage?: MnemonicVaultBackend };
     const ss = electron?.safeStorage;
     if (

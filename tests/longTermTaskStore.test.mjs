@@ -771,4 +771,14 @@ test('listTasksResolvedSince: terminal tasks after the watermark, newest first; 
 
   // Empty window → empty list (the injection layer emits no block).
   assert.deepEqual(store.listTasksResolvedSince(Date.parse('2030-01-01T00:00:00.000Z'), 8), []);
+  try {
+    sqliteStore.close();
+  } catch {
+    // ignore close error
+  }
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // ignore Windows EPERM cleanup
+  }
 });

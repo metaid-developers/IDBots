@@ -650,6 +650,7 @@ test('Compiled buildMvcFtIssueRawTxWorker.js subprocess: reads env mnemonic + JS
     allowIncreaseMints: false,
     feeRate: 1,
     preferredFundingUtxos: [funding],
+    preferredFundingRawTxs: { [funding.txId]: funding.txHex },
   });
 
   const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
@@ -658,6 +659,8 @@ test('Compiled buildMvcFtIssueRawTxWorker.js subprocess: reads env mnemonic + JS
         ...process.env,
         IDBOTS_METABOT_MNEMONIC: testMnemonic,
         IDBOTS_METABOT_PATH: "m/44'/10001'/0'",
+        IDBOTS_METALET_HOST: 'http://127.0.0.1:9',
+        IDBOTS_MVC_API_HOST: 'http://127.0.0.1:9',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
