@@ -339,6 +339,15 @@ export async function handleOpenTeamInvite(
   if (allowRemoteCollab === '0') {
     return decline('remote_collab_disabled', 'remote collaboration is disabled by the bot owner');
   }
+  // Twin Bot holds elevated orchestration & wallet management privileges:
+  // decline external OpenTeam invites by default unless the owner explicitly
+  // opts in (`openteam.allowRemoteCollab === '1'`).
+  if (metabot.metabot_type === 'twin' && allowRemoteCollab !== '1') {
+    return decline(
+      'twin_remote_collab_disabled',
+      'Twin Bot does not join external OpenTeam groups unless explicitly enabled by the owner',
+    );
+  }
   const localGlobalMetaId = (metabot.globalmetaid ?? '').trim();
   const localCompareKey = globalMetaIdCompareKey(localGlobalMetaId);
   if (!localCompareKey || localCompareKey !== globalMetaIdCompareKey(invite.targetGlobalMetaId)) {

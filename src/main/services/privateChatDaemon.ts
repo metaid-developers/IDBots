@@ -37,6 +37,10 @@ import { PROCEDURE_PROMPT_MAX_ITEMS, renderProcedureBlock } from '../libs/proced
 import { formatBotWorkspaceDate } from '../libs/botWorkspace';
 import { isDshShutdownError } from '../libs/dshShutdownError';
 import { PrivateChatOrderCowork, type OrderCoworkRequest } from './privateChatOrderCowork';
+import {
+  assertNoSecretEgressText,
+  scanSecretEgressText,
+} from '../security/secretEgressGuard';
 import { appendA2AGuidanceToSystemPrompt } from './a2aGuidance';
 import type { SwapOrderTrackerService } from './swapOrderTrackerService';
 import type { SwapStationFulfillDaemon } from './swapStationFulfillDaemon';
@@ -680,6 +684,12 @@ export function buildAutoReplySuppressedNotice(
     return tApp(
       `（系统提示：已收下对方这条消息；当前设置不响应陌生人私信，因此未自动回复。该 Bot 自己发起或回复过的会话不受影响。）`,
       ` (System notice: this peer message was received and stored; the current settings do not respond to stranger private messages, so no auto-reply was sent. Conversations this bot initiated or already replied to are unaffected.)`,
+    );
+  }
+  if (reason === 'twin_stranger_blocked') {
+    return tApp(
+      `（系统提示：已收下对方这条消息；出于钱包与账号安全考虑，Twin Bot 默认不会自动回复未曾主动联系过的外部陌生人私信。你可以查看内容后手动决定是否回复。）`,
+      ` (System notice: this peer message was received and stored; for wallet and account security, Twin Bot does not auto-reply to unsolicited private messages from external strangers by default. You can review the message and reply manually if desired.)`,
     );
   }
   return tApp(
@@ -3046,9 +3056,11 @@ export type PrivateChatAutoReplyPolicyReason =
   | 'disabled_metabot'
   | 'auto_reply_disabled'
   | 'owner'
+  | 'local_bot'
   | 'respond_to_strangers_enabled'
   | 'prior_local_outbound'
-  | 'stranger_blocked';
+  | 'stranger_blocked'
+  | 'twin_stranger_blocked';
 
 export function isPrivateChatFromMetabotOwner(params: {
   metabot: {
@@ -3078,7 +3090,9 @@ export function isPrivateChatFromMetabotOwner(params: {
 
 export function evaluatePrivateChatAutoReplyPolicy(params: {
   metabot: {
+    id?: number;
     enabled?: boolean;
+    metabot_type?: string | null;
     /** Per-MetaBot A2A auto-reply toggle; null/undefined = default (on). */
     a2a_auto_reply_enabled?: boolean | null;
     boss_id?: number | null;
@@ -3087,7 +3101,7 @@ export function evaluatePrivateChatAutoReplyPolicy(params: {
   senderGlobalMetaId?: string | null;
   senderMetaId?: string | null;
   listenerConfig?: Partial<ListenerConfig> | null;
-  metabotStore: Pick<MetabotStore, 'getMetabotById'>;
+  metabotStore: Pick<MetabotStore, 'getMetabotById'> & Partial<Pick<MetabotStore, 'listMetabots'>>;
   hasPriorLocalOutbound: boolean;
 }): { shouldReply: boolean; reason: PrivateChatAutoReplyPolicyReason } {
   if (params.metabot.enabled === false) {
@@ -3107,12 +3121,36 @@ export function evaluatePrivateChatAutoReplyPolicy(params: {
     return { shouldReply: true, reason: 'owner' };
   }
 
-  if (params.listenerConfig?.respondToStrangerPrivateChats !== false) {
-    return { shouldReply: true, reason: 'respond_to_strangers_enabled' };
+  // Allow another local MetaBot on this device to message Twin / Workers smoothly.
+  const senderGlobal = normalizeIdentity(params.senderGlobalMetaId);
+  const senderLegacy = normalizeIdentity(params.senderMetaId);
+  if ((senderGlobal || senderLegacy) && typeof params.metabotStore.listMetabots === 'function') {
+    const localBots = params.metabotStore.listMetabots();
+    const isFromLocalBot = localBots.some((bot) =>
+      bot.id !== params.metabot.id
+      && (
+        matchesSenderIdentity(bot.globalmetaid, senderGlobal, senderLegacy)
+        || matchesSenderIdentity(bot.metaid, senderGlobal, senderLegacy)
+      )
+    );
+    if (isFromLocalBot) {
+      return { shouldReply: true, reason: 'local_bot' };
+    }
   }
 
   if (params.hasPriorLocalOutbound) {
     return { shouldReply: true, reason: 'prior_local_outbound' };
+  }
+
+  // Twin Bot holds elevated orchestration & management authority: never
+  // auto-reply to unsolicited external strangers by default. Inbound messages
+  // are still stored and displayed to the owner for manual review.
+  if (params.metabot.metabot_type === 'twin') {
+    return { shouldReply: false, reason: 'twin_stranger_blocked' };
+  }
+
+  if (params.listenerConfig?.respondToStrangerPrivateChats !== false) {
+    return { shouldReply: true, reason: 'respond_to_strangers_enabled' };
   }
 
   return { shouldReply: false, reason: 'stranger_blocked' };
@@ -4481,6 +4519,11 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   // Send combined message to B via simplemsg
   let combinedMessageMetadata: A2AChainMetadata = {};
   try {
+    const ratingWalletMnemonic = metabotStore.getMetabotWalletByMetabotId?.(metabot.id)?.mnemonic;
+    assertNoSecretEgressText(combinedMessage, {
+      channel: 'private_chat_order_rating',
+      extraMnemonics: ratingWalletMnemonic ? [ratingWalletMnemonic] : undefined,
+    });
     const encrypted = ecdhEncrypt(combinedMessage, sharedSecretForReply);
     const payloadStr = buildPrivateMsgPayload(sellerGlobalMetaId, encrypted, '');
     const combinedMessageResult = await createPin(metabotStore, metabot.id, {
@@ -5861,6 +5904,10 @@ async function processOne(
       }
 
       const sendEncryptedMsg = async (text: string) => {
+        assertNoSecretEgressText(text, {
+          channel: 'private_chat_order_reply',
+          extraMnemonics: wallet?.mnemonic ? [wallet.mnemonic] : undefined,
+        });
         const encrypted = ecdhEncrypt(text, sharedSecretForReply);
         const payloadStr = buildPrivateMsgPayload(fromGlobalMetaId, encrypted, row.reply_pin || '');
         return await createSimpleMsgPin(payloadStr);
@@ -7920,6 +7967,38 @@ async function processOne(
         rethrowSqliteWasmBoundsError(error);
         emitLog(`[PrivateChat] Memory update failed: ${error instanceof Error ? error.message : String(error)}`);
       }
+    }
+
+    const egressViolations = scanSecretEgressText(trimmed, {
+      extraMnemonics: wallet?.mnemonic ? [wallet.mnemonic] : undefined,
+    });
+    if (egressViolations.length > 0) {
+      const detectors = Array.from(new Set(egressViolations.map((v) => v.detector))).join(', ');
+      const blockedNotice = tApp(
+        `（系统安全拦截：检测到拟发送的回复疑似包含助记词、私钥或敏感凭据［${detectors}］，已阻止加密及上链发送。）`,
+        ` (Security block: outbound reply appeared to contain a mnemonic, private key, or sensitive credential [${detectors}] and was blocked before encryption/broadcast.)`,
+      );
+      const blockedMetadata: CoworkMessageMetadata = {
+        ...(assistantMessage.metadata ?? {}),
+        privateChatDeliveryStatus: 'failed',
+        privateChatDeliveryError: `secret_egress_blocked:${detectors}`,
+        privateChatDeliveryFailedAt: Date.now(),
+      };
+      coworkStore.updateMessage(sessionId, assistantMessage.id, {
+        content: blockedNotice,
+        metadata: blockedMetadata,
+      });
+      assistantMessage.content = blockedNotice;
+      assistantMessage.metadata = blockedMetadata;
+      emitToRenderer('cowork:stream:messageUpdate', {
+        sessionId,
+        messageId: assistantMessage.id,
+        content: blockedNotice,
+        metadata: blockedMetadata,
+      });
+      emitLog(`[PrivateChat] SecretEgressGuard blocked outbound reply for row=${row.id} detectors=${detectors}`);
+      markProcessed(db, row.id, saveDb);
+      return;
     }
 
     const encryptedReply = ecdhEncrypt(trimmed, sharedSecretForReply);

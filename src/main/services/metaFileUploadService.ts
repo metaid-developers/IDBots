@@ -20,6 +20,11 @@ import { getConfiguredTrafficApiBase, getConfiguredTrafficPinMode } from './traf
 import { getConfiguredTrafficFallbackPolicy } from './trafficAccountService';
 import { resolveMetaFileUploadSharedModulePath } from './metaFileUploadSharedResolver';
 import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPathResolver';
+import {
+  assertNoSecretEgressBuffer,
+  assertNoSecretEgressFile,
+  assertSafeOutboundFilePath,
+} from '../security/secretEgressGuard';
 
 function loadMetaFileUploadShared(): {
   DEFAULT_CHUNK_THRESHOLD_BYTES: number;
@@ -284,6 +289,19 @@ export async function uploadMetaFile(
   const contentType = normalizeUploadContentType(
     params.contentType || inferContentTypeFromFilePath(fileName),
   );
+  if (useFile && resolvedFilePath) {
+    assertSafeOutboundFilePath(resolvedFilePath, 'metafile_upload');
+    assertNoSecretEgressFile(resolvedFilePath, {
+      channel: 'metafile_upload',
+      contentType,
+    });
+  } else if (useData && dataBuffer) {
+    assertNoSecretEgressBuffer(dataBuffer, {
+      channel: 'metafile_upload',
+      contentType,
+      fileName,
+    });
+  }
   const uploadMode = selectUploadMode({
     sizeBytes: size,
     chunkThresholdBytes: params.chunkThresholdBytes ?? DEFAULT_CHUNK_THRESHOLD_BYTES,

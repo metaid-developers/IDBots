@@ -33,6 +33,7 @@ import {
 import { buildMetabotInfoPayloads, buildMetabotHomepagePayload, type MetabotInfoPayload } from './metabotInfoPayload';
 import { OWNER_BINDING_PATH } from './ownerBindingService';
 import { requestMvcGasSubsidy } from './mvcSubsidyService';
+import { assertNoSecretEgressPayload } from '../security/secretEgressGuard';
 import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPathResolver';
 import { runMvcSponsorCreatePin, TrafficInsufficientError, type CreatePinFeeAssistMetadata } from './mvcSponsorCreatePin';
 import { recordChainWriteFromCreatePin } from '../libs/chainWriteLedger';
@@ -738,6 +739,11 @@ export async function createPinForIdentity(params: {
   if (!mnemonic) {
     throw new Error('Identity mnemonic is empty');
   }
+  assertNoSecretEgressPayload(params.metaidData.payload, {
+    channel: `create_pin_identity:${params.metaidData.path || params.metaidData.operation}`,
+    contentType: params.metaidData.contentType,
+    extraMnemonics: [mnemonic],
+  });
   const walletPath = params.path || "m/44'/10001'/0'/0/0";
   const runBroadcastWorker = () => spawnCreatePinWorker({
     mnemonic,
@@ -830,6 +836,11 @@ export async function createPin(
   if (!mnemonic) {
     throw new Error(`MetaBot ${metabot_id} wallet mnemonic is empty`);
   }
+  assertNoSecretEgressPayload(metaidData.payload, {
+    channel: `create_pin:${metaidData.path || metaidData.operation}`,
+    contentType: metaidData.contentType,
+    extraMnemonics: [mnemonic],
+  });
 
   const walletPath = wallet.path || "m/44'/10001'/0'/0/0";
   const network = resolveCreatePinNetwork(options?.network);
