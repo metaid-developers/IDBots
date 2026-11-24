@@ -86,6 +86,204 @@ export function isMetaidRpcTokenAuthorized(
   return timingSafeEqual(expectedBuffer, providedBuffer);
 }
 
+export type MetaidRpcSessionType = 'standard' | 'a2a';
+
+export type MetaidRpcAuthContext =
+  | { authorized: false }
+  | { authorized: true; scope: 'master' }
+  | {
+      authorized: true;
+      scope: 'session';
+      sessionId: string;
+      metabotId: number | null;
+      sessionType: MetaidRpcSessionType;
+    };
+
+interface ScopedMetaidRpcTokenRecord {
+  token: string;
+  sessionId: string;
+  metabotId: number | null;
+  sessionType: MetaidRpcSessionType;
+  issuedAt: number;
+  expiresAt: number;
+}
+
+const SCOPED_RPC_TOKEN_PREFIX = 'idbots_sess_';
+const DEFAULT_SCOPED_RPC_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_SCOPED_RPC_TOKENS = 512;
+
+const scopedTokensByValue = new Map<string, ScopedMetaidRpcTokenRecord>();
+const scopedTokenBySessionKey = new Map<string, string>();
+
+function normalizeSessionType(sessionType: string | undefined | null): MetaidRpcSessionType {
+  return sessionType === 'a2a' ? 'a2a' : 'standard';
+}
+
+function normalizeOptionalMetabotId(metabotId: number | null | undefined): number | null {
+  return typeof metabotId === 'number' && Number.isInteger(metabotId) && metabotId > 0
+    ? metabotId
+    : null;
+}
+
+function pruneExpiredScopedTokens(nowMs: number = Date.now()): void {
+  for (const [token, record] of scopedTokensByValue.entries()) {
+    if (record.expiresAt <= nowMs) {
+      scopedTokensByValue.delete(token);
+      if (scopedTokenBySessionKey.get(record.sessionId) === token) {
+        scopedTokenBySessionKey.delete(record.sessionId);
+      }
+    }
+  }
+  if (scopedTokensByValue.size <= MAX_SCOPED_RPC_TOKENS) return;
+  const ordered = Array.from(scopedTokensByValue.values()).sort((a, b) => a.issuedAt - b.issuedAt);
+  const excess = ordered.length - MAX_SCOPED_RPC_TOKENS;
+  for (let i = 0; i < excess; i += 1) {
+    const victim = ordered[i];
+    scopedTokensByValue.delete(victim.token);
+    if (scopedTokenBySessionKey.get(victim.sessionId) === victim.token) {
+      scopedTokenBySessionKey.delete(victim.sessionId);
+    }
+  }
+}
+
+export function isScopedMetaidRpcToken(token: string | undefined | null): boolean {
+  return typeof token === 'string' && token.trim().startsWith(SCOPED_RPC_TOKEN_PREFIX);
+}
+
+/**
+ * Issue (or refresh) a session-scoped MetaID RPC bearer token bound to a
+ * specific cowork session, metabot_id, and sessionType ('standard' | 'a2a').
+ *
+ * Scoped tokens prevent a compromised or prompt-injected bash/skill subprocess
+ * from impersonating another MetaBot (e.g. Twin) or calling high-risk
+ * financial/admin routes from an A2A session.
+ */
+export function issueScopedMetaidRpcToken(params: {
+  sessionId: string;
+  metabotId?: number | null;
+  sessionType?: string | null;
+  ttlMs?: number;
+  nowMs?: number;
+}): string {
+  const nowMs = params.nowMs ?? Date.now();
+  pruneExpiredScopedTokens(nowMs);
+  const sessionId = String(params.sessionId || '').trim() || `anon-${randomBytes(8).toString('hex')}`;
+  const metabotId = normalizeOptionalMetabotId(params.metabotId);
+  const sessionType = normalizeSessionType(params.sessionType);
+  const ttlMs = Math.max(60_000, params.ttlMs ?? DEFAULT_SCOPED_RPC_TOKEN_TTL_MS);
+
+  const existingToken = scopedTokenBySessionKey.get(sessionId);
+  if (existingToken) {
+    const existing = scopedTokensByValue.get(existingToken);
+    if (
+      existing
+      && existing.expiresAt > nowMs
+      && existing.metabotId === metabotId
+      && existing.sessionType === sessionType
+    ) {
+      existing.expiresAt = nowMs + ttlMs;
+      return existing.token;
+    }
+    if (existing) {
+      scopedTokensByValue.delete(existingToken);
+    }
+    scopedTokenBySessionKey.delete(sessionId);
+  }
+
+  const token = `${SCOPED_RPC_TOKEN_PREFIX}${randomBytes(24).toString('hex')}`;
+  const record: ScopedMetaidRpcTokenRecord = {
+    token,
+    sessionId,
+    metabotId,
+    sessionType,
+    issuedAt: nowMs,
+    expiresAt: nowMs + ttlMs,
+  };
+  scopedTokensByValue.set(token, record);
+  scopedTokenBySessionKey.set(sessionId, token);
+  return token;
+}
+
+export function revokeScopedMetaidRpcTokensForSession(sessionId: string): void {
+  const key = String(sessionId || '').trim();
+  if (!key) return;
+  const token = scopedTokenBySessionKey.get(key);
+  if (token) {
+    scopedTokensByValue.delete(token);
+    scopedTokenBySessionKey.delete(key);
+  }
+}
+
+export function clearScopedMetaidRpcTokensForTests(): void {
+  scopedTokensByValue.clear();
+  scopedTokenBySessionKey.clear();
+}
+
+/** Return active scoped tokens for outbound DLP fingerprinting (never logged). */
+export function listActiveScopedMetaidRpcTokens(nowMs: number = Date.now()): string[] {
+  pruneExpiredScopedTokens(nowMs);
+  return Array.from(scopedTokensByValue.keys());
+}
+
+/**
+ * Authorize an incoming `Authorization: Bearer <token>` header against both
+ * the host master token and the in-memory scoped session token registry.
+ */
+export function authorizeMetaidRpcRequest(
+  providedAuthHeader: string | undefined,
+  expectedMasterToken: string,
+  nowMs: number = Date.now(),
+): MetaidRpcAuthContext {
+  const header = (providedAuthHeader ?? '').trim();
+  if (!header.startsWith('Bearer ')) {
+    return { authorized: false };
+  }
+  const provided = header.slice('Bearer '.length).trim();
+  if (!provided) {
+    return { authorized: false };
+  }
+
+  // 1. Check host master token (used by trusted internal host callers & legacy tests).
+  const expectedBuffer = Buffer.from(expectedMasterToken);
+  const providedBuffer = Buffer.from(provided);
+  if (
+    expectedBuffer.length === providedBuffer.length
+    && timingSafeEqual(expectedBuffer, providedBuffer)
+  ) {
+    return { authorized: true, scope: 'master' };
+  }
+
+  // 2. Check session-scoped token registry.
+  if (!provided.startsWith(SCOPED_RPC_TOKEN_PREFIX)) {
+    return { authorized: false };
+  }
+  const record = scopedTokensByValue.get(provided);
+  if (!record) {
+    return { authorized: false };
+  }
+  if (record.expiresAt <= nowMs) {
+    scopedTokensByValue.delete(provided);
+    if (scopedTokenBySessionKey.get(record.sessionId) === provided) {
+      scopedTokenBySessionKey.delete(record.sessionId);
+    }
+    return { authorized: false };
+  }
+  const storedBuffer = Buffer.from(record.token);
+  if (
+    storedBuffer.length !== providedBuffer.length
+    || !timingSafeEqual(storedBuffer, providedBuffer)
+  ) {
+    return { authorized: false };
+  }
+  return {
+    authorized: true,
+    scope: 'session',
+    sessionId: record.sessionId,
+    metabotId: record.metabotId,
+    sessionType: record.sessionType,
+  };
+}
+
 /** Path of the per-launch token mirror file inside the Electron userData dir. */
 export function getMetaidRpcTokenFilePath(userDataPath: string): string {
   return join(userDataPath, METAID_RPC_TOKEN_FILENAME);

@@ -9,7 +9,7 @@ import { getInternalApiBaseURL } from './coworkOpenAICompatProxy';
 import { coworkLog } from './coworkLogger';
 import { resolveElectronSkillExecutablePath } from './runtimePaths';
 import { resolveWritableSkillsRoot } from './skillRoots';
-import { getMetaidRpcBase, getMetaidRpcTokenFilePath, METAID_RPC_AUTHFILE_ENV } from '../services/metaidRpcEndpoint';
+import { getMetaidRpcBase } from '../services/metaidRpcEndpoint';
 import { chatCompletionWithTools } from '../services/cognitiveChatCompletion';
 import type { MetabotBrainOptions } from '../services/llmFallback';
 import { buildTurnAckReplyMessages, buildOwnerWaitUpdateMessages, buildTurnStatusGoalMessages, sanitizeTurnAckReplyForInput, sanitizeTurnStatusGoalForInput, type OwnerWaitUpdateInput } from './turnAckReply';
@@ -1146,15 +1146,10 @@ export function getSkillHostEnv(): Record<string, string> {
     env.IDBOTS_APP_PATH = appPath;
     env.IDBOTS_DIST_MAIN_PATH = join(appPath, 'dist-electron', 'main');
   }
-  // Global RPC base (no token). Per-session IDBOTS_RPC_TOKEN still rides
-  // the BASH_ENV session file / AUTHFILE; scripts default to 127.0.0.1:31200
-  // when this is missing.
+  // Global RPC base (no token). Per-session scoped IDBOTS_RPC_TOKEN and
+  // per-session scoped IDBOTS_RPC_AUTHFILE ride the BASH_ENV session file so
+  // the shared DSH process never exposes the master host RPC token.
   env.IDBOTS_RPC_URL = getMetaidRpcBase();
-  // Scrub-proof fallback channel for the local RPC bearer token: DSH bash
-  // erases *TOKEN* env names, so SKILL scripts read the token from this
-  // mirror file (written per launch by the MetaID RPC server) when the
-  // env-borne IDBOTS_RPC_TOKEN is missing.
-  env[METAID_RPC_AUTHFILE_ENV] = getMetaidRpcTokenFilePath(app.getPath('userData'));
   const internalApiBaseURL = getInternalApiBaseURL();
   if (internalApiBaseURL) {
     env.IDBOTS_API_BASE_URL = internalApiBaseURL;

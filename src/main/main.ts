@@ -782,7 +782,13 @@ import {
   installCommunityMetaApp,
   listCommunityMetaApps,
 } from './services/metaAppChainService';
-import { getMetaidRpcBase, getMetaidRpcToken } from './services/metaidRpcEndpoint';
+import {
+  getMetaidRpcBase,
+  getMetaidRpcToken,
+  issueScopedMetaidRpcToken,
+  listActiveScopedMetaidRpcTokens,
+} from './services/metaidRpcEndpoint';
+import { migratePlaintextMnemonicsAtRest } from './security/mnemonicVault';
 import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
 import {
   ServiceOrderLifecycleService,
@@ -8057,16 +8063,23 @@ const getCoworkRunner = () => {
             processEnv: process.env,
           })
         );
+        const sessionType = session?.sessionType ?? 'standard';
         if (metabotId != null && typeof metabotId === 'number') {
           const wallet = metabot ? metabotStore.getMetabotWalletByMetabotId(metabotId) : null;
           if (metabot && wallet) {
+            const scopedRpcToken = issueScopedMetaidRpcToken({
+              sessionId,
+              metabotId,
+              sessionType,
+            });
             Object.assign(overrides, {
               IDBOTS_METABOT_ID: String(metabotId),
-              IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
+              // Never expose wallet mnemonic to agent bash / DSH BASH_ENV files;
+              // signing runs exclusively inside host-managed tools / RPC workers.
               IDBOTS_TWIN_NAME: metabot.name,
               IDBOTS_METABOT_PATH: wallet.path,
               IDBOTS_RPC_URL: getMetaidRpcBase(),
-              IDBOTS_RPC_TOKEN: getMetaidRpcToken(),
+              IDBOTS_RPC_TOKEN: scopedRpcToken,
             });
             if (metabot.globalmetaid) {
               overrides.IDBOTS_METABOT_GLOBALMETAID = metabot.globalmetaid;
@@ -8086,13 +8099,18 @@ const getCoworkRunner = () => {
         const twin = metabotStore.getTwinWallet();
         if (!twin && Object.keys(overrides).length === 0) return overrides;
         if (twin) {
+          const scopedRpcToken = issueScopedMetaidRpcToken({
+            sessionId,
+            metabotId: twin.id,
+            sessionType,
+          });
           Object.assign(overrides, {
             IDBOTS_METABOT_ID: String(twin.id),
-            IDBOTS_METABOT_MNEMONIC: twin.mnemonic,
+            // Never expose wallet mnemonic to agent bash / DSH BASH_ENV files.
             IDBOTS_TWIN_NAME: twin.name,
             IDBOTS_METABOT_PATH: twin.path,
             IDBOTS_RPC_URL: getMetaidRpcBase(),
-            IDBOTS_RPC_TOKEN: getMetaidRpcToken(),
+            IDBOTS_RPC_TOKEN: scopedRpcToken,
           });
           const twinMetabot = metabotStore.getMetabotById(twin.id);
           if (twinMetabot?.globalmetaid) {
@@ -25375,8 +25393,22 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     // Local Q&A answer ledger (post_simpleanswer repeat notice): same kv store.
     setSimpleQaAnswerLedgerStore(getStore());
 
+    // At-rest encryption for wallet mnemonics: idempotently migrate any legacy
+    // plaintext rows in metabot_wallets & user_identity using OS safeStorage.
+    try {
+      const store = getStore();
+      const mig = migratePlaintextMnemonicsAtRest(store.getDatabase(), store.getSaveFunction());
+      if (!mig.skipped && (mig.encryptedWallets > 0 || mig.encryptedUserIdentity > 0)) {
+        startupLog(
+          `encrypted legacy mnemonics at rest (wallets=${mig.encryptedWallets}, userIdentity=${mig.encryptedUserIdentity})`
+        );
+      }
+    } catch (err) {
+      startupLog(`mnemonic at-rest migration skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     // Outbound DLP / secret-egress guard: register local wallet mnemonics,
-    // human identity mnemonic, active RPC token, and sensitive userData dir
+    // human identity mnemonic, active RPC tokens, and sensitive userData dir
     // so outbound chat/pin/upload/IM paths can never exfiltrate them.
     registerSensitiveUserDataPath(app.getPath('userData'));
     registerLocalSecretProvider(() => {
@@ -25396,6 +25428,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       try {
         const rpcToken = getMetaidRpcToken();
         if (rpcToken) tokens.push(rpcToken);
+        tokens.push(...listActiveScopedMetaidRpcTokens());
       } catch {
         // Ignore if RPC token is not generated yet.
       }
