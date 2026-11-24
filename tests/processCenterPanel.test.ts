@@ -184,18 +184,19 @@ test('a manual placement still wins over the follow-up lanes (one precedence, no
   assert.deepEqual(model.humanSessions.map((s) => s.id), []);
 });
 
-test('① the expanded lists are real scrollers (bounded height + own overflow)', () => {
+test('① the expanded bot list is a real scroller (bounded height + own overflow)', () => {
   const panel = readSource('src/renderer/components/cowork/ProcessCenterPanel.tsx');
   // Root cause pinned: the bar is shrink-0, so an unbounded list blows the column
-  // out and gets clipped by an ancestor — no scrollbar, no wheel. Both lists must
-  // therefore carry their OWN max-height + overflow.
+  // out and gets clipped by an ancestor — no scrollbar, no wheel. The surviving
+  // grey bot list must carry its OWN max-height + overflow; the awaiting list
+  // that used to be the second one was removed with the strip (owner 01:09).
   assert.equal(
     (panel.match(/max-h-\[min\(45vh,420px\)\] flex-col gap-1\.5 overflow-y-auto overscroll-contain px-4 pb-2/g) ?? []).length,
-    2,
-    'both expanded lists (awaiting + bot) scroll on their own',
+    1,
+    'the grey bot list scrolls on its own',
   );
   assert.match(panel, /data-testid="process-bot-list"[\s\S]{0,120}overflow-y-auto/);
-  assert.match(panel, /data-testid="process-awaiting-list"[\s\S]{0,120}overflow-y-auto/);
+  assert.doesNotMatch(panel, /data-testid="process-awaiting-list"/);
 });
 
 test('② row columns read dot · task · [spark] · kind · time · signature · valve (v2.1)', () => {
@@ -464,8 +465,9 @@ test('出口路由 v1: the strip, the silent bar and the rail badge are three vi
   // can never disagree on the same tick.
   assert.match(panel, /splitProcessHub\(\s*\n?\s*sessions,\s*\n?\s*decisionSessionIds,\s*\n?\s*nowMs,\s*\n?\s*undefined,\s*\n?\s*lineageOverrides,/);
   assert.match(rail, /splitProcessHub\(coworkSessions, decisionSessionIds, Date\.now\(\), undefined, lineageOverrides\)/);
-  // The strip count and the rail badge count the SAME set (awaiting == human).
-  assert.match(panel, /const awaitingCount = countAwaitingProcesses\(model\);/);
+  // P0 follow-up: the panel no longer renders a strip, so it no longer computes
+  // the awaiting count; the rail badge remains the entry's count.
+  assert.doesNotMatch(panel, /process-awaiting-strip|awaitingCount|awaitingExpanded/);
   assert.match(panel, /const botCount = countBotSelfDigested\(model\);/);
   // The valve writes through the store (not local state).
   assert.match(panel, /setLineageBucket\(sessionId, next\)/);
@@ -487,10 +489,9 @@ test('出口路由 v1: the row valve offers exactly one direction per row state'
   assert.match(panel, /setSessionFoldOverride\(sessionId, 'out'\)/);
 });
 
-test('出口路由 v1: the four new strings exist in both languages', () => {
+test('出口路由 v1: the three surviving strings exist in both languages', () => {
   const i18n = readSource('src/renderer/services/i18n.ts');
   for (const key of [
-    'processAwaitingStripEmptyBot',
     'processBotBar',
     'processValveEscalate',
     'processValveDemote',
@@ -634,29 +635,24 @@ test('v6 panel: 动态 is the DEFAULT tab, 自主 / 编排 are the two source en
   assert.match(panel, /data-tab-count-for=\{key\}/);
   assert.doesNotMatch(panel, /const ZONE_ORDER: ProcessZone\[\]/);
 
-  // The awaiting layer is GONE: 待你拍板 is one pinned strip above every tab, and
-  // the v1 double-layer inside tab 1 must not survive anywhere.
+  // The awaiting layer is GONE, and so is its pinned strip (owner 01:09):
+  // decision entries live ONLY in the notification center now. The grey
+  // self-digest bar below is STATUS, not a verdict prompt, so it survives.
   assert.doesNotMatch(panel, /process-layer-awaiting/);
   assert.doesNotMatch(panel, /processAwaitingLayerBadge/);
   assert.doesNotMatch(panel, /processTabAwaiting/);
   assert.doesNotMatch(panel, /processTabRunning/);
-  assert.match(panel, /data-testid="process-awaiting-strip"/);
-  assert.match(panel, /data-awaiting-count=\{awaitingCount\}/);
-  assert.match(panel, /data-testid="process-awaiting-count"/);
-  assert.match(panel, /border-\[#e6c93e\] bg-\[#fffbe8\]/);
-  assert.match(panel, /awaitingExpanded/);
-  // The strip count is THE count: the same helper the rail badge uses, over the
-  // same model — one source, so the two can never disagree.
-  assert.match(panel, /const awaitingCount = countAwaitingProcesses\(model\);/);
+  assert.doesNotMatch(panel, /process-awaiting-strip/);
+  assert.doesNotMatch(panel, /process-awaiting-toggle/);
+  assert.doesNotMatch(panel, /processAwaitingStrip/);
+  assert.doesNotMatch(panel, /awaitingExpanded|awaitingCount/);
   assert.match(panel, /const botCount = countBotSelfDigested\(model\);/);
-  // 出口路由 v1: a silent grey bar under the strip, collapsed by default.
+  // 出口路由 v1: a silent grey bar, collapsed by default.
   assert.match(panel, /data-testid="process-bot-bar"/);
   assert.match(panel, /data-bot-count=\{botCount\}/);
   assert.match(panel, /const \[botExpanded, setBotExpanded\] = useState\(false\);/);
   assert.match(panel, /data-testid="process-bot-list"/);
   assert.match(panel, /i18nService\.t\('processBotBar'\)\.replace\('\{count\}', String\(botCount\)\)/);
-  // the empty copy names the two-bucket split instead of claiming "nothing pending"
-  assert.match(panel, /processAwaitingStripEmptyBot/);
   const rail = readSource('src/renderer/components/layout/WorkspaceRail.tsx');
   assert.match(rail, /countAwaitingProcesses\(\s*\n?\s*splitProcessHub\(coworkSessions, decisionSessionIds, Date\.now\(\), undefined, lineageOverrides\),\s*\n?\s*\)/);
   // …and it subscribes to the SAME override store the panel reads.
@@ -900,10 +896,11 @@ test("the panel speaks the app's shape language (copied values, no bespoke px)",
   assert.doesNotMatch(panel, /bg-\[#FFDC51\] font-semibold/);
   assert.doesNotMatch(panel, /border-r border-claude-border px-3 py-1/);
 
-  // ③ awaiting strip = the 36px tier, row-level type sizes, rail's own badge class.
-  assert.match(panel, /className="flex h-\[36px\] w-full items-center gap-2 px-4 text-left"/);
-  assert.doesNotMatch(panel, /px-4 py-1\.5 dark:border-amber-700/);
-  assert.match(panel, /className="flex h-\[14px\] min-w-\[14px\] flex-shrink-0 items-center justify-center rounded-full bg-red-500 px-\[3px\] text-\[9\.5px\] font-bold leading-none text-white"/);
+  // ③ the former 36px awaiting strip is GONE (owner 01:09): no toggle, no
+  //    count badge, no expandable list inside the panel. (The amber palette
+  //    still colors the pending ROW state — that is status, not a strip.)
+  assert.doesNotMatch(panel, /h-\[36px\] w-full items-center gap-2 px-4 text-left/);
+  assert.doesNotMatch(panel, /process-awaiting-strip|process-awaiting-count|process-awaiting-toggle/);
 
   // ④ in-row tags = the app's existing tag spec (MetaTaskBoard: px-1.5 py-0.5
   //    text-[11px] rounded) via ONE shared constant — no 10px, no rounded-[4px].
@@ -1042,8 +1039,6 @@ test('every v2 i18n key exists once per language pack', () => {
     'processZoneLongterm',
     // v2 awaiting strip (demoted from a tab)
     'processAwaitingStripLabel',
-    'processAwaitingStripHint',
-    'processAwaitingStripEmpty',
     // v2 tree
     'processTreeRunCount',
     'processShowMore',
@@ -1303,8 +1298,8 @@ test('v5 ① fork 1A: the valve gate is TRI-STATE by lineage, and the boolean is
   assert.doesNotMatch(panel, /renderRun\([^)]*, 0, true\)/);
   // Archived rows are the 'none' face — no valves at all (unchanged contract).
   assert.match(panel, /renderRun\(entry, 0, 'none'\)/);
-  // The awaiting strip / bot bar / tree children compute the level PER ROW.
-  assert.match(panel, /model\.awaiting\.map\(\(entry\) => renderRun\(entry, 0, rowValveLevelOf\(entry\.session\)\)\)/);
+  // The bot bar / tree children compute the level PER ROW. (The awaiting strip
+  // that also did this was removed by owner ruling 01:09 — see the P0 test.)
   assert.match(panel, /model\.botSelfDigested\.map\(\(entry\) => renderRun\(entry, 0, rowValveLevelOf\(entry\.session\), true\)\)/);
   assert.match(panel, /node\.children\.map\(\(child\) => renderRun\(child, 1, rowValveLevelOf\(child\.session\)\)\)/);
   // The bucket valve (整理类, lineage-exempt) rides the SAME level gate.
@@ -1409,6 +1404,25 @@ test('v5 ③ the exception-gate bar classifies the three gates and stays READ-ON
   assert.doesNotMatch(bar, /buildAllowResult/);
   assert.doesNotMatch(bar, /behavior: 'allow'/);
   assert.doesNotMatch(bar, /cowork:permission:respond/);
+});
+
+test('P0 follow-up (owner 01:09): the 待你拍板 strip is GONE from the hub', () => {
+  const panel = readSource('src/renderer/components/cowork/ProcessCenterPanel.tsx');
+  const detail = readSource('src/renderer/components/cowork/CoworkSessionDetail.tsx');
+  const i18n = readSource('src/renderer/services/i18n.ts');
+
+  // No amber banner, no toggle, no count, no expanded list — not even a hidden
+  // render path. The hub carries zero verdict prompts.
+  assert.doesNotMatch(panel, /process-awaiting-strip|process-awaiting-toggle|process-awaiting-count|process-awaiting-list/);
+  assert.doesNotMatch(panel, /processAwaitingStrip|awaitingExpanded|countAwaitingProcesses/);
+  // The grey self-digest bar is a status row, not a decision prompt — it stays.
+  assert.match(panel, /data-testid="process-bot-bar"/);
+  // The shared label key survives for the session-detail page; the strip-only
+  // hint/empty copies are retired from BOTH locales.
+  assert.match(detail, /processAwaitingStripLabel/);
+  for (const key of ['processAwaitingStripHint', 'processAwaitingStripEmpty', 'processAwaitingStripEmptyBot']) {
+    assert.equal((i18n.match(new RegExp(`\n\s*${key}:`, 'g')) ?? []).length, 0, `${key}: retired with the strip`);
+  }
 });
 
 test('P0 权限搬迁 (v3.2 §2.3): the hub holds NO ruling channel — Live Stage is the only writer', () => {

@@ -26,7 +26,6 @@ import {
   buildProcessDynamic,
   buildProcessGateEntries,
   buildUnassignedHumanEntries,
-  countAwaitingProcesses,
   countAutonomousRuns,
   countBotSelfDigested,
   lastAssistantDigest,
@@ -77,7 +76,7 @@ import {
  * Owner ruling 2026-11-21 (23:27–00:24, v1; 16:37, v2 返工):
  *  - v1 made the runs their own panel reached from the left function rail;
  *  - v2 turns the 2k+ ROW LIST into a TREE (task = parent, its runs = children)
- *    and demotes 待你拍板 from a tab to one always-on strip.
+ *    and demoted 待你拍板 from a tab to one always-on strip.
  *
  * Shape (v2):
  *  - header: title + three ZONE tabs — 编排树 / 定时任务 / 长期工作. The three
@@ -85,10 +84,10 @@ import {
  *    on this machine, one zone alone holds 1,381 runs (752 top-level nodes), so
  *    a single unified scroll would be ~1,425 items — not browsable. Numbers are
  *    in the delivery report's Mon-decision section.
- *  - 待你拍板 strip: pinned under the header, pale yellow (#fffbe8 on #e6c93e),
- *    with the count badge on the right; clicking it expands the awaited list in
- *    place. This is the ONE home of an awaited run — zones exclude them, so the
- *    old "tab1 renders awaiting twice" double semantics is gone.
+ *  - 待你拍板: the amber strip was REMOVED by owner ruling 2026-11-25 01:09.
+ *    The hub now carries zero verdict prompts — decision entries live only in
+ *    the bottom-left notification center (entry) and the Live Stage card (seat).
+ *    Awaited runs still feed the shared status model, but are not rendered here.
  *  - tree: a parent row (36px) groups a task's runs; expanding it reveals the
  *    children (32px, 16px indent, 1px #e3e6ea connector). Rows that cannot be
  *    grouped stay top-level leaves — no parent is ever fabricated.
@@ -103,10 +102,10 @@ import {
  *    一句当前动作) with 最近结束 (完成/失败 counts, newest first, foldable) below;
  *  - 编排树 / 定时任务 / 长期工作 stop being the first screen and become three
  *    secondary tabs — 动态 | 编排 | 定时 | 长期, 动态 selected and first;
- *  - the 567/657 flat counts move into the tab badges (角标), and the 待你拍板
- *    strip stays pinned above every tab with unchanged count semantics;
+ *  - the 567/657 flat counts move into the tab badges (角标);
  *  - no new table: 动态 is a re-projection of the same byStatus bands
- *    (pending / live / dead) — pending rows stay in the strip, never in a band.
+ *    (pending / live / dead) — pending rows are neither band nor strip (see the
+ *    2026-11-25 removal above), so the dynamic page shows running + ended only.
  */
 
 const RELATIVE_TIME_TICK_MS = 60_000;
@@ -1072,7 +1071,6 @@ const ProcessCenterPanel: React.FC<{
   // the three sources are secondary tabs. 动态 is first AND selected by default.
   const [tab, setTab] = useState<ProcessHubTab>(restored?.tab ?? 'dynamic');
   const [archivedMode, setArchivedMode] = useState(restored?.archivedMode ?? false);
-  const [awaitingExpanded, setAwaitingExpanded] = useState(false);
   const [botExpanded, setBotExpanded] = useState(false);
   // 最近结束 is open by default (it is the landing page's second half) but folds,
   // because on a busy day it is a long tail.
@@ -1220,10 +1218,10 @@ const ProcessCenterPanel: React.FC<{
     viewStateRef.current = { ...viewStateRef.current, scrollTop: event.currentTarget.scrollTop };
   };
 
-  const awaitingCount = countAwaitingProcesses(model);
   const botCount = countBotSelfDigested(model);
   // 动态 is a re-projection of the SAME byStatus model (live / dead); pending
-  // runs stay in the strip above, never in either band.
+  // runs are counted by the status model but not rendered here (no verdict
+  // prompt in the hub after the 2026-11-25 strip removal).
   const dynamic = useMemo(() => buildProcessDynamic(model.running), [model.running]);
   // v6 三入口 (owner approval 2026-11-24 17:23):
   //   自主 = 定时 + 长期 (chips) + 做梦 / 冲浪 (run rows);
@@ -1425,51 +1423,6 @@ const ProcessCenterPanel: React.FC<{
           </button>
         ) : null}
       </div>
-
-      {/* 待你拍板 strip (spec ②): always on, above the tree, one source of truth
-          with the rail badge. Awaited runs live HERE and nowhere else. */}
-      <div
-        data-testid="process-awaiting-strip"
-        data-awaiting-count={awaitingCount}
-        className="shrink-0 border-b border-[#e6c93e] bg-[#fffbe8] dark:border-amber-700/60 dark:bg-amber-900/15"
-      >
-        <button
-          type="button"
-          data-testid="process-awaiting-toggle"
-          aria-expanded={awaitingExpanded}
-          onClick={() => setAwaitingExpanded((previous) => !previous)}
-          className="flex h-[36px] w-full items-center gap-2 px-4 text-left"
-        >
-          <span aria-hidden className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-[#8a6d1a] dark:text-amber-300">
-            {awaitingExpanded ? <ChevronDownIcon className="h-3.5 w-3.5" /> : <ChevronRightIcon className="h-3.5 w-3.5" />}
-          </span>
-          <HandRaisedIcon className="h-3.5 w-3.5 flex-shrink-0 text-[#8a6d1a] dark:text-amber-300" />
-          <span className="min-w-0 truncate text-[12.5px] font-semibold text-[#7a5f14] dark:text-amber-200">
-            {i18nService.t('processAwaitingStripLabel')}
-          </span>
-          <span
-            data-testid="process-awaiting-count"
-            // Verbatim copy of the rail badge (WorkspaceRail RailButton).
-            className="flex h-[14px] min-w-[14px] flex-shrink-0 items-center justify-center rounded-full bg-red-500 px-[3px] text-[9.5px] font-bold leading-none text-white"
-          >
-            {awaitingCount}
-          </span>
-          <span className="min-w-0 truncate text-[11px] text-[#8a6d1a] dark:text-amber-300/90">
-            {awaitingCount > 0
-              ? i18nService.t('processAwaitingStripHint')
-              : i18nService.t('processAwaitingStripEmptyBot')}
-          </span>
-        </button>
-        {awaitingExpanded && awaitingCount > 0 && (
-          <div
-            data-testid="process-awaiting-list"
-            className="flex max-h-[min(45vh,420px)] flex-col gap-1.5 overflow-y-auto overscroll-contain px-4 pb-2"
-          >
-            {model.awaiting.map((entry) => renderRun(entry, 0, rowValveLevelOf(entry.session)))}
-          </div>
-        )}
-      </div>
-
 
       {/* 三例外闸只读条 (Friday 稿四步③): pending G1/G2/G3 gates, view + jump
           only — the decisive seats stay in the chat composer / corner overlay. */}
