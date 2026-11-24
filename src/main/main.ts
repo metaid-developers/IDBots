@@ -118,7 +118,7 @@ import { buildSessionTranscriptMarkdown, transcriptExportFileName } from './libs
 import { saveCoworkApiConfig } from './libs/coworkConfigStore';
 import { computeCoworkContextUsage } from './libs/coworkContextUsage';
 import { resolveContinueSystemPrompt } from './libs/coworkPromptStrategy';
-import { generateSessionTitle, setSessionTitleBrainProvider, setTurnAckReplyBrainProvider } from './libs/coworkUtil';
+import { generateSessionTitle, generateStudioWaitReassurance, setSessionTitleBrainProvider, setTurnAckReplyBrainProvider } from './libs/coworkUtil';
 import { ensureSandboxReady, getSandboxStatus, onSandboxProgress } from './libs/coworkSandboxRuntime';
 import { startCoworkOpenAICompatProxy, stopCoworkOpenAICompatProxy, setScheduledTaskDeps, setFreeQuotaExhaustedListener } from './libs/coworkOpenAICompatProxy';
 import { startDshWebToolsProxy, stopDshWebToolsProxy, resolveDeepSeekWebToolsUpstream, relayWebToolsBase } from './services/dshWebToolsProxy';
@@ -12825,6 +12825,7 @@ const getStudioChiefOfStaffService = () => {
         if (!ltTaskId) return null;
         return getLongTermTaskStore().getTask(ltTaskId)?.currentProgressNote ?? null;
       },
+      generateWaitingReassurance: (input) => generateStudioWaitReassurance(input),
       projectShowcaseHtml: async (input) => {
         const projInput = {
           sessionId: input.sessionId,

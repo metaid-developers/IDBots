@@ -427,15 +427,34 @@ export class StudioDecisionQueueStore {
     presentedSessionId: string,
     atIso: string = nowIso(),
   ): StudioDecisionQueueItem | null {
+    const targetSessionId = asString(presentedSessionId);
     const activePresenting = this.getPresenting(twinMetabotId);
-    if (activePresenting) return null;
-    const nextRows = this.queryAll(
-      `SELECT * FROM studio_decision_queue
-        WHERE twin_metabot_id = ? AND status = 'queued'
-        ORDER BY priority ASC, created_at ASC
-        LIMIT 1`,
-      [twinMetabotId],
-    );
+    if (activePresenting) {
+      const presentedInSession = asString(activePresenting.presentedSessionId);
+      if (!targetSessionId || !presentedInSession || presentedInSession === targetSessionId) {
+        return null;
+      }
+      // Cross-session stale lock: defer the older session's presenting item
+      // back to `'queued'` so the current active Studio session can proceed.
+      this.deferPresenting(activePresenting.id, atIso);
+    }
+    const nextRows = targetSessionId
+      ? this.queryAll(
+          `SELECT * FROM studio_decision_queue
+            WHERE twin_metabot_id = ? AND status = 'queued'
+            ORDER BY CASE WHEN origin_studio_session_id = ? THEN 0 ELSE 1 END ASC,
+                     priority ASC,
+                     created_at ASC
+            LIMIT 1`,
+          [twinMetabotId, targetSessionId],
+        )
+      : this.queryAll(
+          `SELECT * FROM studio_decision_queue
+            WHERE twin_metabot_id = ? AND status = 'queued'
+            ORDER BY priority ASC, created_at ASC
+            LIMIT 1`,
+          [twinMetabotId],
+        );
     if (!nextRows[0]) return null;
     const next = this.mapRow(nextRows[0]);
     this.db.run(

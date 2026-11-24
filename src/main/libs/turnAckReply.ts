@@ -402,3 +402,104 @@ export function sanitizeTurnStatusGoalForInput(raw: string, userText: string): s
   if (containsCjk(userText ?? '') && !containsCjk(raw ?? '')) return '';
   return sanitizeTurnStatusGoal(raw);
 }
+
+// ---------------------------------------------------------------------------
+// Studio background waiting reassurance (worker execution / [督办] verify)
+// ---------------------------------------------------------------------------
+
+export interface StudioWaitReassuranceWorkerContext {
+  workerName: string;
+  title?: string | null;
+  progressNote?: string | null;
+}
+
+export interface StudioWaitReassuranceInput {
+  language: 'zh' | 'en';
+  phase: 'working' | 'verifying';
+  waitedMinutes: number;
+  priorCount: number;
+  workers: StudioWaitReassuranceWorkerContext[];
+  priorMessages?: string[];
+  recentConversationContext?: string;
+  includeParallelHint?: boolean;
+}
+
+const STUDIO_WAIT_PRIOR_MAX = 4;
+const STUDIO_WAIT_CONTEXT_MAX_CHARS = 500;
+
+/**
+ * Prompt messages for Studio mode background waiting reassurance (pure).
+ * Written fresh by the LLM in its own voice for each check-in so consecutive
+ * reassurance bubbles never repeat fixed templates, accurately report total
+ * continuous wait minutes across worker retries/verification, and occasionally
+ * remind the owner they can chat or assign parallel tasks without waiting.
+ */
+export function buildStudioWaitReassuranceMessages(
+  input: StudioWaitReassuranceInput,
+): Array<{ role: 'system' | 'user'; content: string }> {
+  const waitedMinutes = Math.max(1, Math.round(input.waitedMinutes));
+  const targetLang = input.language === 'zh' ? 'Simplified Chinese' : 'English';
+  const workers = Array.isArray(input.workers) ? input.workers : [];
+  const workerLines = workers.length > 0
+    ? workers.slice(0, 4).map((w, idx) => {
+        const name = oneLineClip(w.workerName || 'Worker', 40);
+        const title = w.title ? ` — task "${oneLineClip(w.title, 60)}"` : '';
+        const note = w.progressNote ? ` | latest checkpoint: "${oneLineClip(w.progressNote, 80)}"` : '';
+        return `${idx + 1}. ${name}${title}${note}`;
+      })
+    : ['1. Worker — task in progress'];
+
+  const phaseLine = input.phase === 'verifying'
+    ? 'Current phase: the worker has returned its output and you (TwinBot) are verifying deliverables and preparing the owner report in the back office.'
+    : workers.length > 1
+      ? `Current phase: ${workers.length} workers are running in parallel in the background.`
+      : 'Current phase: the delegated worker is still executing in the background.';
+
+  const priorList = (input.priorMessages ?? [])
+    .map((m) => oneLineClip(m, 140))
+    .filter(Boolean)
+    .slice(-STUDIO_WAIT_PRIOR_MAX);
+  const priorBlock = priorList.length > 0
+    ? [
+        `Earlier waiting check-ins already sent in this episode (${input.priorCount} total):`,
+        ...priorList.map((m, i) => `- #${i + 1}: ${m}`),
+        'CRITICAL: Write something genuinely NEW. Use a different opening, structure, and phrasing from every line above — never repeat any earlier sentence.',
+      ].join('\n')
+    : 'This is the first waiting check-in for this background run.';
+
+  const parallelDirective = input.includeParallelHint
+    ? 'Parallel-work tip: Naturally and casually add a brief note (without sounding preachy or repetitive) letting the owner know they do not need to wait idle — they can chat with you about other topics or assign another parallel task anytime while this runs in the background.'
+    : 'Parallel-work tip: Skip the parallel-work reminder this time so it stays occasional rather than repetitive.';
+
+  const convoContext = (input.recentConversationContext ?? '').trim();
+  const convoLine = convoContext
+    ? `Recent visible chat context:\n${truncateUtf16UnitsSafe(convoContext, STUDIO_WAIT_CONTEXT_MAX_CHARS)}`
+    : '';
+
+  return [
+    {
+      role: 'system',
+      content: [
+        'You are TwinBot, the owner\'s Chief of Staff in Studio mode. The owner has been waiting for background worker execution or back-office verification to finish.',
+        'Write 1 to 2 natural, conversational sentences in your own voice to reassure the owner that work is progressing normally and has not stalled.',
+        '- NEVER use canned status templates (for example, never output stock patterns like "⏳ ... 仍在后台处理…" or repetitive boilerplate). Sound like a capable human chief of staff giving a quick, genuine update in chat.',
+        `- Mention the real elapsed wait time plainly (~${waitedMinutes} minute(s) so far), name the worker(s) / current stage (still executing vs. returned & verifying), and cite the latest checkpoint if one is provided.`,
+        `- ${parallelDirective}`,
+        `- Language: ${targetLang}. Length: 1-2 short sentences, under 140 characters (CJK) or 45 words (English).`,
+        '- Hard prohibitions: NO markdown, NO bullet lists, NO surrounding quotes, NO emoji, NO ETAs or deadlines, and NO words promising it is almost finished ("soon", "shortly", "almost done", "马上好", "很快", "快好了", "稍等就好"). Output ONLY the finished message text — never reasoning or meta-commentary.',
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: [
+        `Total continuous elapsed wait: ~${waitedMinutes} minute(s)`,
+        phaseLine,
+        'Active worker(s):',
+        ...workerLines,
+        priorBlock,
+        convoLine,
+      ].filter(Boolean).join('\n\n'),
+    },
+  ];
+}
+

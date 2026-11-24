@@ -12,7 +12,7 @@ import { resolveWritableSkillsRoot } from './skillRoots';
 import { getMetaidRpcBase } from '../services/metaidRpcEndpoint';
 import { chatCompletionWithTools } from '../services/cognitiveChatCompletion';
 import type { MetabotBrainOptions } from '../services/llmFallback';
-import { buildTurnAckReplyMessages, buildOwnerWaitUpdateMessages, buildTurnStatusGoalMessages, sanitizeTurnAckReplyForInput, sanitizeTurnStatusGoalForInput, type OwnerWaitUpdateInput } from './turnAckReply';
+import { buildTurnAckReplyMessages, buildOwnerWaitUpdateMessages, buildStudioWaitReassuranceMessages, buildTurnStatusGoalMessages, sanitizeTurnAckReplyForInput, sanitizeTurnStatusGoalForInput, type OwnerWaitUpdateInput, type StudioWaitReassuranceInput } from './turnAckReply';
 import { modelAlwaysThinks } from './modelThinking';
 import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 import { assignPathValue, collapseWindowsPathKeys, pathValueOf } from './windowsPathEnv';
@@ -1504,6 +1504,62 @@ export async function generateOwnerWaitUpdate(input: OwnerWaitUpdateInput): Prom
       throw error;
     }
     console.error('Failed to generate owner wait update:', error);
+    return '';
+  }
+}
+
+/**
+ * One-shot LLM Studio background waiting reassurance — used by
+ * StudioChiefOfStaffService when delegated workers or back-office [督办]
+ * verification run for several minutes without a front-office reply.
+ * Returns '' on failure so the caller skips the bubble instead of falling
+ * back to canned template text.
+ */
+export async function generateStudioWaitReassurance(
+  input: StudioWaitReassuranceInput,
+): Promise<string> {
+  try {
+    const brain = turnAckReplyBrainProvider?.() ?? null;
+    const effectiveModel =
+      brain?.llmId ??
+      resolveApiConfigForModel(null, 'local', null, brain?.llmProvider ?? null)?.config?.model ??
+      null;
+    const maxTokens = modelAlwaysThinks(effectiveModel) ? 2048 : 160;
+    const languageCue = input.language === 'zh' ? '请用中文汇报进度' : 'Reply in English';
+    const result = await chatCompletionWithTools(
+      buildStudioWaitReassuranceMessages(input),
+      {
+        llmId: brain?.llmId ?? undefined,
+        llmProvider: brain?.llmProvider ?? undefined,
+        fallbackLlmId: brain?.fallbackLlmId ?? undefined,
+        fallbackLlmProvider: brain?.fallbackLlmProvider ?? undefined,
+        thinking: 'disabled',
+        effort: 'off',
+        maxTokens,
+        temperature: 0.85,
+        throwOnEmptyContent: true,
+        webSearch: false,
+        attemptTimeoutMs: 5_000,
+        attemptTimeoutKind: 'idle',
+      }
+    );
+    const metadata = result.responseMetadata;
+    const promotedFromReasoning = metadata?.contentBlockTypes?.includes('reasoning') ?? false;
+    if (promotedFromReasoning || metadata?.stopReason === 'length') {
+      console.info(
+        '[studioWait] dropped LLM waiting reassurance:',
+        `promotedFromReasoning=${promotedFromReasoning}`,
+        `stopReason=${metadata?.stopReason ?? 'n/a'}`,
+        `blocks=${metadata?.contentBlockTypes?.join(',') ?? 'none'}`
+      );
+      return '';
+    }
+    return sanitizeTurnAckReplyForInput(result.content ?? '', languageCue);
+  } catch (error) {
+    if (isSqliteWasmBoundsError(error)) {
+      throw error;
+    }
+    console.error('Failed to generate Studio waiting reassurance:', error);
     return '';
   }
 }
