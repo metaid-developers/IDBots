@@ -46,10 +46,13 @@ import {
   extractGlobalMetaIdCandidate,
 } from '../services/globalMetaid';
 import {
+  buildFtOrderBookCardSnapshot,
   buildFtQuoteCardSnapshot,
   buildTokenCardSnapshot,
   fetchLiveFtSellerOrders,
   formatTokenAmountDisplay,
+  type BuildFtOrderBookCardInput,
+  type BuildFtOrderBookCardResult,
   type BuildFtQuoteCardInput,
   type BuildFtQuoteCardResult,
   type BuildTokenCardInput,
@@ -216,6 +219,7 @@ export type WalletToolsControl = {
   }): MvcFtIssuanceRecord[];
   getMetabotSummary?(metabotId: number): TokenCardMetabotSummary | null;
   getTokenCard?(input: BuildTokenCardInput): Promise<BuildTokenCardResult>;
+  getTokenOrders?(input: BuildFtOrderBookCardInput): Promise<BuildFtOrderBookCardResult>;
   getTokenQuote?(input: BuildFtQuoteCardInput): Promise<BuildFtQuoteCardResult>;
   listActiveFtOrders?(filter?: { metabotId?: number }): FtActiveOrderRecord[];
   registerActiveFtOrder?(input: RegisterFtActiveOrderInput): FtActiveOrderRecord;
@@ -3060,6 +3064,81 @@ export function buildWalletAgentTools(deps: {
     },
   );
 
+  const walletTokenOrders = tool(
+    'wallet_token_orders',
+    [
+      'Query active market sell orders (order book) for any BTC MRC-20 / ID-Coin or MVC MetaContract FT and emit a native visual ```ft-orderbook-card (`OB-1` compact 6-per-page paginated order book card with #1 floor highlight, per-row Buy triggers, and One-Click Buy Lowest Lot CTA).',
+      'ALWAYS call this tool FIRST whenever the user asks "查看挂单 / 挂单情况 / 挂单列表 / 订单簿 / 最低挂单 / order book / active listings for $TICKER" — even if external CLI skills like `metabot-token-broker` or `metabot-trade-metaidmarket-v2` are also installed — so the chat renders the native paginated ```ft-orderbook-card instead of a plain text table.',
+      'Include the returned ```ft-orderbook-card block VERBATIM in your reply.',
+    ].join(' '),
+    {
+      token: z
+        .string()
+        .min(1)
+        .describe('Token ticker (e.g. "$METAID", "METAID", "ORDI") or canonical asset_key ("mrc20:<id>" / "mvc-ft:<codehash>:<genesis>").'),
+      rail: z
+        .enum(['btc-psbt', 'mvc-tokensell', 'me-escrow'])
+        .optional()
+        .describe('Optional market rail ("btc-psbt" for BTC metaid.market PSBT, "mvc-tokensell" for MVC TokenSell contract, "me-escrow" for ME Points). Auto-selected when omitted.'),
+      chain: z
+        .enum(['btc', 'mvc'])
+        .optional()
+        .describe('Optional chain hint ("btc" or "mvc").'),
+      limit: z
+        .number()
+        .int()
+        .min(6)
+        .max(60)
+        .optional()
+        .describe('Max orders to preload for instant client-side 6-per-page pagination (default 36, max 60).'),
+      metabot_id: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Optional local MetaBot id; defaults to THIS session MetaBot.'),
+    },
+    async (args: {
+      token: string;
+      rail?: FtCardRail;
+      chain?: 'btc' | 'mvc';
+      limit?: number;
+      metabot_id?: number;
+    }) => {
+      const tokenQuery = asString(args.token);
+      if (!tokenQuery) {
+        return textResult('wallet_token_orders requires `token` (e.g. "METAID").', true);
+      }
+      const targetMetabotId = args.metabot_id ?? resolveMetabotId(sessionId);
+      const ordersInput: BuildFtOrderBookCardInput = {
+        query: tokenQuery,
+        rail: args.rail,
+        chain: args.chain,
+        limit: args.limit,
+        metabotId: targetMetabotId,
+      };
+      try {
+        const result = control.getTokenOrders
+          ? await control.getTokenOrders(ordersInput)
+          : await buildFtOrderBookCardSnapshot(ordersInput, {
+              getBalances: (input) => control.getBalances(input),
+              listMrc20s: (input) => control.listMrc20s(input),
+              listMvcFtTokens: (input) => control.listMvcFtTokens(input),
+              listIssuedTokens: control.listIssuedTokens
+                ? (filter) => control.listIssuedTokens!(filter)
+                : undefined,
+              getMetabotSummary: control.getMetabotSummary
+                ? (id) => control.getMetabotSummary!(id)
+                : undefined,
+            });
+        return textResult(result.summaryText);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_token_orders failed: ${msg}`, true);
+      }
+    },
+  );
+
   const walletTokenMyOrders = tool(
     'wallet_token_my_orders',
     [
@@ -3369,6 +3448,7 @@ export function buildWalletAgentTools(deps: {
     walletBalance,
     walletMrc20Balance,
     walletTokenCard,
+    walletTokenOrders,
     walletTokenQuote,
     walletTokenPortfolio,
     walletTokenMyOrders,

@@ -1,6 +1,7 @@
 import React from 'react';
 import TokenCard, { TokenCardStreamingPlaceholder } from './TokenCard';
 import FtOrderCard from './FtOrderCard';
+import FtOrderBookCard from './FtOrderBookCard';
 import FtQuoteCard from './FtQuoteCard';
 import FtFillCard from './FtFillCard';
 import FtMyOrdersCard from './FtMyOrdersCard';
@@ -38,6 +39,8 @@ export const TokenSuiteSegmentCard: React.FC<TokenSuiteSegmentCardProps> = ({
       return <TokenCard data={segment.data} />;
     case 'ft-order-card':
       return <FtOrderCard data={segment.data} />;
+    case 'ft-orderbook-card':
+      return <FtOrderBookCard data={segment.data} />;
     case 'ft-quote-card':
       return <FtQuoteCard data={segment.data} />;
     case 'ft-fill-card':

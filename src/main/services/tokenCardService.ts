@@ -13,9 +13,12 @@ import {
   type TokenCardStandard,
 } from '../../renderer/components/chat/tokenCardSyntax';
 import {
+  formatFtOrderBookCardFence,
   formatFtQuoteCardFence,
   type FtCardRail,
   type FtMyOrderItem,
+  type FtOrderBookCardData,
+  type FtOrderBookRow,
   type FtQuoteCardData,
   type FtQuoteRow,
 } from '../../renderer/components/chat/ftCardSyntax';
@@ -2124,5 +2127,432 @@ export async function fetchLiveFtSellerOrders(
   }
 
   return { items, mvcSatsTotal, meTotal, btcSatsTotal };
+}
+
+export interface BuildFtOrderBookCardInput {
+  /** Ticker (`"$METAID"`, `"METAID"`), `assetKey` (`"mrc20:<id>"`, `"mvc-ft:<codehash>:<genesis>"`), or `mrc20Id`. */
+  query: string;
+  /** Optional explicit rail (`"btc-psbt"`, `"mvc-tokensell"`, `"me-escrow"`). Auto-selected when omitted. */
+  rail?: FtCardRail;
+  /** Optional chain hint (`"btc"` or `"mvc"`). */
+  chain?: TokenCardChain;
+  /** Max orders to include in client-side paginated payload (default 36, max 60; rendered 6 per page). */
+  limit?: number;
+  /** Active session MetaBot ID. */
+  metabotId?: number;
+}
+
+export interface BuildFtOrderBookCardResult {
+  card: FtOrderBookCardData;
+  fence: string;
+  summaryText: string;
+}
+
+export async function buildFtOrderBookCardSnapshot(
+  input: BuildFtOrderBookCardInput,
+  deps: TokenCardServiceDeps,
+): Promise<BuildFtOrderBookCardResult> {
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const timeoutMs = deps.httpTimeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
+  const metasoBase = (deps.metasoApiBase || process.env.METASO_API_BASE || METASO_DEFAULT_BASE).replace(/\/+$/, '');
+
+  const rawQuery = normalizeQuery(input.query);
+  if (!rawQuery) {
+    throw new Error('token query is required for wallet_token_orders (e.g. "$METAID" or an asset_key).');
+  }
+
+  const maxRows = Math.min(60, Math.max(6, Math.floor(Number(input.limit) || 36)));
+
+  let explicitMrc20Id: string | undefined;
+  let explicitMvcCodehash: string | undefined;
+  let explicitMvcGenesis: string | undefined;
+
+  if (rawQuery.toLowerCase().startsWith('mrc20:')) {
+    explicitMrc20Id = rawQuery.slice('mrc20:'.length).trim();
+  } else if (/^[0-9a-f]{64}i\d+$/i.test(rawQuery)) {
+    explicitMrc20Id = rawQuery.trim();
+  } else if (rawQuery.toLowerCase().startsWith('mvc-ft:')) {
+    const rest = rawQuery.slice('mvc-ft:'.length).trim();
+    const [ch = '', gen = ''] = rest.split(':');
+    explicitMvcCodehash = ch.trim().toLowerCase() || undefined;
+    explicitMvcGenesis = gen.trim().toLowerCase() || undefined;
+  }
+
+  const isExplicitKey = Boolean(explicitMrc20Id || explicitMvcGenesis);
+  const tickerCandidate = isExplicitKey ? '' : normalizeTicker(rawQuery);
+  const explicitAssetKey = explicitMrc20Id
+    ? `mrc20:${explicitMrc20Id}`
+    : explicitMvcCodehash && explicitMvcGenesis
+      ? `mvc-ft:${explicitMvcCodehash}:${explicitMvcGenesis}`
+      : undefined;
+
+  const [
+    spotPrices,
+    metaletMrc20Prices,
+    metaletMvcFtPrices,
+    mrc20WalletEntries,
+    mvcFtWalletEntries,
+    metaidMarketHit,
+    metasoListingsJson,
+  ] = await Promise.all([
+    fetchCoinSpotPrices(fetchImpl, timeoutMs),
+    fetchMetaletMrc20PriceMap(fetchImpl, timeoutMs),
+    fetchMetaletMvcFtPriceMap(fetchImpl, timeoutMs),
+    input.metabotId != null && deps.listMrc20s
+      ? deps.listMrc20s({ metabotIds: [input.metabotId] }).catch(() => [])
+      : Promise.resolve([]),
+    input.metabotId != null && deps.listMvcFtTokens
+      ? deps.listMvcFtTokens({ metabotIds: [input.metabotId] }).catch(() => [])
+      : Promise.resolve([]),
+    explicitMvcGenesis
+      ? Promise.resolve(null)
+      : fetchMetaidMarketToken(
+          fetchImpl,
+          explicitMrc20Id ? { tickId: explicitMrc20Id } : { tick: tickerCandidate },
+          timeoutMs,
+        ),
+    fetchJsonWithTimeout<{ code?: number; data?: { list?: Record<string, unknown>[]; total?: number } | Record<string, unknown>[] }>(
+      fetchImpl,
+      `${metasoBase}/api/ft/market/listings?${new URLSearchParams({
+        ...(explicitAssetKey
+          ? { assetKey: explicitAssetKey }
+          : tickerCandidate
+            ? { symbol: tickerCandidate }
+            : {}),
+        sort: 'unit_price_asc',
+        cursor: '0',
+        size: String(Math.max(50, maxRows)),
+      }).toString()}`,
+      timeoutMs,
+    ),
+  ]);
+
+  const botMrc20Assets = mrc20WalletEntries[0]?.assets ?? [];
+  const botMvcFtTokens = mvcFtWalletEntries[0]?.balance?.tokens ?? [];
+  const localIssuances = deps.listIssuedTokens
+    ? deps.listIssuedTokens({
+        ...(explicitMvcCodehash && explicitMvcGenesis
+          ? { assetKey: `mvc-ft:${explicitMvcCodehash}:${explicitMvcGenesis}` }
+          : tickerCandidate
+            ? { symbol: tickerCandidate }
+            : {}),
+        limit: 10,
+      })
+    : [];
+
+  const curatedMrc20 = explicitMrc20Id
+    ? metaletMrc20Prices.find((p) => p.mrc20Id.toLowerCase() === explicitMrc20Id!.toLowerCase())
+    : metaletMrc20Prices.find((p) => p.symbol === tickerCandidate);
+  const walletMrc20 = explicitMrc20Id
+    ? botMrc20Assets.find((a) => a.mrc20Id.toLowerCase() === explicitMrc20Id!.toLowerCase())
+    : botMrc20Assets.find((a) => a.symbol.trim().toUpperCase() === tickerCandidate);
+
+  let mrc20Info: Partial<MetaidMarketRawInfo> | null = metaidMarketHit ? { ...metaidMarketHit } : null;
+  let resolvedMrc20Id =
+    mrc20Info?.mrc20Id || explicitMrc20Id || curatedMrc20?.mrc20Id || walletMrc20?.mrc20Id;
+
+  if (!explicitMvcGenesis && !mrc20Info?.mrc20Id && (resolvedMrc20Id || tickerCandidate)) {
+    const fallbackTick = await fetchMetaletMrc20TickInfo(
+      fetchImpl,
+      resolvedMrc20Id ? { tickId: resolvedMrc20Id } : { tick: tickerCandidate },
+      timeoutMs,
+    );
+    if (fallbackTick?.mrc20Id) {
+      mrc20Info = fallbackTick;
+      resolvedMrc20Id = fallbackTick.mrc20Id;
+    }
+  }
+
+  const walletMvc =
+    explicitMvcCodehash && explicitMvcGenesis
+      ? botMvcFtTokens.find(
+          (t) =>
+            t.codeHash.toLowerCase() === explicitMvcCodehash &&
+            t.genesis.toLowerCase() === explicitMvcGenesis,
+        )
+      : botMvcFtTokens.find((t) => t.symbol.trim().toUpperCase() === tickerCandidate);
+  const localMvc =
+    explicitMvcCodehash && explicitMvcGenesis
+      ? localIssuances.find(
+          (r) =>
+            r.codehash.toLowerCase() === explicitMvcCodehash &&
+            r.genesis.toLowerCase() === explicitMvcGenesis,
+        )
+      : localIssuances.find((r) => r.tokenSymbol.trim().toUpperCase() === tickerCandidate);
+
+  const resolvedMvcCodehash =
+    explicitMvcCodehash || walletMvc?.codeHash?.toLowerCase() || localMvc?.codehash?.toLowerCase();
+  const resolvedMvcGenesis =
+    explicitMvcGenesis || walletMvc?.genesis?.toLowerCase() || localMvc?.genesis?.toLowerCase();
+  const resolvedMvcAssetKey =
+    resolvedMvcCodehash && resolvedMvcGenesis
+      ? `mvc-ft:${resolvedMvcCodehash}:${resolvedMvcGenesis}`
+      : undefined;
+
+  const finalSymbol = (
+    mrc20Info?.tick ||
+    walletMrc20?.symbol ||
+    walletMvc?.symbol ||
+    localMvc?.tokenSymbol ||
+    tickerCandidate ||
+    'TOKEN'
+  )
+    .trim()
+    .toUpperCase();
+
+  const [btcOrdersJson, metasoVerify] = await Promise.all([
+    resolvedMrc20Id
+      ? fetchJsonWithTimeout<{ code?: number; data?: { list?: Record<string, unknown>[]; total?: number } }>(
+          fetchImpl,
+          `${METAID_MARKET_BASE}/api/v1/market/mrc20/orders?${new URLSearchParams({
+            assetType: 'mrc20',
+            orderState: '1',
+            tickId: resolvedMrc20Id,
+            sortKey: 'tokenPriceRate',
+            sortType: '1',
+            cursor: '0',
+            size: String(Math.max(50, maxRows)),
+          }).toString()}`,
+          timeoutMs,
+        )
+      : Promise.resolve(null),
+    fetchMetasoFtVerification(
+      fetchImpl,
+      metasoBase,
+      resolvedMrc20Id
+        ? `mrc20:${resolvedMrc20Id}`
+        : resolvedMvcAssetKey || explicitAssetKey || `symbol:${finalSymbol}`,
+      finalSymbol,
+      Math.min(timeoutMs, 2_500),
+    ),
+  ]);
+
+  const rawMetasoList: Record<string, unknown>[] = Array.isArray(metasoListingsJson?.data)
+    ? metasoListingsJson!.data
+    : Array.isArray((metasoListingsJson?.data as { list?: unknown[] } | undefined)?.list)
+      ? ((metasoListingsJson!.data as { list: Record<string, unknown>[] }).list ?? [])
+      : Array.isArray((metasoListingsJson?.data as { items?: unknown[] } | undefined)?.items)
+        ? ((metasoListingsJson!.data as { items: Record<string, unknown>[] }).items ?? [])
+        : [];
+
+  const allMetasoParsed = rawMetasoList.flatMap((item) => parseMetasoListingOrders(item, spotPrices));
+
+  const isTrustedOrOfficial =
+    Boolean(curatedMrc20) ||
+    mrc20Info?.kind === 'idcoin' ||
+    metasoVerify?.caVerified === true ||
+    Boolean(metaletMvcFtPrices[finalSymbol]) ||
+    (resolvedMvcGenesis ? Boolean(metaletMvcFtPrices[resolvedMvcGenesis.toUpperCase()]) : false);
+
+  const filteredMetasoOrders = allMetasoParsed.filter((o) => {
+    const keyLower = o.assetKey.toLowerCase();
+    if (explicitAssetKey) return keyLower === explicitAssetKey.toLowerCase();
+    if (keyLower.startsWith('mrc20:')) {
+      if (resolvedMrc20Id) return keyLower === `mrc20:${resolvedMrc20Id.toLowerCase()}`;
+      return o.caVerified || !isTrustedOrOfficial;
+    }
+    if (keyLower.startsWith('mvc-ft:')) {
+      if (resolvedMvcAssetKey && keyLower === resolvedMvcAssetKey.toLowerCase()) return true;
+      const parts = keyLower.split(':');
+      const genUpper = (parts[2] || '').toUpperCase();
+      if (o.caVerified || (genUpper && metaletMvcFtPrices[genUpper])) return true;
+      return !isTrustedOrOfficial;
+    }
+    return !isTrustedOrOfficial;
+  });
+
+  const caVerified = isTrustedOrOfficial || filteredMetasoOrders.some((o) => o.caVerified);
+  const hasBtcLeg =
+    Boolean(resolvedMrc20Id) ||
+    filteredMetasoOrders.some((o) => o.assetKey.toLowerCase().startsWith('mrc20:'));
+  const hasMvcLeg =
+    Boolean(resolvedMvcAssetKey) ||
+    filteredMetasoOrders.some((o) => o.assetKey.toLowerCase().startsWith('mvc-ft:')) ||
+    Boolean(metaletMvcFtPrices[finalSymbol]) ||
+    KNOWN_BRIDGED_FT_SYMBOLS.has(finalSymbol) ||
+    input.chain === 'mvc';
+
+  if (!hasBtcLeg && !hasMvcLeg && filteredMetasoOrders.length === 0) {
+    throw new Error(
+      `Token "${rawQuery}" could not be resolved on BTC (MRC-20 / ID-Coin) or MVC (MetaContract FT).`,
+    );
+  }
+
+  const btcDecimals = mrc20Info?.decimals ?? walletMrc20?.decimal ?? 8;
+  const btcAssetKey = resolvedMrc20Id ? `mrc20:${resolvedMrc20Id}` : explicitAssetKey || `symbol:${finalSymbol}`;
+  const btcOrders: ParsedQuoteOrder[] = ((btcOrdersJson?.data?.list ?? []) as Record<string, unknown>[])
+    .map((r) =>
+      parseBtcMarketOrderItem(r, btcAssetKey, finalSymbol, btcDecimals, caVerified, spotPrices.btcUsd),
+    )
+    .filter((x): x is ParsedQuoteOrder => Boolean(x))
+    .sort((a, b) => a.unitPriceMain - b.unitPriceMain);
+
+  const mvcOrders = filteredMetasoOrders
+    .filter((o) => o.rail === 'mvc-tokensell')
+    .sort((a, b) => a.unitPriceMain - b.unitPriceMain);
+
+  const meOrders = filteredMetasoOrders
+    .filter((o) => o.rail === 'me-escrow' && o.sellerOnline)
+    .sort((a, b) => a.unitPriceMain - b.unitPriceMain);
+
+  let selectedRail: FtCardRail;
+  if (input.rail) {
+    selectedRail = input.rail;
+  } else if (input.chain === 'mvc') {
+    selectedRail = mvcOrders.length > 0 || !meOrders.length ? 'mvc-tokensell' : 'me-escrow';
+  } else if (input.chain === 'btc') {
+    selectedRail = btcOrders.length > 0 || hasBtcLeg ? 'btc-psbt' : 'me-escrow';
+  } else if (btcOrders.length > 0) {
+    selectedRail = 'btc-psbt';
+  } else if (mvcOrders.length > 0) {
+    selectedRail = 'mvc-tokensell';
+  } else if (meOrders.length > 0) {
+    selectedRail = 'me-escrow';
+  } else if (hasBtcLeg) {
+    selectedRail = 'btc-psbt';
+  } else {
+    selectedRail = 'mvc-tokensell';
+  }
+
+  const selectedOrders =
+    selectedRail === 'btc-psbt'
+      ? btcOrders
+      : selectedRail === 'mvc-tokensell'
+        ? mvcOrders
+        : meOrders;
+
+  const targetChain: 'btc' | 'mvc' =
+    selectedRail === 'btc-psbt'
+      ? 'btc'
+      : selectedRail === 'mvc-tokensell'
+        ? 'mvc'
+        : hasBtcLeg && input.chain !== 'mvc'
+          ? 'btc'
+          : 'mvc';
+
+  const targetAssetKey =
+    targetChain === 'btc'
+      ? resolvedMrc20Id
+        ? `mrc20:${resolvedMrc20Id}`
+        : explicitAssetKey || selectedOrders[0]?.assetKey || `symbol:${finalSymbol}`
+      : resolvedMvcAssetKey || explicitAssetKey || selectedOrders[0]?.assetKey || `symbol:${finalSymbol}`;
+
+  const standard: 'mrc20' | 'idcoin' | 'mvc-ft' =
+    targetChain === 'mvc'
+      ? 'mvc-ft'
+      : mrc20Info?.kind === 'idcoin'
+        ? 'idcoin'
+        : 'mrc20';
+
+  const totalCurrencyUnit =
+    selectedRail === 'btc-psbt' ? 'BTC' : selectedRail === 'mvc-tokensell' ? 'SPACE' : 'ME';
+
+  const slicedOrders = selectedOrders.slice(0, maxRows);
+  const rows: FtOrderBookRow[] = slicedOrders.map((o, idx) => {
+    if (selectedRail === 'btc-psbt') {
+      const unitHeadline = formatSatsHeadline(o.unitPriceMain);
+      const unitBtcStr = formatTokenAmountDisplay((o.unitPriceMain / SATOSHI_PER_COIN).toFixed(8), 8);
+      const totalBtcStr = formatTokenAmountDisplay((o.lotTotalNative / SATOSHI_PER_COIN).toFixed(8), 8);
+      return {
+        rank: idx + 1,
+        orderId: o.orderId || `btc-${idx + 1}`,
+        rail: 'btc-psbt',
+        amountDisplay: o.amountDisplayStr,
+        unitPricePrimary: `${unitHeadline.main} ${unitHeadline.unit}`,
+        unitPriceSecondary: `${unitBtcStr} BTC`,
+        totalPriceLabel: `${totalBtcStr} BTC`,
+        ...(o.sellerAddress ? { sellerAddress: o.sellerAddress } : {}),
+        ...(o.utxoOutpoint ? { utxoOutpoint: o.utxoOutpoint } : {}),
+        ...(o.sellPriceSats ? { sellPriceSats: o.sellPriceSats } : {}),
+      };
+    }
+    if (selectedRail === 'mvc-tokensell') {
+      const unitSpace = formatTokenAmountDisplay(o.unitPriceMain.toFixed(8), 6);
+      const totalSpace = formatTokenAmountDisplay((o.lotTotalNative / SATOSHI_PER_COIN).toFixed(8), 6);
+      const usdStr = o.unitUsd ? formatUsdPrice(o.unitUsd) : undefined;
+      return {
+        rank: idx + 1,
+        orderId: o.orderId || `mvc-${idx + 1}`,
+        rail: 'mvc-tokensell',
+        amountDisplay: o.amountDisplayStr,
+        unitPricePrimary: `${unitSpace} SPACE`,
+        ...(usdStr ? { unitPriceSecondary: `≈${usdStr}` } : {}),
+        totalPriceLabel: `${totalSpace} SPACE`,
+        ...(o.sellerAddress ? { sellerAddress: o.sellerAddress } : {}),
+        ...(o.utxoOutpoint ? { utxoOutpoint: o.utxoOutpoint } : {}),
+        ...(o.sellTxid ? { sellTxid: o.sellTxid } : {}),
+        ...(o.sellOutputIndex !== undefined ? { sellOutputIndex: o.sellOutputIndex } : {}),
+        ...(o.sellPriceSats ? { sellPriceSats: o.sellPriceSats } : {}),
+      };
+    }
+    const unitMe = formatTokenAmountDisplay(o.unitPriceMain, 4);
+    const totalMe = formatTokenAmountDisplay(o.lotTotalNative, 3);
+    return {
+      rank: idx + 1,
+      orderId: o.orderId || `me-${idx + 1}`,
+      rail: 'me-escrow',
+      amountDisplay: o.amountDisplayStr,
+      unitPricePrimary: `${unitMe} ME`,
+      totalPriceLabel: `${totalMe} ME`,
+      ...(o.sellerAddress ? { sellerAddress: o.sellerAddress } : {}),
+      ...(o.utxoOutpoint ? { utxoOutpoint: o.utxoOutpoint } : {}),
+    };
+  });
+
+  const floorOrder = selectedOrders[0];
+  let floorPriceLabel: string | undefined;
+  let floorUsdText: string | undefined;
+  if (floorOrder) {
+    if (selectedRail === 'btc-psbt') {
+      const fh = formatSatsHeadline(floorOrder.unitPriceMain);
+      floorPriceLabel = `${fh.main} ${fh.unit}`;
+    } else if (selectedRail === 'mvc-tokensell') {
+      floorPriceLabel = `${formatTokenAmountDisplay(floorOrder.unitPriceMain.toFixed(8), 6)} SPACE`;
+    } else {
+      floorPriceLabel = `${formatTokenAmountDisplay(floorOrder.unitPriceMain, 4)} ME`;
+    }
+    floorUsdText = floorOrder.unitUsd ? formatUsdPrice(floorOrder.unitUsd) : undefined;
+  }
+
+  const rawBtcTotal = parseFiniteNum((btcOrdersJson?.data as { total?: unknown } | undefined)?.total);
+  const totalOrdersCount =
+    selectedRail === 'btc-psbt' && rawBtcTotal !== undefined
+      ? Math.max(selectedOrders.length, Math.round(rawBtcTotal))
+      : selectedOrders.length;
+
+  const iconUrl = sanitizeTokenIconUrl(mrc20Info?.icon);
+
+  const card: FtOrderBookCardData = {
+    assetKey: targetAssetKey,
+    symbol: finalSymbol,
+    chain: targetChain,
+    standard,
+    rail: selectedRail,
+    caVerified,
+    ...(iconUrl ? { iconUrl } : {}),
+    ...(floorPriceLabel ? { floorPriceLabel } : {}),
+    ...(floorUsdText ? { floorUsdText } : {}),
+    ...(mrc20Info?.holders !== undefined && targetChain === 'btc'
+      ? { holdersCount: mrc20Info.holders }
+      : {}),
+    totalOrdersCount,
+    pageSize: 6,
+    totalCurrencyUnit,
+    orders: rows,
+  };
+
+  const fence = formatFtOrderBookCardFence(card);
+  const summaryLines: string[] = [
+    `$${finalSymbol} order book (${selectedRail}): ${totalOrdersCount} open order(s)${floorPriceLabel ? `, floor ${floorPriceLabel}${floorUsdText ? ` (${floorUsdText})` : ''}` : ''}.`,
+    'Include the ```ft-orderbook-card block below VERBATIM in your reply so the user gets the interactive 6-per-page paginated order book card (do NOT rewrite its rows as a plain text or Markdown table):',
+    '',
+    fence,
+  ];
+
+  return {
+    card,
+    fence,
+    summaryText: summaryLines.join('\n'),
+  };
 }
 

@@ -222,6 +222,21 @@ export interface SellerAutoFulfillDeps {
   fetchMrc20Utxos?: (params: { address: string; mrc20Id: string }) => Promise<AuthoritativeMrc20Utxo[]>;
   tokenGoodsWaiters?: TokenGoodsWaiterRegistry;
   recordNotification?: (input: AgentNotificationInput) => void;
+  onFtEscrowPassiveSold?: (payload: {
+    orderId: string;
+    metabotId: number;
+    sessionId?: string | null;
+    listingKey: string;
+    assetKey: string;
+    chain: 'btc' | 'mvc';
+    symbol: string;
+    amountDisplay: string;
+    amountMilli: number;
+    deliveryTxId: string;
+    buyerAddress?: string;
+    filledLots: number;
+    totalLots: number;
+  }) => { sessionId?: string | null } | void;
   emitLog?: (msg: string) => void;
   now?: () => number;
 }
@@ -1831,19 +1846,47 @@ export class SellerAutoFulfillDaemon {
       settledAt: now,
     });
 
+    let resolvedSessionId = localOrder?.sessionId ?? null;
+    if (this.deps.onFtEscrowPassiveSold) {
+      try {
+        const pushed = this.deps.onFtEscrowPassiveSold({
+          orderId: order.orderId,
+          metabotId: sellerMetabotId,
+          sessionId: localOrder?.sessionId ?? null,
+          listingKey: localOrder?.listingKey ?? order.listingKey ?? order.orderId,
+          assetKey: order.assetKey,
+          chain: order.assetKey.toLowerCase().startsWith('mrc20:') ? 'btc' : 'mvc',
+          symbol: localOrder?.symbol ?? order.tokenSymbol,
+          amountDisplay: localOrder?.amountDisplay ?? order.tokenAmountBase,
+          amountMilli: order.amountMilli,
+          deliveryTxId,
+          buyerAddress: order.buyerBotAddress,
+          filledLots,
+          totalLots,
+        });
+        if (!resolvedSessionId && pushed && typeof pushed === 'object' && pushed.sessionId) {
+          resolvedSessionId = pushed.sessionId;
+        }
+      } catch (pushErr) {
+        this.log(
+          `[SellerAutoFulfill/FT] Passive fill card push failed for ${order.orderId}: ${pushErr instanceof Error ? pushErr.message : String(pushErr)}`,
+        );
+      }
+    }
+
     this.deps.recordNotification?.({
       eventId: `ft-me-sold:${order.orderId}`,
       type: 'ft.escrow.sold',
       category: 'work',
       metabotId: sellerMetabotId,
-      sessionId: localOrder?.sessionId ?? null,
+      sessionId: resolvedSessionId,
       taskId: null,
       runId: null,
       title: `${localOrder?.symbol ?? order.tokenSymbol} auto-fulfilled (+${meDisplay} ME)`,
       body: `Delivered ${localOrder?.amountDisplay ?? order.tokenAmountBase} ${localOrder?.symbol ?? order.tokenSymbol} and settled ${meDisplay} ME (${filledLots}/${totalLots} lots).`,
       priority: 'normal',
-      target: localOrder?.sessionId
-        ? { kind: 'session', sessionId: localOrder.sessionId }
+      target: resolvedSessionId
+        ? { kind: 'session', sessionId: resolvedSessionId }
         : { kind: 'bot_automation', metabotId: sellerMetabotId, section: 'surf' },
     });
 

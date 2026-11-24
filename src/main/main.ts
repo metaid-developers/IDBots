@@ -254,7 +254,11 @@ import {
 import { convertToGlobalMetaId } from './services/globalMetaid';
 import { executeMvcFtIssue, executeMvcFtMint, listMvcFtIssuances } from './services/mvcFtIssueService';
 import { executeMrc20Transfer, listMrc20Assets } from './services/mrc20Service';
-import { TokenOrderWatcher } from './services/tokenOrderWatcher';
+import {
+  buildPassiveSellFillCardMessage,
+  TokenOrderWatcher,
+  type PassiveSellFillCardParams,
+} from './services/tokenOrderWatcher';
 import { defaultFtMandateGate } from './services/ftMandateGateService';
 import {
   getFtBatchOrderProgress,
@@ -4697,6 +4701,24 @@ function getSellerAutoFulfillDaemon(): SellerAutoFulfillDaemon {
             console.warn('[SellerAutoFulfill/FT] recordNotification failed:', err);
           }
         },
+        onFtEscrowPassiveSold: (payload) =>
+          pushPassiveFtSellCardToCowork({
+            metabotId: payload.metabotId,
+            preferredSessionId: payload.sessionId,
+            listingKey: payload.listingKey,
+            cardParams: {
+              assetKey: payload.assetKey,
+              symbol: payload.symbol,
+              rail: 'me-escrow',
+              chain: payload.chain,
+              amountDisplay: payload.amountDisplay,
+              priceMeMilli: payload.amountMilli,
+              filledTxId: payload.deliveryTxId,
+              buyerAddress: payload.buyerAddress,
+              filledLots: payload.filledLots,
+              totalLots: payload.totalLots,
+            },
+          }),
         emitToRenderer: (channel, data) => {
           broadcastToRenderers(channel, data);
           if (channel === 'goodsTrade:autoSold' && data && typeof data === 'object') {
@@ -4775,6 +4797,58 @@ function getSellerAutoFulfillDaemon(): SellerAutoFulfillDaemon {
   return sellerAutoFulfillDaemon;
 }
 
+function pushPassiveFtSellCardToCowork(input: {
+  metabotId: number;
+  preferredSessionId?: string | null;
+  listingKey: string;
+  cardParams: PassiveSellFillCardParams;
+}): { sessionId: string | null } {
+  try {
+    const coworkStore = getCoworkStore();
+    let targetSessionId: string | null = null;
+    const preferred = String(input.preferredSessionId || '').trim();
+    if (preferred) {
+      const summary = coworkStore.getSessionSummary(preferred, { omitInlinePeerDataAvatar: true });
+      if (summary && !summary.archivedAt) {
+        targetSessionId = summary.id;
+      }
+    }
+    if (!targetSessionId) {
+      const sessions = coworkStore.listSessions({
+        metabotId: input.metabotId,
+        omitInlinePeerDataAvatar: true,
+      });
+      const primaryHumanSession =
+        sessions.find(
+          (s) => (!s.sessionType || s.sessionType === 'standard') && !s.autoOrigin && !s.archivedAt,
+        ) ??
+        sessions.find((s) => (!s.sessionType || s.sessionType === 'standard') && !s.archivedAt) ??
+        sessions[0];
+      targetSessionId = primaryHumanSession?.id ?? null;
+    }
+    if (!targetSessionId) {
+      return { sessionId: null };
+    }
+
+    const content = buildPassiveSellFillCardMessage(input.cardParams);
+    const msg = coworkStore.addMessage(targetSessionId, {
+      type: 'assistant',
+      content,
+      metadata: {
+        ftPassiveFillCard: true,
+        listingKey: input.listingKey,
+        filledTxId: input.cardParams.filledTxId,
+        suppressRunningStatus: true,
+      },
+    });
+    emitCoworkStreamMessage(targetSessionId, msg);
+    return { sessionId: targetSessionId };
+  } catch (err) {
+    console.warn('[pushPassiveFtSellCardToCowork] failed:', err);
+    return { sessionId: null };
+  }
+}
+
 let tokenOrderWatcher: TokenOrderWatcher | null = null;
 function getTokenOrderWatcher(): TokenOrderWatcher {
   if (!tokenOrderWatcher) {
@@ -4783,6 +4857,25 @@ function getTokenOrderWatcher(): TokenOrderWatcher {
       getStore().getSaveFunction(),
       {
         emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+        onOrderFilledPassive: (event, order, meta) =>
+          pushPassiveFtSellCardToCowork({
+            metabotId: order.metabotId,
+            preferredSessionId: order.sessionId,
+            listingKey: order.listingKey,
+            cardParams: {
+              assetKey: order.assetKey,
+              symbol: order.symbol,
+              rail: order.rail,
+              chain: order.chain,
+              amountDisplay: order.amountDisplay,
+              priceSats: order.priceSats,
+              priceMeMilli: order.priceMeMilli,
+              filledTxId: event.filledTxId,
+              buyerAddress: meta.buyerAddress,
+              filledLots: event.filledLots,
+              totalLots: event.totalLots,
+            },
+          }),
         recordNotification: (notif) => {
           try {
             getNotificationService().record(notif);
