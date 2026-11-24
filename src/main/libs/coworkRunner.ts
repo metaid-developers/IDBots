@@ -9271,10 +9271,11 @@ export class CoworkRunner extends EventEmitter {
    * Channel-B owner gate for wallet_transfer (R2): transfers to addresses
    * OUTSIDE the local metabot roster need an owner approval
    * (from/to/amount/estimated fee) unless the settings gate is disabled.
-   * Local-roster transfers never reach this dialog. timeoutDefault 'allow'
-   * (owner ruling 2026-11-13): an unanswered transfer prompt proceeds so an
-   * away-from-keyboard owner never strands the task; only an explicit denial
-   * stops it.
+   * Local-roster transfers never reach this dialog. timeoutDefault 'deny'
+   * + ownerOnly (transfer-approval hardening, 437368322 2026-11-24,
+   * superseding the 2026-11-13 'allow' ruling for transfers): an EXTERNAL
+   * transfer is irreversible money movement, so an unanswered prompt must
+   * not auto-proceed — only an explicit approval completes it.
    */
   private async confirmExternalTransfer(sessionId: string, info: ExternalTransferInfo): Promise<boolean> {
     const activeSession = this.activeSessions.get(sessionId);
