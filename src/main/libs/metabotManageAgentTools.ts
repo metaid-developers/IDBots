@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { stripLoneSurrogates, truncateUtf16Units } from './llmSafeText';
 import { describeAvatarFailure, isAvatarNormalizeFailure, normalizeAvatarToDataUrl } from '../utils/avatarNormalize';
 import { parseNftAvatarReference } from '../services/nftAvatarService';
+import { appendNftActionCardBlock } from './nftCardMarkdown';
 import {
   applyChatSkillOp,
   type CreateMetaBotOnChainResult,
@@ -603,9 +604,22 @@ export function buildMetabotManageAgentTools(deps: {
           true,
         );
       }
+      const parsedNftAvatar = typeof input.avatar === 'string' ? parseNftAvatarReference(input.avatar) : null;
       const result = await control.update(id, input);
       const text = formatUpdateResult(result);
-      return textResult(avatarNotice ? `${text}\n${avatarNotice}` : text, !result.success);
+      let finalOut = avatarNotice ? `${text}\n${avatarNotice}` : text;
+      if (result.success && parsedNftAvatar) {
+        finalOut = appendNftActionCardBlock(finalOut, {
+          kind: 'avatar',
+          format: 'mrc721',
+          pinId: parsedNftAvatar.itemPinId,
+          senderLabel: result.metabot?.name || undefined,
+          senderAddress: result.metabot?.mvc_address || undefined,
+          avatarPath: '/info/nftAvatar',
+          txId: result.sync?.txids?.at(-1) || undefined,
+        });
+      }
+      return textResult(finalOut, !result.success);
     },
   );
 

@@ -487,6 +487,21 @@ export const NFT_COLLECTION_CARD_FENCE_TAG = 'nft-collection-card';
 export const isNftCollectionCardFenceLanguage = (language: string): boolean =>
   language.trim().toLowerCase() === NFT_COLLECTION_CARD_FENCE_TAG;
 
+export interface NftCollectionPreviewItem {
+  pinId: string;
+  tokenIndex?: string;
+  number?: number;
+  name?: string;
+  icon?: string;
+  imgUrl?: string;
+  priceMeMilli?: number;
+  priceCnyCents?: number;
+  priceSats?: number;
+  sellerAddress?: string;
+  sellerGlobalMetaId?: string;
+  sellerName?: string;
+}
+
 export interface NftCollectionCardData {
   /** The collectionid (= the collection_desc pinId) — required identity. */
   collectionId: string;
@@ -497,6 +512,8 @@ export interface NftCollectionCardData {
   website?: string;
   /** metafile:// cover URI. */
   icon?: string;
+  /** Direct https cover link if available. */
+  imgUrl?: string;
   /** -1 = unlimited. */
   totalSupply?: number;
   minted?: number;
@@ -504,6 +521,16 @@ export interface NftCollectionCardData {
   issuer?: string;
   issuerLabel?: string;
   action?: string;
+  /** C2 market summary optional fields. */
+  caVerified?: boolean;
+  listedCount?: number;
+  holderCount?: number;
+  floorPriceMeMilli?: number;
+  floorPriceCnyCents?: number;
+  medianPriceMeMilli?: number;
+  tradeCount24h?: number;
+  shopMetaAppPinId?: string;
+  previewItems?: NftCollectionPreviewItem[];
 }
 
 /** totalSupply allows -1 (unlimited) — unlike the item serial. */
@@ -513,6 +540,46 @@ const cleanTotalSupply = (value: unknown): number | undefined => {
     : typeof value === 'string' && /^-?\d+$/.test(value.trim()) ? Number(value) : NaN;
   if (!Number.isInteger(num) || num < -1 || num > 1_000_000_000_000) return undefined;
   return num;
+};
+
+const cleanCollectionPreviews = (value: unknown): NftCollectionPreviewItem[] | undefined => {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const out: NftCollectionPreviewItem[] = [];
+  for (const raw of value.slice(0, 6)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const it = raw as Record<string, unknown>;
+    const pinId = cleanPinId(it.pinId);
+    if (!pinId) continue;
+    const tokenIndex =
+      typeof it.tokenIndex === 'string' || typeof it.tokenIndex === 'number'
+        ? cleanTextField(String(it.tokenIndex), 24)
+        : undefined;
+    const number = cleanSerial(it.number);
+    const name = cleanTextField(it.name);
+    const icon = cleanMetafileUri(it.icon);
+    const imgUrl = cleanHttpsUrl(it.imgUrl);
+    const priceMeMilli = cleanNonNegInt(it.priceMeMilli);
+    const priceCnyCents = cleanNonNegInt(it.priceCnyCents);
+    const priceSats = cleanPriceSats(it.priceSats);
+    const sellerAddress = cleanAddress(it.sellerAddress);
+    const sellerGlobalMetaId = cleanGlobalMetaId(it.sellerGlobalMetaId);
+    const sellerName = cleanTextField(it.sellerName);
+    out.push({
+      pinId,
+      ...(tokenIndex ? { tokenIndex } : {}),
+      ...(number !== undefined ? { number } : {}),
+      ...(name ? { name } : {}),
+      ...(icon ? { icon } : {}),
+      ...(imgUrl ? { imgUrl } : {}),
+      ...(priceMeMilli !== undefined ? { priceMeMilli } : {}),
+      ...(priceCnyCents !== undefined ? { priceCnyCents } : {}),
+      ...(priceSats !== undefined ? { priceSats } : {}),
+      ...(sellerAddress ? { sellerAddress } : {}),
+      ...(sellerGlobalMetaId ? { sellerGlobalMetaId } : {}),
+      ...(sellerName ? { sellerName } : {}),
+    });
+  }
+  return out.length > 0 ? out : undefined;
 };
 
 export const parseNftCollectionCardFence = (codeText: string): NftCollectionCardData | null => {
@@ -540,6 +607,8 @@ export const parseNftCollectionCardFence = (codeText: string): NftCollectionCard
   if (website) data.website = website;
   const icon = cleanMetafileUri(row.icon);
   if (icon) data.icon = icon;
+  const imgUrl = cleanHttpsUrl(row.imgUrl);
+  if (imgUrl) data.imgUrl = imgUrl;
   const totalSupply = cleanTotalSupply(row.totalSupply);
   if (totalSupply !== undefined) data.totalSupply = totalSupply;
   const minted = cleanSerial(row.minted);
@@ -552,5 +621,40 @@ export const parseNftCollectionCardFence = (codeText: string): NftCollectionCard
   if (issuerLabel) data.issuerLabel = issuerLabel;
   const action = cleanTextField(row.action, MAX_ACTION_FIELD);
   if (action) data.action = action.toLowerCase();
+  if (typeof row.caVerified === 'boolean') data.caVerified = row.caVerified;
+  const listedCount = cleanSerial(row.listedCount);
+  if (listedCount !== undefined) data.listedCount = listedCount;
+  const holderCount = cleanSerial(row.holderCount);
+  if (holderCount !== undefined) data.holderCount = holderCount;
+  const floorPriceMeMilli = cleanNonNegInt(row.floorPriceMeMilli);
+  if (floorPriceMeMilli !== undefined) data.floorPriceMeMilli = floorPriceMeMilli;
+  const floorPriceCnyCents = cleanNonNegInt(row.floorPriceCnyCents);
+  if (floorPriceCnyCents !== undefined) data.floorPriceCnyCents = floorPriceCnyCents;
+  const medianPriceMeMilli = cleanNonNegInt(row.medianPriceMeMilli);
+  if (medianPriceMeMilli !== undefined) data.medianPriceMeMilli = medianPriceMeMilli;
+  const tradeCount24h = cleanSerial(row.tradeCount24h);
+  if (tradeCount24h !== undefined) data.tradeCount24h = tradeCount24h;
+  const shopMetaAppPinId = cleanPinId(row.shopMetaAppPinId);
+  if (shopMetaAppPinId) data.shopMetaAppPinId = shopMetaAppPinId;
+  const previewItems = cleanCollectionPreviews(row.previewItems);
+  if (previewItems) data.previewItems = previewItems;
   return data;
+};
+
+const NFT_COLLECTION_CARD_KEY_ORDER: Array<keyof NftCollectionCardData> = [
+  'collectionId', 'collectionName', 'name', 'desc', 'website', 'icon',
+  'totalSupply', 'minted', 'royaltyRate', 'issuer', 'issuerLabel', 'action',
+  'imgUrl', 'caVerified', 'listedCount', 'holderCount', 'floorPriceMeMilli',
+  'floorPriceCnyCents', 'medianPriceMeMilli', 'tradeCount24h', 'shopMetaAppPinId', 'previewItems',
+];
+
+export const serializeNftCollectionCardFence = (data: NftCollectionCardData): string => {
+  const ordered: Record<string, unknown> = {};
+  for (const key of NFT_COLLECTION_CARD_KEY_ORDER) {
+    const value = data[key];
+    if (value !== undefined && value !== null && value !== '') {
+      ordered[key] = value;
+    }
+  }
+  return `\`\`\`${NFT_COLLECTION_CARD_FENCE_TAG}\n${JSON.stringify(ordered)}\n\`\`\``;
 };

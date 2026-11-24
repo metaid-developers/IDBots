@@ -520,6 +520,39 @@ function DiagnosticCopyButton({ message, sessionId }: { message: ChatMessageView
 
 function MessageRow({ message, sessionId, onOpenFile, onOpenUri, onDismissError }: { message: ChatMessageView; sessionId: string | null; onOpenFile: (filePath: string) => boolean; onOpenUri?: (uri: string) => void; onDismissError: (id: string) => void }): JSX.Element {
   if (message.role === 'user') {
+    const userSegments = splitTokenCardMessageSegments(message.text);
+    if (hasStandaloneTokenCardSegment(userSegments)) {
+      return (
+        <div className="flex flex-col items-end gap-2">
+          {userSegments.map((seg, segIdx) => {
+            if (seg.kind !== 'markdown') {
+              return (
+                <div
+                  key={`usr-ts-${seg.kind}-${segIdx}`}
+                  data-standalone-token-bubble="true"
+                  data-standalone-card-kind={seg.kind}
+                  data-standalone-user-side="true"
+                  className={
+                    seg.kind === 'nft-card-group'
+                      ? 'twin-message flex w-full max-w-full justify-end'
+                      : 'twin-message flex w-full max-w-[364px] justify-end'
+                  }
+                >
+                  <TokenSuiteSegmentCard segment={seg} userSide />
+                </div>
+              );
+            }
+            return (
+              <div key={`usr-md-${segIdx}`} className="twin-message flex justify-end">
+                <div className="twin-message-user whitespace-pre-wrap break-words" data-testid="chat-user-message">
+                  <TwemojiText text={mapWechatBracketCodesForDisplay(seg.content)} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
     return (
       <div className="twin-message flex justify-end">
         <div className="twin-message-user whitespace-pre-wrap break-words" data-testid="chat-user-message">
@@ -590,7 +623,11 @@ function MessageRow({ message, sessionId, onOpenFile, onOpenUri, onDismissError 
                 key={`ts-${seg.kind}-${segIdx}`}
                 data-standalone-token-bubble="true"
                 data-standalone-card-kind={seg.kind}
-                className="twin-message flex w-full max-w-[364px] justify-start"
+                className={
+                  seg.kind === 'nft-card-group'
+                    ? 'twin-message flex w-full max-w-full justify-start'
+                    : 'twin-message flex w-full max-w-[364px] justify-start'
+                }
               >
                 <TokenSuiteSegmentCard segment={seg} />
               </div>

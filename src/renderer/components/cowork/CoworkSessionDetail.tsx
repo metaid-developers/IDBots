@@ -1480,48 +1480,117 @@ const UserMessageItem: React.FC<{
                   innermost data-message-id mount, so it hugs this bubble's
                   own outline — w-fit width, its 22px radius. */}
               <div className="relative w-fit max-w-[min(720px,82%)]">
-                <div
-                  className="cowork-user-bubble rounded-[22px] px-[16px] py-[10px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text"
-                  data-message-id={message.id}
-                >
-                  {sentQuote ? (
-                    <>
-                      <CoworkSentQuoteBlock
-                        block={sentQuote.block}
-                        onJump={onJumpToQuoteBlock
-                          ? () => onJumpToQuoteBlock(
-                            sentQuote.ordinal,
-                            readQuotedJumpMessageId(message.metadata) ?? undefined,
-                          )
-                          : undefined}
-                      />
-                      {sentQuote.rest ? (
-                        <UserMessageBody
-                          content={sentQuote.rest}
-                          resolveLocalFilePath={resolveLocalFilePath}
+                {(() => {
+                  const userRestContent = sentQuote
+                    ? (sentQuote.rest ?? '')
+                    : sentSelectionQuote
+                      ? (sentSelectionQuote.rest ?? '')
+                      : message.content;
+                  const userSegments = splitTokenCardMessageSegments(userRestContent);
+                  if (!hasStandaloneTokenCardSegment(userSegments)) {
+                    return (
+                      <div
+                        className="cowork-user-bubble rounded-[22px] px-[16px] py-[10px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text"
+                        data-message-id={message.id}
+                      >
+                        {sentQuote ? (
+                          <>
+                            <CoworkSentQuoteBlock
+                              block={sentQuote.block}
+                              onJump={onJumpToQuoteBlock
+                                ? () => onJumpToQuoteBlock(
+                                  sentQuote.ordinal,
+                                  readQuotedJumpMessageId(message.metadata) ?? undefined,
+                                )
+                                : undefined}
+                            />
+                            {sentQuote.rest ? (
+                              <UserMessageBody
+                                content={sentQuote.rest}
+                                resolveLocalFilePath={resolveLocalFilePath}
+                              />
+                            ) : null}
+                          </>
+                        ) : sentSelectionQuote ? (
+                          <>
+                            <CoworkSentQuoteBlock block={sentSelectionQuote.block} />
+                            {sentSelectionQuote.rest ? (
+                              <UserMessageBody
+                                content={sentSelectionQuote.rest}
+                                resolveLocalFilePath={resolveLocalFilePath}
+                              />
+                            ) : null}
+                          </>
+                        ) : (
+                          <UserMessageBody
+                            content={message.content}
+                            resolveLocalFilePath={resolveLocalFilePath}
+                          />
+                        )}
+                      </div>
+                    );
+                  }
+
+                  let quoteRendered = false;
+                  const renderQuoteHeader = () => {
+                    if (quoteRendered) return null;
+                    quoteRendered = true;
+                    if (sentQuote) {
+                      return (
+                        <CoworkSentQuoteBlock
+                          block={sentQuote.block}
+                          onJump={onJumpToQuoteBlock
+                            ? () => onJumpToQuoteBlock(
+                              sentQuote.ordinal,
+                              readQuotedJumpMessageId(message.metadata) ?? undefined,
+                            )
+                            : undefined}
                         />
+                      );
+                    }
+                    if (sentSelectionQuote) {
+                      return <CoworkSentQuoteBlock block={sentSelectionQuote.block} />;
+                    }
+                    return null;
+                  };
+
+                  return (
+                    <div className="flex flex-col items-end gap-1.5" data-message-id={message.id}>
+                      {(sentQuote || sentSelectionQuote) && userSegments[0]?.kind !== 'markdown' ? (
+                        <div className="cowork-user-bubble rounded-[22px] px-[16px] py-[10px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text">
+                          {renderQuoteHeader()}
+                        </div>
                       ) : null}
-                    </>
-                  ) : sentSelectionQuote ? (
-                    // Same quote bar as the reply block — gold rule, source line,
-                    // excerpt — just without a jump target (a hand-picked
-                    // selection carries no message position).
-                    <>
-                      <CoworkSentQuoteBlock block={sentSelectionQuote.block} />
-                      {sentSelectionQuote.rest ? (
-                        <UserMessageBody
-                          content={sentSelectionQuote.rest}
-                          resolveLocalFilePath={resolveLocalFilePath}
-                        />
-                      ) : null}
-                    </>
-                  ) : (
-                    <UserMessageBody
-                      content={message.content}
-                      resolveLocalFilePath={resolveLocalFilePath}
-                    />
-                  )}
-                </div>
+                      {userSegments.map((seg, segIdx) => {
+                        if (seg.kind !== 'markdown') {
+                          return (
+                            <div
+                              key={`usr-card-${seg.kind}-${segIdx}`}
+                              data-standalone-token-bubble="true"
+                              data-standalone-card-kind={seg.kind}
+                              data-standalone-user-side="true"
+                              className={seg.kind === 'nft-card-group' ? 'flex w-full max-w-full justify-end' : 'flex w-full max-w-[364px] justify-end'}
+                            >
+                              <TokenSuiteSegmentCard segment={seg} userSide />
+                            </div>
+                          );
+                        }
+                        return (
+                          <div
+                            key={`usr-md-${segIdx}`}
+                            className="cowork-user-bubble rounded-[22px] px-[16px] py-[10px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text"
+                          >
+                            {renderQuoteHeader()}
+                            <UserMessageBody
+                              content={seg.content}
+                              resolveLocalFilePath={resolveLocalFilePath}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
                 {/* Menu button positioned on the left side of the bubble, symmetrical to bot messages */}
                 <div className="absolute z-10 right-full top-1 mr-1">
                   <CoworkMessageActionsMenu
@@ -1699,7 +1768,7 @@ const AssistantMessageItem: React.FC<{
                             key={`ts-${seg.kind}-${segIdx}`}
                             data-standalone-token-bubble="true"
                             data-standalone-card-kind={seg.kind}
-                            className="w-full max-w-[364px]"
+                            className={seg.kind === 'nft-card-group' ? 'w-full max-w-full' : 'w-full max-w-[364px]'}
                           >
                             <TokenSuiteSegmentCard segment={seg} />
                           </div>
