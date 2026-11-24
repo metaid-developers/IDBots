@@ -1196,3 +1196,6 @@ blob-report/
 # Batch 1 P0 wallet & secret security hardening
 !tests/walletSecurityP0.test.mjs
 !tests/walletSecurityBatch2.test.mjs
+
+# Mobile smooth streaming & jitter-free auto-scroll
+!tests/mobileSmoothStreaming.test.ts
