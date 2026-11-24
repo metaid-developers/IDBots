@@ -711,3 +711,79 @@ export async function verifyWalletTx(
     status,
   };
 }
+
+export interface VerifyEscrowOnChainCustodyTxInput {
+  action: 'escrow_goods' | 'release_goods' | 'timeout_t2_return_goods' | 'ruling_release' | 'ruling_rollback';
+  goodsKind: 'mrc721' | 'metacontract';
+  txid: string;
+  expectedRecipientAddress: string;
+  itemPinId?: string;
+}
+
+export type VerifyEscrowOnChainCustodyTxResult =
+  | { verified: true; confirmed?: boolean }
+  | { verified: false; reason: string };
+
+/**
+ * Verify an MVC on-chain escrow custody/release/return transaction:
+ * 1. txid must be 64-hex and resolvable on MVC (`status.found === true`).
+ * 2. At least one output must pay `expectedRecipientAddress` (direct address
+ *    match for MRC-721 P2PKH transfers, or recipient 20-byte pubkey hash160
+ *    embedded in output scriptHex for MetaContract FT/NFT contract transfers).
+ */
+export async function verifyEscrowOnChainCustodyTx(
+  input: VerifyEscrowOnChainCustodyTxInput,
+  deps: WalletTxStatusDeps = {},
+): Promise<VerifyEscrowOnChainCustodyTxResult> {
+  const txid = String(input.txid ?? '').trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(txid)) {
+    return { verified: false, reason: 'proof txid must be a 64-character hex string' };
+  }
+  const recipient = String(input.expectedRecipientAddress ?? '').trim();
+  if (!recipient) {
+    return { verified: false, reason: 'expected recipient address is missing on the escrow order' };
+  }
+
+  let status: WalletTxStatus;
+  try {
+    status = await getWalletTxStatus(deps, {
+      chain: 'mvc',
+      txid,
+      receiver: recipient,
+    });
+  } catch (error) {
+    return {
+      verified: false,
+      reason: `on-chain tx lookup failed: ${getErrorMessage(error)}`,
+    };
+  }
+
+  if (!status.found) {
+    return {
+      verified: false,
+      reason: `tx ${txid} was not found on MVC${status.note ? ` (${status.note})` : ''}`,
+    };
+  }
+
+  const recipientHash160 = pubkeyHashFromAddress(recipient)?.toLowerCase() ?? null;
+  const outputs = status.outputs ?? [];
+  const recipientMatched = outputs.some((out) => {
+    if (out.address && out.address.trim() === recipient) return true;
+    if (recipientHash160 && out.scriptHex) {
+      return out.scriptHex.toLowerCase().includes(recipientHash160);
+    }
+    return false;
+  });
+
+  if (!recipientMatched) {
+    return {
+      verified: false,
+      reason: `tx ${txid} exists on MVC but has no output transferring assets to expected recipient ${recipient}`,
+    };
+  }
+
+  return {
+    verified: true,
+    ...(status.confirmed !== undefined ? { confirmed: status.confirmed } : {}),
+  };
+}

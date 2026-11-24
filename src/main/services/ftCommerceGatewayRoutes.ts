@@ -1120,7 +1120,7 @@ export async function handleFtWatchRegisterRoute(
             : undefined;
       const autoFulfillMe =
         rail === 'me-escrow'
-          ? (lot.autoFulfillMe ?? lot.auto_fulfill_me ?? body.autoFulfillMe ?? true) !== false
+          ? (lot.autoFulfillMe ?? lot.auto_fulfill_me ?? body.autoFulfillMe ?? false) === true
           : false;
 
       let sellPinId = String(lot.sellPinId ?? lot.sell_pin_id ?? '').trim() || undefined;

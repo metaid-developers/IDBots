@@ -240,7 +240,12 @@ import {
 } from './services/walletQueryService';
 import { executeWalletMvcTransfer } from './services/walletTransferService';
 import { executeWalletTokenSend } from './services/walletTokenSendService';
-import { getWalletTxStatus, verifyWalletTx } from './services/walletTxStatusService';
+import {
+  getWalletTxStatus,
+  verifyEscrowOnChainCustodyTx,
+  verifyWalletTx,
+} from './services/walletTxStatusService';
+import { verifyOfficialEscrowGuarantor } from './services/officialBotVerifyService';
 import { openMetabotBtcWallet, signBtcPsbtPartial } from './services/btcPartialSign';
 import { broadcastBtcTx, fetchBtcUtxos } from './libs/btcApi';
 import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
@@ -9986,6 +9991,10 @@ const getCoworkRunner = () => {
             getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
           getMetabotDisplayName: (metabotId) =>
             getMetabotStore().getMetabotById(metabotId)?.name?.trim() || null,
+          getMetabotGlobalMetaId: (metabotId) =>
+            getMetabotStore().getMetabotById(metabotId)?.globalmetaid?.trim() || null,
+          verifyEscrowGuarantor: (input) => verifyOfficialEscrowGuarantor(input),
+          verifyOnChainCustodyTx: (input) => verifyEscrowOnChainCustodyTx(input),
         },
         orders: getEscrowOrderStore(),
       },
