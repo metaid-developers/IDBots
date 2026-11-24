@@ -9,7 +9,7 @@
  *   3  pending — retry later (index lag, transfer not yet stable)
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -95,7 +95,23 @@ export function registerConfiguredSeries(config) {
   }
 }
 
+export const PILOT_CONFIG_JSON_FILENAME = 'nft-swap-pilot-config.json';
+
 export function readPilotConfig(userDataPath) {
+  const fromEnv = process.env.IDBOTS_NFT_SWAP_PILOT_CONFIG_JSON?.trim();
+  if (fromEnv) {
+    const parsed = JSON.parse(fromEnv);
+    registerConfiguredSeries(parsed);
+    return parsed;
+  }
+
+  const mirrorJsonPath = path.join(userDataPath, PILOT_CONFIG_JSON_FILENAME);
+  if (existsSync(mirrorJsonPath)) {
+    const parsed = JSON.parse(readFileSync(mirrorJsonPath, 'utf8'));
+    registerConfiguredSeries(parsed);
+    return parsed;
+  }
+
   const dbPath = path.join(userDataPath, APP_DB_FILENAME);
   if (!existsSync(dbPath)) {
     throw new CliError(

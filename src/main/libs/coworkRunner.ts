@@ -58,8 +58,14 @@ import {
   copyDshSkillSessionEnvFile,
   ensureDshSkillEnvChannel,
   writeDshSkillSessionEnvFile,
+  writeDshSkillSessionRpcTokenFile,
 } from './dshSkillSessionEnv';
-import { METAID_RPC_AUTHFILE_ENV, getMetaidRpcTokenFilePath } from '../services/metaidRpcEndpoint';
+import { evaluateDshSensitiveAccess } from '../security/dshSensitiveAccessGuard';
+import {
+  METAID_RPC_AUTHFILE_ENV,
+  isScopedMetaidRpcToken,
+  issueScopedMetaidRpcToken,
+} from '../services/metaidRpcEndpoint';
 import { mapDshReasoningEffort } from './dshReasoningEffort';
 import { shouldIncludeMetawebDeepSections, nextMetawebPromptTier, type MetawebPromptMode, type MetawebPromptTier } from './metawebPromptTier';
 import { dshModelReasoningDeclaration, dshRouteReasoningEffort, isGlmFamilyModelId, undeclaredReasoningRouteWarning } from './dshModelReasoning';
@@ -12761,19 +12767,27 @@ export class CoworkRunner extends EventEmitter {
     const userData = app.getPath('userData');
     ensureDshSkillEnvChannel(userData);
     const overrides = await this.getSkillSessionEnvOverrides?.(coworkSessionId) ?? {};
+    const session = this.store.getSessionWithoutMessages?.(coworkSessionId) ?? this.store.getSession(coworkSessionId);
+    const scopedToken =
+      typeof overrides.IDBOTS_RPC_TOKEN === 'string' && isScopedMetaidRpcToken(overrides.IDBOTS_RPC_TOKEN)
+        ? overrides.IDBOTS_RPC_TOKEN
+        : issueScopedMetaidRpcToken({
+            sessionId: coworkSessionId,
+            metabotId: session?.metabotId ?? null,
+            sessionType: session?.sessionType ?? 'standard',
+          });
+    const scopedAuthFile = writeDshSkillSessionRpcTokenFile(userData, dshSessionId, scopedToken);
     const tempDir = ensureCoworkTempDir(cwd);
     writeDshSkillSessionEnvFile(userData, dshSessionId, {
       // Instance-level channels every DSH session needs regardless of metabot
-      // identity: the scrub-proof RPC authfile (its IDBOTS_RPC_* siblings ride
-      // the identity overrides below), and the instance's own data dirs so a
-      // session can always locate ITS app instance's storage instead of
-      // guessing the default install path — a dev-fresh profile guessing
-      // ~/Library/Application Support/IDBots is how the 2026-10-27 OpenTeam
-      // test ended up editing the production app's SQLite directly.
-      [METAID_RPC_AUTHFILE_ENV]: getMetaidRpcTokenFilePath(userData),
+      // identity: the per-session scoped RPC authfile (never the global master
+      // token file), and the instance's own data dirs so a session can always
+      // locate ITS app instance's storage instead of guessing the default path.
       IDBOTS_USER_DATA_PATH: userData,
       IDBOTS_APP_DATA_PATH: app.getPath('appData'),
       ...overrides,
+      IDBOTS_RPC_TOKEN: scopedToken,
+      ...(scopedAuthFile ? { [METAID_RPC_AUTHFILE_ENV]: scopedAuthFile } : {}),
       TMPDIR: tempDir,
       TMP: tempDir,
       TEMP: tempDir,
@@ -15259,6 +15273,48 @@ export class CoworkRunner extends EventEmitter {
             });
             return { decision: 'deny', reason: studioVerdict.reason };
           }
+        }
+      }
+      // Security policy (Batch 2): unconditionally block DSH fs/bash access to
+      // sensitive IDBots wallet databases, master RPC tokens, other sessions'
+      // BASH_ENV files, and OS credential stores — BEFORE permissionMode
+      // ('acceptEdits' / 'bypassPermissions') or autoApprove skips.
+      {
+        const guardCwd = activeSession?.workspaceRoot ?? process.cwd();
+        let userDataPath: string | null = null;
+        try {
+          userDataPath = app.getPath('userData');
+        } catch {
+          userDataPath = null;
+        }
+        let sessionTypeForGuard: string = 'standard';
+        try {
+          sessionTypeForGuard =
+            this.store.getSessionWithoutMessages?.(sessionId)?.sessionType
+            ?? this.store.getSession(sessionId)?.sessionType
+            ?? 'standard';
+        } catch {
+          sessionTypeForGuard = 'standard';
+        }
+        const sensitiveCheck = evaluateDshSensitiveAccess({
+          toolName,
+          toolInput,
+          cwd: guardCwd,
+          userDataPath,
+          sessionType: sessionTypeForGuard,
+        });
+        if (sensitiveCheck.blocked) {
+          coworkLog('WARN', 'evaluateDshToolPolicy', 'Blocked sensitive host file/command access', {
+            sessionId,
+            toolName,
+            category: sensitiveCheck.category,
+          });
+          return {
+            decision: 'deny',
+            reason:
+              sensitiveCheck.reason
+              ?? 'Security policy: access to sensitive IDBots wallet/credential storage is blocked.',
+          };
         }
       }
       // Dream-RSI practice sessions (design §3.5): every tool call passes the
