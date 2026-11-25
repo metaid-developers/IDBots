@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLsRemoteTags, isReleaseTagged, isPureVersionBump, decide } from '../scripts/ci-gate.mjs';
+import { parseLsRemoteTags, isReleaseTagged, isPureVersionBump, decide, decideTests } from '../scripts/ci-gate.mjs';
 
 const sha = (char) => char.repeat(40);
 const HEAD = sha('a');
@@ -91,4 +91,64 @@ test('decide: an ordinary main push runs even when it touches package.json', () 
     packageJsonDiff: '+  "electron-updater": "^6.6.2",',
   });
   assert.equal(decision.skip, false);
+});
+
+/* ---- tests on the tag run (skip_tests) ---- */
+
+// What the gate reads back for the tagged commit's parent: the jobs of its
+// latest completed main run.
+const PARENT_GREEN = {
+  jobs: [
+    { name: 'build (macos-latest, --mac --arm64 --dir, arm64, mac-arm64)', conclusion: 'success' },
+    { name: 'build (macos-15-intel, --mac --x64 --dir, x64, mac)', conclusion: 'success' },
+    { name: 'build (windows-signer, --win --x64)', conclusion: 'success' },
+    { name: 'gate', conclusion: 'success' },
+  ],
+};
+const TAG_PUSH = {
+  eventName: 'push',
+  ref: 'refs/tags/v1.1.3',
+  sha: HEAD,
+  changedFiles: ['package.json'],
+  packageJsonDiff: '-  "version": "1.1.2",\n+  "version": "1.1.3",',
+};
+
+test('decideTests: a pure version bump whose parent is green on all three platforms skips the tests', () => {
+  assert.equal(decideTests({ ...TAG_PUSH, parentRun: PARENT_GREEN }).skip, true);
+});
+
+test('decideTests: nothing but a tag push ever skips', () => {
+  const mainPush = decideTests({ ...TAG_PUSH, ref: 'refs/heads/main', parentRun: PARENT_GREEN });
+  const dispatch = decideTests({ ...TAG_PUSH, eventName: 'workflow_dispatch', parentRun: PARENT_GREEN });
+  assert.equal(mainPush.skip, false);
+  assert.equal(dispatch.skip, false);
+});
+
+test('decideTests: a tagged commit that changes anything but the version keeps the tests', () => {
+  const withFix = decideTests({
+    ...TAG_PUSH,
+    changedFiles: ['package.json', 'src/main/agentGame/runtime.ts'],
+    parentRun: PARENT_GREEN,
+  });
+  assert.equal(withFix.skip, false);
+});
+
+test('decideTests: without a completed, green main run for the parent the tests run', () => {
+  // No run at all: the API was unreadable, or main never saw that commit.
+  assert.match(decideTests({ ...TAG_PUSH, parentRun: null }).reason, /no completed main run/);
+
+  // A main run this gate itself skipped has every build job "skipped", never "success".
+  const skippedRun = { jobs: PARENT_GREEN.jobs.map((job) => ({ ...job, conclusion: 'skipped' })) };
+  assert.equal(decideTests({ ...TAG_PUSH, parentRun: skippedRun }).skip, false);
+
+  // One platform failed.
+  const windowsFailed = {
+    jobs: PARENT_GREEN.jobs.map((job) => (job.name.includes('windows') ? { ...job, conclusion: 'failure' } : job)),
+  };
+  const failed = decideTests({ ...TAG_PUSH, parentRun: windowsFailed });
+  assert.equal(failed.skip, false);
+  assert.match(failed.reason, /windows-signer[^\n]*: failure/, 'the reason names the platform that was not green');
+
+  // Fewer than three build jobs is not the whole matrix.
+  assert.equal(decideTests({ ...TAG_PUSH, parentRun: { jobs: PARENT_GREEN.jobs.slice(0, 2) } }).skip, false);
 });

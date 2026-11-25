@@ -27,8 +27,14 @@ jobs:
   # can prove.
   gate:
     runs-on: ubuntu-latest
+    # Reading another run's jobs needs actions:read; naming any permission here
+    # drops every other one, so contents is repeated.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       skip: ${{ steps.gate.outputs.skip }}
+      skip_tests: ${{ steps.gate.outputs.skip_tests }}
     steps:
       - name: Check out Git repository
         uses: actions/checkout@v4
@@ -47,8 +53,13 @@ jobs:
       - name: Test the gate and the tools that need no dependencies
         run: node --test tests/ciGate.test.mjs tests/ciReleaseWatch.test.mjs tests/ciWorktreeEol.test.mjs tests/ciWindowsSignOnce.test.mjs
 
+      # Two decisions: whether this run is redundant at all, and whether a tag
+      # run may leave out its tests because the parent commit's main run
+      # already ran the identical steps green on all three platforms.
       - name: Decide whether this run is redundant
         id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: node scripts/ci-gate.mjs
 
   build:
@@ -193,11 +204,13 @@ jobs:
       # hook and the workflow's wiring (scripts/ci-*.mjs).
       - name: Guard the CI tooling itself
         id: test_ci_tooling
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:ci-tooling
 
       - name: Run Windows installer reliability tests
         id: test_windows_installer_reliability
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: node --test tests/windowsInstallerReliability.test.mjs
 
@@ -211,7 +224,7 @@ jobs:
       - name: Compile the NSIS syntax harness (makensis -WX)
         id: test_nsis_harness
         continue-on-error: true
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && needs.gate.outputs.skip_tests != 'true'
         shell: powershell
         run: |
           # Mirror findMakensis in scripts/verify-nsis-harness.mjs: iterate
@@ -234,6 +247,7 @@ jobs:
 
       - name: Run LLM-safe text tests
         id: test_llm_safe_text
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: node --test tests/llmSafeText.test.mjs
 
@@ -242,6 +256,7 @@ jobs:
       # longterm.advance escalation rules.
       - name: Run long-term task tests
         id: test_long_term_task
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: node --test tests/longTermTaskStore.test.mjs tests/heartbeatService.test.mjs tests/longTermAdvanceService.test.mjs tests/longTermTaskAgentTools.test.mjs
 
@@ -250,11 +265,13 @@ jobs:
       # local-bot auto-approve fast lane + the RPC bot channel.
       - name: Run agent-game tests
         id: test_agent_game
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:agent-game
 
       - name: Validate runtime dependency contracts
         id: test_runtime_dependency_contracts
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: |
           node --test tests/runtimeDependencyContract.test.mjs tests/dshRuntimeDepsCheck.test.mjs
@@ -270,6 +287,7 @@ jobs:
       # the patch + prompt contract in source.
       - name: Run dsh ask-context tests
         id: test_dsh_ask_context
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: |
           node dsh-runtime/test/ask-bridge.test.mjs
@@ -280,6 +298,7 @@ jobs:
       # regex assertions: no compile step needed, safe on every matrix OS.
       - name: Run workspace-instructions contract tests
         id: test_workspace_instructions
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: node --test tests/workspaceInstructionsBoundary.test.mjs tests/coworkSessionDetailGitBranch.test.mjs
 
@@ -287,6 +306,7 @@ jobs:
       # bot-internet composer reuse (pure file-read assertions, no compile).
       - name: Run pinned-skill contract tests
         id: test_pinned_skills
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:pinned-skills
 
@@ -295,6 +315,7 @@ jobs:
       # Each script runs compile:electron first (project convention).
       - name: Run group-task / skill-assignment / cowork-proxy regression tests
         id: test_release_regressions
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:release-regressions
 
@@ -304,6 +325,7 @@ jobs:
       # compile:electron first (14 of its node suites require dist-electron).
       - name: Run release-review umbrella tests
         id: test_release_review
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:release-review
 
@@ -315,6 +337,7 @@ jobs:
       # compile:electron first, project convention).
       - name: Run private-chat wake re-drive disposition tests
         id: test_private_chat_wake
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:private-chat-wake-disposition
 
@@ -324,11 +347,13 @@ jobs:
       # compile:electron first (project convention).
       - name: Run daily-report / follow-up regression tests
         id: test_daily_report
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:daily-report
 
       - name: Run memory and team-culture tests
         id: test_memory
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:memory
 
@@ -337,16 +362,19 @@ jobs:
       # dropped. Runs compile:electron first (project convention).
       - name: Run open-team impression tests
         id: test_open_team_impression
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:open-team-impression
 
       - name: Run dream retry classification tests
         id: test_dream_retry
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:dream-retry
 
       - name: Run MetaWeb agent-tool tests
         id: test_metaweb
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:metaweb
 
@@ -359,6 +387,7 @@ jobs:
       # first (project convention).
       - name: Run omni-read agent-tool and list-page contract tests
         id: test_omni_read
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:omni-read
 
@@ -369,6 +398,7 @@ jobs:
       # script runs compile:electron first (project convention).
       - name: Run MetaID RPC body-guard tests
         id: test_rpc_body_guard
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: pnpm run test:rpc-body-guard
 
@@ -376,6 +406,7 @@ jobs:
       # and PayBuzz dual-track unlock verification gates.
       - name: Run commerce, goods-trade, FT-commerce, PayBuzz, and wallet-security tests
         id: test_commerce_wallet
+        if: needs.gate.outputs.skip_tests != 'true'
         continue-on-error: true
         run: |
           pnpm run test:commerce

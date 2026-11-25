@@ -22,8 +22,19 @@
  * Tag pushes and workflow_dispatch runs (rehearsals, SOP §5.1 retries) always
  * run, and so does anything the gate cannot prove redundant.
  *
- * Usage: the workflow runs it with the runner's GITHUB_* env and reads
- * `skip=<true|false>` from $GITHUB_OUTPUT. Standalone it prints the decision.
+ * The same gate also decides whether a tag run may leave out its test steps
+ * (`skip_tests`). A tag run tests nothing new when the tagged commit only
+ * bumps the version and its parent already has a main run whose three build
+ * jobs — which run the identical test steps — succeeded. On 2026-11-25
+ * (v1.1.3) six of the nine failed Windows attempts of the tag run were test
+ * failures that main's own Windows job had already shown; the signing machine
+ * built, tested and signed the same commit three times in a row. Anything
+ * unproven — another change in the tagged commit, no completed main run for
+ * the parent, a build job that failed or was skipped — keeps the tests.
+ *
+ * Usage: the workflow runs it with the runner's GITHUB_* env (GH_TOKEN for the
+ * parent-run lookup) and reads `skip=<true|false>` and `skip_tests=<true|false>`
+ * from $GITHUB_OUTPUT. Standalone it prints both decisions.
  */
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
@@ -84,6 +95,37 @@ export function decide({ eventName, ref, sha, tags, changedFiles, packageJsonDif
   return { skip: false, reason: `push to main touches ${changedFiles.length} file(s)` };
 }
 
+/** How build.yml names its matrix jobs: `build (windows-signer, --win --x64)`. */
+const BUILD_JOB_PREFIX = 'build (';
+const BUILD_PLATFORMS = 3;
+
+/**
+ * Whether a tag run may skip its test steps. `parentRun` is the parent
+ * commit's latest completed main run ({ jobs: [{ name, conclusion }] }) or
+ * null; a build job that was skipped counts as not green, so a main run that
+ * this gate itself skipped can never vouch for anything.
+ */
+export function decideTests({ eventName, ref, sha, changedFiles, packageJsonDiff, parentRun }) {
+  const keep = (reason) => ({ skip: false, reason });
+  if (eventName !== 'push' || !ref.startsWith('refs/tags/')) return keep('not a tag push');
+  if (!isPureVersionBump(changedFiles, packageJsonDiff)) {
+    return keep(`tagged commit ${sha.slice(0, 9)} changes more than the version`);
+  }
+  if (!parentRun) return keep('the parent commit has no completed main run to vouch for this tree');
+  const builds = (parentRun.jobs ?? []).filter((job) => job.name.startsWith(BUILD_JOB_PREFIX));
+  if (builds.length < BUILD_PLATFORMS) {
+    return keep(`the parent's main run lists only ${builds.length} build job(s), fewer than ${BUILD_PLATFORMS} platforms`);
+  }
+  const notGreen = builds.filter((job) => job.conclusion !== 'success');
+  if (notGreen.length > 0) {
+    return keep(`the parent's main run is not green (${notGreen.map((job) => `${job.name}: ${job.conclusion}`).join('; ')})`);
+  }
+  return {
+    skip: true,
+    reason: `tagged commit ${sha.slice(0, 9)} only bumps the version and its parent's main run is green on ${builds.length} platforms`,
+  };
+}
+
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['pipe', 'pipe', 'ignore'] });
 }
@@ -102,6 +144,47 @@ function describePush(sha) {
   }
 }
 
+function parentOf(sha) {
+  try {
+    return git(['rev-parse', `${sha}^1`]).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** One `gh api` call, reduced with --jq; null when it cannot be made or parsed. */
+function ghJson(route, query) {
+  const repo = process.env.GITHUB_REPOSITORY;
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  if (!repo || !token) return null;
+  try {
+    const output = execFileSync('gh', ['api', `repos/${repo}/${route}`, '--jq', query], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, GH_TOKEN: token },
+    });
+    return JSON.parse(output);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The latest completed Build/Release run of `commitSha` on main, reduced to
+ * its jobs' conclusions — or null when there is none or it cannot be read.
+ */
+function findMainRunFor(commitSha) {
+  if (!commitSha) return null;
+  const run = ghJson(
+    `actions/runs?head_sha=${commitSha}&event=push&per_page=20`,
+    '[.workflow_runs[] | select(.head_branch == "main" and .path == ".github/workflows/build.yml" and .status == "completed")]'
+      + ' | sort_by(.run_started_at) | last | {id}',
+  );
+  if (!run || !run.id) return null;
+  return ghJson(`actions/runs/${run.id}/jobs?per_page=50`, '{jobs: [.jobs[] | {name, conclusion}]}');
+}
+
 function main() {
   const eventName = process.env.GITHUB_EVENT_NAME ?? '';
   const ref = process.env.GITHUB_REF ?? '';
@@ -115,8 +198,22 @@ function main() {
   }
   const decision = decide({ eventName, ref, sha, tags, changedFiles, packageJsonDiff });
   console.log(`[ci-gate] ${decision.skip ? 'SKIP' : 'RUN'}: ${decision.reason}`);
+
+  let tests = { skip: false, reason: 'not a tag push' };
+  if (eventName === 'push' && ref.startsWith('refs/tags/')) {
+    // What main last built is the parent of the tagged commit.
+    tests = decideTests({
+      eventName,
+      ref,
+      sha,
+      ...describePush(sha),
+      parentRun: findMainRunFor(parentOf(sha)),
+    });
+  }
+  console.log(`[ci-gate] tests ${tests.skip ? 'SKIPPED' : 'RUN'}: ${tests.reason}`);
+
   const outputFile = process.env.GITHUB_OUTPUT;
-  if (outputFile) appendFileSync(outputFile, `skip=${decision.skip}\n`);
+  if (outputFile) appendFileSync(outputFile, `skip=${decision.skip}\nskip_tests=${tests.skip}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

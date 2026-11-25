@@ -20,12 +20,16 @@ test('the gate decides before any build job starts, and the build jobs honour it
   const gate = workflow.jobs.gate;
   assert.equal(buildSteps.length > 0, true);
   assert.match(String(gate.outputs.skip), /steps\.gate\.outputs\.skip/);
+  assert.match(String(gate.outputs.skip_tests), /steps\.gate\.outputs\.skip_tests/);
   assert.deepEqual(workflow.jobs.build.needs, 'gate');
   assert.match(workflow.jobs.build.if, /needs\.gate\.outputs\.skip != 'true'/);
   assert.deepEqual(workflow.jobs.release.needs, ['build']);
   const decideAt = gate.steps.findIndex((step) => step.id === 'gate');
   const guardAt = gate.steps.findIndex((step) => step.name === 'Test the gate and the tools that need no dependencies');
   assert.equal(guardAt >= 0 && decideAt > guardAt, true, 'the gate is tested before it decides');
+  // The tests decision reads the parent commit's main run through the API.
+  assert.equal(gate.permissions.actions, 'read');
+  assert.match(String(gate.steps[decideAt].env.GH_TOKEN), /github\.token/);
   // The gate job has no node_modules: everything it runs must stay dependency-free.
   const gateTests = gate.steps[guardAt].run.match(/tests\/[\w.]+\.test\.mjs/g) ?? [];
   assert.equal(gateTests.includes('tests/ciGate.test.mjs'), true);
@@ -48,6 +52,30 @@ test('every test step runs to completion instead of failing fast', () => {
     assert.equal(step['continue-on-error'], true, `${step.id} must not stop the job`);
   }
   assert.equal(new Set(testSteps.map((step) => step.id)).size, testSteps.length, 'step ids are unique');
+});
+
+test("a tag run leaves out its tests only on the gate's say-so, and packaging never does", () => {
+  for (const step of testSteps) {
+    assert.match(String(step.if), /needs\.gate\.outputs\.skip_tests != 'true'/, `${step.id} must yield to skip_tests`);
+  }
+  // A platform condition is kept, not replaced.
+  assert.equal(
+    testSteps.find((step) => step.id === 'test_nsis_harness').if,
+    `runner.os == 'Windows' && needs.gate.outputs.skip_tests != 'true'`,
+  );
+  // Skipped steps pass the verdict, so the verdict itself must always run.
+  assert.equal(buildSteps[indexOf(VERDICT)].if, undefined);
+  // Building, signing and verifying are the point of a tag run.
+  for (const name of [
+    'Build renderer (Vite)',
+    'Compile Electron main process',
+    'Build Electron app package (Windows signed)',
+    'Verify Windows signatures',
+    'Verify DSH kernel patches in the packaged app',
+    'Upload build artifacts',
+  ]) {
+    assert.doesNotMatch(String(buildSteps[indexOf(name)].if ?? ''), /skip_tests/, `${name} must not depend on skip_tests`);
+  }
 });
 
 test('the verdict step sees the outcome of every test step, and nothing else', () => {
