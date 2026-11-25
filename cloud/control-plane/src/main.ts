@@ -50,6 +50,7 @@ async function main(): Promise<void> {
 
   const app: AppContext = { config, db, docker, sms, poller: null, metrics: new MetricsRegistry(), push: new PushDeliveryService(db, config) };
   app.localHostId = localHostId;
+  app.metrics.gaugeFn('cp_host_agents_connected', () => app.hostAgents?.connectedHostIds().length ?? 0);
   app.push.start();
   const rolloutStore = config.rolloutDatabaseUrl
     ? await PostgresRolloutStore.connect(config.rolloutDatabaseUrl)

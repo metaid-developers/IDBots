@@ -17,7 +17,7 @@ Runbooks: `host-bootstrap.md` (start here), `deploy-control-plane.md`,
 `tenant-image-rollout.md`, `backup-and-restore.md`, `incident-response.md`,
 `secret-rotation.md`, `user-data-export-and-deletion.md`, `add-host.md`,
 `staging-reset.md`, `commercial-operations.md` (RBAC/MFA, approvals, and the
-Web admin backend).
+Web admin backend), `commercial-acceptance.md` (live commercial gate).
 
 ## Conventions
 

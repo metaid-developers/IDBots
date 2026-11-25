@@ -68,6 +68,12 @@ export class HostAgentGateway {
     this.sockets.get(hostId)?.close(1001, 'replaced by a new agent connection');
     this.sockets.set(hostId, socket);
     this.app.db.prepare('UPDATE hosts SET agent_last_seen_at = ? WHERE id = ?').run(Date.now(), hostId);
+    const heartbeat = setInterval(() => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      socket.ping();
+      this.app.db.prepare('UPDATE hosts SET agent_last_seen_at = ? WHERE id = ?').run(Date.now(), hostId);
+    }, 25_000);
+    heartbeat.unref();
     socket.on('message', (data: RawData) => {
       try {
         const message = JSON.parse(data.toString()) as AgentResponseMessage;
@@ -83,6 +89,7 @@ export class HostAgentGateway {
       }
     });
     socket.on('close', () => {
+      clearInterval(heartbeat);
       if (this.sockets.get(hostId) === socket) this.sockets.delete(hostId);
       for (const [id, pending] of this.pending) {
         if (pending.hostId !== hostId) continue;

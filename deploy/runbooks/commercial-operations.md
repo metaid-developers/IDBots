@@ -97,6 +97,9 @@ credential handling, and the explicit new-user placement/proxy-routing boundary.
 
 ## Safety checks before commercial promotion
 
+Use `commercial-acceptance.md` as the live gate and
+`deploy/hosts/commercial-preflight.sh` for the host-level checks.
+
 - Verify additive migrations and a control-plane backup on a copy first.
 - Verify viewer/support/operator/admin permissions and MFA expiry on staging.
 - Prove self-approval, approval replay, payload substitution, and expired

@@ -34,6 +34,8 @@ export class RolloutManager {
       leaseMs?: number;
       readyTimeoutMs?: number;
       readyPollMs?: number;
+      executor?: (item: RolloutItem, image: string, operator: string) => Promise<UpgradeResult>;
+      preflight?: (hostId: string, image: string) => Promise<void>;
     } = {},
   ) {}
 
@@ -85,6 +87,7 @@ export class RolloutManager {
     if (this.started) return;
     this.started = true;
     await this.store.requeueInFlight();
+    await this.updateMetrics();
     this.timer = setInterval(() => this.kick(), this.options.tickMs ?? 250);
     this.timer.unref();
     this.kick();
@@ -164,6 +167,23 @@ export class RolloutManager {
       await Promise.all(items.map((item) => this.execute(item, view.job.releaseId, view.job.operator)));
       await this.evaluate(job.id);
     }
+    await this.updateMetrics();
+  }
+
+  private async updateMetrics(): Promise<void> {
+    const jobs = await this.store.listJobs(200);
+    const jobCounts = new Map<string, number>();
+    const itemCounts = new Map<string, number>();
+    for (const view of jobs) {
+      jobCounts.set(view.job.status, (jobCounts.get(view.job.status) ?? 0) + 1);
+      for (const item of view.items) itemCounts.set(item.status, (itemCounts.get(item.status) ?? 0) + 1);
+    }
+    for (const status of ['paused', 'running', 'completed', 'cancelled']) {
+      this.app.metrics.setGauge('cp_rollout_jobs', { status }, jobCounts.get(status) ?? 0);
+    }
+    for (const status of ['pending', 'leased', 'succeeded', 'failed', 'rolled-back', 'skipped']) {
+      this.app.metrics.setGauge('cp_rollout_items', { status }, itemCounts.get(status) ?? 0);
+    }
   }
 
   private async preflight(jobId: string): Promise<void> {
@@ -188,6 +208,10 @@ export class RolloutManager {
   }
 
   private async preflightImage(hostId: string, image: string): Promise<void> {
+    if (this.options.preflight) {
+      await this.options.preflight(hostId, image);
+      return;
+    }
     if (this.app.localHostId && hostId !== this.app.localHostId) {
       if (!this.app.hostAgents) throw new Error(`host agent ${hostId} is unavailable`);
       await this.app.hostAgents.preflight(hostId, image);
@@ -223,6 +247,7 @@ export class RolloutManager {
   }
 
   private async executeUpgrade(item: RolloutItem, image: string, operator: string): Promise<UpgradeResult> {
+    if (this.options.executor) return this.options.executor(item, image, operator);
     if (!this.app.localHostId || item.hostId === this.app.localHostId) {
       const [result] = await upgradeTenants(this.app, [item.tenantId], image, {
         operator: `${operator}:${item.jobId}`,

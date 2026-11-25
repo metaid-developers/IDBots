@@ -283,7 +283,23 @@ export function createMetricsServer(app: AppContext): http.Server {
     }>;
     const lines: string[] = [];
     for (const row of tenantRows) {
-      lines.push(`cp_tenants{status="${row.status}"} ${row.n}`);
+      lines.push(`cp_tenants_by_status{status="${row.status}"} ${row.n}`);
+    }
+    for (const column of ['kind', 'cohort'] as const) {
+      const rows = app.db.prepare(`SELECT ${column} AS name, COUNT(*) AS n FROM tenants GROUP BY ${column}`).all() as Array<{ name: string; n: number }>;
+      for (const row of rows) lines.push(`cp_tenants_by_${column}{${column}="${row.name}"} ${row.n}`);
+    }
+    const hostRows = app.db.prepare('SELECT id, environment, capacity, agent_last_seen_at FROM hosts').all() as Array<{
+      id: string;
+      environment: string;
+      capacity: number;
+      agent_last_seen_at: number | null;
+    }>;
+    for (const host of hostRows) {
+      lines.push(`cp_host_capacity{host_id="${host.id}",environment="${host.environment}"} ${host.capacity}`);
+      if (host.agent_last_seen_at !== null) {
+        lines.push(`cp_host_agent_last_seen_timestamp_seconds{host_id="${host.id}"} ${host.agent_last_seen_at / 1000}`);
+      }
     }
     res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
     res.end(`${app.metrics.render()}${lines.join('\n')}\n`);
