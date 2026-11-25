@@ -99,7 +99,7 @@
     "test:gig-square": "pnpm run compile:electron && node scripts/gig-square-self-test.mjs",
     "test:live-private-chat": "npx tsx scripts/test_live_private_chat.ts",
     "preview": "vite preview",
-    "compile:electron": "npx -p typescript@5 tsc --project electron-tsconfig.json && node scripts/copy-electron-js.cjs",
+    "compile:electron": "node scripts/compile-electron.cjs && node scripts/copy-electron-js.cjs",
     "build:skills": "node scripts/build-skills.js && node scripts/build-web-search-skill.js",
     "build:skill:web-search": "node scripts/build-web-search-skill.js",
     "start:electron": "cross-env NODE_ENV=development ELECTRON_START_URL=http://127.0.0.1:5175 electron .",

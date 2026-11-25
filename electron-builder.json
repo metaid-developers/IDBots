@@ -10,6 +10,7 @@
   "files": [
     "dist/**/*",
     "dist-electron/**/*",
+    "!dist-electron/.tsbuildinfo*",
     "sandbox/agent-runner/AGENT_SYSTEM_PROMPT.md",
     "sandbox/agent-runner/Bootstrap.md",
     "sandbox/agent-runner/IDBotsPrimer.md"
