@@ -7,8 +7,8 @@ import { createAndroidEntry, mergeAndroidUpdateManifest, readAndroidVersion } fr
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
-test('Android 0.1.7 uses native update checks and the existing versioned download channel', () => {
-  assert.deepEqual(readAndroidVersion(), { versionCode: 9, versionName: '0.1.7' });
+test('Android 0.1.8 uses native update checks and the existing versioned download channel', () => {
+  assert.deepEqual(readAndroidVersion(), { versionCode: 10, versionName: '0.1.8' });
   const activity = read('../android/app/src/main/java/com/idbots/world/MainActivity.java');
   assert.match(activity, /new AppUpdateManager\(this\)/);
   assert.match(activity, /appUpdateManager\.onResume\(\)/);
@@ -32,15 +32,15 @@ test('Android 0.1.7 uses native update checks and the existing versioned downloa
 test('release metadata hashes the exact APK and preserves the desktop manifest', () => {
   const directory = mkdtempSync(join(tmpdir(), 'idbots-update-metadata-'));
   try {
-    const apk = join(directory, 'IDBots-Android-0.1.7.apk');
+    const apk = join(directory, 'IDBots-Android-0.1.8.apk');
     writeFileSync(apk, 'apk-content');
     const release = JSON.parse(read('../release-notes/android-release.json'));
     const entry = createAndroidEntry(apk, release);
-    assert.equal(entry.version, '0.1.7');
-    assert.equal(entry.versionCode, 9);
+    assert.equal(entry.version, '0.1.8');
+    assert.equal(entry.versionCode, 10);
     assert.equal(entry.size, 11);
     assert.equal(entry.sha256, 'cb580f7f3dff3a02ab5053988c8dc92131ebc051d671c4b4efe8cc39b4768353');
-    assert.equal(entry.url, 'https://app.idbots.world/downloads/IDBots-Android-0.1.7.apk');
+    assert.equal(entry.url, 'https://app.idbots.world/downloads/IDBots-Android-0.1.8.apk');
     const desktop = { code: 0, data: { value: { version: '1.1.1', macArm: { url: 'https://download.idbots.ai/mac.dmg' } } } };
     const merged = mergeAndroidUpdateManifest(desktop, entry);
     assert.equal(merged.data.value.version, '1.1.1');

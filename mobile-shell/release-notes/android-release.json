@@ -1,21 +1,21 @@
 {
-  "date": "2026-11-21",
+  "date": "2026-11-26",
   "minVersionCode": 0,
   "changeLog": {
     "ch": {
       "title": "更新说明",
       "content": [
-        "修复后台恢复时的 WebView 卡死，底部四个栏目保持可点。",
-        "兼容 0.1.6 及更早的原生壳，避免升级后停在启动页。",
-        "新增 Android 推送通知与通知点击跳转支持。"
+        "更新移动端外壳与云端 PWA，老用户可直接覆盖升级，账号和云端数据保持不变。",
+        "优化语音输入的准备状态、就绪触感与实时声波，并提升聊天流式显示流畅度。",
+        "包含最新邀请注册、Bot 自动化、结果通知与移动端体验改进。"
       ]
     },
     "en": {
       "title": "Release Notes",
       "content": [
-        "Fixes the WebView freeze after foreground recovery; all four bottom tabs stay responsive.",
-        "Keeps older 0.1.6 native shells booting instead of freezing on the launch splash.",
-        "Adds Android push notifications and notification tap routing."
+        "Updates the native shell and cloud PWA. Existing users can install over the current app while keeping their account and cloud data.",
+        "Improves voice-input preparing and ready feedback, live waveform, and smooth chat streaming.",
+        "Includes the latest invite registration, Bot automation, result notifications, and mobile experience improvements."
       ]
     }
   }
