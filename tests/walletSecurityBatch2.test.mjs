@@ -13,10 +13,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Module from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+// fileURLToPath, NOT new URL(...).pathname: on Windows the URL pathname is
+// "/C:/actions-runner/..." (leading slash before the drive letter) and
+// path.resolve turns it into "C:\C:\actions-runner\..." — v1.1.3 tag run
+// 45551178172 failed exactly this way. fileURLToPath yields a real OS path.
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const {
   formatPosixEnvFile,
