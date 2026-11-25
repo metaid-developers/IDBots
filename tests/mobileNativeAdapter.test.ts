@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createNativeAdapter } from '../src/mobile/native/nativeAdapter.ts';
 import type { IdbotsNativeBridge, MobileNativeCapabilities } from '../src/mobile/native/idbotsNative.ts';
 
-function capabilities(overrides: Partial<MobileNativeCapabilities> = {}): MobileNativeCapabilities {
+function capabilities(overrides: Partial<MobileNativeCapabilities> = {}): Required<MobileNativeCapabilities> {
   return {
     camera: false,
     photos: false,
@@ -14,6 +14,7 @@ function capabilities(overrides: Partial<MobileNativeCapabilities> = {}): Mobile
     externalUrls: true,
     secureScreen: false,
     pushNotifications: false,
+    haptics: false,
     ...overrides,
   };
 }
@@ -245,4 +246,33 @@ test('native permission, size and unavailable failures remain typed', async () =
   await assert.rejects(unavailable.pickPhoto('camera'), (error) => (error as { code?: string }).code === 'UNAVAILABLE');
   await assert.rejects(unavailable.shareArtifact({ url: 'https://app.example/f', filename: 'f' }), (error) => (error as { code?: string }).code === 'UNAVAILABLE');
   await assert.rejects(unavailable.setSecureScreen(true), (error) => (error as { code?: string }).code === 'UNAVAILABLE');
+});
+
+test('triggerHaptic uses native haptics when available and Web Vibration fallback otherwise', async () => {
+  const nativeStyles: string[] = [];
+  const nativeTarget = target(nativeBridge({
+    getCapabilities: () => capabilities({ haptics: true }),
+    haptic: async (style = 'medium') => { nativeStyles.push(style); },
+  }));
+  const native = createNativeAdapter(nativeTarget.value);
+  assert.equal(native.getCapabilities().haptics, true);
+  native.triggerHaptic('prepare');
+  native.triggerHaptic('ready');
+  native.triggerHaptic('light');
+  assert.deepEqual(nativeStyles, ['prepare', 'ready', 'light']);
+
+  const vibrations: Array<number | number[]> = [];
+  const webTarget = target();
+  (webTarget.value as unknown as { navigator: { vibrate: (p: number | number[]) => boolean } }).navigator = {
+    vibrate: (pattern) => {
+      vibrations.push(pattern);
+      return true;
+    },
+  };
+  const web = createNativeAdapter(webTarget.value);
+  web.triggerHaptic('prepare');
+  assert.deepEqual(vibrations, [], 'prepare never emits an early vibration on web');
+  web.triggerHaptic('ready');
+  web.triggerHaptic('light');
+  assert.deepEqual(vibrations, [35, 10]);
 });

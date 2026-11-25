@@ -876,7 +876,11 @@ export default function ChatScreen(props: {
     textareaRef.current?.blur();
     setEmojiPanelOpen(false);
     setComposerMenuOpen(false);
-    setVoiceComposerMode((current) => current === 'text' ? 'voice' : 'text');
+    setVoiceComposerMode((current) => {
+      const next = current === 'text' ? 'voice' : 'text';
+      if (next === 'voice') voice.warmup({ resume: false });
+      return next;
+    });
   };
   const voiceButtonProps = {
     state: voice.state,
@@ -884,6 +888,7 @@ export default function ChatScreen(props: {
     recognizedText: voice.recognizedText,
     levelRef: voice.levelRef,
     bottomInset: keyboardInset,
+    onWarmup: voice.warmup,
     onStart: voice.start,
     onStop: voice.stop,
     onStartHold: voice.startHold,

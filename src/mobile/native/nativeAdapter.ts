@@ -1,4 +1,4 @@
-import type { IdbotsNativeBridge, MobileNativeCapabilities } from './idbotsNative';
+import type { IdbotsNativeBridge, MobileNativeCapabilities, MobileNativeHapticStyle } from './idbotsNative';
 
 const CAPABILITY_KEYS = [
   'camera',
@@ -10,9 +10,10 @@ const CAPABILITY_KEYS = [
   'externalUrls',
   'secureScreen',
   'pushNotifications',
+  'haptics',
 ] as const;
 
-const WEB_CAPABILITIES: MobileNativeCapabilities = Object.freeze({
+const WEB_CAPABILITIES: Required<MobileNativeCapabilities> = Object.freeze({
   camera: false,
   photos: false,
   files: false,
@@ -22,16 +23,18 @@ const WEB_CAPABILITIES: MobileNativeCapabilities = Object.freeze({
   externalUrls: false,
   secureScreen: false,
   pushNotifications: false,
+  haptics: false,
 });
 
 export interface MobileNativeAdapter {
   readonly isNative: boolean;
-  getCapabilities(): MobileNativeCapabilities;
+  getCapabilities(): Required<MobileNativeCapabilities>;
   getAppVersion(): { versionName: string; versionCode: number } | null;
   pickPhoto(source: 'camera' | 'photos'): Promise<File | null>;
   pickFiles(multi: boolean): Promise<File[]>;
   shareArtifact(input: { url: string; filename: string }): Promise<'shared' | 'cancelled'>;
   setSecureScreen(enabled: boolean): Promise<void>;
+  triggerHaptic(style?: MobileNativeHapticStyle): void;
   openExternal(url: string): Promise<void>;
   onAppStateChange(callback: (active: boolean) => void): () => void;
   onBackButton(callback: () => boolean): () => void;
@@ -75,13 +78,26 @@ function nativeBridge(target: Window): IdbotsNativeBridge | null {
   return bridge;
 }
 
-function readCapabilities(bridge: IdbotsNativeBridge | null): MobileNativeCapabilities {
+function readCapabilities(bridge: IdbotsNativeBridge | null): Required<MobileNativeCapabilities> {
   if (!bridge) return { ...WEB_CAPABILITIES };
   try {
     const value = bridge.getCapabilities();
-    return Object.fromEntries(CAPABILITY_KEYS.map((key) => [key, value?.[key] === true])) as unknown as MobileNativeCapabilities;
+    return Object.fromEntries(CAPABILITY_KEYS.map((key) => [key, value?.[key] === true])) as unknown as Required<MobileNativeCapabilities>;
   } catch {
     return { ...WEB_CAPABILITIES };
+  }
+}
+
+function vibrateWebFallback(target: Window, style: MobileNativeHapticStyle): void {
+  if (style === 'prepare') return;
+  const nav = (target as { navigator?: { vibrate?: (pattern: number | number[]) => boolean } }).navigator
+    ?? (typeof navigator !== 'undefined' ? (navigator as { vibrate?: (pattern: number | number[]) => boolean }) : undefined);
+  if (typeof nav?.vibrate !== 'function') return;
+  const durationMs = style === 'ready' || style === 'heavy' ? 35 : style === 'light' ? 10 : 22;
+  try {
+    nav.vibrate(durationMs);
+  } catch {
+    // Web Vibration API is best-effort and may be blocked by OS battery saver.
   }
 }
 
@@ -107,7 +123,7 @@ function unavailable(): () => void {
 
 export function createNativeAdapter(target: Window): MobileNativeAdapter {
   const bridge = nativeBridge(target);
-  const hasCapability = (key: keyof MobileNativeCapabilities): boolean => readCapabilities(bridge)[key];
+  const hasCapability = (key: keyof Required<MobileNativeCapabilities>): boolean => readCapabilities(bridge)[key];
   return {
     isNative: bridge !== null,
     getCapabilities: () => readCapabilities(bridge),
@@ -164,6 +180,17 @@ export function createNativeAdapter(target: Window): MobileNativeAdapter {
       } catch (error) {
         throw normalizeNativeError(error);
       }
+    },
+    triggerHaptic: (style = 'medium') => {
+      if (bridge && hasCapability('haptics') && typeof bridge.haptic === 'function') {
+        try {
+          void Promise.resolve(bridge.haptic(style)).catch(() => vibrateWebFallback(target, style));
+          return;
+        } catch {
+          // Fall through to web vibration fallback.
+        }
+      }
+      vibrateWebFallback(target, style);
     },
     openExternal: async (value) => {
       const { url, protocol } = approvedExternalUrl(value);

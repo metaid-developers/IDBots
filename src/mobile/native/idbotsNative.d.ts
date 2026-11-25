@@ -8,6 +8,7 @@ interface MobileNativeCapabilities {
   externalUrls: boolean;
   secureScreen: boolean;
   pushNotifications: boolean;
+  haptics?: boolean;
 }
 
 interface IdbotsNativeListenerHandle {
@@ -23,6 +24,7 @@ interface IdbotsNativeAppPlugin {
 }
 
 type MobileNativePhotoSource = 'camera' | 'photos';
+type MobileNativeHapticStyle = 'prepare' | 'ready' | 'light' | 'medium' | 'heavy';
 
 interface IdbotsNativeBridge {
   readonly nativeBridgeVersion: 1;
@@ -38,6 +40,7 @@ interface IdbotsNativeBridge {
   pickFiles?(multi: boolean): Promise<File[]>;
   shareArtifact?(input: { url: string; filename: string }): Promise<'shared' | 'cancelled'>;
   setSecureScreen?(enabled: boolean): Promise<void>;
+  haptic?(style?: MobileNativeHapticStyle): Promise<void>;
   openExternal?(url: string): Promise<void>;
   onAppStateChange?(callback: (active: boolean) => void): () => void;
   onBackButton?(callback: () => boolean): () => void;
@@ -76,5 +79,6 @@ export type {
   IdbotsNativeListenerHandle,
   IdbotsNativeProof,
   MobileNativeCapabilities,
+  MobileNativeHapticStyle,
   MobileNativePhotoSource,
 };

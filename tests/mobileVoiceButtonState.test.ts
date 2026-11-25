@@ -188,19 +188,23 @@ test('voicePhaseTestid follows the phase (e2e selectors)', () => {
 // Overlay variant mapping (data-testid source for the three overlay states)
 // ---------------------------------------------------------------------------
 
-test('voiceOverlayVariant: hold phases map to recording / recognizing / error', () => {
+test('voiceOverlayVariant: hold phases map to preparing -> recording -> recognizing / error', () => {
   const hold = (phase: VoiceUiState['phase'], errorCode: VoiceUiState['errorCode'] = null): VoiceUiState =>
     ({ phase, mode: 'hold', errorCode, keptText: false });
-  assert.equal(voiceOverlayVariant(hold('requestingMic'), false), 'recording');
-  assert.equal(voiceOverlayVariant(hold('connecting'), false), 'recording');
+  assert.equal(voiceOverlayVariant(VOICE_UI_INITIAL, false, false), null);
+  assert.equal(voiceOverlayVariant(VOICE_UI_INITIAL, false, true), 'preparing', '0ms press on hold bar shows preparing');
+  assert.equal(voiceOverlayVariant(hold('requestingMic'), false), 'preparing');
+  assert.equal(voiceOverlayVariant(hold('connecting'), false), 'preparing');
   assert.equal(voiceOverlayVariant(hold('recording'), false), 'recording');
   assert.equal(voiceOverlayVariant(hold('stopping'), false), 'recognizing');
   assert.equal(voiceOverlayVariant(hold('error', 'mic_denied'), false), 'error');
-  assert.equal(voiceOverlayVariant(VOICE_UI_INITIAL, false), null);
 });
 
-test('voiceOverlayVariant: swipe-up arms the cancel variant while still pressed', () => {
+test('voiceOverlayVariant: swipe-up arms cancel during both preparing and recording', () => {
+  const preparing: VoiceUiState = { phase: 'connecting', mode: 'hold', errorCode: null, keptText: false };
   const recording: VoiceUiState = { phase: 'recording', mode: 'hold', errorCode: null, keptText: false };
+  assert.equal(voiceOverlayVariant(VOICE_UI_INITIAL, true, true), 'cancel');
+  assert.equal(voiceOverlayVariant(preparing, true), 'cancel');
   assert.equal(voiceOverlayVariant(recording, true), 'cancel');
   assert.equal(voiceOverlayVariant(recording, false), 'recording');
 });

@@ -7,17 +7,27 @@
  *  - a press shorter than HOLD_MIN_MS is an accidental tap, not a message;
  *    the same short press is also how keyboard/screen-reader users toggle
  *    recording (a11y fallback), so the SCREEN decides what a tap means.
+ *  - on the dual-purpose mic icon, HOLD_START_DELAY_MS distinguishes a mode
+ *    toggle tap from a hold; on the dedicated wide "Hold to talk" bar,
+ *    HOLD_DEDICATED_START_DELAY_MS starts capture much sooner while still
+ *    ignoring micro-taps.
  *  - dragging up past HOLD_CANCEL_DISTANCE arms "release to cancel".
  *    Re-arming on the way back down uses a smaller threshold (hysteresis) so
  *    the state does not flicker while the finger hovers near the line.
  */
 
-/** Sustained-press gate: a quick tap must never start the microphone. */
-export const HOLD_START_DELAY_MS = 180;
+/** Sustained-press gate on the dual-purpose icon button (tap = switch mode). */
+export const HOLD_START_DELAY_MS = 120;
+/** Faster activation on the dedicated "Hold to talk" bar while ignoring synthetic/accidental taps. */
+export const HOLD_DEDICATED_START_DELAY_MS = 85;
 export const HOLD_MIN_MS = 400;
 export const HOLD_CANCEL_DISTANCE_PX = 80;
 /** Re-arm band: travel must fall back below this before cancel disarms. */
 export const HOLD_CANCEL_DISARM_PX = 56;
+
+export function holdStartDelayMs(variant: 'icon' | 'hold'): number {
+  return variant === 'hold' ? HOLD_DEDICATED_START_DELAY_MS : HOLD_START_DELAY_MS;
+}
 
 export interface HoldTravelInput {
   /** Pointer Y at press time (clientY). */

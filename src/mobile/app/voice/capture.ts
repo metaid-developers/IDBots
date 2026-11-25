@@ -1,25 +1,24 @@
 /**
- * Microphone capture controller (voice P0, subtask #10) — the only module
- * that touches browser audio APIs directly.
+ * Microphone capture controller (voice P0/P1) — the only module that touches
+ * browser audio APIs directly.
  *
- * iOS Safari compatibility path (documented decisions):
- *  1. The AudioContext is created INSIDE the user gesture (tap handler) —
- *     Safari refuses to start audio outside a gesture.
- *  2. We request `new AudioContext({ sampleRate: 16000 })`. Safari 14.1+
- *     honors the option; if the context still reports another rate (older
- *     iOS quirks), pcm.ts linearly downsamples to the 16 kHz wire contract.
- *  3. Interruption (lock screen, phone call, app switch): iOS suspends the
+ * iOS Safari & Android WebView fast-path and compatibility decisions:
+ *  1. AudioContext creation / resume happens synchronously at the top of the
+ *     user gesture (BEFORE awaiting `getUserMedia`), running `addModule` in
+ *     parallel with `getUserMedia` so cold startup latency is overlapped and
+ *     iOS gesture activation never expires across an await boundary.
+ *  2. Warm reuse: once an AudioContext + `pcm-capture` worklet module has been
+ *     initialized (via `VoiceCapture.warmup()` or the first press), `stop()`
+ *     immediately stops all `MediaStream` tracks (turning off the OS mic
+ *     indicator right away) while suspending — not destroying — the warm
+ *     AudioContext so subsequent presses skip worklet loading completely.
+ *  3. We request `new AudioContext({ sampleRate: 16000 })`. If the context
+ *     negotiates another rate, `pcm.ts` linearly downsamples to 16 kHz.
+ *  4. Interruption (lock screen, phone call, app switch): iOS suspends the
  *     context ('interrupted'/'suspended'). We report `onInterrupted` and the
- *     session layer finalizes gracefully — PCM flush + `stop` frame — so the
- *     text recognized so far lands in the draft instead of being lost. A web
- *     page CANNOT keep recording on a locked screen; the honest guarantee is
- *     "no data loss on interruption", not "recording continues while locked".
- *  4. Permission: getUserMedia inside the same gesture; NotAllowedError maps
- *     to the mic_denied copy with a settings hint. We deliberately do NOT
- *     arm a timeout while the system permission dialog is open — killing the
- *     session under an unanswered dialog would be worse UX.
- *  5. Old iOS (< 14.1, no AudioWorklet): `isVoiceCaptureSupported()` gates
- *     the button; tapping shows the degrade hint instead of failing silently.
+ *     session layer finalizes gracefully so recognized words are preserved.
+ *  5. Permission: `NotAllowedError` maps to `mic_denied`; we never arm a
+ *     timeout while the system permission dialog may still be open.
  */
 
 import { PcmChunker, TARGET_SAMPLE_RATE } from './pcm';
@@ -34,8 +33,8 @@ export interface VoiceCaptureEvents {
   onError: (code: 'mic_denied' | 'mic_unavailable' | 'audio_context_failed') => void;
   /**
    * Live input level in 0..1, derived from the RMS of the same PCM frames the
-   * wire gets (no synthetic animation). Emitted roughly every 30 ms while
-   * recording; consumers draw the hold overlay's volume bars from it.
+   * wire gets (no synthetic animation). Emitted roughly every 32 ms while
+   * recording; consumers draw the hold overlay's volume wave from it.
    */
   onLevel?: (level: number) => void;
 }
@@ -68,6 +67,7 @@ export type VoiceAudioContextLike = {
   createMediaStreamSource(stream: unknown): { connect(node: unknown): void; disconnect(): void };
   destination: unknown;
   resume(): Promise<void>;
+  suspend?: () => Promise<void>;
   close(): Promise<void>;
 };
 
@@ -88,6 +88,7 @@ export interface VoiceCaptureDeps {
 interface ActiveSession {
   stream: MediaStream;
   context: VoiceAudioContextLike;
+  sharedContext: boolean;
   source: { connect(node: unknown): void; disconnect(): void };
   workletNode: { port: { onmessage: ((event: { data: Float32Array }) => void) | null }; disconnect(): void };
   chunker: PcmChunker;
@@ -98,19 +99,96 @@ interface ActiveSession {
 
 const DEFAULT_WORKLET_URL = new URL('./pcm-capture-processor.js', import.meta.url).toString();
 
+let warmContext: VoiceAudioContextLike | null = null;
+let warmWorkletPromise: Promise<void> | null = null;
+let warmContextInUse = false;
+let micPermissionGrantedCache = false;
+
+export function isMicPermissionKnownGranted(): boolean {
+  return micPermissionGrantedCache;
+}
+
+export function markMicPermissionGranted(): void {
+  micPermissionGrantedCache = true;
+}
+
+/**
+ * Best-effort non-prompting permission check so returning users get parallel
+ * ASR socket dialing on their very first press after loading the page.
+ */
+export function probeMicPermission(): void {
+  if (micPermissionGrantedCache || typeof navigator === 'undefined') return;
+  const permissions = (navigator as unknown as {
+    permissions?: {
+      query?: (desc: { name: string }) => Promise<{ state?: string; onchange?: (() => void) | null }>;
+    };
+  }).permissions;
+  if (typeof permissions?.query !== 'function') return;
+  void permissions
+    .query({ name: 'microphone' })
+    .then((status) => {
+      if (status?.state === 'granted') micPermissionGrantedCache = true;
+      else if (status?.state === 'denied') micPermissionGrantedCache = false;
+      if (status && 'onchange' in status) {
+        status.onchange = () => {
+          micPermissionGrantedCache = status.state === 'granted';
+        };
+      }
+    })
+    .catch(() => undefined);
+}
+
+export function resetVoiceWarmStateForTests(): void {
+  micPermissionGrantedCache = false;
+  warmContextInUse = false;
+  warmWorkletPromise = null;
+  if (warmContext) {
+    void warmContext.close().catch(() => undefined);
+    warmContext = null;
+  }
+}
+
+function ensureWarmAudioContext(resumeNow: boolean): {
+  context: VoiceAudioContextLike;
+  ready: Promise<void>;
+} {
+  const Ctor = globalThis.AudioContext as unknown as VoiceAudioContextConstructor;
+  if (!warmContext || warmContext.state === 'closed') {
+    const ctx = new Ctor({ sampleRate: TARGET_SAMPLE_RATE });
+    warmContext = ctx;
+    warmWorkletPromise = ctx.audioWorklet.addModule(DEFAULT_WORKLET_URL).catch((err) => {
+      if (warmContext === ctx) {
+        warmContext = null;
+        warmWorkletPromise = null;
+      }
+      void ctx.close().catch(() => undefined);
+      throw err;
+    });
+  }
+  const ctx = warmContext;
+  const ready = warmWorkletPromise!;
+  if (resumeNow && ctx.state !== 'running') {
+    void ctx.resume().catch(() => undefined);
+  }
+  return { context: ctx, ready };
+}
+
 export class VoiceCapture {
   private active: ActiveSession | null = null;
   private readonly deps: VoiceCaptureDeps;
+  private readonly canShareWarmContext: boolean;
+  private readonly usesDefaultGetUserMedia: boolean;
 
   constructor(
     private readonly events: VoiceCaptureEvents,
     deps?: Partial<VoiceCaptureDeps>,
   ) {
     const nav = navigator as { mediaDevices?: { getUserMedia?: VoiceCaptureDeps['getUserMedia'] } };
+    this.usesDefaultGetUserMedia = !deps?.getUserMedia;
+    this.canShareWarmContext =
+      !deps?.AudioContextCtor && !deps?.workletUrl && !deps?.createWorkletNode;
     this.deps = {
       getUserMedia: deps?.getUserMedia ?? nav.mediaDevices!.getUserMedia.bind(nav.mediaDevices),
-      // DOM lib's AudioContext has handler signatures TS can't structurally
-      // unify with our narrow shape — the unknown cast is the sanctioned seam.
       AudioContextCtor:
         deps?.AudioContextCtor ?? (globalThis.AudioContext as unknown as VoiceAudioContextConstructor),
       workletUrl: deps?.workletUrl ?? DEFAULT_WORKLET_URL,
@@ -120,6 +198,30 @@ export class VoiceCapture {
 
   static supported(): boolean {
     return isVoiceCaptureSupported();
+  }
+
+  /**
+   * Pre-initializes the shared AudioContext and loads the AudioWorklet module
+   * without touching `getUserMedia` (never triggers a mic prompt or OS mic dot).
+   * Call inside a user gesture such as switching to voice mode or pointerdown.
+   */
+  static warmup(options: { resume?: boolean } = {}): void {
+    probeMicPermission();
+    if (!isVoiceCaptureSupported() || typeof globalThis.AudioContext !== 'function') return;
+    try {
+      const { context, ready } = ensureWarmAudioContext(options.resume === true);
+      if (options.resume !== true) {
+        void ready
+          .then(() => {
+            if (!warmContextInUse && context.state === 'running' && typeof context.suspend === 'function') {
+              void context.suspend().catch(() => undefined);
+            }
+          })
+          .catch(() => undefined);
+      }
+    } catch {
+      // Warmup is strictly opportunistic; start() handles real errors.
+    }
   }
 
   /** Real rate the context negotiated (wire stays 16 kHz either way). */
@@ -132,11 +234,47 @@ export class VoiceCapture {
   }
 
   /**
-   * MUST be called synchronously inside the tap handler chain. Resolves once
+   * MUST be called synchronously inside the gesture/timer chain. Resolves once
    * PCM is flowing; rejects with a typed capture error otherwise.
    */
   async start(): Promise<{ sampleRate: number }> {
     if (this.active) return { sampleRate: this.actualSampleRate };
+
+    // Start/prepare the AudioContext synchronously BEFORE awaiting getUserMedia
+    // so worklet loading overlaps mic hardware startup AND iOS gesture
+    // activation stays bound to the user press.
+    let sharedContext = false;
+    let pendingContext: VoiceAudioContextLike | null = null;
+    let contextError: unknown = null;
+    let workletReady: Promise<void> | null = null;
+
+    if (this.canShareWarmContext && !warmContextInUse && typeof this.deps.AudioContextCtor === 'function') {
+      try {
+        const warm = ensureWarmAudioContext(true);
+        pendingContext = warm.context;
+        sharedContext = true;
+        warmContextInUse = true;
+        workletReady = warm.ready.catch((err) => {
+          contextError = err;
+        });
+      } catch (error) {
+        contextError = error;
+      }
+    } else {
+      try {
+        const ctx = new this.deps.AudioContextCtor({ sampleRate: TARGET_SAMPLE_RATE });
+        pendingContext = ctx;
+        if (ctx.state !== 'running') {
+          void ctx.resume().catch(() => undefined);
+        }
+        workletReady = ctx.audioWorklet.addModule(this.deps.workletUrl!).catch((err) => {
+          contextError = err;
+        });
+      } catch (error) {
+        contextError = error;
+      }
+    }
+
     let stream: MediaStream;
     try {
       stream = await this.deps.getUserMedia({
@@ -147,29 +285,55 @@ export class VoiceCapture {
           autoGainControl: true,
         },
       });
+      if (this.usesDefaultGetUserMedia) markMicPermissionGranted();
     } catch (error) {
+      if (sharedContext) {
+        warmContextInUse = false;
+        if (pendingContext && typeof pendingContext.suspend === 'function') {
+          void pendingContext.suspend().catch(() => undefined);
+        }
+      } else if (pendingContext) {
+        void pendingContext.close().catch(() => undefined);
+      }
       const name = (error as { name?: string })?.name;
       if (name === 'NotAllowedError' || name === 'SecurityError') this.events.onError('mic_denied');
       else this.events.onError('mic_unavailable');
       throw error;
     }
 
-    let context: VoiceAudioContextLike;
+    if (workletReady) await workletReady;
+    if (contextError || !pendingContext) {
+      if (sharedContext) warmContextInUse = false;
+      for (const track of stream.getTracks()) track.stop();
+      this.events.onError('audio_context_failed');
+      throw contextError ?? new Error('AudioContext failed to initialize');
+    }
+
+    const context = pendingContext;
+    let source: ActiveSession['source'];
+    let workletNode: ActiveSession['workletNode'];
     try {
-      context = new this.deps.AudioContextCtor({ sampleRate: TARGET_SAMPLE_RATE });
-      await context.audioWorklet.addModule(this.deps.workletUrl!);
+      source = context.createMediaStreamSource(stream);
+      workletNode = this.deps.createWorkletNode!(context);
     } catch (error) {
+      if (sharedContext) {
+        warmContextInUse = false;
+        if (warmContext === context) {
+          warmContext = null;
+          warmWorkletPromise = null;
+        }
+      }
+      void context.close().catch(() => undefined);
       for (const track of stream.getTracks()) track.stop();
       this.events.onError('audio_context_failed');
       throw error;
     }
 
     const chunker = new PcmChunker(context.sampleRate);
-    const source = context.createMediaStreamSource(stream);
-    const workletNode = this.deps.createWorkletNode!(context);
     const session: ActiveSession = {
       stream,
       context,
+      sharedContext,
       source,
       workletNode,
       chunker,
@@ -178,8 +342,8 @@ export class VoiceCapture {
     };
     workletNode.port.onmessage = (event) => {
       const frame = event.data;
-      // Level first: the chunker may hold frames back until a chunk is full,
-      // but the overlay should react immediately.
+      // Level first: the chunker holds frames back until a wire chunk is full,
+      // while the overlay waveform reacts every ~32 ms.
       if (this.events.onLevel) {
         session.levelPeak = Math.max(session.levelPeak, frameRms(frame));
         session.levelFrames += 1;
@@ -193,22 +357,22 @@ export class VoiceCapture {
     };
     source.connect(workletNode);
 
-    context.onstatechange = () => {
-      if (context.state !== 'running' && this.active) this.events.onInterrupted();
-    };
     if (context.state !== 'running') {
       try {
         await context.resume();
       } catch {
-        // iOS may resume asynchronously after the gesture; statechange covers it.
+        // iOS may resume asynchronously right after the gesture; statechange covers it.
       }
     }
+    context.onstatechange = () => {
+      if (context.state !== 'running' && this.active === session) this.events.onInterrupted();
+    };
 
     this.active = session;
     return { sampleRate: context.sampleRate };
   }
 
-  /** Flushes remaining PCM and tears everything down. Returns the tail chunk. */
+  /** Flushes remaining PCM and releases mic hardware immediately. Returns the tail chunk. */
   stop(): Uint8Array | null {
     const session = this.active;
     if (!session) return null;
@@ -223,13 +387,24 @@ export class VoiceCapture {
       // node already disconnected
     }
     for (const track of session.stream.getTracks()) track.stop();
-    void session.context.close().catch(() => undefined);
+    if (session.sharedContext) {
+      warmContextInUse = false;
+      if (typeof session.context.suspend === 'function') {
+        void session.context.suspend().catch(() => undefined);
+      } else {
+        if (warmContext === session.context) {
+          warmContext = null;
+          warmWorkletPromise = null;
+        }
+        void session.context.close().catch(() => undefined);
+      }
+    } else {
+      void session.context.close().catch(() => undefined);
+    }
     return tail;
   }
 
   private createRealWorkletNode(context: VoiceAudioContextLike): ActiveSession['workletNode'] {
-    // Minimal structural wrapper around AudioWorkletNode: we only rely on
-    // port.onmessage + disconnect, so the fake contexts in tests work too.
     const node = new (globalThis as unknown as {
       AudioWorkletNode: new (
         ctx: VoiceAudioContextLike,

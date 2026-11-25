@@ -2,32 +2,16 @@
  * useVoiceInput — React glue for the mobile voice input (voice P1).
  *
  * Thin wrapper around VoiceSession (voiceSession.ts): the React layer owns
- * only the reducer state, the elapsed ticker mirror, the live level ref and
- * the recognized-text mirror; capture/socket/timers/text-merge live in the
+ * only the reducer state, the elapsed ticker mirror, the live level ref, the
+ * recognized-text mirror, warmup, and the ready-haptic trigger; capture,
+ * socket, pre-open audio buffering, timers, and text-merge live in the
  * imperative core so they are testable without a DOM.
- *
- * Two interaction modes:
- *  - `startHold()` / `endHold()` / `cancelHold()` — hold to talk. The
- *    composer draft is NEVER read for writing: partials stay in the session,
- *    and the finished transcript leaves through `onFinalText` exactly once
- *    (ChatScreen sends it as a new message with draft preservation). Release without a session ends
- *    in `cancelHold()`, which discards everything.
- *  - `start()` / `stop()` — the voice-P0 tap toggle, kept as the
- *    accessibility fallback (keyboard / screen reader). This path keeps the
- *    streaming backfill into the composer draft through `onDraftReplace`.
- *
- * `commitToDraft()` is the only hold-mode path that may write the composer:
- * it backs the error card's "put into input box" button, so a failed
- * recognition can never silently lose its words.
- *
- * `levelRef` is a mutable 0..1 level driven by the PCM frame RMS in
- * capture.ts. The overlay polls it with requestAnimationFrame, so audio
- * levels never re-render the chat screen.
  */
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
-import { VoiceCapture } from './capture';
+import { probeMicPermission, VoiceCapture } from './capture';
+import { triggerVoiceReadyHaptic, type VoiceHapticSink } from './voiceHaptics';
 import { reduceVoiceUi, VOICE_UI_INITIAL, type VoiceUiEvent, type VoiceUiState } from './voiceButtonState';
 import { VoiceSession } from './voiceSession';
 
@@ -38,6 +22,9 @@ export interface UseVoiceInputOptions {
   getDraftAndCaret: () => { draft: string; caret: number | null } | null;
   /** Hold mode: finished transcript, emitted once after `asr.done`. */
   onFinalText?: (text: string) => void;
+  /** Optional hook notified at the exact ready-to-speak transition. */
+  onReady?: () => void;
+  hapticSink?: VoiceHapticSink | null;
   urlOverride?: string;
 }
 
@@ -48,6 +35,8 @@ export interface UseVoiceInputResult {
   recognizedText: string;
   /** 0..1 input level from PCM RMS; read it in rAF, never in render loops. */
   levelRef: MutableRefObject<number>;
+  /** Pre-warms AudioWorklet / permission state inside a user gesture. */
+  warmup: (options?: { resume?: boolean }) => void;
   /** a11y fallback: tap toggles recording (backfills the draft). */
   start: () => void;
   stop: () => void;
@@ -84,8 +73,16 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     levelRef.current = 0;
   }, []);
 
-  // Unmount safety: never leak a mic or socket.
-  useEffect(() => dispose, [dispose]);
+  // Probe permission state once on mount (never prompts) so returning users
+  // get parallel WebSocket dialing on their very first press; clean up on unmount.
+  useEffect(() => {
+    probeMicPermission();
+    return dispose;
+  }, [dispose]);
+
+  const warmup = useCallback((warmOpts?: { resume?: boolean }) => {
+    VoiceCapture.warmup(warmOpts);
+  }, []);
 
   const begin = useCallback(
     (mode: 'hold' | 'tap'): void => {
@@ -120,6 +117,10 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
               busyRef.current = false;
             }
             dispatch(event);
+          },
+          onReady: () => {
+            triggerVoiceReadyHaptic(optionsRef.current.hapticSink);
+            optionsRef.current.onReady?.();
           },
           onElapsed: (sec) => setElapsedSec(sec),
           onLevel: (level) => {
@@ -179,6 +180,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       elapsedSec,
       recognizedText,
       levelRef,
+      warmup,
       start,
       stop,
       startHold,
@@ -187,6 +189,18 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       commitToDraft,
       dismissError,
     }),
-    [state, elapsedSec, recognizedText, start, stop, startHold, endHold, cancelHold, commitToDraft, dismissError],
+    [
+      state,
+      elapsedSec,
+      recognizedText,
+      warmup,
+      start,
+      stop,
+      startHold,
+      endHold,
+      cancelHold,
+      commitToDraft,
+      dismissError,
+    ],
   );
 }

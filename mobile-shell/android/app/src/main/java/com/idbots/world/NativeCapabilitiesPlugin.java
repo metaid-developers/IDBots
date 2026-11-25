@@ -1,13 +1,20 @@
 package com.idbots.world;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.os.VibratorManager;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.provider.Settings;
 import android.util.Base64;
+import android.view.HapticFeedbackConstants;
+import android.view.View;
 import android.view.WindowManager;
 import androidx.activity.result.ActivityResult;
 import androidx.core.content.FileProvider;
@@ -280,6 +287,57 @@ public class NativeCapabilitiesPlugin extends Plugin {
         } catch (android.content.ActivityNotFoundException error) {
             call.reject("System notification settings are unavailable", "UNAVAILABLE", error);
         }
+    }
+
+    @PluginMethod
+    public void haptic(PluginCall call) {
+        String rawStyle = call.getString("style", "medium");
+        String style = rawStyle == null ? "medium" : rawStyle;
+        if ("prepare".equals(style)) {
+            call.resolve();
+            return;
+        }
+        boolean vibrated = false;
+        try {
+            Vibrator vibrator = resolveVibrator();
+            if (vibrator != null && vibrator.hasVibrator()) {
+                boolean hasAmplitude = vibrator.hasAmplitudeControl();
+                VibrationEffect effect;
+                if ("ready".equals(style) || "heavy".equals(style)) {
+                    effect = VibrationEffect.createOneShot(38L, hasAmplitude ? 225 : VibrationEffect.DEFAULT_AMPLITUDE);
+                } else if ("light".equals(style)) {
+                    effect = VibrationEffect.createOneShot(12L, hasAmplitude ? 110 : VibrationEffect.DEFAULT_AMPLITUDE);
+                } else {
+                    effect = VibrationEffect.createOneShot(22L, VibrationEffect.DEFAULT_AMPLITUDE);
+                }
+                vibrator.vibrate(effect);
+                vibrated = true;
+            }
+        } catch (Exception ignored) {
+        }
+        if (!vibrated && getBridge() != null && getBridge().getActivity() != null) {
+            final int constant = "light".equals(style)
+                ? HapticFeedbackConstants.CLOCK_TICK
+                : HapticFeedbackConstants.LONG_PRESS;
+            getBridge().getActivity().runOnUiThread(() -> {
+                View view = getBridge().getWebView();
+                if (view != null) {
+                    view.performHapticFeedback(constant);
+                }
+            });
+        }
+        call.resolve();
+    }
+
+    @SuppressWarnings("deprecation")
+    private Vibrator resolveVibrator() {
+        Context context = getContext();
+        if (context == null) return null;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            VibratorManager manager = (VibratorManager) context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+            return manager != null ? manager.getDefaultVibrator() : null;
+        }
+        return (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
     }
 
     private JSObject describe(Uri uri, boolean temporary) throws Exception {

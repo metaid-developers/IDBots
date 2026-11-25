@@ -1,14 +1,16 @@
 /**
  * VoiceButton + VoiceErrorBanner + hold gesture host (voice P1).
  *
- * Interaction: HOLD TO TALK. Pointerdown arms a hold, and only a sustained
- * press starts the microphone; a short tap never requests mic permission.
- * Pointerup sends the transcript as a new message, swiping up arms cancel. The bottom
- * overlay (VoiceOverlay) rises over the composer while the finger is down.
- * In the icon variant a short press switches composer modes; in the wide
- * "hold to talk" variant it is only an accidental press. Keyboard and
- * screen-reader activation switches modes on the icon, or toggles recording
- * on the wide button as the accessibility fallback.
+ * Interaction: HOLD TO TALK. Pointerdown immediately shows a Preparing state
+ * on the hold surface and pre-warms audio/haptics without touching the mic;
+ * only a sustained press starts microphone capture, so a short tap never
+ * requests mic permission. Once BOTH microphone capture and ASR (`asr.open`)
+ * are ready, the phone vibrates and the overlay transitions into the live
+ * Listening state. Pointerup sends the transcript as a new message, swiping up
+ * arms cancel. In the icon variant a short press switches composer modes; in
+ * the wide "hold to talk" variant it is only an accidental press. Keyboard and
+ * screen-reader activation switches modes on the icon, or toggles recording on
+ * the wide button as the accessibility fallback.
  *
  * iOS guard set (each one answers a concrete failure; see the inline notes):
  *  1. `touch-action: none` — without it iOS claims the gesture for scrolling
@@ -38,13 +40,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, MutableRefObject, PointerEvent as ReactPointerEvent } from 'react';
 import { t } from '../../i18n';
 import {
-  HOLD_START_DELAY_MS,
   holdCancelArmed,
+  holdStartDelayMs,
   resolveHoldRelease,
   type HoldCancelReason,
 } from './holdToSend';
 import { VoiceOverlay, formatElapsed } from './VoiceOverlay';
 import { voiceErrorCopyKey } from './voiceCopy';
+import { prepareVoiceHaptic, triggerVoiceCancelHaptic } from './voiceHaptics';
 import { voicePhaseTestid, type VoiceUiState } from './voiceButtonState';
 
 export { voiceErrorCopyKey } from './voiceCopy';
@@ -60,6 +63,10 @@ export interface VoiceButtonProps {
   levelRef: MutableRefObject<number>;
   /** Keyboard inset (px) forwarded to the overlay. */
   bottomInset?: number;
+  /** Optional controlled override for the initial press-hold preparing window (SSR/tests). */
+  pressingHold?: boolean;
+  /** Pre-warms AudioWorklet / permission cache inside the user gesture without touching mic. */
+  onWarmup?: (options?: { resume?: boolean }) => void;
   /** Wide-button keyboard / screen-reader recording toggle. */
   onStart: () => void;
   onStop: () => void;
@@ -119,6 +126,8 @@ export function VoiceButton({
   recognizedText,
   levelRef,
   bottomInset = 0,
+  pressingHold: pressingHoldProp,
+  onWarmup,
   onStart,
   onStop,
   onStartHold,
@@ -130,6 +139,7 @@ export function VoiceButton({
   onToggleMode,
 }: VoiceButtonProps): JSX.Element {
   const [cancelArmed, setCancelArmed] = useState(false);
+  const [isPressingHold, setIsPressingHold] = useState(false);
   const holdRef = useRef(null as HoldState | null);
   // Started holds and cancelled gestures suppress their synthesized click;
   // an unstarted icon tap uses that click to switch modes on the same target.
@@ -145,6 +155,7 @@ export function VoiceButton({
       holdActivationRef.current = null;
     }
     holdRef.current = null;
+    setIsPressingHold(false);
     setCancelArmed(false);
     setPageGestureLock(false);
   }, []);
@@ -170,6 +181,10 @@ export function VoiceButton({
     } catch {
       // Older WebKit may refuse capture; the gesture still works, just weaker.
     }
+    // Pre-warm the Taptic Engine + AudioWorklet inside the synchronous gesture
+    // without touching getUserMedia (no premature mic prompt or buzz).
+    prepareVoiceHaptic();
+    onWarmup?.({ resume: variant === 'hold' });
     holdRef.current = {
       pointerId: event.pointerId,
       startY: event.clientY,
@@ -179,6 +194,9 @@ export function VoiceButton({
       sessionStarted: false,
     };
     setCancelArmed(false);
+    // Dedicated hold bar shows Preparing immediately at 0 ms; the dual-purpose
+    // icon waits for holdStartDelayMs('icon') so a mode-toggle tap never flashes.
+    if (variant === 'hold') setIsPressingHold(true);
     setPageGestureLock(true);
     const pointerId = event.pointerId;
     holdActivationRef.current = setTimeout(() => {
@@ -186,7 +204,7 @@ export function VoiceButton({
       if (!hold?.active || hold.pointerId !== pointerId) return;
       hold.sessionStarted = true;
       onStartHold();
-    }, HOLD_START_DELAY_MS);
+    }, holdStartDelayMs(variant));
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>): void => {
@@ -196,6 +214,7 @@ export function VoiceButton({
     if (armed !== hold.armed) {
       hold.armed = armed;
       setCancelArmed(armed);
+      if (armed) triggerVoiceCancelHaptic();
     }
   };
 
@@ -264,8 +283,10 @@ export function VoiceButton({
     else if (state.phase === 'idle') onStart();
   };
 
+  const effectivePressingHold = Boolean(pressingHoldProp) || isPressingHold;
   const recording = state.phase === 'recording';
   const inFlight = state.phase === 'requestingMic' || state.phase === 'connecting';
+  const preparing = (effectivePressingHold && variant === 'hold') || inFlight;
   const stopping = state.phase === 'stopping';
   const errored = state.phase === 'error';
 
@@ -273,11 +294,13 @@ export function VoiceButton({
     ? t('mobile.chat.voice.errorDismiss')
     : recording
       ? t(variant === 'hold' ? 'mobile.chat.voice.holdReleaseToSend' : 'mobile.chat.voice.stop')
-      : stopping && variant === 'hold'
-        ? t('mobile.chat.voice.recognizing')
-        : variant === 'hold'
-          ? t('mobile.chat.voice.holdToTalk')
-          : t('mobile.chat.voice.start');
+      : preparing && variant === 'hold'
+        ? t('mobile.chat.voice.preparing')
+        : stopping && variant === 'hold'
+          ? t('mobile.chat.voice.recognizing')
+          : variant === 'hold'
+            ? t('mobile.chat.voice.holdToTalk')
+            : t('mobile.chat.voice.start');
 
   return (
     <>
@@ -287,6 +310,7 @@ export function VoiceButton({
         data-variant={variant}
         aria-label={label}
         aria-pressed={recording}
+        aria-busy={preparing || undefined}
         style={PRESS_STYLE}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -298,11 +322,17 @@ export function VoiceButton({
           errored
             ? 'text-[var(--twin-warning)]'
             : recording
-              ? 'twin-icon-button-danger animate-pulse motion-reduce:animate-none'
-              : stopping
-                ? 'bg-[var(--bg-hover)] text-[var(--text-secondary)]'
-                : ''
-        } ${inFlight ? 'opacity-70' : ''}`}
+              ? variant === 'hold'
+                ? 'twin-voice-hold-button-recording'
+                : 'twin-icon-button-danger animate-pulse motion-reduce:animate-none'
+              : preparing
+                ? variant === 'hold'
+                  ? 'twin-voice-hold-button-preparing'
+                  : 'opacity-70'
+                : stopping
+                  ? 'bg-[var(--bg-hover)] text-[var(--text-secondary)]'
+                  : ''
+        }`}
       >
         {variant === 'hold' ? (
           <span className="pointer-events-none">{label}</span>
@@ -322,6 +352,7 @@ export function VoiceButton({
         text={recognizedText}
         levelRef={levelRef}
         cancelArmed={cancelArmed}
+        pressingHold={effectivePressingHold}
         bottomInset={bottomInset}
         onSalvage={onSalvage}
         onDismissError={onDismissError}

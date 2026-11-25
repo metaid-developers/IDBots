@@ -4,38 +4,22 @@
  * tests/mobileVoiceButtonState.test.ts.
  *
  * Interaction decision (2026-11-10, owner explicitly overrode voice P0):
- * HOLD TO TALK — pointerdown starts recording, pointerup sends the final
- * transcript as a new message. Voice P0 shipped tap-toggle and documented a
- * rejection of hold-to-talk; that rejection is overturned here, and the three
- * reasons it named are answered in code rather than waved away:
- *
- *  1. iOS long-press raises the callout/context menu.
- *     Fixed in VoiceButton: `-webkit-touch-callout: none` plus a
- *     `contextmenu` preventDefault while a hold is live.
- *  2. Scrolling fires touchcancel and aborts the utterance mid-word.
- *     Fixed in VoiceButton: `touch-action: none` on the press surface,
- *     Pointer Events with `setPointerCapture` so the gesture keeps its
- *     target even when the finger leaves the button, and a non-passive
- *     `touchmove` preventDefault for the duration of the hold.
- *  3. Hold-to-talk is worse for accessibility.
- *     The icon's click/Enter/Space path switches composer modes, while the
- *     wide "hold to talk" button's keyboard / screen-reader click toggles
- *     recording. Pointer taps never start a recording accidentally.
- *
- * `mode` records which path started the current session: hold sessions render
- * the bottom overlay and never touch the composer draft; tap sessions keep the
- * voice-P0 backfill-into-draft behaviour (the accessibility fallback).
+ * HOLD TO TALK — pointerdown immediately shows a Preparing UI while mic + ASR
+ * initialize; once BOTH microphone capture and the ASR session are ready, the
+ * phone vibrates and the overlay transitions into the live Listening state
+ * with a voice-reactive waveform. Pointerup sends the final transcript as a
+ * new message.
  */
 
 export type VoicePhase =
-  | 'idle' // button shows mic icon, press to start
+  | 'idle' // button shows mic icon / hold bar, press to start
   | 'requestingMic' // getUserMedia in flight (system permission dialog may show)
-  | 'connecting' // mic granted, WebSocket dialing + awaiting `ready`
-  | 'recording' // streaming PCM, partials may arrive
-  | 'stopping' // user released; flushing PCM + awaiting final/end (recognizing)
+  | 'connecting' // mic granted, WebSocket dialing + awaiting `asr.open`
+  | 'recording' // BOTH mic capture and ASR session ready; streaming PCM live
+  | 'stopping' // user released; flushing PCM + awaiting final/done (recognizing)
   | 'error'; // terminal for this attempt; user dismisses or salvages the text
 
-/** Which interaction started the session (see the header comment). */
+/** Which interaction started the session. */
 export type VoiceMode = 'hold' | 'tap';
 
 /** Client-side error codes (server codes arrive as `server:<code>`). */
@@ -187,20 +171,27 @@ export function voicePhaseTestid(state: VoiceUiState): string {
 }
 
 /** Overlay variant for the current phase; null = no overlay (idle / tap mode). */
-export type VoiceOverlayVariant = 'recording' | 'recognizing' | 'error';
+export type VoiceOverlayVariant = 'preparing' | 'recording' | 'recognizing' | 'cancel' | 'error';
 
 export function voiceOverlayVariant(
   state: VoiceUiState,
   cancelArmed: boolean,
-): 'recording' | 'recognizing' | 'cancel' | 'error' | null {
+  pressingHold = false,
+): VoiceOverlayVariant | null {
   if (state.mode !== 'hold') return null;
   if (state.phase === 'error') return 'error';
   if (state.phase === 'stopping') return 'recognizing';
-  if (state.phase === 'requestingMic' || state.phase === 'connecting' || state.phase === 'recording') {
-    // The cancel affordance wins visually the moment the finger crosses the
-    // threshold, and while the pointer is still down it replaces the live
-    // waveform with the release-to-cancel card.
+  if (state.phase === 'recording') {
     return cancelArmed ? 'cancel' : 'recording';
+  }
+  if (
+    state.phase === 'requestingMic' ||
+    state.phase === 'connecting' ||
+    (state.phase === 'idle' && pressingHold)
+  ) {
+    // Show the explicit Preparing UI immediately on press until BOTH the mic
+    // and ASR upstream are ready; swiping up still arms cancel right away.
+    return cancelArmed ? 'cancel' : 'preparing';
   }
   return null;
 }

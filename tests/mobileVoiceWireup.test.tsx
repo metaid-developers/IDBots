@@ -14,7 +14,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { VoiceButton, VoiceErrorBanner, voiceErrorCopyKey } from '../src/mobile/app/voice/VoiceButton.tsx';
-import { VoiceOverlay } from '../src/mobile/app/voice/VoiceOverlay.tsx';
+import { BAR_COUNT, levelBarHeights, VoiceOverlay } from '../src/mobile/app/voice/VoiceOverlay.tsx';
 import { VOICE_UI_INITIAL, type VoiceUiState } from '../src/mobile/app/voice/voiceButtonState.ts';
 import { mobileI18n } from '../src/mobile/i18n.ts';
 
@@ -85,23 +85,65 @@ test('VoiceButton SSR: error phase keeps the button visible for re-entry', () =>
 // Hold overlay SSR: three states + error card, each with a stable testid
 // ---------------------------------------------------------------------------
 
-test('hold overlay: recording state shows live text, real level bars, timer and both hints', () => {
+test('hold overlay: immediate press and startup phases show Preparing UI telling user to wait for vibration', () => {
+  const immediatePressHtml = renderButton({
+    variant: 'hold',
+    pressingHold: true,
+    state: state({ phase: 'idle', mode: 'hold' }),
+  });
+  assert.match(immediatePressHtml, /data-testid="voice-overlay-preparing"/);
+  assert.match(immediatePressHtml, /data-testid="voice-overlay-preparing-spinner"/);
+  assert.match(immediatePressHtml, /data-testid="voice-overlay-preparing-wave"/);
+  assert.match(immediatePressHtml, /正在准备中…/);
+  assert.match(immediatePressHtml, /请稍候，震动后即可开始说话/);
+  assert.match(immediatePressHtml, /保持按住/);
+  assert.match(immediatePressHtml, /aria-busy="true"/);
+  assert.doesNotMatch(immediatePressHtml, /data-testid="voice-level-bar"/, 'live bars wait for ready state');
+
+  for (const phase of ['requestingMic', 'connecting'] as const) {
+    const html = renderButton({
+      variant: 'hold',
+      state: state({ phase, mode: 'hold' }),
+    });
+    assert.match(html, /data-testid="voice-overlay-preparing"/, phase);
+    assert.match(html, /请稍候，震动后即可开始说话/, phase);
+  }
+});
+
+test('hold overlay: recording state shows live text, symmetric voiceprint wave bars, timer and both hints', () => {
   const html = renderButton({
     state: state({ phase: 'recording', mode: 'hold' }),
     elapsedSec: 5,
     recognizedText: '这是一段实时识别文本',
   });
   assert.match(html, /data-testid="voice-overlay-recording"/);
+  assert.match(html, /正在聆听/);
   assert.match(html, /data-testid="voice-overlay-text"/);
   assert.match(html, /这是一段实时识别文本/);
   assert.match(html, /data-testid="voice-overlay-level"/);
   const bars = html.match(/data-testid="voice-level-bar"/g) ?? [];
-  assert.equal(bars.length, 9, 'the level meter renders its full bar set');
+  assert.equal(bars.length, BAR_COUNT, 'the voiceprint wave renders its full 15-bar set');
   assert.match(html, /data-testid="voice-overlay-timer"/);
   assert.match(html, /5s/);
   assert.match(html, /松开发送/);
   assert.match(html, /上滑取消/);
   assert.match(html, /data-testid="voice-overlay-panel"/);
+});
+
+test('levelBarHeights stays calm on silence and undulates organically across wave phases when speaking', () => {
+  const silentA = levelBarHeights(0, 0);
+  const silentB = levelBarHeights(0, 1.8);
+  assert.equal(silentA.length, BAR_COUNT);
+  assert.deepEqual(silentA, silentB, 'silence never fakes travelling speech motion');
+  assert.ok(silentA.every((h) => h <= 0.2), 'silent baseline stays compact');
+
+  const midPhase0 = levelBarHeights(0.55, 0);
+  const midPhase1 = levelBarHeights(0.55, 1.4);
+  const loudPhase0 = levelBarHeights(0.92, 0);
+  assert.notDeepEqual(midPhase0, midPhase1, 'sustained speech undulates smoothly across phase ticks');
+  for (let i = 0; i < BAR_COUNT; i += 1) {
+    assert.ok(loudPhase0[i]! > midPhase0[i]!, `bar ${i} grows monotonically with voice volume`);
+  }
 });
 
 test('hold overlay: release switches to the recognizing state', () => {
@@ -195,11 +237,13 @@ test('reduced motion turns off the pulse/dot animation', () => {
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
-test('a short tap only switches modes; the microphone starts only after the hold delay', () => {
+test('a short tap only switches modes; the microphone starts only after the variant hold delay', () => {
   const source = readSource('../src/mobile/app/voice/VoiceButton.tsx');
   assert.match(source, /holdActivationRef\.current = setTimeout/);
   assert.match(source, /hold\.sessionStarted = true;\s*onStartHold\(\);/);
-  assert.match(source, /\}, HOLD_START_DELAY_MS\)/);
+  assert.match(source, /\}, holdStartDelayMs\(variant\)\)/);
+  assert.match(source, /prepareVoiceHaptic\(\)/);
+  assert.match(source, /onWarmup\?\.\(\{ resume: variant === 'hold' \}\)/);
   assert.match(source, /sessionStarted: false/);
   assert.match(source, /pointerHandledRef\.current = variant !== 'icon' \|\| decision\.reason !== 'too_short' \|\| sessionStarted/);
 });
@@ -283,6 +327,9 @@ const VOICE_I18N_KEYS = [
   'mobile.chat.voice.errorServer.sessionCap',
   'mobile.chat.voice.errorServer.upstream',
   'mobile.chat.voice.errorServer.generic',
+  'mobile.chat.voice.preparing',
+  'mobile.chat.voice.preparingPlaceholder',
+  'mobile.chat.voice.preparingKeepHolding',
   'mobile.chat.voice.listening',
   'mobile.chat.voice.listeningPlaceholder',
   'mobile.chat.voice.holdReleaseToSend',
@@ -325,6 +372,8 @@ test('ChatScreen wires hold-to-send: final text bypasses the composer and goes t
   assert.match(source, /sendVoiceMessage\(chat, text, \{ blocked: composerBlocked \}\)/, 'new-message hand-off');
   assert.match(source, /pendingCaretRef\.current = caret/, 'caret restore plumbing reused');
   assert.match(source, /<VoiceErrorBanner state=\{voice\.state\} onDismiss=\{voice\.dismissError\} \/>/);
+  assert.match(source, /onWarmup: voice\.warmup/);
+  assert.match(source, /if \(next === 'voice'\) voice\.warmup\(\{ resume: false \}\)/);
   assert.match(source, /onStartHold: voice\.startHold/);
   assert.match(source, /onEndHold: voice\.endHold/);
   assert.match(source, /onCancelHold: voice\.cancelHold/);
