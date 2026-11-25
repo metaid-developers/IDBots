@@ -56,6 +56,8 @@ authoritative table.
 | `CP_ENVIRONMENT` | `staging` or `production` (default `production`) |
 | `CP_HOST_ID` | Optional stable host ID; defaults to a hash of the Docker URL |
 | `CP_HOST_CAPACITY` | Active-tenant capacity (defaults: staging 27, production 58); legacy zero is repaired at startup |
+| `CP_AGENT_LISTEN` / `CP_AGENT_TLS_*_FILE` | Optional VPC-only mTLS listener for remote host agents; all TLS files are required when enabled |
+| `CP_ROLLOUT_DATABASE_URL` | Optional PostgreSQL rollout queue; unset keeps the SQLite queue. User/login/tenant metadata remains in SQLite |
 | `CP_MASTER_KEY` | 32 bytes base64; AES-256-GCM key for gateway secrets, redeem codes, and device push tokens |
 | `CP_DOCKER_URL` | Docker Engine API, e.g. `http://docker-proxy:2375` or `http+unix:///var/run/docker.sock` |
 | `CP_TENANT_IMAGE` | default tenant image tag |

@@ -1,0 +1,24 @@
+# Optional PostgreSQL backend for durable rollout jobs. Apply with compose.yml.
+# No database port is published outside the internal cp-docker network.
+name: idbots
+
+volumes:
+  operations-db-data:
+
+services:
+  operations-db:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: idbots_operations
+      POSTGRES_USER: idbots
+      POSTGRES_PASSWORD: ${OPERATIONS_DB_PASSWORD:?set OPERATIONS_DB_PASSWORD in /etc/idbots/deploy.env}
+    volumes:
+      - operations-db-data:/var/lib/postgresql/data
+    networks:
+      - cp-docker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U idbots -d idbots_operations"]
+      interval: 10s
+      timeout: 5s
+      retries: 12

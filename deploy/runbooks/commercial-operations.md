@@ -81,6 +81,20 @@ Recommended pages are Overview, Tenants, Hosts, Releases, Rollout detail,
 Approvals, and Audit. Reuse the server-side roles; client-side hiding is not an
 authorization boundary.
 
+## PostgreSQL rollout queue and host agents
+
+`CP_ROLLOUT_DATABASE_URL` moves the durable rollout queue to PostgreSQL;
+`compose.operations-db.yml` provides an internal-only database on the same
+operations host. This does not migrate users, login sessions, tenant secrets,
+or tenant metadata out of SQLite. Add `pg_dump` backup/restore acceptance before
+enabling it commercially. The SQL store is exercised with `pg-mem` in the
+repository suite; a real PostgreSQL migration, lock, restart, and restore drill
+remains a staging gate.
+
+Remote host agents use the VPC-only mTLS listener and execute remote preflight,
+container recreation, readiness, and rollback. See `add-host.md` for enrollment,
+credential handling, and the explicit new-user placement/proxy-routing boundary.
+
 ## Safety checks before commercial promotion
 
 - Verify additive migrations and a control-plane backup on a copy first.

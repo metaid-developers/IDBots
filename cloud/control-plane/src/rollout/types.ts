@@ -73,5 +73,6 @@ export interface RolloutStore {
   listPreflightHosts(jobId: string, wave: number): Promise<Array<{ hostId: string; status: string; error: string | null }>>;
   markPreflightHost(jobId: string, hostId: string, wave: number, status: 'ready' | 'failed', error: string | null, now: number): Promise<void>;
   retryFailed(jobId: string): Promise<number>;
+  hasRunningItem(tenantId: string): Promise<boolean>;
   requeueInFlight(): Promise<number>;
 }

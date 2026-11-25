@@ -1,0 +1,10 @@
+# Optional control-plane mTLS listener for remote host agents. Apply together
+# with compose.yml on the control-plane host. AGENT_BIND_IP must be a VPC address.
+name: idbots
+
+services:
+  control-plane:
+    volumes:
+      - /etc/idbots/agent-tls:/etc/idbots/agent-tls:ro
+    ports:
+      - "${AGENT_BIND_IP:?set AGENT_BIND_IP to a VPC address}:9101:9101"

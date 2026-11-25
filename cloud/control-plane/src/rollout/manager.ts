@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { AppContext } from '../context.js';
 import { selectFleetUpgradeTenantIds } from '../services/upgradeSelection.js';
-import { upgradeTenants } from '../services/upgrade.js';
+import { upgradeTenants, type UpgradeResult } from '../services/upgrade.js';
+import { decryptSecret } from '../crypto.js';
+import type { RemoteUpgradeTask } from '../agent/protocol.js';
 import type { RolloutItem, RolloutJobStatus, RolloutJobView, RolloutStore } from './types.js';
 import { assignRolloutWaves, type WaveTenant } from './waves.js';
 
@@ -175,7 +177,7 @@ export class RolloutManager {
         continue;
       }
       try {
-        await this.app.docker.imageInspect(release.tenant_image);
+        await this.preflightImage(host.hostId, release.tenant_image);
         await this.store.markPreflightHost(jobId, host.hostId, view.job.currentWave, 'ready', null, Date.now());
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
@@ -185,6 +187,15 @@ export class RolloutManager {
     }
   }
 
+  private async preflightImage(hostId: string, image: string): Promise<void> {
+    if (this.app.localHostId && hostId !== this.app.localHostId) {
+      if (!this.app.hostAgents) throw new Error(`host agent ${hostId} is unavailable`);
+      await this.app.hostAgents.preflight(hostId, image);
+      return;
+    }
+    await this.app.docker.imageInspect(image);
+  }
+
   private async execute(item: RolloutItem, releaseId: string, operator: string): Promise<void> {
     const release = this.app.db.prepare('SELECT tenant_image FROM releases WHERE id = ?').get(releaseId) as { tenant_image: string };
     const heartbeat = setInterval(() => {
@@ -192,11 +203,7 @@ export class RolloutManager {
     }, Math.max(1000, Math.floor((this.options.leaseMs ?? 30_000) / 3)));
     heartbeat.unref();
     try {
-      const [result] = await upgradeTenants(this.app, [item.tenantId], release.tenant_image, {
-        operator: `${operator}:${item.jobId}`,
-        readyTimeoutMs: this.options.readyTimeoutMs,
-        readyPollMs: this.options.readyPollMs,
-      });
+      const result = await this.executeUpgrade(item, release.tenant_image, operator);
       const status = result.outcome === 'upgraded'
         ? 'succeeded'
         : result.outcome === 'rolled-back'
@@ -213,6 +220,65 @@ export class RolloutManager {
     } finally {
       clearInterval(heartbeat);
     }
+  }
+
+  private async executeUpgrade(item: RolloutItem, image: string, operator: string): Promise<UpgradeResult> {
+    if (!this.app.localHostId || item.hostId === this.app.localHostId) {
+      const [result] = await upgradeTenants(this.app, [item.tenantId], image, {
+        operator: `${operator}:${item.jobId}`,
+        readyTimeoutMs: this.options.readyTimeoutMs,
+        readyPollMs: this.options.readyPollMs,
+      });
+      return result;
+    }
+    if (!this.app.hostAgents) throw new Error(`host agent ${item.hostId} is unavailable`);
+    const row = this.app.db.prepare(`SELECT tenants.*, users.display_name, users.locale FROM tenants
+      JOIN users ON users.id = tenants.user_id WHERE tenants.id = ?`).get(item.tenantId) as Record<string, unknown>;
+    const task: RemoteUpgradeTask = {
+      tenant: {
+        id: item.tenantId,
+        userId: String(row.user_id),
+        containerName: String(row.container_name),
+        volumeName: String(row.volume_name),
+        image: String(row.image),
+        previousImage: row.previous_image === null ? null : String(row.previous_image),
+        imageDigest: row.image_digest === null ? null : String(row.image_digest),
+        status: String(row.status),
+        appVersion: row.app_version === null ? null : String(row.app_version),
+        contractVersion: row.contract_version === null ? null : String(row.contract_version),
+      },
+      user: { id: String(row.user_id), displayName: String(row.display_name), locale: String(row.locale) },
+      gatewaySecret: decryptSecret(this.app.config.masterKey, String(row.gateway_secret_enc)),
+      newImage: image,
+      config: {
+        publicOrigin: this.app.config.publicOrigin,
+        tenantNetwork: this.app.config.tenantNetwork,
+        tenantMemoryMb: this.app.config.tenantMemoryMb,
+        tenantCpus: this.app.config.tenantCpus,
+        tenantEnv: this.app.config.tenantEnv,
+      },
+      readyTimeoutMs: this.options.readyTimeoutMs,
+      readyPollMs: this.options.readyPollMs,
+    };
+    const remote = await this.app.hostAgents.upgrade(item.hostId, task);
+    this.app.db.prepare(`UPDATE tenants SET status = ?, image = ?, previous_image = ?, image_digest = ?,
+      app_version = ?, contract_version = ?, last_error = ?, updated_at = ? WHERE id = ?`)
+      .run(
+        remote.tenant.status,
+        remote.tenant.image,
+        remote.tenant.previous_image,
+        remote.tenant.image_digest,
+        remote.tenant.app_version,
+        remote.tenant.contract_version,
+        remote.tenant.last_error,
+        Date.now(),
+        item.tenantId,
+      );
+    return {
+      tenantId: remote.result.tenantId,
+      outcome: remote.result.outcome as UpgradeResult['outcome'],
+      detail: remote.result.detail,
+    };
   }
 
   private async evaluate(jobId: string): Promise<void> {

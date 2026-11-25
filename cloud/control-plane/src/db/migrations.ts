@@ -421,6 +421,15 @@ function migration10(db: Database.Database): void {
   `);
 }
 
+function migration11(db: Database.Database): void {
+  db.exec(`
+    ALTER TABLE hosts ADD COLUMN agent_token_hash TEXT;
+    ALTER TABLE hosts ADD COLUMN agent_fingerprint TEXT;
+    ALTER TABLE hosts ADD COLUMN agent_last_seen_at INTEGER;
+    CREATE INDEX idx_hosts_agent_fingerprint ON hosts(agent_fingerprint);
+  `);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'initial-schema', up: migration1 },
   { version: 2, name: 'asr-usage', up: migration2 },
@@ -432,4 +441,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 8, name: 'immutable-releases', up: migration8 },
   { version: 9, name: 'persistent-rollout-jobs', up: migration9 },
   { version: 10, name: 'admin-rbac-mfa-approvals', up: migration10 },
+  { version: 11, name: 'host-agent-identity', up: migration11 },
 ];

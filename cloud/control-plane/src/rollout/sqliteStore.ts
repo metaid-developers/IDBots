@@ -203,6 +203,11 @@ export class SqliteRolloutStore implements RolloutStore {
       WHERE job_id = ? AND status IN ('failed', 'rolled-back')`).run(jobId).changes;
   }
 
+  async hasRunningItem(tenantId: string): Promise<boolean> {
+    return Boolean(this.db.prepare(`SELECT 1 FROM rollout_items ri JOIN rollout_jobs rj ON rj.id = ri.job_id
+      WHERE ri.tenant_id = ? AND ri.status IN ('pending', 'leased') AND rj.status = 'running' LIMIT 1`).get(tenantId));
+  }
+
   async requeueInFlight(): Promise<number> {
     return this.db.prepare(`UPDATE rollout_items SET status = 'pending', lease_owner = NULL,
       lease_expires_at = NULL WHERE status = 'leased'`).run().changes;

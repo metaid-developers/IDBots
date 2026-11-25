@@ -122,6 +122,7 @@ export async function startTestApp(options: {
     push: new PushDeliveryService(options.db, config),
   };
   app.rollouts = new RolloutManager(app, new SqliteRolloutStore(options.db));
+  app.localHostId = 'h_testhost';
   const server = createPublicServer(app, {
     ...(options.wsProxy ? { wsProxy: options.wsProxy } : {}),
     ...(options.asr ? { asr: options.asr } : {}),

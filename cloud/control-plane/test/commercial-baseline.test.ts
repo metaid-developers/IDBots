@@ -108,5 +108,16 @@ describe('commercial tenant metadata and safe fleet selection', () => {
     assert.equal(staging.hostCapacity, 27);
     assert.equal(staging.hostId, 'h_staging');
     assert.throws(() => loadConfig({ ...env, CP_ENVIRONMENT: 'test' }), /CP_ENVIRONMENT/);
+    assert.throws(() => loadConfig({ ...env, CP_AGENT_LISTEN: '127.0.0.1:9101' }), /CP_AGENT_TLS_CERT_FILE/);
+    const operations = loadConfig({
+      ...env,
+      CP_AGENT_LISTEN: '127.0.0.1:9101',
+      CP_AGENT_TLS_CERT_FILE: '/tls/server.crt',
+      CP_AGENT_TLS_KEY_FILE: '/tls/server.key',
+      CP_AGENT_TLS_CA_FILE: '/tls/ca.crt',
+      CP_ROLLOUT_DATABASE_URL: 'postgresql://operations.test/idbots',
+    });
+    assert.equal(operations.agent?.listen, '127.0.0.1:9101');
+    assert.equal(operations.rolloutDatabaseUrl, 'postgresql://operations.test/idbots');
   });
 });

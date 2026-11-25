@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import https from 'node:https';
 import { loadConfig } from './config.js';
 import { openDb, ensureHostRow } from './db/index.js';
 import { sha256Hex } from './crypto.js';
@@ -10,7 +12,9 @@ import { MetricsRegistry } from './metrics.js';
 import type { AppContext } from './context.js';
 import { PushDeliveryService } from './services/pushDelivery.js';
 import { SqliteRolloutStore } from './rollout/sqliteStore.js';
+import { PostgresRolloutStore } from './rollout/postgresStore.js';
 import { RolloutManager } from './rollout/manager.js';
+import { HostAgentGateway } from './agent/gateway.js';
 
 /**
  * Process entry point: load config, open the database (running migrations),
@@ -38,14 +42,18 @@ async function main(): Promise<void> {
   });
 
   const docker = new DockerClient(config.dockerUrl);
+  const localHostId = hostId;
   const sms: SmsProvider =
     config.smsMode === 'fake'
       ? new FakeSmsProvider(config.fakeSmsNumbers)
       : new AliyunSmsProvider(config.sms);
 
   const app: AppContext = { config, db, docker, sms, poller: null, metrics: new MetricsRegistry(), push: new PushDeliveryService(db, config) };
+  app.localHostId = localHostId;
   app.push.start();
-  const rolloutStore = new SqliteRolloutStore(db);
+  const rolloutStore = config.rolloutDatabaseUrl
+    ? await PostgresRolloutStore.connect(config.rolloutDatabaseUrl)
+    : new SqliteRolloutStore(db);
   const rolloutManager = new RolloutManager(app, rolloutStore);
   app.rollouts = rolloutManager;
   await rolloutStore.requeueInFlight();
@@ -65,6 +73,21 @@ async function main(): Promise<void> {
   const poller = new TenantPoller(app, {});
   app.poller = poller;
   poller.start();
+  let agentServer: https.Server | null = null;
+  if (config.agent) {
+    const gateway = new HostAgentGateway(app, { requireMtls: true });
+    app.hostAgents = gateway;
+    agentServer = https.createServer({
+      cert: fs.readFileSync(config.agent.tlsCertFile),
+      key: fs.readFileSync(config.agent.tlsKeyFile),
+      ca: fs.readFileSync(config.agent.tlsCaFile),
+      requestCert: true,
+      rejectUnauthorized: true,
+    });
+    gateway.attach(agentServer);
+    const agentListen = parseListen(config.agent.listen);
+    agentServer.listen(agentListen.port, agentListen.host);
+  }
   await rolloutManager.start();
 
   const publicServer = createPublicServer(app);
@@ -80,15 +103,17 @@ async function main(): Promise<void> {
   const shutdown = (signal: string): void => {
     console.log(JSON.stringify({ msg: 'shutting down', signal }));
     app.push.stop();
-    void rolloutManager.stop().finally(() => {
-      void poller.stop().finally(() => {
-        publicServer.close(() => {
-          metricsServer.close(() => {
-            db.close();
-            process.exit(0);
-          });
-        });
-      });
+    void (async () => {
+      await rolloutManager.stop();
+      if (rolloutStore instanceof PostgresRolloutStore) await rolloutStore.close();
+      await app.hostAgents?.close();
+      if (agentServer) await new Promise<void>((resolve) => agentServer.close(() => resolve()));
+      await poller.stop();
+      await new Promise<void>((resolve) => publicServer.close(() => resolve()));
+      await new Promise<void>((resolve) => metricsServer.close(() => resolve()));
+    })().finally(() => {
+      db.close();
+      process.exit(0);
     });
     setTimeout(() => process.exit(0), 10_000).unref();
   };

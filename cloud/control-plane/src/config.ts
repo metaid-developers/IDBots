@@ -58,6 +58,8 @@ export interface ControlPlaneConfig {
   environment: DeploymentEnvironment;
   hostId: string | null;
   hostCapacity: number;
+  agent: { listen: string; tlsCertFile: string; tlsKeyFile: string; tlsCaFile: string } | null;
+  rolloutDatabaseUrl: string | null;
   masterKey: Buffer;
   dockerUrl: string;
   tenantImage: string;
@@ -346,6 +348,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
   const inviteService = parseInviteServiceConfig(env);
   const asr = parseAsrConfig(env);
   const environment = parseEnvironment(env);
+  const agentListen = env.CP_AGENT_LISTEN?.trim() || null;
+  if (agentListen) {
+    parseListen(env, 'CP_AGENT_LISTEN', agentListen);
+    required(env, 'CP_AGENT_TLS_CERT_FILE');
+    required(env, 'CP_AGENT_TLS_KEY_FILE');
+    required(env, 'CP_AGENT_TLS_CA_FILE');
+  }
 
   return {
     publicOrigin,
@@ -356,6 +365,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
     environment,
     hostId: env.CP_HOST_ID?.trim() || null,
     hostCapacity: parsePositiveInt(env, 'CP_HOST_CAPACITY', environment === 'staging' ? 27 : 58),
+    agent: agentListen ? {
+      listen: agentListen,
+      tlsCertFile: env.CP_AGENT_TLS_CERT_FILE!,
+      tlsKeyFile: env.CP_AGENT_TLS_KEY_FILE!,
+      tlsCaFile: env.CP_AGENT_TLS_CA_FILE!,
+    } : null,
+    rolloutDatabaseUrl: env.CP_ROLLOUT_DATABASE_URL?.trim() || null,
     masterKey: parseMasterKey(env),
     dockerUrl: required(env, 'CP_DOCKER_URL'),
     tenantImage: required(env, 'CP_TENANT_IMAGE'),

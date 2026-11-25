@@ -31,7 +31,7 @@ interface TenantRow {
 }
 
 export async function reconcileAtStartup(
-  app: Pick<AppContext, 'config' | 'db' | 'docker'>,
+  app: Pick<AppContext, 'config' | 'db' | 'docker' | 'rollouts'>,
 ): Promise<string[]> {
   const log = (level: 'info' | 'warn' | 'error', msg: string, extra?: Record<string, unknown>) =>
     console.log(JSON.stringify({ level, component: 'reconcile', msg, ...extra }));
@@ -61,11 +61,7 @@ export async function reconcileAtStartup(
     }
     if (tenant.status === 'provisioning' || tenant.status === 'upgrading') {
       if (tenant.status === 'upgrading') {
-        const managed = app.db.prepare(`SELECT 1 FROM rollout_items ri
-          JOIN rollout_jobs rj ON rj.id = ri.job_id
-          WHERE ri.tenant_id = ? AND ri.status IN ('pending', 'leased') AND rj.status = 'running'
-          LIMIT 1`).get(tenant.id);
-        if (managed) continue;
+        if (app.rollouts && await app.rollouts.store.hasRunningItem(tenant.id)) continue;
       }
       try {
         const outcome = await recoverTenant(app, tenant);

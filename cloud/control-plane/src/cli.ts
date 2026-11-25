@@ -76,6 +76,8 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
     environment,
     hostId: env.CP_HOST_ID?.trim() || null,
     hostCapacity: num('CP_HOST_CAPACITY', environment === 'staging' ? 27 : 58),
+    agent: null,
+    rolloutDatabaseUrl: null,
     masterKey,
     dockerUrl: env.CP_DOCKER_URL ?? 'http+unix:///var/run/docker.sock',
     tenantImage: env.CP_TENANT_IMAGE ?? '',
@@ -252,6 +254,24 @@ async function startTenantContainer(ctx: AppContext, tenant: TenantRow): Promise
 }
 
 // --- commands ---------------------------------------------------------------
+
+function cmdHostRegister(ctx: AppContext, flags: Map<string, string | boolean>, id: string, as: string): void {
+  if (!/^h_[a-zA-Z0-9_-]{1,64}$/.test(id)) throw new CliError('host id must look like h_<name>');
+  const environment = requireFlag(flags, 'environment');
+  if (environment !== 'staging' && environment !== 'production') throw new CliError('--environment must be staging or production');
+  const capacity = Number(requireFlag(flags, 'capacity'));
+  if (!Number.isInteger(capacity) || capacity < 1) throw new CliError('--capacity must be a positive integer');
+  const fingerprint = flagString(flags, 'fingerprint')?.replaceAll(':', '').toUpperCase() ?? null;
+  const token = fingerprint ? null : newGatewaySecret();
+  ctx.db.prepare(`INSERT INTO hosts (id, docker_url, capacity, status, environment, agent_token_hash, agent_fingerprint)
+    VALUES (?, ?, ?, 'active', ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET docker_url = excluded.docker_url, capacity = excluded.capacity,
+      status = 'active', environment = excluded.environment,
+      agent_token_hash = excluded.agent_token_hash, agent_fingerprint = excluded.agent_fingerprint`)
+    .run(id, `agent://${id}`, capacity, environment, token ? sha256Hex(token) : null, fingerprint);
+  audit(ctx, as, 'host.register', id, { environment, capacity, credential: fingerprint ? 'mtls' : 'token' });
+  console.log(`${id}: registered environment=${environment} capacity=${capacity}${token ? `\nagent token (shown once): ${token}` : ''}`);
+}
 
 function cmdAdminCreate(ctx: AppContext, flags: Map<string, string | boolean>, username: string, as: string): void {
   const role = requireFlag(flags, 'role') as AdminRole;
@@ -875,6 +895,7 @@ async function cmdDeletionComplete(
 // --- dispatch ---------------------------------------------------------------
 
 const MUTATING = new Set([
+  'host.register',
   'admin.create',
   'admin.disable',
   'rollout.create',
@@ -914,12 +935,18 @@ async function run(argv: string[]): Promise<void> {
     requireOperator(as);
   }
   if (!domain) {
-    throw new CliError('usage: cli.js <admin|rollout|release|invite|redeem|credit|user|tenant|deletion|push> <command> [flags] [--as NAME]');
+    throw new CliError('usage: cli.js <host|admin|rollout|release|invite|redeem|credit|user|tenant|deletion|push> <command> [flags] [--as NAME]');
   }
 
   const ctx = loadCliContext(process.env);
   try {
     switch (action) {
+      case 'host.register':
+        cmdHostRegister(ctx, flags, rest[0], as!);
+        break;
+      case 'host.list':
+        console.log(JSON.stringify(ctx.db.prepare('SELECT id, environment, capacity, status, agent_fingerprint, agent_last_seen_at FROM hosts ORDER BY id').all(), null, 2));
+        break;
       case 'admin.create':
         cmdAdminCreate(ctx, flags, rest[0], as!);
         break;
