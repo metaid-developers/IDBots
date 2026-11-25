@@ -108,7 +108,7 @@ export async function recreateContainer(
   await app.docker.startContainer(created.Id);
 }
 
-async function upgradeOne(
+async function upgradeOneInner(
   app: AppContext,
   tenantId: string,
   newImage: string,
@@ -293,6 +293,24 @@ async function upgradeOne(
   const detail = `rollback to ${rollbackImage} also did not become ready (${rollbackWait.outcome})`;
   audit(app, opts.operator, 'tenant.upgrade.failed', tenantId, { to: rollbackImage, detail });
   return fail(detail, detail);
+}
+
+const tenantUpgradeLocks = new Map<string, Promise<UpgradeResult>>();
+
+async function upgradeOne(
+  app: AppContext,
+  tenantId: string,
+  newImage: string,
+  opts: Required<UpgradeOptions>,
+): Promise<UpgradeResult> {
+  const previous = tenantUpgradeLocks.get(tenantId) ?? Promise.resolve({ tenantId, outcome: 'skipped', detail: 'no previous upgrade' } as UpgradeResult);
+  const run = previous.catch(() => undefined).then(() => upgradeOneInner(app, tenantId, newImage, opts));
+  tenantUpgradeLocks.set(tenantId, run);
+  try {
+    return await run;
+  } finally {
+    if (tenantUpgradeLocks.get(tenantId) === run) tenantUpgradeLocks.delete(tenantId);
+  }
 }
 
 /** Upgrade the given tenants to `newImage`, at most `batch` at a time. */

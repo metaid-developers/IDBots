@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     : new SqliteRolloutStore(db);
   const rolloutManager = new RolloutManager(app, rolloutStore);
   app.rollouts = rolloutManager;
-  await rolloutStore.requeueInFlight();
+  await rolloutStore.requeueInFlight(Date.now());
 
   // REQ-B-11: reconcile before the poller takes over.
   await reconcileAtStartup(app).catch((err) => {

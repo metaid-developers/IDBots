@@ -167,6 +167,23 @@ describe('persistent staged rollouts', () => {
     }
   });
 
+  test('startup recovery requeues only expired leases, not healthy workers', async () => {
+    const image = 'tenant:rollout-lease';
+    await seedImage(image);
+    const tenantId = await seedTenant();
+    const releaseId = register(image);
+    const run = manager();
+    const store = new SqliteRolloutStore(db);
+    const created = await run.create({ releaseId, operator: 'test', tenantIds: [tenantId], soakMs: 0 });
+    await store.setJobStatus(created.job.id, 'running');
+    const claimed = await store.claimItems(created.job.id, 'healthy-worker', 1, 30_000, 1000);
+    assert.equal(claimed.length, 1);
+    assert.equal(await store.requeueInFlight(2000), 0);
+    assert.equal((await store.getJob(created.job.id))?.items[0].leaseOwner, 'healthy-worker');
+    assert.equal(await store.requeueInFlight(31_000), 1);
+    assert.equal((await store.getJob(created.job.id))?.items[0].status, 'pending');
+  });
+
   test('missing target image fails preflight before a tenant is touched', async () => {
     const image = 'tenant:rollout-not-pulled';
     const tenantId = await seedTenant();

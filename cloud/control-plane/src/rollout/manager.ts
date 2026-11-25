@@ -86,7 +86,7 @@ export class RolloutManager {
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
-    await this.store.requeueInFlight();
+    await this.store.requeueInFlight(Date.now());
     await this.updateMetrics();
     this.timer = setInterval(() => this.kick(), this.options.tickMs ?? 250);
     this.timer.unref();

@@ -254,8 +254,8 @@ export class PostgresRolloutStore implements RolloutStore {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async requeueInFlight(): Promise<number> {
-    const result = await this.pool.query("UPDATE rollout_items SET status='pending',lease_owner=NULL,lease_expires_at=NULL WHERE status='leased'");
+  async requeueInFlight(now: number): Promise<number> {
+    const result = await this.pool.query("UPDATE rollout_items SET status='pending',lease_owner=NULL,lease_expires_at=NULL WHERE status='leased' AND lease_expires_at <= $1", [now]);
     return result.rowCount ?? 0;
   }
 

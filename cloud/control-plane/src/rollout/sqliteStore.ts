@@ -208,8 +208,8 @@ export class SqliteRolloutStore implements RolloutStore {
       WHERE ri.tenant_id = ? AND ri.status IN ('pending', 'leased') AND rj.status = 'running' LIMIT 1`).get(tenantId));
   }
 
-  async requeueInFlight(): Promise<number> {
+  async requeueInFlight(now: number): Promise<number> {
     return this.db.prepare(`UPDATE rollout_items SET status = 'pending', lease_owner = NULL,
-      lease_expires_at = NULL WHERE status = 'leased'`).run().changes;
+      lease_expires_at = NULL WHERE status = 'leased' AND lease_expires_at <= ?`).run(now).changes;
   }
 }

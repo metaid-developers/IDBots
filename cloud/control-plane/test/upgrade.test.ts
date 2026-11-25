@@ -194,6 +194,17 @@ describe('tenant upgrade (REQ-B-12)', () => {
     assert.equal(audits('t_up4', 'tenant.upgrade.start').length, 0);
   });
 
+  test('concurrent calls for the same tenant serialize and skip the duplicate', async () => {
+    seedUserAndTenant(db, { userId: 'u_lock1', phone: '+8613900005092', tenantId: 't_lock1', status: 'ready', image: IMAGE_1_0, appVersion: '1.0.0' });
+    await startTenantContainer('t_lock1', IMAGE_1_0, '1.0.0');
+    const [first, second] = await Promise.all([
+      upgradeTenants(app.app, ['t_lock1'], IMAGE_1_1, { operator: 'tester-a', readyTimeoutMs: 5000, readyPollMs: 100 }),
+      upgradeTenants(app.app, ['t_lock1'], IMAGE_1_1, { operator: 'tester-b', readyTimeoutMs: 5000, readyPollMs: 100 }),
+    ]);
+    assert.deepEqual([first[0].outcome, second[0].outcome].sort(), ['skipped', 'upgraded']);
+    assert.equal(audits('t_lock1', 'tenant.upgrade.start').length, 1);
+  });
+
   test('batch=2 upgrades three tenants, all ready', async () => {
     const ids: string[] = [];
     for (let i = 0; i < 3; i += 1) {

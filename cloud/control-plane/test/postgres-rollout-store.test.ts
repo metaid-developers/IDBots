@@ -41,6 +41,8 @@ describe('PostgreSQL rollout store', () => {
     const first = await store.claimItems(created.job.id, 'worker-a', 2, 30_000, 1000);
     assert.deepEqual(first.map((item) => item.tenantId), ['t_pg_1', 't_pg_3']);
     assert.equal((await store.claimItems(created.job.id, 'worker-b', 2, 30_000, 1001)).length, 0);
+    assert.equal(await store.requeueInFlight(2000), 0);
+    assert.equal((await store.getJob(created.job.id))?.items.find((item) => item.tenantId === 't_pg_1')?.leaseOwner, 'worker-a');
     assert.equal(await store.hasRunningItem('t_pg_1'), true);
     await store.completeItem(created.job.id, 't_pg_1', 'worker-a', 'succeeded', 'upgraded', null, 2000);
     const second = await store.claimItems(created.job.id, 'worker-b', 1, 30_000, 2001);
@@ -48,7 +50,7 @@ describe('PostgreSQL rollout store', () => {
     await store.completeItem(created.job.id, 't_pg_2', 'worker-b', 'failed', 'failed', 'injected', 3000);
     await store.completeItem(created.job.id, 't_pg_3', 'worker-a', 'rolled-back', 'rolled-back', 'injected', 3001);
     assert.equal(await store.retryFailed(created.job.id), 2);
-    assert.equal(await store.requeueInFlight(), 0);
+    assert.equal(await store.requeueInFlight(Date.now()), 0);
     const view = await store.getJob(created.job.id);
     assert.ok(view);
     assert.equal(view.items.find((item) => item.tenantId === 't_pg_1')?.status, 'succeeded');
