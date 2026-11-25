@@ -139,6 +139,7 @@
     "test:twin-orchestration": "pnpm run compile:electron && node --test tests/orchestrationProgress.test.mjs tests/twinOrchestrationService.test.mjs tests/crossSessionDeliveryRunner.test.mjs tests/twinWorkerSessionStop.test.mjs tests/orchestratorCoworkBridgeSkillIds.test.mjs tests/twinDelegationAnchor.test.mjs tests/skillTurnWrapUpState.test.mjs tests/orchestratorCoworkBridgeWrapUp.test.mjs tests/twinDelegationWrapUpContract.test.mjs tests/a2aPendingAskBridge.test.mjs tests/twinStepAcceptance.test.mjs tests/twinNotifyOnce.test.mjs",
     "test:release-runbook": "node --test tests/releaseRunbook.test.mjs",
     "release:runbook": "node scripts/release-runbook.mjs",
+    "release:watch": "node scripts/release-watch.mjs",
     "preelectron:dev:dsh": "pnpm run check:dsh-deps",
     "electron:dev:dsh": "node scripts/kill-dev-port.cjs 5185 && cross-env IDBOTS_USER_DATA_PATH=./.dev-userdata-dsh IDBOTS_APP_DATA_PATH=./.dev-appdata-dsh concurrently \"vite --host 127.0.0.1 --port 5185\" \"wait-on -v -t 120000 -d 10000 http://127.0.0.1:5185 && node scripts/wait-electron-dev-build.mjs dist-electron && cross-env NODE_ENV=development IDBOTS_DISABLE_SINGLE_INSTANCE_LOCK=1 ELECTRON_START_URL=http://127.0.0.1:5185 electron .\"",
     "test:desktop-ax": "node --test dsh-runtime/test/desktop-ax-plugin.test.mjs tests/desktopAxComputerUseGate.test.mjs",
