@@ -455,7 +455,29 @@ jobs:
           }
 
           $env:IDBOTS_PORTABLE_GIT_ARCHIVE = $archivePath
+          # Exported for scripts/mingit-signed-cache.cjs, which keys the signed PortableGit cache on the archive.
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "IDBOTS_PORTABLE_GIT_ARCHIVE=$archivePath`n")
           node scripts/setup-mingit.js --required
+
+      # PortableGit is a fixed third-party tree — 333 of the 356 binaries the
+      # Windows job signs — so its signed form is the same from build to build.
+      # Reuse the copy signed once for this archive and certificate instead of
+      # sending those signatures through the cloud signer and the timestamp
+      # servers on every build (the v1.1.3 tag run 45609195621 lost its signer
+      # on the 711th signature of the build and failed eight 90-second timeouts
+      # later). A miss falls back to normal signing: an empty or damaged cache
+      # cannot break a build.
+      - name: Reuse the signed PortableGit cache (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          WIN_CERT_SHA1: ${{ secrets.WIN_CERT_SHA1 }}
+        run: |
+          # AppendAllText writes UTF-8 without a BOM (Out-File/Add-Content differ per PS version).
+          $presigned = Join-Path $env:RUNNER_TEMP 'idbots-presigned-mingit.json'
+          if (Test-Path $presigned) { Remove-Item $presigned -Force }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "IDBOTS_PRESIGNED_MANIFEST=$presigned`n")
+          node scripts/mingit-signed-cache.cjs apply
 
       # 非 Windows: 创建 mingit 占位目录，避免 electron-builder 报"file source doesn't exist"错误
       - name: Create mingit placeholder (non-Windows)
@@ -543,6 +565,15 @@ jobs:
             exit 1
           }
           pnpm exec electron-builder ${{ matrix.build_args }} --publish never
+
+      # Fill the PortableGit cache from this build's signed tree. Best effort:
+      # the next build's cache hit is an optimization, never a requirement.
+      - name: Store the signed PortableGit cache (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        env:
+          WIN_CERT_SHA1: ${{ secrets.WIN_CERT_SHA1 }}
+        run: node scripts/mingit-signed-cache.cjs store
 
       - name: Verify Windows signatures
         if: runner.os == 'Windows'

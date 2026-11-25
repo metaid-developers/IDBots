@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 
 const require = createRequire(import.meta.url);
 const signWindowsArtifact = require('../scripts/windows-sign.cjs');
@@ -52,6 +53,7 @@ function makeSigningRig(t) {
   });
   const target = (name, content = 'MZ\u0000\u0000binary') => {
     const file = path.join(dir, name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, content);
     return file;
   };
@@ -121,4 +123,20 @@ test('a failed signature is not remembered, so the retry reaches signtool', { sk
   // One signature: the configured timestamp server is tried first and succeeds.
   assert.equal(rig.calls().length, failedCalls + 1, 'the retry after a failure must reach signtool');
   assert.equal(rig.read(exe), 'MZ\u0000\u0000binarysignature');
+});
+
+test('a PortableGit binary handed over by the signed cache is not signed again — unless its bytes changed', { skip: process.platform === 'win32' }, async (t) => {
+  const rig = makeSigningRig(t);
+  const signedBytes = 'MZ\u0000git<signature>';
+  const git = rig.target(path.join('release', 'win-unpacked', 'resources', 'mingit', 'usr', 'bin', 'git.exe'), signedBytes);
+  const digestList = path.join(path.dirname(rig.target('where-am-i')), 'presigned.json');
+  fs.writeFileSync(digestList, JSON.stringify({ version: 1, files: { 'usr/bin/git.exe': createHash('sha256').update(signedBytes).digest('hex') } }));
+
+  await rig.sign(git, { IDBOTS_PRESIGNED_MANIFEST: digestList });
+  assert.equal(rig.calls().length, 0, 'a pre-signed PortableGit binary must not reach signtool');
+
+  // A damaged or half-replaced tree: the recorded digest no longer describes the file.
+  fs.writeFileSync(git, 'MZ\u0000git<signature-with-a-flipped-byte>');
+  await rig.sign(git, { IDBOTS_PRESIGNED_MANIFEST: digestList });
+  assert.equal(rig.calls().length, 1, 'bytes that no longer match the recorded digest are signed');
 });

@@ -114,3 +114,20 @@ test('package.json and electron-builder.json carry the matching wiring', () => {
   // The incremental state lives in the output directory, so it must not ship.
   assert.equal(readJson('electron-builder.json').files.includes('!dist-electron/.tsbuildinfo*'), true);
 });
+
+test('the signed PortableGit cache is reused before packaging and filled after it, best effort', () => {
+  const reuseAt = indexOf('Reuse the signed PortableGit cache (Windows)');
+  const storeAt = indexOf('Store the signed PortableGit cache (Windows)');
+  assert.equal(reuseAt > indexOf('Setup MinGit (Windows)'), true, 'reuse follows the extraction it substitutes for');
+  assert.equal(reuseAt < indexOf('Build Electron app package (Windows signed)'), true);
+  assert.equal(storeAt > indexOf('Build Electron app package (Windows signed)'), true);
+  assert.equal(storeAt < indexOf('Verify Windows signatures'), true);
+  for (const at of [reuseAt, storeAt]) assert.equal(buildSteps[at].if, `runner.os == 'Windows'`);
+  assert.match(buildSteps[reuseAt].run, /mingit-signed-cache\.cjs apply/);
+  assert.match(buildSteps[storeAt].run, /mingit-signed-cache\.cjs store/);
+  // Filling the cache is an optimization for the NEXT build: it must never fail this one.
+  assert.equal(buildSteps[storeAt]['continue-on-error'], true);
+  // Both directions key on the archive the Setup step actually extracted.
+  assert.match(buildSteps[indexOf('Setup MinGit (Windows)')].run, /IDBOTS_PORTABLE_GIT_ARCHIVE=\$archivePath/);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'scripts/mingit-verify-signatures.ps1')), true);
+});

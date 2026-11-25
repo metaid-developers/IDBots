@@ -1203,7 +1203,7 @@ blob-report/
 
 # Release pipeline tooling: redundant-run gate, byte-exact Windows checkout,
 # aggregated test verdict, job-level watcher, workflow wiring, incremental
-# compile, sign-once hook
+# compile, sign-once hook, signed PortableGit cache
 !tests/ciGate.test.mjs
 !tests/ciWorktreeEol.test.mjs
 !tests/ciTestVerdict.test.mjs
@@ -1211,3 +1211,4 @@ blob-report/
 !tests/ciWorkflowContract.test.mjs
 !tests/ciCompileElectron.test.mjs
 !tests/ciWindowsSignOnce.test.mjs
+!tests/ciMingitSignedCache.test.mjs

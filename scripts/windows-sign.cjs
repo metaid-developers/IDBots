@@ -1,5 +1,6 @@
 const { spawn } = require("node:child_process");
-const { existsSync, statSync } = require("node:fs");
+const { existsSync, statSync, readFileSync } = require("node:fs");
+const { createHash } = require("node:crypto");
 const path = require("node:path");
 
 const DEFAULT_TIMESTAMP_URLS = [
@@ -31,6 +32,29 @@ function signAndRemember(signtoolPath, args, filePath, options) {
   return runSignTool(signtoolPath, args, options).then(() => {
     signedInThisProcess.set(path.resolve(filePath), fileFingerprint(filePath));
   });
+}
+
+// PortableGit can arrive pre-signed: scripts/mingit-signed-cache.cjs `apply`
+// substitutes the tree signed once for this archive and certificate, and hands
+// over the digest of every file in it through IDBOTS_PRESIGNED_MANIFEST. A file
+// is skipped only while its bytes still equal that digest, so a damaged or
+// half-replaced tree is signed as usual.
+let presignedDigests = null;
+
+function presignedDigestFor(filePath) {
+  if (presignedDigests === null) {
+    presignedDigests = new Map();
+    try {
+      const manifest = JSON.parse(readFileSync(process.env.IDBOTS_PRESIGNED_MANIFEST, "utf8"));
+      for (const [relative, digest] of Object.entries(manifest.files ?? {})) {
+        presignedDigests.set(String(relative).replace(/\\/g, "/"), String(digest));
+      }
+    } catch {
+      // no digest list: nothing is pre-signed
+    }
+  }
+  const match = String(filePath).match(/[\\/]resources[\\/]mingit[\\/](.+)$/i);
+  return match ? presignedDigests.get(match[1].replace(/\\/g, "/")) : undefined;
 }
 
 function runSignTool(signtoolPath, args, options = {}) {
@@ -99,6 +123,16 @@ module.exports = async function signWindowsArtifact(configuration) {
   const filePath = configuration && configuration.path;
   if (!filePath) {
     throw new Error("windows-sign: missing target path from electron-builder.");
+  }
+
+  const expectedDigest = presignedDigestFor(filePath);
+  if (
+    expectedDigest &&
+    existsSync(filePath) &&
+    createHash("sha256").update(readFileSync(filePath)).digest("hex") === expectedDigest
+  ) {
+    console.log(`[windows-sign] already signed (PortableGit cache): ${filePath}`);
+    return;
   }
 
   const fingerprint = fileFingerprint(filePath);
@@ -228,4 +262,7 @@ module.exports = async function signWindowsArtifact(configuration) {
   throw new Error(`windows-sign: all timestamp attempts failed:\n${errors.join("\n")}`);
 };
 
-module.exports.resetForTests = () => signedInThisProcess.clear();
+module.exports.resetForTests = () => {
+  signedInThisProcess.clear();
+  presignedDigests = null;
+};
