@@ -142,6 +142,10 @@ ships.
   image's `org.idbots.rollback-safe-to` label allows that version; otherwise
   mark `failed` and alert. Batches run one tenant at a time by default
   (`--batch` raises it). Downgrades below `rollback-safe-to` are refused.
+  The commercial rollout engine persists jobs, per-tenant leases/outcomes, and
+  per-host image preflight; it advances through canary/internal/percentage waves,
+  supports pause/resume/retry, and pauses expansion on the safety thresholds.
+  Direct `--all` selects only ready/degraded tenants that need the target image.
 
 ### Proxy
 
@@ -178,6 +182,8 @@ ships.
   | Command | Effect |
   |---------|--------|
   | `release register --file MANIFEST`, `release list`, `release promote ID --status STATUS` | Immutable image digests, source/contract/schema provenance, and channel promotion |
+  | `rollout create RELEASE [FILTERS]`, `rollout list/show` | Durable staged rollout jobs and per-tenant outcomes |
+  | `rollout start/pause/resume/retry/cancel ID` | Audited rollout controls; retry while paused |
   | `invite create --uses N [--with-redeem] [--expires DATE] [--note TEXT]` | Prints the new code |
   | `invite list`, `invite disable CODE` | |
   | `redeem import --file CODES.csv [--note TEXT]` | Imports single-use codes exported from the Metaso admin console; duplicates are skipped |

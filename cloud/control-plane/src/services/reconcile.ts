@@ -60,6 +60,13 @@ export async function reconcileAtStartup(
       continue;
     }
     if (tenant.status === 'provisioning' || tenant.status === 'upgrading') {
+      if (tenant.status === 'upgrading') {
+        const managed = app.db.prepare(`SELECT 1 FROM rollout_items ri
+          JOIN rollout_jobs rj ON rj.id = ri.job_id
+          WHERE ri.tenant_id = ? AND ri.status IN ('pending', 'leased') AND rj.status = 'running'
+          LIMIT 1`).get(tenant.id);
+        if (managed) continue;
+      }
       try {
         const outcome = await recoverTenant(app, tenant);
         log('info', 'recovered orphaned tenant row', { tenant: tenant.id, outcome });

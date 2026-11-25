@@ -332,6 +332,55 @@ function migration8(db: Database.Database): void {
   `);
 }
 
+function migration9(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE rollout_jobs (
+      id TEXT PRIMARY KEY,
+      release_id TEXT NOT NULL REFERENCES releases(id),
+      status TEXT NOT NULL CHECK (status IN ('paused', 'running', 'completed', 'cancelled')),
+      current_wave INTEGER NOT NULL DEFAULT 0,
+      waves_json TEXT NOT NULL,
+      global_concurrency INTEGER NOT NULL,
+      per_host_concurrency INTEGER NOT NULL,
+      failure_threshold_percent REAL NOT NULL DEFAULT 2,
+      failure_threshold_count INTEGER NOT NULL DEFAULT 3,
+      consecutive_failure_limit INTEGER NOT NULL DEFAULT 2,
+      stop_reason TEXT,
+      operator TEXT NOT NULL,
+      wave_started_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      completed_at INTEGER
+    );
+    CREATE TABLE rollout_items (
+      job_id TEXT NOT NULL REFERENCES rollout_jobs(id) ON DELETE CASCADE,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      host_id TEXT NOT NULL,
+      wave_index INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'leased', 'succeeded', 'failed', 'rolled-back', 'skipped')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      lease_owner TEXT,
+      lease_expires_at INTEGER,
+      started_at INTEGER,
+      finished_at INTEGER,
+      outcome TEXT,
+      error TEXT,
+      PRIMARY KEY(job_id, tenant_id)
+    );
+    CREATE INDEX idx_rollout_items_claim ON rollout_items(job_id, wave_index, status, host_id, lease_expires_at);
+    CREATE INDEX idx_rollout_items_tenant ON rollout_items(tenant_id, status);
+    CREATE TABLE rollout_hosts (
+      job_id TEXT NOT NULL REFERENCES rollout_jobs(id) ON DELETE CASCADE,
+      host_id TEXT NOT NULL,
+      wave_index INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'failed')),
+      error TEXT,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(job_id, host_id, wave_index)
+    );
+  `);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'initial-schema', up: migration1 },
   { version: 2, name: 'asr-usage', up: migration2 },
@@ -341,4 +390,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 6, name: 'invite-grants', up: migration6 },
   { version: 7, name: 'tenant-rollout-metadata', up: migration7 },
   { version: 8, name: 'immutable-releases', up: migration8 },
+  { version: 9, name: 'persistent-rollout-jobs', up: migration9 },
 ];

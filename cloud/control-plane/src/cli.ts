@@ -20,6 +20,8 @@ import { encryptSecret, sha256Hex, maskPhone } from './crypto.js';
 import { upgradeTenants, findContainerId, recreateContainer } from './services/upgrade.js';
 import { selectFleetUpgradeTenantIds } from './services/upgradeSelection.js';
 import { listReleases, registerRelease, setReleaseStatus } from './services/releases.js';
+import { RolloutManager } from './rollout/manager.js';
+import { SqliteRolloutStore } from './rollout/sqliteStore.js';
 import { MetricsRegistry } from './metrics.js';
 import { PushDeliveryService } from './services/pushDelivery.js';
 import type { AppContext } from './context.js';
@@ -249,6 +251,48 @@ async function startTenantContainer(ctx: AppContext, tenant: TenantRow): Promise
 }
 
 // --- commands ---------------------------------------------------------------
+
+function rolloutManager(ctx: AppContext): RolloutManager {
+  ctx.rollouts ??= new RolloutManager(ctx, new SqliteRolloutStore(ctx.db));
+  return ctx.rollouts;
+}
+
+async function cmdRolloutCreate(ctx: AppContext, flags: Map<string, string | boolean>, rest: string[], as: string): Promise<void> {
+  const releaseId = rest[0];
+  if (!releaseId) throw new CliError('usage: rollout create RELEASE_ID [TENANT_ID ...] [--kind KIND] [--cohort COHORT] [--environment ENV]');
+  const kind = flagString(flags, 'kind') as 'customer' | 'internal' | 'synthetic' | 'demo' | null;
+  const cohort = flagString(flags, 'cohort') as 'canary' | 'early' | 'stable' | null;
+  const environment = flagString(flags, 'environment') as 'staging' | 'production' | null;
+  const view = await rolloutManager(ctx).create({
+    releaseId,
+    operator: as,
+    tenantIds: rest.length > 1 ? rest.slice(1) : undefined,
+    ...(kind ? { kind } : {}),
+    ...(cohort ? { cohort } : {}),
+    ...(environment ? { environment } : {}),
+    globalConcurrency: Number(flagString(flags, 'global-concurrency') ?? '20'),
+    perHostConcurrency: Number(flagString(flags, 'per-host-concurrency') ?? '1'),
+    ...(flagString(flags, 'soak-ms') ? { soakMs: Number(flagString(flags, 'soak-ms')) } : {}),
+  });
+  console.log(`${view.job.id}: paused release=${view.job.releaseId} tenants=${view.items.length} waves=${view.waves.length}`);
+}
+
+function printRollout(view: NonNullable<Awaited<ReturnType<SqliteRolloutStore['getJob']>>>): void {
+  const counts: Record<string, number> = {};
+  for (const item of view.items) counts[item.status] = (counts[item.status] ?? 0) + 1;
+  console.log(JSON.stringify({
+    id: view.job.id,
+    releaseId: view.job.releaseId,
+    status: view.job.status,
+    currentWave: view.job.currentWave,
+    waves: view.waves,
+    items: counts,
+    stopReason: view.job.stopReason,
+    operator: view.job.operator,
+    createdAt: view.job.createdAt,
+    updatedAt: view.job.updatedAt,
+  }));
+}
 
 function cmdReleaseRegister(ctx: AppContext, flags: Map<string, string | boolean>, as: string): void {
   const file = requireFlag(flags, 'file');
@@ -815,6 +859,12 @@ async function cmdDeletionComplete(
 // --- dispatch ---------------------------------------------------------------
 
 const MUTATING = new Set([
+  'rollout.create',
+  'rollout.start',
+  'rollout.pause',
+  'rollout.resume',
+  'rollout.cancel',
+  'rollout.retry',
   'release.register',
   'release.promote',
   'invite.create',
@@ -846,12 +896,34 @@ async function run(argv: string[]): Promise<void> {
     requireOperator(as);
   }
   if (!domain) {
-    throw new CliError('usage: cli.js <release|invite|redeem|credit|user|tenant|deletion|push> <command> [flags] [--as NAME]');
+    throw new CliError('usage: cli.js <rollout|release|invite|redeem|credit|user|tenant|deletion|push> <command> [flags] [--as NAME]');
   }
 
   const ctx = loadCliContext(process.env);
   try {
     switch (action) {
+      case 'rollout.create':
+        await cmdRolloutCreate(ctx, flags, rest, as!);
+        break;
+      case 'rollout.list':
+        for (const view of await rolloutManager(ctx).store.listJobs()) printRollout(view);
+        break;
+      case 'rollout.show':
+        printRollout(await rolloutManager(ctx).requireJob(rest[0]));
+        break;
+      case 'rollout.start':
+      case 'rollout.resume':
+        await rolloutManager(ctx).resume(rest[0]);
+        break;
+      case 'rollout.pause':
+        await rolloutManager(ctx).pause(rest[0]);
+        break;
+      case 'rollout.cancel':
+        await rolloutManager(ctx).cancel(rest[0]);
+        break;
+      case 'rollout.retry':
+        console.log(`retry items: ${await rolloutManager(ctx).retryFailed(rest[0])}`);
+        break;
       case 'release.register':
         cmdReleaseRegister(ctx, flags, as!);
         break;

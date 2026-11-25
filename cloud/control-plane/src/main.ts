@@ -9,6 +9,8 @@ import { reconcileAtStartup } from './services/reconcile.js';
 import { MetricsRegistry } from './metrics.js';
 import type { AppContext } from './context.js';
 import { PushDeliveryService } from './services/pushDelivery.js';
+import { SqliteRolloutStore } from './rollout/sqliteStore.js';
+import { RolloutManager } from './rollout/manager.js';
 
 /**
  * Process entry point: load config, open the database (running migrations),
@@ -43,6 +45,10 @@ async function main(): Promise<void> {
 
   const app: AppContext = { config, db, docker, sms, poller: null, metrics: new MetricsRegistry(), push: new PushDeliveryService(db, config) };
   app.push.start();
+  const rolloutStore = new SqliteRolloutStore(db);
+  const rolloutManager = new RolloutManager(app, rolloutStore);
+  app.rollouts = rolloutManager;
+  await rolloutStore.requeueInFlight();
 
   // REQ-B-11: reconcile before the poller takes over.
   await reconcileAtStartup(app).catch((err) => {
@@ -59,6 +65,7 @@ async function main(): Promise<void> {
   const poller = new TenantPoller(app, {});
   app.poller = poller;
   poller.start();
+  await rolloutManager.start();
 
   const publicServer = createPublicServer(app);
   const metricsServer = createMetricsServer(app);
@@ -73,11 +80,13 @@ async function main(): Promise<void> {
   const shutdown = (signal: string): void => {
     console.log(JSON.stringify({ msg: 'shutting down', signal }));
     app.push.stop();
-    void poller.stop().finally(() => {
-      publicServer.close(() => {
-        metricsServer.close(() => {
-          db.close();
-          process.exit(0);
+    void rolloutManager.stop().finally(() => {
+      void poller.stop().finally(() => {
+        publicServer.close(() => {
+          metricsServer.close(() => {
+            db.close();
+            process.exit(0);
+          });
         });
       });
     });

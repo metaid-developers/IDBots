@@ -55,13 +55,36 @@ $CP tenant show {t_canary}          # note previous_image
 $CP tenant upgrade {t_canary} --image {previous_image} --as admin:{you}
 ```
 
-## 2. Fleet rollout
+## 2. Persistent staged rollout (primary path)
 
-Staging first (all fake + test tenants), soak 24 h, then production:
+Staging first (all fake + test tenants), soak 24 h, then production. Create the
+job from the registered immutable release; it starts paused and expands through
+synthetic canary → internal → 1% → 10% → 25% → fleet with per-wave safety gates:
+
+```bash
+$CP rollout create {release_id} --environment staging --as admin:{you}
+# note ro_... from the output
+$CP rollout start {ro_id} --as admin:{you}
+$CP rollout show {ro_id}
+# controls: pause/resume; retry failed items while paused, then resume
+$CP rollout pause {ro_id} --as admin:{you}
+$CP rollout retry {ro_id} --as admin:{you}
+$CP rollout resume {ro_id} --as admin:{you}
+```
+
+Defaults are global concurrency 20 and one active upgrade per host. Jobs,
+leases, per-host image preflight, per-tenant attempts, outcomes, and wave soak
+state survive control-plane restarts. A canary failure, two consecutive
+failures, or the configured wave failure threshold pauses expansion; only the
+affected tenant rolls back automatically. `rollout create` also accepts
+`--kind`, `--cohort`, explicit tenant IDs, `--global-concurrency`,
+`--per-host-concurrency`, and `--soak-ms` (test drills only).
+
+The legacy direct command remains a break-glass path for an individual tenant
+or an operator-selected fleet when the scheduler is unavailable:
 
 ```bash
 $CP tenant upgrade --all --image {REGISTRY}/idbots/tenant:{tag} --as admin:{you}
-# default one tenant at a time; --batch N raises concurrency (staging only)
 # --all selects only ready/degraded tenants not already on the target.
 # Optional: --digest sha256:... --kind customer --cohort stable --environment production
 ```

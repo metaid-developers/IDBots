@@ -177,6 +177,10 @@ builds; a root-context build is governed by the repository-root
   --file /secure/path/cloud-release-manifest.json --as OPERATOR`, then use
   `release list` and `release promote ID --status canary|stable`. A conflicting
   manifest for an existing release identity is rejected rather than overwritten.
+- **Use persistent rollouts for fleet changes.** `rollout create RELEASE_ID`
+  creates a paused staged job; `rollout start`, `show`, `pause`, `resume`,
+  `retry`, and `cancel` operate it. Jobs survive restarts, preflight each host,
+  and stop expanding on canary/consecutive/threshold failures.
 - **Never expose the control plane directly.** Client IPs come from
   `X-Forwarded-For` and are trusted unconditionally — safe only behind the
   WS-C reverse proxy, which must be the single public entry. A directly

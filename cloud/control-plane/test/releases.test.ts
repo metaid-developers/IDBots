@@ -88,7 +88,11 @@ describe('immutable cloud releases', () => {
       assert.equal(written.contractVersion, '1.0.0');
       assert.equal(written.createdBy, 'test-ci');
       assert.ok((written.databaseSchemaVersion as number) >= 8);
-      assert.doesNotThrow(() => registerRelease(db, written, 'operator'));
+      const imported = {
+        ...written,
+        tenant: { image: 'registry.test/idbots/tenant:1.2.0-bbbbbbb', digest: `sha256:${'d'.repeat(64)}` },
+      };
+      assert.equal(registerRelease(db, imported, 'operator').duplicate, false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
