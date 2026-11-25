@@ -159,7 +159,10 @@ function collectExplicitFilePaths(texts: string[], cwd: string): string[] {
     .map((ext) => ext.slice(1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join('|');
   const regex = new RegExp(
-    String.raw`(?:^|[\s:：，,（(])([~./A-Za-z0-9_\-][~./A-Za-z0-9_@\-]*\.(${extensionPattern}))(?=$|[\s。；;，,)）])`,
+    // \ and : in both character classes so Windows guest paths (C:\dir\file.txt)
+    // match too — without them a Windows host never collects explicitly
+    // mentioned deliverables (v1.1.3 tag run 45551178172 exposed the gap).
+    String.raw`(?:^|[\s:：，,（(])([~./\\:A-Za-z0-9_\-][~./\\:A-Za-z0-9_@\-]*\.(${extensionPattern}))(?=$|[\s。；;，,)）])`,
     'gi',
   );
   const candidates: string[] = [];
