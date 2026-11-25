@@ -1206,3 +1206,4 @@ blob-report/
 # compile, sign-once hook
 !tests/ciReleaseWatch.test.mjs
 !tests/ciCompileElectron.test.mjs
+!tests/ciWindowsSignOnce.test.mjs
