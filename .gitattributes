@@ -19,3 +19,17 @@ scripts/dsh-kernel-patches/*.patch -text
 tests/fixtures/xiangqi-adapter/agent-game/adapter.js -text
 tests/fixtures/xiangqi-adapter/js/notation.js -text
 tests/fixtures/xiangqi-adapter/js/rules.js -text
+
+# METAAPPs are published app packages (personal-goods-shop, goods-market-
+# thermometer, metatask-viz, ...): their APP.md front-matter, static assets and
+# on-chain publish payloads are asserted byte-for-byte. Git for Windows
+# (core.autocrlf=true by default) rewrites them to CRLF in the working tree,
+# which breaks the LF front-matter assertions and publish-commerce-tutorials'
+# "CRLF line endings are not allowed" guard on Windows only (v1.1.3 tag run
+# 45457951981 failed exactly this way in the commerce block; macOS is
+# unaffected). Check out the whole package tree byte-exact.
+METAAPPs/** -text
+
+# The commerce tutorial payloads under docs/nft-commerce-loop are validated by
+# the same publish script (LF-only compliance guard). Check out byte-exact.
+docs/nft-commerce-loop/** -text
