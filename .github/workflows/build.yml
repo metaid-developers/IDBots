@@ -16,7 +16,44 @@ permissions:
   contents: write  # 允许创建 GitHub Release 和上传 Release 附件
 
 jobs:
+  # A release pushes `main` and its `v*` tag together, which starts two runs for
+  # the same commit one second apart. The main run is a strict subset of the tag
+  # run, yet its Windows job queues for the single signing runner ahead of the
+  # release — and cancelling it by hand is what takes the runner down (SOP
+  # §11.16). On 2026-11-25 (v1.1.3) the tag run waited 57 min and 1 h 43 min
+  # behind its own main runs, and a cancellation left the runner offline for
+  # 7.5 h overnight. Decide up front whether a run is redundant, so that
+  # nothing has to be cancelled later; scripts/ci-gate.mjs only skips what it
+  # can prove.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.gate.outputs.skip }}
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          # Two commits: the gate diffs the pushed commit against its parent.
+          fetch-depth: 2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # The gate is tested before anything relies on it: a broken gate must
+      # stop the pipeline, never quietly skip it. Only the tests that need no
+      # node_modules run here; the full set runs in each build job.
+      - name: Test the gate and the tools that need no dependencies
+        run: node --test tests/ciGate.test.mjs tests/ciReleaseWatch.test.mjs tests/ciWorktreeEol.test.mjs tests/ciWindowsSignOnce.test.mjs
+
+      - name: Decide whether this run is redundant
+        id: gate
+        run: node scripts/ci-gate.mjs
+
   build:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -51,56 +88,63 @@ jobs:
 
     steps:
       # Windows: 必须在 checkout 之前启用长路径，否则 git 操作可能被截断
+      # Also check out the committed bytes. Git for Windows defaults to
+      # core.autocrlf=true, which rewrites all ~4,300 LF-committed text files
+      # to CRLF in the working tree — the whole "red on Windows only" family
+      # (kernel patches v0.9.3, xiangqi fixture v0.9.5, METAAPPs and docs
+      # commerce payloads v1.1.3), each so far patched one path at a time.
       - name: Enable Git long paths (Windows)
         if: runner.os == 'Windows'
-        run: git config --global core.longpaths true
+        run: |
+          git config --global core.longpaths true
+          git config --global core.autocrlf false
 
       - name: Check out Git repository
         uses: actions/checkout@v4
         with:
-          # fetch-depth: 0 获取完整历史和所有标签
-          # electron-builder 在 publish 时需要访问 git 标签来确定版本和发布信息
-          fetch-depth: 0
+          # Shallow on purpose: nothing in a build job reads history or tags.
+          # electron-builder only needs them when publishing, and every build
+          # runs with --publish never (the version comes from package.json and
+          # GITHUB_REF_NAME). The full history is a 190 MB pack that the signing
+          # machine pulls over a link that resets connections: its checkout step
+          # failed three times on 2026-11-25 (v1.1.3) and one re-clone took 107
+          # minutes.
+          fetch-depth: 1
           submodules: false
 
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      # The runner workspace outlives runs, and files checked out while
+      # core.autocrlf was still true keep their CRLF copies: git's stat cache
+      # never rewrites a file it believes unchanged (SOP §11.22), so the
+      # setting in "Enable Git long paths" alone does not repair them. Rewrite
+      # exactly those files — a re-clone on this link has taken 107 minutes.
+      - name: Normalize working tree line endings (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/ci-worktree-eol.mjs
+
       - name: Enable pnpm
         run: corepack enable
-
-      # The self-hosted win-sign runner has no bash on PATH until the
-      # "Setup MinGit (Windows)" step much later in this job, so `shell: bash`
-      # dies here with "bash: command not found" (first pnpm-era Windows run,
-      # 2026-09-24). Resolve the store path per platform instead (SOP 11.10).
-      - name: Get pnpm store directory (Windows)
-        if: runner.os == 'Windows'
-        id: pnpm-store-win
-        shell: powershell
-        run: |
-          # The runner executes PowerShell steps with $ErrorActionPreference='Stop',
-          # which turns ANY native-command stderr output into a terminating error.
-          # Corepack's first-run banner ("Corepack is about to download pnpm@...")
-          # goes to stderr and killed the first pnpm-era Windows run (2026-09-24).
-          # Keep stderr non-fatal and judge success by the parsed value instead.
-          $ErrorActionPreference = 'Continue'
-          $store = (pnpm store path | Where-Object { $_ -and "$_".Trim() } | Select-Object -Last 1)
-          if (-not $store) {
-            Write-Error "pnpm store path returned no usable path"
-            exit 1
-          }
-          # AppendAllText writes UTF-8 without a BOM (Out-File/Add-Content differ per PS version).
-          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "STORE_PATH=$($store.Trim())`n")
 
       - name: Get pnpm store directory (non-Windows)
         if: runner.os != 'Windows'
         id: pnpm-store-nix
         run: echo "STORE_PATH=$(pnpm store path)" >> "$GITHUB_OUTPUT"
 
+      # Hosted runners only. The self-hosted win-sign runner keeps its pnpm
+      # store on disk between runs; archiving and uploading that multi-GB store
+      # over the signing machine's throttled link took 24 min in the post step
+      # of every successful job (runs 44735013693, 45589655519) and up to 10 min
+      # to restore — all while the single runner stays busy and queued jobs
+      # wait. (Do not give an early Windows step `shell: bash`: bash only
+      # reaches PATH with "Setup MinGit (Windows)" further down, SOP §11.10.)
       - uses: actions/cache@v4
+        if: runner.os != 'Windows'
         with:
-          path: ${{ steps.pnpm-store-win.outputs.STORE_PATH || steps.pnpm-store-nix.outputs.STORE_PATH }}
+          path: ${{ steps.pnpm-store-nix.outputs.STORE_PATH }}
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'dsh-runtime/pnpm-lock.yaml', 'SKILLs/web-search/pnpm-lock.yaml') }}
           restore-keys: pnpm-store-${{ runner.os }}-
 
@@ -144,7 +188,17 @@ jobs:
       - name: Compile Electron main process
         run: pnpm run compile:electron
 
+      # This workflow's own tooling on a real checkout of this platform: the
+      # gate, the byte-exact checkout, the incremental compile, the sign-once
+      # hook and the workflow's wiring (scripts/ci-*.mjs).
+      - name: Guard the CI tooling itself
+        id: test_ci_tooling
+        continue-on-error: true
+        run: pnpm run test:ci-tooling
+
       - name: Run Windows installer reliability tests
+        id: test_windows_installer_reliability
+        continue-on-error: true
         run: node --test tests/windowsInstallerReliability.test.mjs
 
       # Grammar gate for scripts/nsis-installer.nsh: the regex test above
@@ -155,6 +209,8 @@ jobs:
       # installed on demand: the electron-builder cache is empty on a cold
       # runner.
       - name: Compile the NSIS syntax harness (makensis -WX)
+        id: test_nsis_harness
+        continue-on-error: true
         if: runner.os == 'Windows'
         shell: powershell
         run: |
@@ -177,21 +233,29 @@ jobs:
           node scripts/verify-nsis-harness.mjs --require-makensis
 
       - name: Run LLM-safe text tests
+        id: test_llm_safe_text
+        continue-on-error: true
         run: node --test tests/llmSafeText.test.mjs
 
       # The long-term task suite guards the first-class board (redesign):
       # the entity store lifecycle, the heartbeat dispatcher, and the
       # longterm.advance escalation rules.
       - name: Run long-term task tests
+        id: test_long_term_task
+        continue-on-error: true
         run: node --test tests/longTermTaskStore.test.mjs tests/heartbeatService.test.mjs tests/longTermAdvanceService.test.mjs tests/longTermTaskAgentTools.test.mjs
 
       # Agent-Game-v2 runtime: seat.claimed identity writes, membership
       # bootstrap before the first on-chain write (room 924-2 root cause),
       # local-bot auto-approve fast lane + the RPC bot channel.
       - name: Run agent-game tests
+        id: test_agent_game
+        continue-on-error: true
         run: pnpm run test:agent-game
 
       - name: Validate runtime dependency contracts
+        id: test_runtime_dependency_contracts
+        continue-on-error: true
         run: |
           node --test tests/runtimeDependencyContract.test.mjs tests/dshRuntimeDepsCheck.test.mjs
           # Depth defense: prove the kernel patches survived every install
@@ -205,6 +269,8 @@ jobs:
       # (ask-bridge E2E, mock provider, no network), and the static test pins
       # the patch + prompt contract in source.
       - name: Run dsh ask-context tests
+        id: test_dsh_ask_context
+        continue-on-error: true
         run: |
           node dsh-runtime/test/ask-bridge.test.mjs
           node --test tests/coworkAskContextPrompt.test.mjs
@@ -213,17 +279,23 @@ jobs:
       # (AGENTS.md/CLAUDE.md injection + git branch chip). Pure file-read +
       # regex assertions: no compile step needed, safe on every matrix OS.
       - name: Run workspace-instructions contract tests
+        id: test_workspace_instructions
+        continue-on-error: true
         run: node --test tests/workspaceInstructionsBoundary.test.mjs tests/coworkSessionDetailGitBranch.test.mjs
 
       # Static source-contract tests for the pinned-skill backstop and the
       # bot-internet composer reuse (pure file-read assertions, no compile).
       - name: Run pinned-skill contract tests
+        id: test_pinned_skills
+        continue-on-error: true
         run: pnpm run test:pinned-skills
 
       # Behavioral regression suites for the review-round fixes: group-task
       # daemon/staffing/entropy, per-bot skill assignment, cowork proxy.
       # Each script runs compile:electron first (project convention).
       - name: Run group-task / skill-assignment / cowork-proxy regression tests
+        id: test_release_regressions
+        continue-on-error: true
         run: pnpm run test:release-regressions
 
       # Umbrella for the release-review test wiring (2026-11-10): 32 new test
@@ -231,6 +303,8 @@ jobs:
       # by no chain, so CI never executed them. The script runs
       # compile:electron first (14 of its node suites require dist-electron).
       - name: Run release-review umbrella tests
+        id: test_release_review
+        continue-on-error: true
         run: pnpm run test:release-review
 
       # H-64 leg B: a wake re-drive must be identifiable at the presentation
@@ -240,6 +314,8 @@ jobs:
       # [NO_REPLY] -> wake -> fired -> re-drive flow (the script runs
       # compile:electron first, project convention).
       - name: Run private-chat wake re-drive disposition tests
+        id: test_private_chat_wake
+        continue-on-error: true
         run: pnpm run test:private-chat-wake-disposition
 
       # Behavioral regression for the daily-report / follow-up gate: the
@@ -247,21 +323,31 @@ jobs:
       # gate, and the cowork follow-up flow. The script runs
       # compile:electron first (project convention).
       - name: Run daily-report / follow-up regression tests
+        id: test_daily_report
+        continue-on-error: true
         run: pnpm run test:daily-report
 
       - name: Run memory and team-culture tests
+        id: test_memory
+        continue-on-error: true
         run: pnpm run test:memory
 
       # Behavioral regression for the OpenTeam task-close fix (H-79): the
       # task-close pin list is capped so team impressions are never silently
       # dropped. Runs compile:electron first (project convention).
       - name: Run open-team impression tests
+        id: test_open_team_impression
+        continue-on-error: true
         run: pnpm run test:open-team-impression
 
       - name: Run dream retry classification tests
+        id: test_dream_retry
+        continue-on-error: true
         run: pnpm run test:dream-retry
 
       - name: Run MetaWeb agent-tool tests
+        id: test_metaweb
+        continue-on-error: true
         run: pnpm run test:metaweb
 
       # Behavioral regression for the omni_read shaping cap (H-71) and for the
@@ -272,6 +358,8 @@ jobs:
       # (omniReaderAgentTools + omniReadListTruncation); compile:electron runs
       # first (project convention).
       - name: Run omni-read agent-tool and list-page contract tests
+        id: test_omni_read
+        continue-on-error: true
         run: pnpm run test:omni-read
 
       # Behavioral regression for the gateway-wide JSON object body guard:
@@ -280,17 +368,52 @@ jobs:
       # TypeError. Starts the real compiled gateway on a random port; the
       # script runs compile:electron first (project convention).
       - name: Run MetaID RPC body-guard tests
+        id: test_rpc_body_guard
+        continue-on-error: true
         run: pnpm run test:rpc-body-guard
 
       # On-chain commerce, FT/NFT escrow & atomic-swap, Token/FT/NFT card suites,
       # and PayBuzz dual-track unlock verification gates.
       - name: Run commerce, goods-trade, FT-commerce, PayBuzz, and wallet-security tests
+        id: test_commerce_wallet
+        continue-on-error: true
         run: |
           pnpm run test:commerce
           pnpm run test:goods-trade
           pnpm run test:ft-commerce
           pnpm run test:paybuzz
           pnpm run test:wallet-security
+
+      # One verdict for every test step above. They run with
+      # continue-on-error so one red suite no longer hides the next: v1.1.3
+      # peeled the commerce block across two 50+ minute rounds (CRLF, then a
+      # Windows-path bug behind it) and three more rounds died at agent-game
+      # without ever reaching the suites after it. Every suite runs; this step
+      # fails the job if any did — before any packaging starts.
+      - name: Fail the job if any test step failed (aggregated verdict)
+        env:
+          TEST_CI_TOOLING_OUTCOME: ${{ steps.test_ci_tooling.outcome }}
+          TEST_WINDOWS_INSTALLER_RELIABILITY_OUTCOME: ${{ steps.test_windows_installer_reliability.outcome }}
+          TEST_NSIS_HARNESS_OUTCOME: ${{ steps.test_nsis_harness.outcome }}
+          TEST_LLM_SAFE_TEXT_OUTCOME: ${{ steps.test_llm_safe_text.outcome }}
+          TEST_LONG_TERM_TASK_OUTCOME: ${{ steps.test_long_term_task.outcome }}
+          TEST_AGENT_GAME_OUTCOME: ${{ steps.test_agent_game.outcome }}
+          TEST_RUNTIME_DEPENDENCY_CONTRACTS_OUTCOME: ${{ steps.test_runtime_dependency_contracts.outcome }}
+          TEST_DSH_ASK_CONTEXT_OUTCOME: ${{ steps.test_dsh_ask_context.outcome }}
+          TEST_WORKSPACE_INSTRUCTIONS_OUTCOME: ${{ steps.test_workspace_instructions.outcome }}
+          TEST_PINNED_SKILLS_OUTCOME: ${{ steps.test_pinned_skills.outcome }}
+          TEST_RELEASE_REGRESSIONS_OUTCOME: ${{ steps.test_release_regressions.outcome }}
+          TEST_RELEASE_REVIEW_OUTCOME: ${{ steps.test_release_review.outcome }}
+          TEST_PRIVATE_CHAT_WAKE_OUTCOME: ${{ steps.test_private_chat_wake.outcome }}
+          TEST_DAILY_REPORT_OUTCOME: ${{ steps.test_daily_report.outcome }}
+          TEST_MEMORY_OUTCOME: ${{ steps.test_memory.outcome }}
+          TEST_OPEN_TEAM_IMPRESSION_OUTCOME: ${{ steps.test_open_team_impression.outcome }}
+          TEST_DREAM_RETRY_OUTCOME: ${{ steps.test_dream_retry.outcome }}
+          TEST_METAWEB_OUTCOME: ${{ steps.test_metaweb.outcome }}
+          TEST_OMNI_READ_OUTCOME: ${{ steps.test_omni_read.outcome }}
+          TEST_RPC_BODY_GUARD_OUTCOME: ${{ steps.test_rpc_body_guard.outcome }}
+          TEST_COMMERCE_WALLET_OUTCOME: ${{ steps.test_commerce_wallet.outcome }}
+        run: node scripts/ci-test-verdict.mjs
 
       - name: Install web-search skill dependencies
         working-directory: SKILLs/web-search
