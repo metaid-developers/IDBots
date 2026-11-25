@@ -88,7 +88,14 @@ export interface DockerListItem {
 
 export interface DockerImageInspect {
   Id: string;
+  RepoDigests?: string[];
   Config: { Labels: Record<string, string> };
+}
+
+export function dockerImageDigest(inspect: DockerImageInspect): string | null {
+  const repoDigest = inspect.RepoDigests?.find((entry) => entry.includes('@sha256:'));
+  const digest = repoDigest?.slice(repoDigest.indexOf('@') + 1) ?? inspect.Id;
+  return /^sha256:[a-f0-9]{64}$/.test(digest) ? digest : null;
 }
 
 interface Transport {

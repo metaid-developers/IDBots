@@ -296,6 +296,19 @@ function migration6(db: Database.Database): void {
   `);
 }
 
+function migration7(db: Database.Database): void {
+  db.exec(`
+    ALTER TABLE tenants ADD COLUMN kind TEXT NOT NULL DEFAULT 'customer'
+      CHECK (kind IN ('customer', 'internal', 'synthetic', 'demo'));
+    ALTER TABLE tenants ADD COLUMN cohort TEXT NOT NULL DEFAULT 'stable'
+      CHECK (cohort IN ('canary', 'early', 'stable'));
+    ALTER TABLE tenants ADD COLUMN image_digest TEXT;
+    ALTER TABLE hosts ADD COLUMN environment TEXT NOT NULL DEFAULT 'production'
+      CHECK (environment IN ('staging', 'production'));
+    CREATE INDEX idx_tenants_rollout_selection ON tenants(status, kind, cohort, image, image_digest);
+  `);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'initial-schema', up: migration1 },
   { version: 2, name: 'asr-usage', up: migration2 },
@@ -303,4 +316,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 4, name: 'credit-apply', up: migration4 },
   { version: 5, name: 'notification-device-delivery', up: migration5 },
   { version: 6, name: 'invite-grants', up: migration6 },
+  { version: 7, name: 'tenant-rollout-metadata', up: migration7 },
 ];

@@ -118,6 +118,23 @@ describe('tenant upgrade (REQ-B-12)', () => {
     assert.equal(audits('t_up1', 'tenant.upgrade.done').length, 1);
   });
 
+  test('an explicit canary already on the target image is skipped, not recreated', async () => {
+    seedUserAndTenant(db, { userId: 'u_skip1', phone: '+8613900005091', tenantId: 't_skip1', status: 'ready', image: IMAGE_1_1, appVersion: '1.1.0' });
+    await startTenantContainer('t_skip1', IMAGE_1_1, '1.1.0');
+    const before = (await client.listContainers({ namePrefix: 'idb-t_skip1' }))[0].Id;
+
+    const results = await upgradeTenants(app.app, ['t_skip1'], IMAGE_1_1, {
+      operator: 'tester',
+      readyTimeoutMs: 1000,
+      readyPollMs: 100,
+    });
+    assert.deepEqual(results.map((r) => r.outcome), ['skipped']);
+    const after = (await client.listContainers({ namePrefix: 'idb-t_skip1' }))[0].Id;
+    assert.equal(after, before);
+    assert.equal(audits('t_skip1', 'tenant.upgrade.skipped').length, 1);
+    assert.equal(audits('t_skip1', 'tenant.upgrade.start').length, 0);
+  });
+
   test('never-ready new image rolls back automatically to the previous image', async () => {
     seedUserAndTenant(db, { userId: 'u_up2', phone: '+8613900005002', tenantId: 't_up2', status: 'ready', image: IMAGE_1_0, appVersion: '1.0.0' });
     await startTenantContainer('t_up2', IMAGE_1_0, '1.0.0');

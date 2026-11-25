@@ -18,6 +18,7 @@ import { FakeSmsProvider } from './sms.js';
 import { newInviteCode, newGatewaySecret } from './ids.js';
 import { encryptSecret, sha256Hex, maskPhone } from './crypto.js';
 import { upgradeTenants, findContainerId, recreateContainer } from './services/upgrade.js';
+import { selectFleetUpgradeTenantIds } from './services/upgradeSelection.js';
 import { MetricsRegistry } from './metrics.js';
 import { PushDeliveryService } from './services/pushDelivery.js';
 import type { AppContext } from './context.js';
@@ -39,6 +40,10 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
   const masterKey = Buffer.from(masterKeyRaw, 'base64');
   if (masterKey.length !== 32) {
     throw new ConfigError(`CP_MASTER_KEY must decode to 32 bytes, got ${masterKey.length}`);
+  }
+  const environment = env.CP_ENVIRONMENT ?? 'production';
+  if (environment !== 'staging' && environment !== 'production') {
+    throw new ConfigError('CP_ENVIRONMENT must be "staging" or "production"');
   }
   const tenantEnv: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
@@ -64,6 +69,9 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
     listen: '0.0.0.0:0',
     metricsListen: '0.0.0.0:0',
     dbPath,
+    environment,
+    hostId: env.CP_HOST_ID?.trim() || null,
+    hostCapacity: num('CP_HOST_CAPACITY', environment === 'staging' ? 27 : 58),
     masterKey,
     dockerUrl: env.CP_DOCKER_URL ?? 'http+unix:///var/run/docker.sock',
     tenantImage: env.CP_TENANT_IMAGE ?? '',
@@ -205,6 +213,9 @@ interface TenantRow {
   volume_name: string;
   image: string;
   previous_image: string | null;
+  image_digest: string | null;
+  kind: 'customer' | 'internal' | 'synthetic' | 'demo';
+  cohort: 'canary' | 'early' | 'stable';
   phase: string | null;
   app_version: string | null;
   contract_version: string | null;
@@ -464,15 +475,36 @@ async function cmdUserSetStatus(
 
 function cmdTenantList(ctx: AppContext, flags: Map<string, string | boolean>): void {
   const status = flagString(flags, 'status');
+  const kind = flagString(flags, 'kind');
+  const cohort = flagString(flags, 'cohort');
+  const environment = flagString(flags, 'environment');
   const rows = ctx.db
-    .prepare('SELECT id, user_id, status, image, app_version, container_name FROM tenants ORDER BY created_at')
-    .all() as Array<{ id: string; user_id: string; status: string; image: string; app_version: string | null; container_name: string }>;
+    .prepare(`SELECT tenants.id, tenants.user_id, tenants.status, tenants.image, tenants.app_version,
+                     tenants.container_name, tenants.kind, tenants.cohort, tenants.image_digest,
+                     hosts.environment
+              FROM tenants LEFT JOIN hosts ON hosts.id = tenants.host_id
+              ORDER BY tenants.created_at`)
+    .all() as Array<{
+      id: string;
+      user_id: string;
+      status: string;
+      image: string;
+      app_version: string | null;
+      container_name: string;
+      kind: string;
+      cohort: string;
+      image_digest: string | null;
+      environment: string | null;
+    }>;
   for (const row of rows) {
-    if (status && row.status !== status) {
-      continue;
-    }
+    if (status && row.status !== status) continue;
+    if (kind && row.kind !== kind) continue;
+    if (cohort && row.cohort !== cohort) continue;
+    if (environment && row.environment !== environment) continue;
     console.log(
-      `${row.id}  ${row.status}  image=${row.image}  appVersion=${row.app_version ?? '-'}  user=${row.user_id}  container=${row.container_name}`,
+      `${row.id}  ${row.status}  image=${row.image}  appVersion=${row.app_version ?? '-'}  ` +
+        `user=${row.user_id}  container=${row.container_name}  kind=${row.kind}  cohort=${row.cohort}  ` +
+        `environment=${row.environment ?? '-'}  digest=${row.image_digest?.slice(0, 19) ?? '-'}`,
     );
   }
 }
@@ -487,6 +519,9 @@ function cmdTenantShow(ctx: AppContext, id: string): void {
       `phase:         ${row.phase ?? '-'}`,
       `image:         ${row.image}`,
       `previous_image: ${row.previous_image ?? '-'}`,
+      `image_digest:  ${row.image_digest ?? '-'}`,
+      `kind:          ${row.kind}`,
+      `cohort:        ${row.cohort}`,
       `app_version:   ${row.app_version ?? '-'}`,
       `contract_version: ${row.contract_version ?? '-'}`,
       `last_error:    ${row.last_error ?? '-'}`,
@@ -522,6 +557,25 @@ async function cmdTenantLifecycle(
   console.log(`tenant ${id}: ${action} done`);
 }
 
+function cmdTenantClassify(ctx: AppContext, flags: Map<string, string | boolean>, id: string, as: string): void {
+  const tenant = getTenant(ctx, id);
+  const kind = flagString(flags, 'kind') ?? tenant.kind;
+  const cohort = flagString(flags, 'cohort') ?? tenant.cohort;
+  if (!['customer', 'internal', 'synthetic', 'demo'].includes(kind)) {
+    throw new CliError('--kind must be customer, internal, synthetic, or demo');
+  }
+  if (!['canary', 'early', 'stable'].includes(cohort)) {
+    throw new CliError('--cohort must be canary, early, or stable');
+  }
+  if (!flagString(flags, 'kind') && !flagString(flags, 'cohort')) {
+    throw new CliError('pass --kind and/or --cohort');
+  }
+  ctx.db.prepare('UPDATE tenants SET kind = ?, cohort = ?, updated_at = ? WHERE id = ?')
+    .run(kind, cohort, Date.now(), id);
+  audit(ctx, as, 'tenant.classify', id, { from: { kind: tenant.kind, cohort: tenant.cohort }, to: { kind, cohort } });
+  console.log(`tenant ${id}: kind=${kind} cohort=${cohort}`);
+}
+
 async function cmdTenantUpgrade(
   ctx: AppContext,
   flags: Map<string, string | boolean>,
@@ -531,11 +585,31 @@ async function cmdTenantUpgrade(
   const image = requireFlag(flags, 'image');
   let tenantIds = ids;
   if (flags.get('all') === true) {
-    tenantIds = (
-      ctx.db.prepare("SELECT id FROM tenants WHERE status != 'failed'").all() as Array<{ id: string }>
-    ).map((row) => row.id);
+    const kind = flagString(flags, 'kind');
+    const cohort = flagString(flags, 'cohort');
+    const environment = flagString(flags, 'environment');
+    if (kind && !['customer', 'internal', 'synthetic', 'demo'].includes(kind)) {
+      throw new CliError('--kind must be customer, internal, synthetic, or demo');
+    }
+    if (cohort && !['canary', 'early', 'stable'].includes(cohort)) {
+      throw new CliError('--cohort must be canary, early, or stable');
+    }
+    if (environment && !['staging', 'production'].includes(environment)) {
+      throw new CliError('--environment must be staging or production');
+    }
+    tenantIds = selectFleetUpgradeTenantIds(ctx.db, {
+      targetImage: image,
+      targetDigest: flagString(flags, 'digest'),
+      ...(kind ? { kind: kind as 'customer' | 'internal' | 'synthetic' | 'demo' } : {}),
+      ...(cohort ? { cohort: cohort as 'canary' | 'early' | 'stable' } : {}),
+      ...(environment ? { environment: environment as 'staging' | 'production' } : {}),
+    });
   }
   if (tenantIds.length === 0) {
+    if (flags.get('all') === true) {
+      console.log('no tenants require upgrade');
+      return;
+    }
     throw new CliError('no tenants selected (pass ids or --all)');
   }
   const batch = Number(flagString(flags, 'batch') ?? '1');
@@ -731,6 +805,7 @@ const MUTATING = new Set([
   'tenant.restart',
   'tenant.stop',
   'tenant.start',
+  'tenant.classify',
   'tenant.upgrade',
   'tenant.rotate-secret',
   'tenant.export',
@@ -802,6 +877,9 @@ async function run(argv: string[]): Promise<void> {
         break;
       case 'tenant.start':
         await cmdTenantLifecycle(ctx, 'start', rest[0], as!);
+        break;
+      case 'tenant.classify':
+        cmdTenantClassify(ctx, flags, rest[0], as!);
         break;
       case 'tenant.upgrade':
         await cmdTenantUpgrade(ctx, flags, rest, as!);

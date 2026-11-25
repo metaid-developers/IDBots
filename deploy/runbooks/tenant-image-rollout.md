@@ -58,11 +58,16 @@ Staging first (all fake + test tenants), soak 24 h, then production:
 ```bash
 $CP tenant upgrade --all --image {REGISTRY}/idbots/tenant:{tag} --as admin:{you}
 # default one tenant at a time; --batch N raises concurrency (staging only)
+# --all selects only ready/degraded tenants not already on the target.
+# Optional: --digest sha256:... --kind customer --cohort stable --environment production
 ```
 
 Upgrades close phone WebSockets with `4012`; clients reconnect on their
 backoff and see an "updating" state. No data lives in the container — only
-in the volume — so an upgrade must never lose user data (A-22).
+in the volume — so an upgrade must never lose user data (A-22). Classify
+synthetic/internal/demo/customer tenants and their canary/early/stable cohort
+with `tenant classify ID --kind KIND --cohort COHORT --as admin:{you}`. Repeating
+an explicit upgrade already on the target image or digest is a no-op.
 
 ## 3. Rollback rules (from C1)
 

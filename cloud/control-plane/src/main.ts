@@ -26,12 +26,13 @@ async function main(): Promise<void> {
   const config = loadConfig(process.env);
   const db = openDb(config.dbPath);
 
-  const hostId = `h_${sha256Hex(config.dockerUrl).slice(0, 20)}`;
+  const hostId = config.hostId ?? `h_${sha256Hex(config.dockerUrl).slice(0, 20)}`;
   ensureHostRow(db, {
     id: hostId,
     dockerUrl: config.dockerUrl,
-    capacity: 0,
+    capacity: config.hostCapacity,
     status: 'active',
+    environment: config.environment,
   });
 
   const docker = new DockerClient(config.dockerUrl);
