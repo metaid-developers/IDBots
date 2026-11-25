@@ -14,6 +14,7 @@ function jobFromRow(row: Record<string, unknown>): RolloutJob {
   return {
     id: String(row.id),
     releaseId: String(row.release_id),
+    mode: String(row.mode) as 'upgrade' | 'rollback',
     status: String(row.status) as RolloutJobStatus,
     currentWave: Number(row.current_wave),
     globalConcurrency: Number(row.global_concurrency),
@@ -54,13 +55,14 @@ export class SqliteRolloutStore implements RolloutStore {
     const now = Date.now();
     this.db.transaction(() => {
       this.db.prepare(`INSERT INTO rollout_jobs (
-        id, release_id, status, current_wave, waves_json, global_concurrency,
+        id, release_id, mode, status, current_wave, waves_json, global_concurrency,
         per_host_concurrency, failure_threshold_percent, failure_threshold_count,
         consecutive_failure_limit, operator, created_at, updated_at
-      ) VALUES (?, ?, 'paused', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      ) VALUES (?, ?, ?, 'paused', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           input.id,
           input.releaseId,
+          input.mode,
           JSON.stringify(input.waves),
           input.globalConcurrency,
           input.perHostConcurrency,

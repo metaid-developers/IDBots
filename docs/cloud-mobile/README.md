@@ -65,6 +65,7 @@ it has to satisfy.
 | [`60-acceptance-and-go-live.md`](60-acceptance-and-go-live.md) | End-to-end scenarios, security, go-live, sign-off | Owner, acceptance, every party |
 | [`delivery/internal-test-release.md`](delivery/internal-test-release.md) | Current WP0–WP3 internal-test build, canary deployment, acceptance, and rollback handoff | Operations, owner, acceptance |
 | [`70-phase-2-optimization-and-iteration-plan.md`](70-phase-2-optimization-and-iteration-plan.md) | Productization baseline: Twin-first vertical plan, capability matrix, WP0–WP5 packages, CR backlog, and acceptance gates | Everyone, especially cloud/mobile and acceptance |
+| [`../../deploy/runbooks/commercial-operations.md`](../../deploy/runbooks/commercial-operations.md) | Implemented commercial rollout/RBAC backend and the follow-up Web admin boundary | Operations, control plane, future Web admin |
 | [`71-commercial-mobile-experience-plan.md`](71-commercial-mobile-experience-plan.md) | Proposed commercial mobile audit: notification/inbox architecture, desktop parity, login and first-run improvements, CM0–CM6 packages, and launch acceptance | Owner, mobile, control-plane, native-shell, and acceptance |
 | [`native-shell/README.md`](native-shell/README.md) | Capacitor native-shell architecture, NS0–NS3 implementation packages, acceptance, and copy-paste development/review prompts | Native mobile development, owner, acceptance |
 

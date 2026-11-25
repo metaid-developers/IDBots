@@ -381,6 +381,46 @@ function migration9(db: Database.Database): void {
   `);
 }
 
+function migration10(db: Database.Database): void {
+  db.exec(`
+    ALTER TABLE rollout_jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'upgrade'
+      CHECK (mode IN ('upgrade', 'rollback'));
+    CREATE TABLE admin_users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL CHECK (role IN ('viewer', 'support', 'operator', 'admin')),
+      token_hash TEXT NOT NULL,
+      mfa_secret_enc TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE admin_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES admin_users(id),
+      role TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX idx_admin_sessions_expiry ON admin_sessions(expires_at);
+    CREATE TABLE admin_approvals (
+      id TEXT PRIMARY KEY,
+      action TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      requested_by TEXT NOT NULL REFERENCES admin_users(id),
+      approved_by TEXT REFERENCES admin_users(id),
+      status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'consumed', 'rejected')),
+      reason TEXT,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      decided_at INTEGER,
+      consumed_at INTEGER
+    );
+    CREATE INDEX idx_admin_approvals_pending ON admin_approvals(status, expires_at);
+  `);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'initial-schema', up: migration1 },
   { version: 2, name: 'asr-usage', up: migration2 },
@@ -391,4 +431,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 7, name: 'tenant-rollout-metadata', up: migration7 },
   { version: 8, name: 'immutable-releases', up: migration8 },
   { version: 9, name: 'persistent-rollout-jobs', up: migration9 },
+  { version: 10, name: 'admin-rbac-mfa-approvals', up: migration10 },
 ];

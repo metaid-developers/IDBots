@@ -17,6 +17,7 @@ import { proxyRoutes } from './services/httpProxy.js';
 import { loginRoutes } from './services/loginBundle.js';
 import { attachAsrGateway, type AsrGatewayOptions } from './services/asr/gateway.js';
 import { attachWsProxy, type WsProxyOptions } from './services/wsProxy.js';
+import { adminRoutes } from './admin/routes.js';
 
 /**
  * Minimal node:http server (no web framework, per REQ-B-2): a tiny
@@ -231,6 +232,7 @@ export function createRequestHandler(app: AppContext): http.RequestListener {
   // Login bundle routes come last: their `/*` catch-all serves bundle
 // assets and 404s anything unmatched above.
 const routes: Route[] = [
+  ...adminRoutes,
   ...authRoutes,
   ...sensitiveRoutes,
   ...accountRoutes,

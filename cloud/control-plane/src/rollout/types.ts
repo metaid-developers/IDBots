@@ -10,6 +10,7 @@ export interface RolloutWave {
 export interface RolloutJob {
   id: string;
   releaseId: string;
+  mode: 'upgrade' | 'rollback';
   status: RolloutJobStatus;
   currentWave: number;
   globalConcurrency: number;
@@ -49,6 +50,7 @@ export interface RolloutJobView {
 export interface NewRolloutJob {
   id: string;
   releaseId: string;
+  mode: 'upgrade' | 'rollback';
   globalConcurrency: number;
   perHostConcurrency: number;
   failureThresholdPercent: number;

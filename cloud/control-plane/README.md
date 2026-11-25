@@ -172,6 +172,11 @@ builds; a root-context build is governed by the repository-root
 
 ## Operations notes
 
+- **Administrator API uses RBAC and MFA.** Bootstrap with `admin create
+  USERNAME --role admin --as OPERATOR`; enroll the one-time TOTP secret, then
+  log in through `/api/v1/admin/session`. See
+  `deploy/runbooks/commercial-operations.md` for roles, endpoints, and the
+  two-person rollout approval flow.
 - **Register immutable releases before rollout.** The Cloud Images workflow
   uploads `cloud-release-manifest.json`. Run `node dist/cli.js release register
   --file /secure/path/cloud-release-manifest.json --as OPERATOR`, then use

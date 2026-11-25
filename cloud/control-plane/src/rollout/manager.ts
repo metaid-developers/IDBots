@@ -8,6 +8,7 @@ import { assignRolloutWaves, type WaveTenant } from './waves.js';
 export interface CreateRolloutOptions {
   releaseId: string;
   operator: string;
+  mode?: 'upgrade' | 'rollback';
   tenantIds?: string[];
   kind?: 'customer' | 'internal' | 'synthetic' | 'demo';
   cohort?: 'canary' | 'early' | 'stable';
@@ -62,6 +63,7 @@ export class RolloutManager {
     return this.store.createJob({
       id: `ro_${randomUUID().replaceAll('-', '')}`,
       releaseId: options.releaseId,
+      mode: options.mode ?? 'upgrade',
       globalConcurrency: options.globalConcurrency ?? 20,
       perHostConcurrency: options.perHostConcurrency ?? 1,
       failureThresholdPercent: 2,
@@ -72,7 +74,7 @@ export class RolloutManager {
       items,
     }).then(async (view) => {
       this.app.db.prepare('INSERT INTO audit_log (at, actor, action, target, detail_json) VALUES (?, ?, ?, ?, ?)')
-        .run(now, `admin:${options.operator}`, 'rollout.create', view.job.id, JSON.stringify({ releaseId: options.releaseId, tenants: items.length, waves: waves.length }));
+        .run(now, `admin:${options.operator}`, 'rollout.create', view.job.id, JSON.stringify({ releaseId: options.releaseId, mode: options.mode ?? 'upgrade', tenants: items.length, waves: waves.length }));
       return view;
     });
   }

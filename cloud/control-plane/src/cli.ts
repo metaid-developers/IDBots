@@ -22,6 +22,7 @@ import { selectFleetUpgradeTenantIds } from './services/upgradeSelection.js';
 import { listReleases, registerRelease, setReleaseStatus } from './services/releases.js';
 import { RolloutManager } from './rollout/manager.js';
 import { SqliteRolloutStore } from './rollout/sqliteStore.js';
+import { createAdminUser, disableAdminUser, listAdminUsers, type AdminRole } from './admin/auth.js';
 import { MetricsRegistry } from './metrics.js';
 import { PushDeliveryService } from './services/pushDelivery.js';
 import type { AppContext } from './context.js';
@@ -252,6 +253,17 @@ async function startTenantContainer(ctx: AppContext, tenant: TenantRow): Promise
 
 // --- commands ---------------------------------------------------------------
 
+function cmdAdminCreate(ctx: AppContext, flags: Map<string, string | boolean>, username: string, as: string): void {
+  const role = requireFlag(flags, 'role') as AdminRole;
+  const result = createAdminUser(ctx.db, ctx.config.masterKey, { username, role }, as);
+  console.log(`id: ${result.id}\nusername: ${result.username}\nrole: ${result.role}\ntoken (shown once): ${result.token}\nmfa secret (shown once): ${result.mfaSecret}\notpauth: ${result.otpauthUrl}`);
+}
+
+function cmdAdminDisable(ctx: AppContext, id: string, as: string): void {
+  disableAdminUser(ctx.db, id, as);
+  console.log(`admin ${id} disabled`);
+}
+
 function rolloutManager(ctx: AppContext): RolloutManager {
   ctx.rollouts ??= new RolloutManager(ctx, new SqliteRolloutStore(ctx.db));
   return ctx.rollouts;
@@ -263,9 +275,12 @@ async function cmdRolloutCreate(ctx: AppContext, flags: Map<string, string | boo
   const kind = flagString(flags, 'kind') as 'customer' | 'internal' | 'synthetic' | 'demo' | null;
   const cohort = flagString(flags, 'cohort') as 'canary' | 'early' | 'stable' | null;
   const environment = flagString(flags, 'environment') as 'staging' | 'production' | null;
+  const mode = flagString(flags, 'mode') ?? 'upgrade';
+  if (mode !== 'upgrade' && mode !== 'rollback') throw new CliError('--mode must be upgrade or rollback');
   const view = await rolloutManager(ctx).create({
     releaseId,
     operator: as,
+    mode,
     tenantIds: rest.length > 1 ? rest.slice(1) : undefined,
     ...(kind ? { kind } : {}),
     ...(cohort ? { cohort } : {}),
@@ -283,6 +298,7 @@ function printRollout(view: NonNullable<Awaited<ReturnType<SqliteRolloutStore['g
   console.log(JSON.stringify({
     id: view.job.id,
     releaseId: view.job.releaseId,
+    mode: view.job.mode,
     status: view.job.status,
     currentWave: view.job.currentWave,
     waves: view.waves,
@@ -859,6 +875,8 @@ async function cmdDeletionComplete(
 // --- dispatch ---------------------------------------------------------------
 
 const MUTATING = new Set([
+  'admin.create',
+  'admin.disable',
   'rollout.create',
   'rollout.start',
   'rollout.pause',
@@ -896,12 +914,21 @@ async function run(argv: string[]): Promise<void> {
     requireOperator(as);
   }
   if (!domain) {
-    throw new CliError('usage: cli.js <rollout|release|invite|redeem|credit|user|tenant|deletion|push> <command> [flags] [--as NAME]');
+    throw new CliError('usage: cli.js <admin|rollout|release|invite|redeem|credit|user|tenant|deletion|push> <command> [flags] [--as NAME]');
   }
 
   const ctx = loadCliContext(process.env);
   try {
     switch (action) {
+      case 'admin.create':
+        cmdAdminCreate(ctx, flags, rest[0], as!);
+        break;
+      case 'admin.list':
+        console.log(JSON.stringify(listAdminUsers(ctx.db), null, 2));
+        break;
+      case 'admin.disable':
+        cmdAdminDisable(ctx, rest[0], as!);
+        break;
       case 'rollout.create':
         await cmdRolloutCreate(ctx, flags, rest, as!);
         break;
