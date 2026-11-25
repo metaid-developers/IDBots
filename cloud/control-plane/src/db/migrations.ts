@@ -309,6 +309,29 @@ function migration7(db: Database.Database): void {
   `);
 }
 
+function migration8(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE releases (
+      id TEXT PRIMARY KEY,
+      tenant_image TEXT NOT NULL UNIQUE,
+      tenant_image_digest TEXT NOT NULL,
+      control_plane_image TEXT NOT NULL,
+      control_plane_image_digest TEXT NOT NULL,
+      source_sha TEXT NOT NULL,
+      app_version TEXT NOT NULL,
+      contract_version TEXT NOT NULL,
+      rollback_safe_to TEXT,
+      database_schema_version INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'candidate'
+        CHECK (status IN ('candidate', 'canary', 'stable', 'retired')),
+      manifest_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      created_by TEXT NOT NULL
+    );
+    CREATE INDEX idx_releases_status_created ON releases(status, created_at);
+  `);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'initial-schema', up: migration1 },
   { version: 2, name: 'asr-usage', up: migration2 },
@@ -317,4 +340,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 5, name: 'notification-device-delivery', up: migration5 },
   { version: 6, name: 'invite-grants', up: migration6 },
   { version: 7, name: 'tenant-rollout-metadata', up: migration7 },
+  { version: 8, name: 'immutable-releases', up: migration8 },
 ];

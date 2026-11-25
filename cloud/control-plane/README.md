@@ -172,6 +172,11 @@ builds; a root-context build is governed by the repository-root
 
 ## Operations notes
 
+- **Register immutable releases before rollout.** The Cloud Images workflow
+  uploads `cloud-release-manifest.json`. Run `node dist/cli.js release register
+  --file /secure/path/cloud-release-manifest.json --as OPERATOR`, then use
+  `release list` and `release promote ID --status canary|stable`. A conflicting
+  manifest for an existing release identity is rejected rather than overwritten.
 - **Never expose the control plane directly.** Client IPs come from
   `X-Forwarded-For` and are trusted unconditionally — safe only behind the
   WS-C reverse proxy, which must be the single public entry. A directly

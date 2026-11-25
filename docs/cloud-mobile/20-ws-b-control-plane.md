@@ -177,6 +177,7 @@ ships.
 
   | Command | Effect |
   |---------|--------|
+  | `release register --file MANIFEST`, `release list`, `release promote ID --status STATUS` | Immutable image digests, source/contract/schema provenance, and channel promotion |
   | `invite create --uses N [--with-redeem] [--expires DATE] [--note TEXT]` | Prints the new code |
   | `invite list`, `invite disable CODE` | |
   | `redeem import --file CODES.csv [--note TEXT]` | Imports single-use codes exported from the Metaso admin console; duplicates are skipped |

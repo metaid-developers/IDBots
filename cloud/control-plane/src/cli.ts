@@ -19,6 +19,7 @@ import { newInviteCode, newGatewaySecret } from './ids.js';
 import { encryptSecret, sha256Hex, maskPhone } from './crypto.js';
 import { upgradeTenants, findContainerId, recreateContainer } from './services/upgrade.js';
 import { selectFleetUpgradeTenantIds } from './services/upgradeSelection.js';
+import { listReleases, registerRelease, setReleaseStatus } from './services/releases.js';
 import { MetricsRegistry } from './metrics.js';
 import { PushDeliveryService } from './services/pushDelivery.js';
 import type { AppContext } from './context.js';
@@ -248,6 +249,25 @@ async function startTenantContainer(ctx: AppContext, tenant: TenantRow): Promise
 }
 
 // --- commands ---------------------------------------------------------------
+
+function cmdReleaseRegister(ctx: AppContext, flags: Map<string, string | boolean>, as: string): void {
+  const file = requireFlag(flags, 'file');
+  const manifest = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+  const result = registerRelease(ctx.db, manifest, as);
+  console.log(`${result.release.id}: ${result.duplicate ? 'already registered' : 'registered'} status=${result.release.status} image=${result.release.tenant.image} digest=${result.release.tenant.digest}`);
+}
+
+function cmdReleaseList(ctx: AppContext): void {
+  for (const release of listReleases(ctx.db)) {
+    console.log(`${release.id}  ${release.status}  app=${release.appVersion}  schema=${release.databaseSchemaVersion}  image=${release.tenant.image}  digest=${release.tenant.digest}`);
+  }
+}
+
+function cmdReleasePromote(ctx: AppContext, flags: Map<string, string | boolean>, id: string, as: string): void {
+  const status = requireFlag(flags, 'status') as 'candidate' | 'canary' | 'stable' | 'retired';
+  const release = setReleaseStatus(ctx.db, id, status, as);
+  console.log(`${release.id}: status=${release.status}`);
+}
 
 function cmdInviteCreate(ctx: AppContext, flags: Map<string, string | boolean>, as: string): void {
   const usesRaw = flagString(flags, 'uses') ?? '1';
@@ -795,6 +815,8 @@ async function cmdDeletionComplete(
 // --- dispatch ---------------------------------------------------------------
 
 const MUTATING = new Set([
+  'release.register',
+  'release.promote',
   'invite.create',
   'invite.disable',
   'redeem.import',
@@ -824,12 +846,21 @@ async function run(argv: string[]): Promise<void> {
     requireOperator(as);
   }
   if (!domain) {
-    throw new CliError('usage: cli.js <invite|redeem|credit|user|tenant|deletion|push> <command> [flags] [--as NAME]');
+    throw new CliError('usage: cli.js <release|invite|redeem|credit|user|tenant|deletion|push> <command> [flags] [--as NAME]');
   }
 
   const ctx = loadCliContext(process.env);
   try {
     switch (action) {
+      case 'release.register':
+        cmdReleaseRegister(ctx, flags, as!);
+        break;
+      case 'release.list':
+        cmdReleaseList(ctx);
+        break;
+      case 'release.promote':
+        cmdReleasePromote(ctx, flags, rest[0], as!);
+        break;
       case 'invite.create':
         cmdInviteCreate(ctx, flags, as!);
         break;

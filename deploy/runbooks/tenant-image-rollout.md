@@ -2,7 +2,11 @@
 
 New tenant images come from CI (`cloud-v*` tags →
 `{REGISTRY}/idbots/tenant:{version}-{commit7}`, Trivy-clean, conformance-passed).
-Rollout is canary-first, then fleet. The control plane drives upgrades
+The same workflow emits `cloud-release-manifest.json` with both pushed image
+digests, source SHA, contract, database schema, and rollback floor. Register it
+before rollout: `$CP release register --file /secure/path/cloud-release-manifest.json --as admin:{you}`;
+`release list` shows the immutable release ID and `release promote ID --status canary|stable`
+records its channel. Rollout is canary-first, then fleet. The control plane drives upgrades
 (WS-B REQ-B-12): stop → recreate on the same volume with the same secret →
 wait ready → auto-rollback to `previous_image` when the new image never
 becomes ready and `org.idbots.rollback-safe-to` allows it.
