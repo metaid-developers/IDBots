@@ -435,7 +435,11 @@ test('action writes are signed as the session agent bot (mover pays), not the ow
       content: envelopeOf('seat.claimed', { payload: { requestedRole: 'red', name: 'Red Bot' } }),
     });
     host.onGroupMessage(GROUP_ID);
-    await waitFor(() => recorder.calls.some((c) => JSON.parse(c.plaintext).type === 'action'), { label: 'action write', timeoutMs: 25_000 });
+    // 38s = §11.35 budget+50% (was 25s): v1.1.3 tag run 45538173082 timed out
+    // at 25.25s under Windows CI load while the same suite passed in earlier
+    // rounds and single-run locally — documented load-flake class, assertion
+    // unchanged.
+    await waitFor(() => recorder.calls.some((c) => JSON.parse(c.plaintext).type === 'action'), { label: 'action write', timeoutMs: 38_000 });
     assert.ok(llmCalls >= 1, 'the host brain must have produced the move');
     const actionCall = recorder.calls.find((c) => JSON.parse(c.plaintext).type === 'action');
     assert.equal(actionCall.opts?.asAgentId, BLACK_AGENT, 'action must be signed as the session agent (走子方自付)');
