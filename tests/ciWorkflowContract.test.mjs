@@ -21,7 +21,7 @@ test('the gate decides before any build job starts, and the build jobs honour it
   assert.equal(buildSteps.length > 0, true);
   assert.match(String(gate.outputs.skip), /steps\.gate\.outputs\.skip/);
   assert.match(String(gate.outputs.skip_tests), /steps\.gate\.outputs\.skip_tests/);
-  assert.deepEqual(workflow.jobs.build.needs, 'gate');
+  assert.deepEqual(workflow.jobs.build.needs, ['gate', 'source']);
   assert.match(workflow.jobs.build.if, /needs\.gate\.outputs\.skip != 'true'/);
   assert.deepEqual(workflow.jobs.release.needs, ['build']);
   const decideAt = gate.steps.findIndex((step) => step.id === 'gate');
@@ -117,16 +117,39 @@ test('the pnpm-store cache is for hosted runners only', () => {
   assert.equal(buildSteps.some((step) => step.id === 'pnpm-store-win'), false);
 });
 
-test('the Windows checkout is byte-exact: configured before checkout, repaired right after Node exists', () => {
-  const configureAt = indexOf('Enable Git long paths (Windows)');
-  const checkoutAt = indexOf('Check out Git repository');
-  const normalizeAt = indexOf('Normalize working tree line endings (Windows)');
-  assert.match(buildSteps[configureAt].run, /core\.autocrlf false/);
-  assert.equal(configureAt < checkoutAt, true, 'autocrlf must be off before the checkout writes files');
-  assert.equal(normalizeAt > indexOf('Install Node.js'), true, 'the repair step runs under node');
-  assert.equal(normalizeAt < buildSteps.findIndex((step) => step.id?.startsWith('test_')), true);
-  assert.equal(buildSteps[normalizeAt].if, `runner.os == 'Windows'`);
-  assert.match(buildSteps[normalizeAt].run, /ci-worktree-eol\.mjs/);
+test('the Windows job never fetches its source from github.com', () => {
+  // The direct checkout is for hosted runners only.
+  assert.equal(buildSteps[indexOf('Check out Git repository')].if, `runner.os != 'Windows'`);
+  const restoreAt = indexOf('Restore the source tree from the bundle (Windows)');
+  assert.equal(buildSteps[restoreAt].if, `runner.os == 'Windows'`);
+  assert.match(buildSteps[restoreAt].run, /ci-source-restore\.cjs/);
+  assert.match(buildSteps[restoreAt].run, /--commit "\$env:GITHUB_SHA"/, 'the restored commit is checked against the run');
+  // Node exists before the restore runs, and the restore precedes everything that needs the tree.
+  assert.equal(indexOf('Install Node.js') < indexOf('Download the source bundle (Windows)'), true);
+  assert.equal(restoreAt < indexOf('Enable pnpm'), true);
+  // Byte-exact from here on, whatever the machine's global git config says.
+  assert.match(buildSteps[indexOf('Enable Git long paths (Windows)')].run, /core\.autocrlf false/);
+  // A restore is a fresh clone, so the stale-tree repair has nothing left to do.
+  assert.equal(buildSteps.some((step) => /ci-worktree-eol/.test(String(step.run))), false);
+
+  // A hosted runner bundles the commit and ships the restore tool next to it.
+  const source = workflow.jobs.source;
+  assert.equal(source.needs, 'gate');
+  assert.equal(source.if, `needs.gate.outputs.skip != 'true'`);
+  assert.equal(source['runs-on'], 'ubuntu-latest');
+  assert.deepEqual(source.steps.map((step) => step.name), [
+    'Check out Git repository',
+    'Bundle the commit together with the restore tool',
+    'Upload the source bundle',
+  ]);
+  assert.equal(source.steps[0].with['persist-credentials'], false, 'the bundle must not carry a token');
+  const bundling = source.steps[1].run;
+  assert.match(bundling, /git bundle create [^\n]*HEAD/);
+  assert.match(bundling, /cp scripts\/ci-source-restore\.cjs/);
+  assert.match(bundling, /rev-parse HEAD\)" = "\$GITHUB_SHA"/, 'the bundle is cut from the commit the run is for');
+  assert.equal(source.steps[2].with.name, 'source-bundle');
+  assert.equal(buildSteps[indexOf('Download the source bundle (Windows)')].with.name, 'source-bundle');
+  assert.equal(fs.existsSync(path.join(repoRoot, 'scripts/ci-source-restore.cjs')), true);
 });
 
 test('package.json and electron-builder.json carry the matching wiring', () => {

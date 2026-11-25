@@ -62,8 +62,47 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/ci-gate.mjs
 
-  build:
+  # The signing machine's route to github.com:443 resets connections: its
+  # checkout step failed on v0.9.6, v0.9.7, v0.9.8, v1.0.9, v1.1.0 and three
+  # times on v1.1.3 (2026-11-25), where the forced re-clone alone took 107
+  # minutes, and the release SOP had carried "prevention pending" since
+  # 2026-09-28. It reaches GitHub's artifact storage without trouble — it
+  # already uploads every build there. So a hosted runner, with a good route,
+  # takes the commit and hands it over as a git bundle; the Windows job
+  # restores from that and never talks to github.com for its source.
+  # (Owner decision 2026-11-26.)
+  source:
     needs: gate
+    if: needs.gate.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          # The bundle must not carry the token; nothing here pushes.
+          persist-credentials: false
+
+      - name: Bundle the commit together with the restore tool
+        run: |
+          mkdir -p "$RUNNER_TEMP/source-bundle"
+          # Cut from a shallow clone, the bundle holds this commit and its whole
+          # tree; the restore marks the result shallow on the receiving side.
+          git bundle create "$RUNNER_TEMP/source-bundle/source.bundle" HEAD
+          cp scripts/ci-source-restore.cjs "$RUNNER_TEMP/source-bundle/"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          ls -la "$RUNNER_TEMP/source-bundle"
+
+      - name: Upload the source bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-bundle
+          path: ${{ runner.temp }}/source-bundle
+          retention-days: 1
+          if-no-files-found: error
+
+  build:
+    needs: [gate, source]
     if: needs.gate.outputs.skip != 'true'
     runs-on: ${{ matrix.os }}
 
@@ -99,10 +138,10 @@ jobs:
 
     steps:
       # Windows: 必须在 checkout 之前启用长路径，否则 git 操作可能被截断
-      # Also check out the committed bytes. Git for Windows defaults to
-      # core.autocrlf=true, which rewrites all ~4,300 LF-committed text files
-      # to CRLF in the working tree — the whole "red on Windows only" family
-      # (kernel patches v0.9.3, xiangqi fixture v0.9.5, METAAPPs and docs
+      # It also keeps core.autocrlf off for every later git call in the job:
+      # Git for Windows defaults it to true, which rewrites all ~4,300
+      # LF-committed text files to CRLF — the whole "red on Windows only"
+      # family (kernel patches v0.9.3, xiangqi fixture v0.9.5, METAAPPs and docs
       # commerce payloads v1.1.3), each so far patched one path at a time.
       - name: Enable Git long paths (Windows)
         if: runner.os == 'Windows'
@@ -110,32 +149,47 @@ jobs:
           git config --global core.longpaths true
           git config --global core.autocrlf false
 
-      - name: Check out Git repository
-        uses: actions/checkout@v4
-        with:
-          # Shallow on purpose: nothing in a build job reads history or tags.
-          # electron-builder only needs them when publishing, and every build
-          # runs with --publish never (the version comes from package.json and
-          # GITHUB_REF_NAME). The full history is a 190 MB pack that the signing
-          # machine pulls over a link that resets connections: its checkout step
-          # failed three times on 2026-11-25 (v1.1.3) and one re-clone took 107
-          # minutes.
-          fetch-depth: 1
-          submodules: false
-
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
 
-      # The runner workspace outlives runs, and files checked out while
-      # core.autocrlf was still true keep their CRLF copies: git's stat cache
-      # never rewrites a file it believes unchanged (SOP §11.22), so the
-      # setting in "Enable Git long paths" alone does not repair them. Rewrite
-      # exactly those files — a re-clone on this link has taken 107 minutes.
-      - name: Normalize working tree line endings (Windows)
+      # Hosted runners reach github.com without trouble and check out directly.
+      - name: Check out Git repository
+        if: runner.os != 'Windows'
+        uses: actions/checkout@v4
+        with:
+          # Shallow on purpose: nothing in a build job reads history or tags.
+          # electron-builder only needs them when publishing, and every build
+          # runs with --publish never (the version comes from package.json and
+          # GITHUB_REF_NAME).
+          fetch-depth: 1
+          submodules: false
+
+      # The signing machine never fetches from github.com (see the `source`
+      # job). scripts/ci-source-restore.cjs deletes everything in its
+      # workspace, clones the bundle and proves the result is the commit this
+      # run is for. It travels inside the artifact because the workspace is
+      # empty by the time it runs — which also means no file of an earlier run
+      # can survive into this one (SOP §11.22, §11.43).
+      - name: Download the source bundle (Windows)
         if: runner.os == 'Windows'
-        run: node scripts/ci-worktree-eol.mjs
+        uses: actions/download-artifact@v4
+        with:
+          name: source-bundle
+          path: ${{ runner.temp }}/source-bundle
+
+      - name: Restore the source tree from the bundle (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $restore = "$env:RUNNER_TEMP\source-bundle\ci-source-restore.cjs"
+          # A tag checkout stays detached, as actions/checkout leaves it; only a branch push gets a branch.
+          if ($env:GITHUB_REF -like 'refs/heads/*') {
+            node $restore --commit "$env:GITHUB_SHA" --branch "$env:GITHUB_REF_NAME"
+          } else {
+            node $restore --commit "$env:GITHUB_SHA"
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Enable pnpm
         run: corepack enable
