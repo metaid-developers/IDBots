@@ -141,7 +141,7 @@ After building a signed release, generate a complete candidate manifest from the
 ```bash
 curl --noproxy '*' -fsSL https://idbots.ai/update.json -o artifacts/update-before.json
 pnpm run release:android:metadata -- \
-  artifacts/IDBots-Android-0.1.7.apk \
+  artifacts/IDBots-Android-0.1.8.apk \
   artifacts/update-before.json \
   artifacts/update.json
 ```
