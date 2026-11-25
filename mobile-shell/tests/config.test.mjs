@@ -58,6 +58,7 @@ test('production startup uses declarative config, safe lifecycle, version 0.1.8,
   const iosProject = read('../ios/App/App.xcodeproj/project.pbxproj');
   assert.equal(iosProject.match(/CURRENT_PROJECT_VERSION = 10;/g)?.length, 2);
   assert.equal(iosProject.match(/MARKETING_VERSION = 0\.1\.8;/g)?.length, 2);
+  assert.equal(iosProject.match(/CODE_SIGN_IDENTITY = "iPhone Distribution: SHOWPAY LIMITED \(48AW2FB7Y2\)";/g)?.length, 2);
   const bootstrap = read('../android/app/src/main/java/com/idbots/world/NativeBootstrap.java');
   assert.match(bootstrap, /BuildConfig\.VERSION_NAME/);
   assert.match(bootstrap, /BuildConfig\.VERSION_CODE/);
