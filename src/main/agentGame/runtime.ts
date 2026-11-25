@@ -169,6 +169,10 @@ export class AgentGameRuntime extends EventEmitter {
   private states = new Map<string, unknown>();
   /** Sessions currently inside the action loop (re-entry guard). */
   private busy = new Set<string>();
+  /** Per-session serialization of async work (see withSessionLock): the action
+   *  loop, the catch-up behind onGroupMessage, resume and recover all mutate
+   *  one session's working state, and no two of them may interleave. */
+  private readonly sessionTails = new Map<string, Promise<void>>();
   /** Pending (in-flight) write per session for retry/dedup. */
   private pending = new Map<string, { event: GameEvent; key: WriteLogKey }>();
   /** GAP-4: wall-clock anchor of the last ACCEPTED game progress per session
@@ -251,7 +255,7 @@ export class AgentGameRuntime extends EventEmitter {
         // otherwise write into the void again.
         await this.ensureGroupMembership(s);
         await this.ensureSandbox(s);
-        await this.catchUp(s.sessionId);
+        await this.withSessionLock(s.sessionId, () => this.catchUp(s.sessionId));
         // Re-acquire lease (fresh id) — conflict stays paused.
         const res = this.leases.acquire(s.groupId, s.seat, s.sessionId);
         if (!res.acquired) {
@@ -317,7 +321,13 @@ export class AgentGameRuntime extends EventEmitter {
     const sessions = this.deps.store.listRecoverableSessions().filter((s) => s.groupId === groupId);
     if (sessions.length === 0) return;
     for (const s of sessions) {
-      void this.catchUp(s.sessionId)
+      void this.withSessionLock(s.sessionId, async () => {
+        // Re-read under the lock: the session may have been stopped while this
+        // catch-up waited behind a running turn.
+        const current = this.deps.store.getSession(s.sessionId);
+        if (!current || current.status === 'stopped' || current.status === 'finished') return null;
+        return this.catchUp(s.sessionId);
+      })
         .then(() => this.scheduleLoop(0))
         .catch((err) => {
           // GAP-5: catchUp can now surface persisted-state corruption
@@ -555,114 +565,161 @@ export class AgentGameRuntime extends EventEmitter {
       this.markStatus(sessionId, 'paused', mkError('budget_exhausted', 'budget depleted or authorization expired', this.now));
       return;
     }
-    const sandbox = this.sandboxes.get(sessionId);
-    if (!sandbox) return;
+    if (!this.sandboxes.has(sessionId)) return;
     this.busy.add(sessionId);
     try {
-      const state = this.states.get(sessionId);
-      if (state === undefined) return;
-      // First: retry any pending write.
-      if (this.pending.has(sessionId)) {
-        await this.retryPendingWrite(s);
-        return;
-      }
-      const turn = await sandbox.getTurn(state);
-      if (turn.phase === 'finished') {
-        await this.finish(s);
-        return;
-      }
-      if (turn.phase !== 'playing' || turn.seat !== s.seat) {
-        // GAP-4: while we WAIT for the mover, watch the move window — a stalled
-        // opponent must be claimable without human resume (S1 legal endgame).
-        this.considerTimeoutClaim(s, turn);
-        return;
-      }
-
-      // Generate a candidate action via the host LLM (≤ N parse attempts).
-      const observation = await sandbox.getObservation(state, s.seat);
-      const schema = await sandbox.getActionSchema(state, s.seat);
-      let action: unknown = null;
-      let lastError: string | undefined;
-      for (let attempt = 1; attempt <= LLM_MAX_PARSE_ATTEMPTS; attempt++) {
-        let text: string;
-        try {
-          const result = await this.completeMoveInWindow(sessionId, buildMovePrompt({
-            gameId: s.gameId, seat: s.seat, observation, schema, lastError,
-          }));
-          text = result.content?.trim() ?? '';
-        } catch (err) {
-          // stop() settles the window with a named error: the session is
-          // already stopped (lease released, sandbox disposed) — return
-          // without any status write, or a late stop-settlement would
-          // resurrect the terminal session as paused/llm_*.
-          if ((err as { name?: string } | null)?.name === 'SessionStoppedError') {
-            this.log(`${sessionId}: move-LLM call interrupted by stop (no status change)`);
-            return;
-          }
-          // GAP-4: session-correlated failure line — operators must be able to
-          // tell WHICH seat stalled with which classification from the host
-          // log alone (the 2026-09-25 G2 red-seat forensics had neither seat
-          // nor cause in ~50 bare "fetch failed" lines).
-          const code = isAbort(err) ? 'llm_timeout' : 'llm_unavailable';
-          this.log(`${sessionId}: move-LLM failed (${code}, seat ${s.seat}, attempt ${attempt}/${LLM_MAX_PARSE_ATTEMPTS}): ${errMsg(err)}`);
-          this.markStatus(sessionId, 'paused', mkError(code, errMsg(err), this.now));
-          return;
-        }
-        s.budget.llmCallsUsed++;
-        const parsed = await sandbox.parseAction(text, { schema, observation, seat: s.seat });
-        if (!parsed.error) {
-          action = parsed.action;
-          break;
-        }
-        lastError = parsed.error;
-      }
-      if (action === null) {
-        this.markStatus(sessionId, 'paused', mkError('llm_unavailable', 'LLM produced no valid action after retries', this.now));
-        return;
-      }
-      const validated = await sandbox.validateAction(state, action, { schema, observation, seat: s.seat });
-      if (!validated.valid) {
-        this.log(`${sessionId}: action rejected by adapter (${validated.code})`);
-        return; // not fatal — try again next tick
-      }
-
-      // State hashing via draft reduce clone (deterministic).
-      const prevStateHash = this.hashOf(await sandbox.serializeState(state));
-      const draft = structuredClone(state);
-      const actionSeq = s.lastActionSeq + 1;
-      const draftEvent = this.draftEnvelope(s, actionSeq, prevStateHash, validated.normalizedAction ?? action);
-      // GAP-3a: the pre-write draft reduce must attribute exactly like the
-      // landed row will (the transport signs as the session agent, so the
-      // chain row's senderMetaId == s.agentId). A meta-less draft reduce can't
-      // map the action to our seat, no-ops, and bakes stateHash ==
-      // prevStateHash into the event — every third-party replay then rejects
-      // it and the mover regenerates the same move forever (924-2 组B/C:
-      // 红 h2e2×2 / 黑 h9g7×9). The meta stays LOCAL: docs/07 §2 keeps
-      // identity in row metadata, never in the chain body (chainWrite sends
-      // the meta-free `event` below).
-      const attributedDraft = withOwnMeta(draftEvent as MetaStampedEvent, s.agentId, this.now());
-      const reducedDraft = await sandbox.reduce(draft, attributedDraft);
-      const stateHash = this.hashOf(await sandbox.serializeState(reducedDraft));
-
-      const event: ActionEvent = {
-        ...draftEvent,
-        stateHash,
-      };
-      const key: WriteLogKey = { groupId: s.groupId, actionSeq, eventId: event.eventId };
-      // Record intent BEFORE write (idempotency ledger).
-      this.deps.store.recordWriteIntent(key, sessionId);
-      this.deps.store.audit('action-write', sessionId, s.agentId, { actionSeq, eventId: event.eventId });
-      this.pending.set(sessionId, { event, key });
-      await this.retryPendingWrite(s);
+      await this.withSessionLock(sessionId, () => this.runTurn(sessionId));
     } catch (err) {
       if (err instanceof AdapterError) {
         this.markStatus(sessionId, 'paused', mkError(err.code, err.message, this.now));
       } else {
-        this.markStatus(sessionId, 'error', mkError('internal_error', errMsg(err), this.now));
+        this.markStatus(sessionId, 'error', mkError(err.code, errMsg(err), this.now));
       }
     } finally {
       this.busy.delete(sessionId);
     }
+  }
+
+  /**
+   * One action-loop pass. Runs under the session lock, so the catch-up behind
+   * onGroupMessage and any other pass of this session cannot interleave with
+   * it; errors propagate to processSession's classification.
+   */
+  private async runTurn(sessionId: string): Promise<void> {
+    // Re-read under the lock: a catch-up, a pause or a stop may have landed
+    // while this pass waited for the lock.
+    const s = this.deps.store.getSession(sessionId);
+    if (!s || s.status !== 'running' || this.disposed) return;
+    const sandbox = this.sandboxes.get(sessionId);
+    if (!sandbox) return;
+    const state = this.states.get(sessionId);
+    if (state === undefined) return;
+    // First: retry any pending write.
+    if (this.pending.has(sessionId)) {
+      await this.retryPendingWrite(s);
+      return;
+    }
+    const turn = await sandbox.getTurn(state);
+    if (turn.phase === 'finished') {
+      await this.finish(s);
+      return;
+    }
+    if (turn.phase !== 'playing' || turn.seat !== s.seat) {
+      // GAP-4: while we WAIT for the mover, watch the move window — a stalled
+      // opponent must be claimable without human resume (S1 legal endgame).
+      this.considerTimeoutClaim(s, turn);
+      return;
+    }
+
+    // Generate a candidate action via the host LLM (≤ N parse attempts).
+    const observation = await sandbox.getObservation(state, s.seat);
+    const schema = await sandbox.getActionSchema(state, s.seat);
+    let action: unknown = null;
+    let lastError: string | undefined;
+    for (let attempt = 1; attempt <= LLM_MAX_PARSE_ATTEMPTS; attempt++) {
+      let text: string;
+      try {
+        const result = await this.completeMoveInWindow(sessionId, buildMovePrompt({
+          gameId: s.gameId, seat: s.seat, observation, schema, lastError,
+        }));
+        text = result.content?.trim() ?? '';
+      } catch (err) {
+        // stop() settles the window with a named error: the session is
+        // already stopped (lease released, sandbox disposed) — return
+        // without any status write, or a late stop-settlement would
+        // resurrect the terminal session as paused/llm_*.
+        if ((err as { name?: string } | null)?.name === 'SessionStoppedError') {
+          this.log(`${sessionId}: move-LLM call interrupted by stop (no status change)`);
+          return;
+        }
+        // GAP-4: session-correlated failure line — operators must be able to
+        // tell WHICH seat stalled with which classification from the host
+        // log alone (the 2026-09-25 G2 red-seat forensics had neither seat
+        // nor cause in ~50 bare "fetch failed" lines).
+        const code = isAbort(err) ? 'llm_timeout' : 'llm_unavailable';
+        this.log(`${sessionId}: move-LLM failed (${code}, seat ${s.seat}, attempt ${attempt}/${LLM_MAX_PARSE_ATTEMPTS}): ${errMsg(err)}`);
+        this.markStatus(sessionId, 'paused', mkError(code, errMsg(err), this.now));
+        return;
+      }
+      s.budget.llmCallsUsed++;
+      const parsed = await sandbox.parseAction(text, { schema, observation, seat: s.seat });
+      if (!parsed.error) {
+        action = parsed.action;
+        break;
+      }
+      lastError = parsed.error;
+    }
+    if (action === null) {
+      this.markStatus(sessionId, 'paused', mkError('llm_unavailable', 'LLM produced no valid action after retries', this.now));
+      return;
+    }
+    const validated = await sandbox.validateAction(state, action, { schema, observation, seat: s.seat });
+    if (!validated.valid) {
+      this.log(`${sessionId}: action rejected by adapter (${validated.code})`);
+      return; // not fatal — try again next tick
+    }
+
+    // State hashing via draft reduce clone (deterministic).
+    const prevStateHash = this.hashOf(await sandbox.serializeState(state));
+    const draft = structuredClone(state);
+    const actionSeq = s.lastActionSeq + 1;
+    const draftEvent = this.draftEnvelope(s, actionSeq, prevStateHash, validated.normalizedAction ?? action);
+    // GAP-3a: the pre-write draft reduce must attribute exactly like the
+    // landed row will (the transport signs as the session agent, so the
+    // chain row's senderMetaId == s.agentId). A meta-less draft reduce can't
+    // map the action to our seat, no-ops, and bakes stateHash ==
+    // prevStateHash into the event — every third-party replay then rejects
+    // it and the mover regenerates the same move forever (924-2 组B/C:
+    // 红 h2e2×2 / 黑 h9g7×9). The meta stays LOCAL: docs/07 §2 keeps
+    // identity in row metadata, never in the chain body (chainWrite sends
+    // the meta-free `event` below).
+    const attributedDraft = withOwnMeta(draftEvent as MetaStampedEvent, s.agentId, this.now());
+    const reducedDraft = await sandbox.reduce(draft, attributedDraft);
+    const stateHash = this.hashOf(await sandbox.serializeState(reducedDraft));
+
+    const event: ActionEvent = {
+      ...draftEvent,
+      stateHash,
+    };
+    const key: WriteLogKey = { groupId: s.groupId, actionSeq, eventId: event.eventId };
+    // Record intent BEFORE write (idempotency ledger).
+    this.deps.store.recordWriteIntent(key, sessionId);
+    this.deps.store.audit('action-write', sessionId, s.agentId, { actionSeq, eventId: event.eventId });
+    this.pending.set(sessionId, { event, key });
+    await this.retryPendingWrite(s);
+  }
+
+  /**
+   * Serialize per-session async work.
+   *
+   * The failure this closes: the action loop's write finalize and the
+   * onGroupMessage catch-up both read `this.states` before an await and wrote
+   * it back after, with nothing mutual about it. A group message that landed
+   * between a write's `committed` and its post-write state update was applied
+   * by the catch-up and then overwritten by the finalize, which reduced into
+   * the state it had captured before the message: the event was gone from the
+   * working state (and the finalize's stale snapshot rolled the cursor back
+   * with it), so the game waited for a move it had already consumed. In
+   * production that is a lost opponent move; in tests it was the Windows-only
+   * agent-game flake that four rounds of wider waitFor budgets never fixed
+   * (v1.1.3, 2026-11-25) — the budget was never the problem, the pass simply
+   * never ran again.
+   *
+   * Every flow that mutates a session's state runs through here; catchUp
+   * itself does not, so a locked flow can call it.
+   */
+  private withSessionLock<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
+    const run = (this.sessionTails.get(sessionId) ?? Promise.resolve()).then(work);
+    // The tail never rejects: one flow's failure must not poison the next.
+    const tail: Promise<void> = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.sessionTails.set(sessionId, tail);
+    void tail.then(() => {
+      if (this.sessionTails.get(sessionId) === tail) this.sessionTails.delete(sessionId);
+    });
+    return run;
   }
 
   /**
@@ -939,7 +996,7 @@ export class AgentGameRuntime extends EventEmitter {
     // terminal guard refuses the running write. Return the view as-is.
     if (s.status === 'finished' || s.status === 'stopped') return toSessionView(s);
     await this.ensureSandbox(s);
-    await this.catchUp(sessionId);
+    await this.withSessionLock(sessionId, () => this.catchUp(sessionId));
     const res = this.leases.acquire(s.groupId, s.seat, sessionId);
     if (!res.acquired) {
       this.markStatus(sessionId, 'paused', mkError('session_conflict', `lease held by ${res.conflictSessionId}`, this.now));
