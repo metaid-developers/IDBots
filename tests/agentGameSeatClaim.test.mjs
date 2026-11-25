@@ -274,7 +274,13 @@ async function startSession(host) {
   return session;
 }
 
-async function waitFor(predicate, { timeoutMs = 8_000, stepMs = 20, label = 'condition' } = {}) {
+// 15s default aligns with every sibling agent-game suite (Convergence,
+// LlmTimeout, RecoverHydration, MoveWindow, MetaUnit, CursorStateHeal) — this
+// file was the 8s outlier, and the v1.1.3 tag runs repeatedly timed out here
+// by razor margins under Windows CI load ("catch-up stamps" 8.15s/8s in run
+// 45589664847, "action write" 25.25s/25s in 45551178172). §11.35: budget
+// fix, assertions untouched.
+async function waitFor(predicate, { timeoutMs = 15_000, stepMs = 20, label = 'condition' } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     // await：同步/异步谓词统一取真值——Promise 对象本身恒为 truthy，
