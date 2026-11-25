@@ -64,6 +64,9 @@ export function confirmNativeBootstrap(): IdbotsNativeBridge | null {
   for (const key of CAPABILITY_KEYS) {
     if (typeof capabilities[key] !== 'boolean') return degrade(`NATIVE_CAPABILITY_INVALID:${key}`);
   }
+  if (capabilities.haptics !== undefined && typeof capabilities.haptics !== 'boolean') {
+    return degrade('NATIVE_CAPABILITY_INVALID:haptics');
+  }
 
   if (!window.idbotsMobile) {
     window.idbotsMobile = { isMobile: true, os: bridge.bootstrap.platform, shell: 'capacitor' };

@@ -1,29 +1,21 @@
 /**
  * VoiceSession — imperative life-cycle core for one voice session (voice P1).
  *
- * Extracted from the voice-P0 React hook so the hold-to-send rules can be
- * exercised end-to-end without a DOM: tests inject a fake capture and a fake
- * socket and drive the REAL finalize / settle / text-emission path.
- *
- * Life-cycle decisions carried over from P0 (must not regress):
- *  - Max duration 120 s, further clamped by the `asr.open` remainingMs budget:
- *    auto-finalize, text kept (the daily quota is metered server-side).
- *  - Ready timeout 8 s: no `asr.open` after the socket opened -> connect_timeout.
- *  - Mic permission dialog is NOT timed.
- *  - Interruption / socket loss / server error: graceful finalize, KEEP the
- *    recognized text — never punish the user by dropping words.
- *  - `upstream_lost` is NOT an error: the gateway reopens the upstream and
- *    re-emits `asr.open` on the same socket, so the session keeps running.
- *
- * New in P1:
- *  - `mode` split: a HOLD session never writes into the composer draft. Its
- *    transcript is emitted once through `onFinalText` after the gateway's
- *    `asr.done`, for ChatScreen to send as a new message. A TAP session keeps
- *    the P0 backfill-into-draft behaviour (a11y fallback).
- *  - `cancel()` discards everything: no final text, no draft write. Used for
- *    swipe-up cancel and accidental short presses.
- *  - `commitToDraft()` is the explicit salvage path ("put into input box") for
- *    an error card — the only way a hold transcript may enter the composer.
+ * Startup speed & zero-dropped-words guarantees:
+ *  - Pre-open PCM buffer: any audio captured after `capture.start()` while the
+ *    WebSocket handshake is still in flight is queued (bounded to 32 chunks,
+ *    ~3.2 s, well inside the gateway's 64-chunk upstream buffer) and flushed
+ *    in exact FIFO order the instant `ws.onOpen` fires. No early syllables are
+ *    dropped while connecting.
+ *  - Parallel dial: once microphone permission is known to be granted, the ASR
+ *    WebSocket handshake runs concurrently with `capture.start()` instead of
+ *    waiting sequentially behind hardware startup. When permission is not yet
+ *    known granted, dialing still waits for `capture.start()` so an unanswered
+ *    OS permission prompt never burns ASR quota or hits `connect_timeout`.
+ *  - Coordinated readiness (`micReady && asrReady`): `socketReady` + `onReady`
+ *    (which triggers the phone vibration and switches UI from Preparing to
+ *    Listening) fire ONLY when BOTH hardware audio capture is running AND
+ *    `asr.open` has arrived — regardless of which finishes first.
  */
 
 import {
@@ -33,13 +25,19 @@ import {
   voiceTextCaret,
   type BackfillController,
 } from './backfill';
-import { VoiceCapture, type VoiceCaptureEvents } from './capture';
+import {
+  isMicPermissionKnownGranted,
+  VoiceCapture,
+  type VoiceCaptureEvents,
+} from './capture';
 import { buildMockMicDeps, shouldUseMockMic } from './mockMic';
 import { classifyVoiceClose, type VoiceServerErrorClass } from './protocol';
 import type { VoiceClientErrorCode, VoiceMode, VoiceUiEvent } from './voiceButtonState';
 import { VoiceSocketClient } from './voiceSocket';
 
 export const MAX_SESSION_MS = 120_000;
+/** ~3.2 s of 100 ms PCM chunks buffered client-side before WS open (gateway buffers up to 64). */
+export const MAX_PREOPEN_PCM_CHUNKS = 32;
 const READY_TIMEOUT_MS = 8_000;
 // Safety net only: `asr.done` closes the interaction, this covers a silent
 // gateway (two-pass finals can be slow, so do not cut them at 600 ms).
@@ -55,7 +53,7 @@ export interface VoiceCaptureLike {
 export interface VoiceSocketLike {
   readonly isOpen: boolean;
   dial(): void;
-  sendPcm(bytes: Uint8Array): void;
+  sendPcm(bytes: Uint8Array): boolean | void;
   sendFinish(): void;
   sendAbort(): void;
   close(): void;
@@ -92,6 +90,8 @@ export interface VoiceSessionHandlers {
   onElapsed: (sec: number) => void;
   onLevel: (level: number) => void;
   onRecognizedText: (text: string) => void;
+  /** Fired exactly once when BOTH mic capture and ASR (`asr.open`) are ready. */
+  onReady?: () => void;
   /** Tap mode only: the P0 streaming backfill into the composer draft. */
   onDraftReplace?: (text: string, caret: number) => void;
   /** Hold mode only: the finished transcript, emitted once after `asr.done`. */
@@ -103,6 +103,12 @@ export interface VoiceSessionConfig {
   draft: string;
   caret: number | null;
   urlOverride?: string;
+  /**
+   * Dial the ASR WebSocket concurrently with `capture.start()`. Defaults to
+   * `isMicPermissionKnownGranted()` so warm sessions overlap mic + WS startup
+   * while cold permission prompts never dial prematurely.
+   */
+  parallelDial?: boolean;
 }
 
 export class VoiceSession {
@@ -110,7 +116,14 @@ export class VoiceSession {
   private socket: VoiceSocketLike | null = null;
   private readonly backfill: BackfillController = createBackfill();
   private base = { before: '', after: '' };
+  private pendingPcmChunks: Uint8Array[] = [];
+  private socketDialed = false;
+  private micReady = false;
+  private asrReady = false;
+  private readyNotified = false;
+  private pendingBudgetMs: number = MAX_SESSION_MS;
   private finalizing = false;
+  private finishPendingSocketOpen = false;
   private cancelled = false;
   private errored = false;
   private finalEmitted = false;
@@ -161,7 +174,7 @@ export class VoiceSession {
 
     const socket = createSocket(
       {
-        onOpen: () => this.handlers.onUiEvent({ type: 'micGranted' }),
+        onOpen: () => this.handleSocketOpen(),
         onEvent: (event) => this.handleServerEvent(event),
         onClose: (info) => this.handleSocketClose(info),
       },
@@ -171,7 +184,7 @@ export class VoiceSession {
 
     const captureEvents: VoiceCaptureEvents = {
       onWireChunk: (bytes) => {
-        this.socket?.sendPcm(bytes);
+        this.forwardOrBufferPcm(bytes);
       },
       onInterrupted: () => {
         // Lock screen / call / app switch: finalize, keep the words.
@@ -195,23 +208,25 @@ export class VoiceSession {
       new VoiceCapture(captureEvents, shouldUseMockMic() ? buildMockMicDeps() : undefined);
     this.capture = capture;
 
+    const shouldParallelDial = this.config.parallelDial ?? isMicPermissionKnownGranted();
+    if (shouldParallelDial) {
+      this.dialSocket();
+    }
+
     capture
       .start()
       .then(() => {
         // Release/cancel can land while the mic prompt is still open: never
         // start streaming into a session that is already over.
-        if (this.cancelled || this.finalizing) {
+        if (this.cancelled || this.finalizing || this.errored) {
           capture.stop();
           if (this.capture === capture) this.capture = null;
           return;
         }
+        this.micReady = true;
         this.handlers.onUiEvent({ type: 'micGranted' });
-        this.socket?.dial();
-        this.readyTimer = setTimeout(() => {
-          this.finalize(true);
-          this.errored = true;
-          this.handlers.onUiEvent({ type: 'socketError', code: 'connect_timeout' });
-        }, READY_TIMEOUT_MS);
+        this.dialSocket();
+        this.enterRecordingIfReady();
       })
       .catch(() => {
         // onError already dispatched the typed failure; just clean up.
@@ -232,10 +247,12 @@ export class VoiceSession {
     this.cancelled = true;
     // Discarded means discarded: no transcript survives to be salvaged.
     this.backfill.clearAll();
+    this.pendingPcmChunks = [];
+    this.finishPendingSocketOpen = false;
     const capture = this.capture;
     this.capture = null;
     capture?.stop();
-    this.socket?.sendAbort();
+    if (this.socketDialed) this.socket?.sendAbort();
     this.socket?.close();
     this.socket = null;
     this.clearTimers();
@@ -257,6 +274,68 @@ export class VoiceSession {
     this.handlers.onDraftReplace?.(draft, voiceTextCaret(this.base, text));
   }
 
+  private dialSocket(): void {
+    if (this.socketDialed || this.cancelled || !this.socket) return;
+    this.socketDialed = true;
+    this.readyTimer = setTimeout(() => {
+      this.finalize(true);
+      this.errored = true;
+      this.handlers.onUiEvent({ type: 'socketError', code: 'connect_timeout' });
+    }, READY_TIMEOUT_MS);
+    this.socket.dial();
+  }
+
+  private forwardOrBufferPcm(bytes: Uint8Array): void {
+    if (this.cancelled || bytes.length === 0) return;
+    const socket = this.socket;
+    if (socket?.isOpen) {
+      this.flushBufferedPcm();
+      socket.sendPcm(bytes);
+      return;
+    }
+    if (this.pendingPcmChunks.length >= MAX_PREOPEN_PCM_CHUNKS) {
+      this.pendingPcmChunks.shift();
+    }
+    this.pendingPcmChunks.push(bytes);
+  }
+
+  private flushBufferedPcm(): void {
+    const socket = this.socket;
+    if (!socket?.isOpen || this.pendingPcmChunks.length === 0) return;
+    const queued = this.pendingPcmChunks;
+    this.pendingPcmChunks = [];
+    for (const chunk of queued) {
+      socket.sendPcm(chunk);
+    }
+  }
+
+  private handleSocketOpen(): void {
+    if (this.cancelled) return;
+    this.flushBufferedPcm();
+    if (this.finishPendingSocketOpen) {
+      this.finishPendingSocketOpen = false;
+      this.socket?.sendFinish();
+    }
+  }
+
+  private enterRecordingIfReady(): void {
+    if (!this.micReady || !this.asrReady || this.cancelled || this.finalizing || this.errored) return;
+    if (this.maxTimer !== null) clearTimeout(this.maxTimer);
+    this.maxTimer = setTimeout(() => this.finalize(true), this.pendingBudgetMs);
+    if (!this.readyNotified) {
+      this.readyNotified = true;
+      this.handlers.onUiEvent({ type: 'socketReady' });
+      this.handlers.onReady?.();
+      if (this.ticker !== null) clearInterval(this.ticker);
+      let elapsed = 0;
+      this.handlers.onElapsed(elapsed);
+      this.ticker = setInterval(() => {
+        elapsed += 1;
+        this.handlers.onElapsed(elapsed);
+      }, 1000);
+    }
+  }
+
   private pushDraft(): void {
     if (this.config.mode !== 'tap') return;
     const text = composeDraft(this.base, this.backfill.voiceText);
@@ -271,23 +350,16 @@ export class VoiceSession {
           clearTimeout(this.readyTimer);
           this.readyTimer = null;
         }
-        this.handlers.onUiEvent({ type: 'socketReady' });
         // remainingMs is THIS connection's wall-clock budget, so the local
         // auto-finalize must never outlive it. A second asr.open (after
-        // UPSTREAM_LOST recovery) simply re-arms.
-        const budgetMs =
+        // UPSTREAM_LOST recovery) simply updates the budget without firing a
+        // duplicate ready vibration or resetting the elapsed timer.
+        this.pendingBudgetMs =
           typeof event.remainingMs === 'number' && event.remainingMs > 0
             ? Math.min(MAX_SESSION_MS, event.remainingMs)
             : MAX_SESSION_MS;
-        if (this.maxTimer !== null) clearTimeout(this.maxTimer);
-        this.maxTimer = setTimeout(() => this.finalize(true), budgetMs);
-        if (this.ticker !== null) clearInterval(this.ticker);
-        let elapsed = 0;
-        this.handlers.onElapsed(elapsed);
-        this.ticker = setInterval(() => {
-          elapsed += 1;
-          this.handlers.onElapsed(elapsed);
-        }, 1000);
+        this.asrReady = true;
+        this.enterRecordingIfReady();
         return;
       }
       case 'partial': {
@@ -337,6 +409,7 @@ export class VoiceSession {
     if (this.finalizing || this.cancelled) return;
     if (!info.wasOpen) {
       this.errored = true;
+      this.teardownMedia();
       this.handlers.onUiEvent({ type: 'socketError', code: 'connect_timeout' });
       return;
     }
@@ -372,9 +445,14 @@ export class VoiceSession {
     if (capture) {
       const tail = capture.stop();
       this.capture = null;
+      if (tail && tail.length > 0) this.forwardOrBufferPcm(tail);
       const socket = this.socket;
-      if (tail && socket?.isOpen) socket.sendPcm(tail);
-      socket?.sendFinish();
+      if (socket?.isOpen) {
+        this.flushBufferedPcm();
+        socket.sendFinish();
+      } else if (this.socketDialed && socket) {
+        this.finishPendingSocketOpen = true;
+      }
     }
     this.clearTimers();
     const settle = (shouldDispatch: boolean) => {
@@ -387,6 +465,8 @@ export class VoiceSession {
       // must still count as kept text.
       const text = this.backfill.voiceText;
       const kept = text.length > 0;
+      this.pendingPcmChunks = [];
+      this.finishPendingSocketOpen = false;
       this.socket?.close();
       this.socket = null;
       this.finalizing = false;
@@ -406,8 +486,11 @@ export class VoiceSession {
   }
 
   private teardownMedia(): void {
+    this.pendingPcmChunks = [];
+    this.finishPendingSocketOpen = false;
     this.capture?.stop();
     this.capture = null;
+    if (this.socketDialed && this.socket?.isOpen) this.socket.sendAbort();
     this.socket?.close();
     this.socket = null;
     this.clearTimers();
@@ -430,6 +513,4 @@ export class VoiceSession {
   }
 }
 
-// Re-exported so tests and the hook share the exact type without importing
-// the whole protocol module.
 export type { VoiceServerEventLike as VoiceServerEvent };

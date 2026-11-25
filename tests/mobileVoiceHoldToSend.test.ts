@@ -14,13 +14,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { rmsToLevel, VoiceCapture, type VoiceCaptureEvents } from '../src/mobile/app/voice/capture.ts';
 import {
+  markMicPermissionGranted,
+  resetVoiceWarmStateForTests,
+  rmsToLevel,
+  VoiceCapture,
+  type VoiceCaptureEvents,
+} from '../src/mobile/app/voice/capture.ts';
+import {
+  HOLD_DEDICATED_START_DELAY_MS,
   HOLD_START_DELAY_MS,
   holdCancelArmed,
+  holdStartDelayMs,
   sendVoiceMessage,
   resolveHoldRelease,
 } from '../src/mobile/app/voice/holdToSend.ts';
+import {
+  prepareVoiceHaptic,
+  triggerVoiceCancelHaptic,
+  triggerVoiceReadyHaptic,
+} from '../src/mobile/app/voice/voiceHaptics.ts';
 import {
   reduceVoiceUi,
   VOICE_UI_INITIAL,
@@ -335,8 +348,12 @@ test('swipe-up cancel discards the session: abort frame, no final text, no send'
   assert.equal(sendCalls, 0);
 });
 
-test('the hold activation gate is shorter than the send threshold', () => {
-  assert.equal(HOLD_START_DELAY_MS, 180);
+test('the hold activation gates are shorter than the send threshold, with faster dedicated hold start', () => {
+  assert.equal(HOLD_START_DELAY_MS, 120);
+  assert.equal(HOLD_DEDICATED_START_DELAY_MS, 85);
+  assert.equal(holdStartDelayMs('icon'), 120);
+  assert.equal(holdStartDelayMs('hold'), 85);
+  assert.ok(HOLD_DEDICATED_START_DELAY_MS < HOLD_START_DELAY_MS);
   assert.ok(HOLD_START_DELAY_MS < 400);
 });
 
@@ -495,4 +512,286 @@ test('the session forwards capture levels to the consumer', async () => {
   harness.capture.events.onLevel?.(0.42);
   assert.deepEqual(harness.levels, [0.42]);
   harness.session.dispose();
+});
+
+// ---------------------------------------------------------------------------
+// 5. Startup speed, pre-open audio buffering & coordinated ready vibration
+// ---------------------------------------------------------------------------
+
+test('pre-open PCM chunks captured during WebSocket handshake are buffered and flushed in FIFO order', async () => {
+  resetVoiceWarmStateForTests();
+  let socketHandlers!: VoiceSocketHandlers;
+  let captureEvents!: VoiceCaptureEvents;
+  const sent: number[] = [];
+  const socket: VoiceSocketLike & { isOpen: boolean } = {
+    isOpen: false,
+    dial() {
+      // Handshake stays in flight until we explicitly open below.
+    },
+    sendPcm(bytes) {
+      sent.push(bytes[0]!);
+    },
+    sendFinish() {},
+    sendAbort() {},
+    close() {
+      this.isOpen = false;
+    },
+  };
+
+  let ui = VOICE_UI_INITIAL;
+  let readyCalls = 0;
+  const session = new VoiceSession(
+    { mode: 'hold', draft: '', caret: null, parallelDial: false },
+    {
+      onUiEvent: (event) => {
+        ui = reduceVoiceUi(ui, event);
+      },
+      onReady: () => {
+        readyCalls += 1;
+      },
+      onElapsed: () => {},
+      onLevel: () => {},
+      onRecognizedText: () => {},
+    },
+    {
+      createCapture: (events) => {
+        captureEvents = events;
+        return {
+          async start() {
+            return { sampleRate: 16_000 };
+          },
+          stop() {
+            return null;
+          },
+        };
+      },
+      createSocket: (handlers) => {
+        socketHandlers = handlers;
+        return socket;
+      },
+    },
+  );
+
+  session.start();
+  await settleMicrotasks();
+  assert.equal(ui.phase, 'connecting', 'still preparing while awaiting WS + asr.open');
+  assert.equal(readyCalls, 0, 'never vibrates before asr.open');
+
+  // User starts speaking before WS opens -> frames are buffered, not dropped.
+  captureEvents.onWireChunk(new Uint8Array([11]));
+  captureEvents.onWireChunk(new Uint8Array([22]));
+  captureEvents.onWireChunk(new Uint8Array([33]));
+  assert.deepEqual(sent, [], 'nothing sent while WS is still connecting');
+
+  socket.isOpen = true;
+  socketHandlers.onOpen();
+  assert.deepEqual(sent, [11, 22, 33], 'queued early syllables flush in exact FIFO order on open');
+  assert.equal(readyCalls, 0, 'WS open alone still awaits asr.open');
+
+  socketHandlers.onEvent({ kind: 'open', remainingMs: 60_000 });
+  assert.equal(ui.phase, 'recording', 'transitions to recording once BOTH mic and asr.open are ready');
+  assert.equal(readyCalls, 1, 'ready haptic callback fires exactly once');
+
+  // Upstream recovery sending a second asr.open must not vibrate again.
+  socketHandlers.onEvent({ kind: 'open', remainingMs: 55_000 });
+  assert.equal(readyCalls, 1);
+
+  captureEvents.onWireChunk(new Uint8Array([44]));
+  assert.deepEqual(sent, [11, 22, 33, 44]);
+  session.dispose();
+});
+
+test('parallel dial overlaps WS setup with mic startup and waits for BOTH before firing onReady', async () => {
+  resetVoiceWarmStateForTests();
+  markMicPermissionGranted();
+  let resolveMic!: (value: { sampleRate: number }) => void;
+  let socketHandlers!: VoiceSocketHandlers;
+  let dialedBeforeMicResolved = false;
+  let micResolved = false;
+  let readyCalls = 0;
+  let ui = VOICE_UI_INITIAL;
+
+  const session = new VoiceSession(
+    { mode: 'hold', draft: '', caret: null },
+    {
+      onUiEvent: (event) => {
+        ui = reduceVoiceUi(ui, event);
+      },
+      onReady: () => {
+        readyCalls += 1;
+      },
+      onElapsed: () => {},
+      onLevel: () => {},
+      onRecognizedText: () => {},
+    },
+    {
+      createCapture: () => ({
+        start: () =>
+          new Promise<{ sampleRate: number }>((resolve) => {
+            resolveMic = resolve;
+          }),
+        stop: () => null,
+      }),
+      createSocket: (handlers) => {
+        socketHandlers = handlers;
+        return {
+          isOpen: true,
+          dial() {
+            dialedBeforeMicResolved = !micResolved;
+            handlers.onOpen();
+          },
+          sendPcm() {},
+          sendFinish() {},
+          sendAbort() {},
+          close() {},
+        };
+      },
+    },
+  );
+
+  session.start();
+  assert.equal(dialedBeforeMicResolved, true, 'warm permission dials WS concurrently with getUserMedia');
+
+  // Even if `asr.open` arrives first, we must NOT claim ready or vibrate while mic is still starting!
+  socketHandlers.onEvent({ kind: 'open', remainingMs: 60_000 });
+  assert.equal(ui.phase, 'requestingMic');
+  assert.equal(readyCalls, 0);
+
+  micResolved = true;
+  resolveMic({ sampleRate: 16_000 });
+  await settleMicrotasks();
+
+  assert.equal(ui.phase, 'recording', 'transitions straight into recording once mic catches up');
+  assert.equal(readyCalls, 1, 'fires ready haptic once BOTH mic and ASR are ready');
+  session.dispose();
+  resetVoiceWarmStateForTests();
+});
+
+test('voiceHaptics helpers emit prepare, ready, and light styles to the tactile sink', () => {
+  const styles: string[] = [];
+  const sink = { triggerHaptic: (style = 'medium') => { styles.push(style); } };
+  prepareVoiceHaptic(sink);
+  triggerVoiceReadyHaptic(sink);
+  triggerVoiceCancelHaptic(sink);
+  assert.deepEqual(styles, ['prepare', 'ready', 'light']);
+});
+
+test('VoiceCapture.warmup preloads AudioWorklet without getUserMedia and reuses warm context across presses', async () => {
+  resetVoiceWarmStateForTests();
+  let getUserMediaCalls = 0;
+  let trackStops = 0;
+  let contextCreated = 0;
+  let addModuleCalls = 0;
+  let suspendCalls = 0;
+
+  class SharedFakeAudioContext {
+    sampleRate = 16_000;
+    state = 'running';
+    onstatechange: (() => void) | null = null;
+    destination = {};
+    audioWorklet = {
+      addModule: async () => {
+        addModuleCalls += 1;
+      },
+    };
+    constructor() {
+      contextCreated += 1;
+    }
+    createMediaStreamSource() {
+      return { connect() {}, disconnect() {} };
+    }
+    async resume() {
+      this.state = 'running';
+    }
+    async suspend() {
+      suspendCalls += 1;
+      this.state = 'suspended';
+    }
+    async close() {
+      this.state = 'closed';
+    }
+  }
+
+  class FakeWorkletNode {
+    port = { onmessage: null };
+    disconnect() {}
+  }
+
+  const prevAudioContext = Object.getOwnPropertyDescriptor(globalThis, 'AudioContext');
+  const prevAudioWorklet = Object.getOwnPropertyDescriptor(globalThis, 'AudioWorklet');
+  const prevWorkletNode = Object.getOwnPropertyDescriptor(globalThis, 'AudioWorkletNode');
+  const prevNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+
+  Object.defineProperty(globalThis, 'AudioContext', {
+    value: SharedFakeAudioContext,
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(globalThis, 'AudioWorklet', {
+    value: function FakeAudioWorklet() {},
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(globalThis, 'AudioWorkletNode', {
+    value: FakeWorkletNode,
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      mediaDevices: {
+        getUserMedia: async () => {
+          getUserMediaCalls += 1;
+          return {
+            getTracks: () => [{ stop: () => { trackStops += 1; } }],
+          } as unknown as MediaStream;
+        },
+      },
+    },
+    configurable: true,
+    writable: true,
+  });
+
+  try {
+    VoiceCapture.warmup({ resume: false });
+    await settleMicrotasks();
+    assert.equal(getUserMediaCalls, 0, 'warmup never prompts or activates the microphone');
+    assert.equal(contextCreated, 1);
+    assert.equal(addModuleCalls, 1);
+
+    const first = new VoiceCapture({
+      onWireChunk: () => {},
+      onInterrupted: () => {},
+      onError: () => assert.fail('unexpected capture error'),
+    });
+    await first.start();
+    assert.equal(getUserMediaCalls, 1);
+    assert.equal(contextCreated, 1, 'reuses the pre-warmed AudioContext on first press');
+    assert.equal(addModuleCalls, 1, 'skips redundant worklet loading');
+    first.stop();
+    assert.equal(trackStops, 1, 'immediately stops MediaStream tracks on release');
+    assert.ok(suspendCalls >= 1);
+
+    const second = new VoiceCapture({
+      onWireChunk: () => {},
+      onInterrupted: () => {},
+      onError: () => assert.fail('unexpected capture error'),
+    });
+    await second.start();
+    assert.equal(getUserMediaCalls, 2);
+    assert.equal(contextCreated, 1, 'second press also reuses the warm AudioContext');
+    assert.equal(addModuleCalls, 1);
+    second.stop();
+    assert.equal(trackStops, 2);
+  } finally {
+    resetVoiceWarmStateForTests();
+    if (prevAudioContext) Object.defineProperty(globalThis, 'AudioContext', prevAudioContext);
+    else delete (globalThis as Record<string, unknown>).AudioContext;
+    if (prevAudioWorklet) Object.defineProperty(globalThis, 'AudioWorklet', prevAudioWorklet);
+    else delete (globalThis as Record<string, unknown>).AudioWorklet;
+    if (prevWorkletNode) Object.defineProperty(globalThis, 'AudioWorkletNode', prevWorkletNode);
+    else delete (globalThis as Record<string, unknown>).AudioWorkletNode;
+    if (prevNavigator) Object.defineProperty(globalThis, 'navigator', prevNavigator);
+    else delete (globalThis as Record<string, unknown>).navigator;
+  }
 });

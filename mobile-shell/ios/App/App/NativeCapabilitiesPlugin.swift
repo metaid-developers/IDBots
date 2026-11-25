@@ -14,12 +14,14 @@ public class NativeCapabilitiesPlugin: CAPPlugin, CAPBridgedPlugin, UIImagePicke
         CAPPluginMethod(name: "readFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "shareArtifact", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setSecureScreen", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "haptic", returnType: CAPPluginReturnPromise),
     ]
 
     private let maxFileBytes = 25 * 1024 * 1024
     private var photoCall: CAPPluginCall?
     private var filesCall: CAPPluginCall?
     private var temporaryCameraFiles: [String: URL] = [:]
+    private var readyImpactGenerator: UIImpactFeedbackGenerator?
 
     @objc func pickPhoto(_ call: CAPPluginCall) {
         guard photoCall == nil, filesCall == nil else {
@@ -278,6 +280,29 @@ public class NativeCapabilitiesPlugin: CAPPlugin, CAPBridgedPlugin, UIImagePicke
     @objc func setSecureScreen(_ call: CAPPluginCall) {
         NativeSecureScreen.setEnabled(call.getBool("enabled", false))
         call.resolve()
+    }
+
+    @objc func haptic(_ call: CAPPluginCall) {
+        let style = call.getString("style", "medium")
+        DispatchQueue.main.async { [weak self] in
+            switch style {
+            case "prepare":
+                let generator = UIImpactFeedbackGenerator(style: .heavy)
+                generator.prepare()
+                self?.readyImpactGenerator = generator
+            case "ready", "heavy":
+                let generator = self?.readyImpactGenerator ?? UIImpactFeedbackGenerator(style: .heavy)
+                self?.readyImpactGenerator = nil
+                generator.impactOccurred(intensity: 1.0)
+            case "light":
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
+            default:
+                let generator = UIImpactFeedbackGenerator(style: .medium)
+                generator.impactOccurred()
+            }
+            call.resolve()
+        }
     }
 
     private func descriptor(for url: URL, temporary: Bool) throws -> [String: Any] {

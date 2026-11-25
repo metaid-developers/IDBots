@@ -167,6 +167,7 @@
       externalUrls: true,
       secureScreen: hasNativeMethod('setSecureScreen'),
       pushNotifications: hasPush(),
+      haptics: hasNativeMethod('haptic'),
     }),
     pickPhoto: async (source = 'photos') => {
       if (!hasNativeMethod('pickPhoto')) throw nativeFailure('Native photo selection is unavailable', 'UNAVAILABLE');
@@ -195,6 +196,11 @@
     setSecureScreen: async (enabled) => {
       if (!hasNativeMethod('setSecureScreen')) throw nativeFailure('Secure screen is unavailable', 'UNAVAILABLE');
       await nativeCapabilitiesPlugin().setSecureScreen({ enabled: enabled === true });
+    },
+    haptic: async (style = 'medium') => {
+      if (!hasNativeMethod('haptic')) throw nativeFailure('Native haptics are unavailable', 'UNAVAILABLE');
+      const normalized = typeof style === 'string' && style.length > 0 ? style : 'medium';
+      await nativeCapabilitiesPlugin().haptic({ style: normalized });
     },
     openExternal: async (value) => {
       const url = approvedExternalUrl(value);

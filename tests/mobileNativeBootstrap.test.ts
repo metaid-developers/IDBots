@@ -139,4 +139,18 @@ test('platform and capability mismatches fall back and are recorded', () => {
     assert.equal(confirmNativeBootstrap(), null);
     assert.equal(malformed.idbotsNativeBootstrapError, 'NATIVE_CAPABILITY_INVALID:camera');
   });
+
+  const withHaptics = nativeWindow('ios');
+  (withHaptics.idbotsNative as IdbotsNativeBridge).getCapabilities = () => ({ ...capabilities(), haptics: true });
+  withGlobals(withHaptics, () => {
+    assert.equal(confirmNativeBootstrap(), withHaptics.idbotsNative);
+  });
+
+  const invalidHaptics = nativeWindow('ios');
+  (invalidHaptics.idbotsNative as IdbotsNativeBridge).getCapabilities = () =>
+    ({ ...capabilities(), haptics: 'yes' }) as unknown as MobileNativeCapabilities;
+  withGlobals(invalidHaptics, () => {
+    assert.equal(confirmNativeBootstrap(), null);
+    assert.equal(invalidHaptics.idbotsNativeBootstrapError, 'NATIVE_CAPABILITY_INVALID:haptics');
+  });
 });

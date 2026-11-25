@@ -69,6 +69,7 @@ test('Android installs the versioned bridge at document start on the exact origi
     externalUrls: true,
     secureScreen: false,
     pushNotifications: false,
+    haptics: false,
   });
 });
 
@@ -231,6 +232,7 @@ test('NS2 capabilities convert native files in order and preserve share and secu
     externalUrls: true,
     secureScreen: true,
     pushNotifications: false,
+    haptics: false,
   });
   const files = await window.idbotsNative.pickFiles(true);
   assert.deepEqual(Array.from(files, (file) => file.name), ['first.txt', 'second.txt']);
@@ -290,4 +292,23 @@ test('NS2 rejects an oversized native file before reading any bytes', async () =
   };
   await assert.rejects(window.idbotsNative.pickPhoto('photos'), (error) => error.code === 'TOO_LARGE');
   assert.equal(reads, 0);
+});
+
+test('NativeCapabilities haptic forwards normalized tactile styles and rejects UNAVAILABLE when absent', async () => {
+  const window = bootstrap('https://staging.idbots.world');
+  assert.equal(window.idbotsNative.getCapabilities().haptics, false);
+  await assert.rejects(window.idbotsNative.haptic('ready'), (error) => error.code === 'UNAVAILABLE');
+
+  const styles = [];
+  window.Capacitor.Plugins.NativeCapabilities = {
+    async haptic({ style }) {
+      styles.push(style);
+    },
+  };
+  assert.equal(window.idbotsNative.getCapabilities().haptics, true);
+  await window.idbotsNative.haptic('prepare');
+  await window.idbotsNative.haptic('ready');
+  await window.idbotsNative.haptic('light');
+  await window.idbotsNative.haptic();
+  assert.deepEqual(styles, ['prepare', 'ready', 'light', 'medium']);
 });

@@ -93,4 +93,90 @@ test.describe('voice input @voice', () => {
     await expect(textarea).toHaveValue('帮我记录：');
     expect(await page.evaluate(() => (window as unknown as { __voiceMockMicCalls?: number }).__voiceMockMicCalls)).toBe(1);
   });
+
+  test('pressing hold immediately shows Preparing, vibrates on ready, and undulates the waveform with speech', async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      const vibrateCalls: Array<number | number[]> = [];
+      (window as unknown as { __vibrateCalls?: Array<number | number[]> }).__vibrateCalls = vibrateCalls;
+      Object.defineProperty(navigator, 'vibrate', {
+        configurable: true,
+        writable: true,
+        value: (pattern: number | number[]) => {
+          vibrateCalls.push(pattern);
+          return true;
+        },
+      });
+
+      const NativeWebSocket = window.WebSocket;
+      class DelayedOpenWebSocket extends NativeWebSocket {
+        constructor(url: string | URL, protocols?: string | string[]) {
+          super(url, protocols);
+          if (String(url).includes('/voice') || String(url).includes('/asr')) {
+            this.addEventListener(
+              'message',
+              (event: MessageEvent) => {
+                if (typeof event.data === 'string' && event.data.includes('"asr.open"')) {
+                  event.stopImmediatePropagation();
+                  const cloned = new MessageEvent('message', { data: event.data });
+                  setTimeout(() => {
+                    this.onopen; // keep reference alive
+                    this.onmessage?.(cloned);
+                  }, 420);
+                }
+              },
+              { capture: true },
+            );
+          }
+        }
+      }
+      window.WebSocket = DelayedOpenWebSocket as unknown as typeof WebSocket;
+    });
+
+    await page.goto('/app/?voiceMockMic=1');
+    await expectAppShell(page);
+    await startNewChatViaPicker(page);
+
+    await touchTap(page, 'voice-btn-idle');
+    const holdButton = page.getByTestId('voice-hold-button');
+    await expect(holdButton).toBeVisible();
+
+    const box = await holdButton.boundingBox();
+    if (!box) throw new Error('voice-hold-button has no boundingBox');
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+
+    // 1. Immediate Preparing UI before ASR handshake completes, with ZERO premature vibration.
+    const preparingOverlay = page.getByTestId('voice-overlay-preparing');
+    await expect(preparingOverlay).toBeVisible({ timeout: 2_000 });
+    await expect(page.getByTestId('voice-overlay-text')).toContainText('speak after the vibration');
+    expect(
+      await page.evaluate(() => (window as unknown as { __vibrateCalls?: unknown[] }).__vibrateCalls?.length ?? 0),
+    ).toBe(0);
+    await attachScreen(testInfo, page, 'voice-preparing-state');
+    await page.screenshot({ path: shot('voice-preparing-state.png'), fullPage: false });
+
+    // 2. Once BOTH mic capture and `asr.open` are ready, phone vibrates and UI switches to Recording.
+    await expect(page.getByTestId('voice-overlay-recording')).toBeVisible({ timeout: 10_000 });
+    expect(
+      await page.evaluate(() => (window as unknown as { __vibrateCalls?: unknown[] }).__vibrateCalls),
+    ).toEqual([35]);
+
+    // 3. Waveform bars actively undulate with live speech input while partials stream in.
+    await expect(page.getByTestId('voice-overlay-text')).toContainText('今天天气怎么样', { timeout: 15_000 });
+    const readBarHeights = () =>
+      page.getByTestId('voice-level-bar').evaluateAll((els) =>
+        els.map((el) => (el as HTMLElement).style.height),
+      );
+    const sampleA = await readBarHeights();
+    await page.waitForTimeout(120);
+    const sampleB = await readBarHeights();
+    expect(sampleA.length).toBe(15);
+    expect(sampleB).not.toEqual(sampleA);
+
+    await attachScreen(testInfo, page, 'voice-recording-wave');
+    await page.screenshot({ path: shot('voice-recording-wave.png'), fullPage: false });
+
+    await page.mouse.up();
+    await expect(page.getByTestId('chat-user-message').last()).toHaveText('今天天气怎么样？', { timeout: 15_000 });
+  });
 });

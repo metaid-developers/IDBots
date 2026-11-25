@@ -821,6 +821,20 @@ textarea.twin-input {
   font-size: 16px;
   font-weight: 600;
   line-height: 24px;
+  transition: background-color 140ms ease, color 140ms ease, transform 120ms ease, box-shadow 160ms ease;
+}
+
+.twin-voice-hold-button-preparing {
+  background: color-mix(in srgb, var(--twin-warning-bg) 78%, var(--twin-surface-inset));
+  color: var(--twin-warning);
+  transform: scale(0.985);
+}
+
+.twin-voice-hold-button-recording {
+  background: color-mix(in srgb, var(--twin-success-bg) 82%, var(--twin-surface-inset));
+  color: var(--twin-success);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--twin-success) 28%, transparent);
+  transform: scale(0.99);
 }
 
 .twin-composer-accessory {
@@ -843,9 +857,9 @@ textarea.twin-input {
 }
 
 /* ---------------------------------------------------------------------------
-   Hold-to-talk overlay (voice P1). The panel rises over the composer while
-   the finger is down; the level bars are fed by PCM frame RMS (see
-   VoiceOverlay.tsx), never by a canned animation.
+   Hold-to-talk overlay (voice P1). The panel rises immediately on press in
+   `preparing` mode, flashes subtly into `recording` at the exact ready
+   vibration, and drives symmetric undulating voiceprint bars from real PCM RMS.
    --------------------------------------------------------------------------- */
 
 .twin-voice-overlay {
@@ -861,8 +875,18 @@ textarea.twin-input {
   border-radius: 24px 24px 0 0;
   background: var(--twin-surface-raised);
   box-shadow: 0 -18px 44px rgba(24, 24, 30, 0.18);
-  animation: twin-voice-rise 180ms cubic-bezier(0.2, 0.9, 0.25, 1);
+  animation: twin-voice-rise 150ms cubic-bezier(0.2, 0.9, 0.25, 1);
   backdrop-filter: blur(18px);
+  transition: border-color 180ms ease, background-color 180ms ease, box-shadow 220ms ease;
+}
+
+.twin-voice-overlay-preparing .twin-voice-overlay-panel {
+  border-color: color-mix(in srgb, var(--twin-warning) 26%, var(--twin-border));
+}
+
+.twin-voice-overlay-recording .twin-voice-overlay-panel {
+  border-color: color-mix(in srgb, var(--twin-success) 34%, var(--twin-border));
+  animation: twin-voice-ready-pop 340ms cubic-bezier(0.2, 0.9, 0.25, 1);
 }
 
 .twin-voice-overlay-cancel .twin-voice-overlay-panel {
@@ -870,10 +894,30 @@ textarea.twin-input {
   background: color-mix(in srgb, var(--twin-danger-bg) 72%, var(--twin-surface-raised));
 }
 
+.twin-voice-prep-spinner {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--twin-warning) 26%, transparent);
+  border-top-color: var(--twin-warning);
+  animation: twin-voice-prep-spin 720ms linear infinite;
+}
+
 .twin-voice-live-dot {
   width: 8px;
   height: 8px;
   border-radius: 999px;
+  background: var(--twin-text-tertiary);
+}
+
+.twin-voice-live-dot-ready {
+  background: var(--twin-success);
+  box-shadow: 0 0 0 calc(3px + var(--voice-energy, 0) * 5px)
+    color-mix(in srgb, var(--twin-success) 24%, transparent);
+  transition: box-shadow 60ms linear;
+}
+
+.twin-voice-live-dot-cancel {
   background: var(--twin-danger);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--twin-danger) 18%, transparent);
 }
@@ -884,9 +928,32 @@ textarea.twin-input {
   color: var(--twin-text-secondary);
 }
 
+.twin-voice-bar-preparing {
+  height: 8px;
+  background: color-mix(in srgb, var(--twin-warning) 36%, var(--twin-border-strong));
+  animation: twin-voice-prep-breathe 1.05s ease-in-out infinite;
+}
+
+.twin-voice-wave-stage {
+  position: relative;
+  border-radius: 16px;
+  background: radial-gradient(
+    ellipse 62% 85% at 50% 50%,
+    color-mix(in srgb, var(--twin-accent) calc(8% + var(--voice-energy, 0) * 24%), transparent),
+    transparent 76%
+  );
+}
+
 .twin-voice-bar {
-  background: linear-gradient(to top, var(--twin-accent-foreground), var(--twin-accent));
-  transition: height 60ms linear;
+  min-height: 6px;
+  background: color-mix(in srgb, var(--twin-text-tertiary) 38%, transparent);
+  transition: height 48ms linear, background-color 120ms ease, box-shadow 120ms ease;
+  will-change: height;
+}
+
+.twin-voice-bar-active {
+  background: linear-gradient(180deg, #ffcf2e 0%, #f59e0b 52%, #10b981 100%);
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.22);
 }
 
 .twin-voice-hint {
@@ -907,12 +974,45 @@ textarea.twin-input {
 
 @keyframes twin-voice-rise {
   from {
-    transform: translateY(18px);
+    transform: translateY(14px);
     opacity: 0;
   }
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+@keyframes twin-voice-ready-pop {
+  0% {
+    transform: scale(0.99);
+    box-shadow: 0 -18px 44px rgba(24, 24, 30, 0.18), 0 0 0 0 color-mix(in srgb, var(--twin-success) 38%, transparent);
+  }
+  55% {
+    transform: scale(1);
+    box-shadow: 0 -18px 44px rgba(24, 24, 30, 0.18), 0 0 0 6px color-mix(in srgb, var(--twin-success) 0%, transparent);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 -18px 44px rgba(24, 24, 30, 0.18);
+  }
+}
+
+@keyframes twin-voice-prep-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes twin-voice-prep-breathe {
+  0%,
+  100% {
+    transform: scaleY(0.75);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scaleY(1.45);
+    opacity: 0.92;
   }
 }
 
