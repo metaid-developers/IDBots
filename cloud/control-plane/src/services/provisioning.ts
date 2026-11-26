@@ -30,6 +30,8 @@ interface TenantRow {
   container_name: string;
   volume_name: string;
   gateway_secret_enc: string | null;
+  last_error: string | null;
+  updated_at: number;
 }
 
 interface UserRow {
@@ -142,6 +144,138 @@ const provisioningInFlight = new Set<string>();
 
 export function isProvisioningInFlight(tenantId: string): boolean {
   return provisioningInFlight.has(tenantId);
+}
+
+const RECOVERABLE_PROVISION_ERROR_PREFIXES = [
+  'container create/start failed:',
+  'existing container adopt/start failed:',
+  'volume create failed:',
+  'provisioning failed:',
+  'auto-wake failed:',
+] as const;
+
+export type ProvisionRetrySource = 'retry_param' | 'me_auto' | 'sms_verify' | 'poller';
+
+interface DbRetryState {
+  meAutoCount: Map<string, number>;
+  pollerRetried: Set<string>;
+}
+
+const retryStateByDb = new WeakMap<object, DbRetryState>();
+
+function getDbRetryState(db: object): DbRetryState {
+  let state = retryStateByDb.get(db);
+  if (!state) {
+    state = { meAutoCount: new Map(), pollerRetried: new Set() };
+    retryStateByDb.set(db, state);
+  }
+  return state;
+}
+
+export function isRecoverableProvisionFailure(
+  tenant: { status: string; last_error: string | null } | null | undefined,
+): boolean {
+  if (!tenant || tenant.status !== 'failed' || !tenant.last_error) {
+    return false;
+  }
+  return RECOVERABLE_PROVISION_ERROR_PREFIXES.some((prefix) =>
+    tenant.last_error!.startsWith(prefix),
+  );
+}
+
+/**
+ * Synchronously resets a recoverable `failed` provisioning tenant back to
+ * `provisioning` and schedules idempotent `provisionTenant` in the background.
+ * Returns true when a retry was initiated.
+ */
+export function triggerRetryFailedProvisioning(
+  app: Pick<AppContext, 'config' | 'db' | 'docker'>,
+  tenantId: string,
+  opts: { source: ProvisionRetrySource; cooldownMs?: number; now?: number },
+): boolean {
+  if (provisioningInFlight.has(tenantId)) {
+    return false;
+  }
+  const tenant = app.db
+    .prepare('SELECT id, status, last_error, updated_at FROM tenants WHERE id = ?')
+    .get(tenantId) as Pick<TenantRow, 'id' | 'status' | 'last_error' | 'updated_at'> | undefined;
+  if (!isRecoverableProvisionFailure(tenant)) {
+    return false;
+  }
+  const now = opts.now ?? Date.now();
+  const defaultCooldownMs =
+    opts.source === 'retry_param' || opts.source === 'sms_verify'
+      ? 0
+      : opts.source === 'poller'
+        ? 30_000
+        : 15_000;
+  const cooldownMs = opts.cooldownMs ?? defaultCooldownMs;
+  if (now - tenant!.updated_at < cooldownMs) {
+    return false;
+  }
+
+  const state = getDbRetryState(app.db);
+  if (opts.source === 'me_auto') {
+    const count = state.meAutoCount.get(tenantId) ?? 0;
+    if (count >= 2) {
+      return false;
+    }
+    state.meAutoCount.set(tenantId, count + 1);
+  } else if (opts.source === 'poller') {
+    if (state.pollerRetried.has(tenantId)) {
+      return false;
+    }
+    state.pollerRetried.add(tenantId);
+  } else {
+    state.meAutoCount.delete(tenantId);
+  }
+
+  const flipped = app.db.transaction(() => {
+    const res = app.db
+      .prepare(
+        `UPDATE tenants
+         SET status = 'provisioning', phase = NULL, last_error = NULL, updated_at = ?
+         WHERE id = ? AND status = 'failed'`,
+      )
+      .run(now, tenantId);
+    if (res.changes > 0) {
+      app.db
+        .prepare('INSERT INTO audit_log (at, actor, action, target, detail_json) VALUES (?, ?, ?, ?, ?)')
+        .run(
+          now,
+          'system',
+          'tenant.provision.retry',
+          tenantId,
+          JSON.stringify({ source: opts.source, previousError: tenant!.last_error }),
+        );
+    }
+    return res.changes > 0;
+  })();
+
+  if (!flipped) {
+    return false;
+  }
+
+  console.log(
+    JSON.stringify({
+      level: 'info',
+      component: 'provisioning',
+      tenant: tenantId,
+      msg: 'retrying failed tenant provisioning',
+      source: opts.source,
+    }),
+  );
+
+  void provisionTenant(app, tenantId).catch((err: unknown) => {
+    const message = `provisioning failed: ${err instanceof Error ? err.message : String(err)}`;
+    console.error(
+      JSON.stringify({ level: 'error', component: 'provisioning', tenant: tenantId, msg: message }),
+    );
+    markFailed(app, tenantId, message);
+    void sendAlert(app.config, `tenant ${tenantId}: ${message}`);
+  });
+
+  return true;
 }
 
 async function findContainerIdByName(

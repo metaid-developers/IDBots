@@ -3,7 +3,13 @@ import { after, before, describe, test } from 'node:test';
 import http from 'node:http';
 import net from 'node:net';
 import { FakeDocker } from './fake-docker/index.mjs';
-import { DockerClient, DockerError, tenantBaseUrl } from '../src/docker/client.js';
+import {
+  DEFAULT_DOCKER_MUTATION_TIMEOUT_MS,
+  DEFAULT_DOCKER_REQUEST_TIMEOUT_MS,
+  DockerClient,
+  DockerError,
+  tenantBaseUrl,
+} from '../src/docker/client.js';
 
 interface FakeContainerRecord {
   id: string;
@@ -210,6 +216,48 @@ describe('docker client against the fake engine', () => {
       return inspect.State.Running ? null : inspect;
     }, 10_000);
     assert.equal(exited.State.ExitCode, 1);
+  });
+
+  test('container mutations use a longer timeout budget than regular Docker reads', async () => {
+    assert.equal(DEFAULT_DOCKER_REQUEST_TIMEOUT_MS, 10_000);
+    assert.equal(DEFAULT_DOCKER_MUTATION_TIMEOUT_MS, 60_000);
+
+    // Local stub server that delays every response by 150 ms so we can verify
+    // createContainer/startContainer/stopContainer/removeContainer use mutationTimeoutMs
+    // while inspectContainer uses requestTimeoutMs.
+    const slowServer = http.createServer((req, res) => {
+      req.resume();
+      setTimeout(() => {
+        if (req.url?.includes('/containers/create')) {
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ Id: 'slow-1' }));
+          return;
+        }
+        if (req.url?.endsWith('/start') || req.url?.includes('/stop')) {
+          res.writeHead(204);
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ Id: 'slow-1' }));
+      }, 150);
+    });
+    await new Promise<void>((resolve) => slowServer.listen(0, '127.0.0.1', resolve));
+    const addr = slowServer.address() as net.AddressInfo;
+    try {
+      const slowClient = new DockerClient(`http://127.0.0.1:${addr.port}`, {
+        requestTimeoutMs: 50,
+        mutationTimeoutMs: 500,
+      });
+      await assert.rejects(() => slowClient.inspectContainer('slow-1'), /timed out/);
+      const created = await slowClient.createContainer({ name: 'idb-slow', image: 'fake-tenant:test' });
+      assert.equal(created.Id, 'slow-1');
+      await slowClient.startContainer('slow-1');
+      await slowClient.stopContainer('slow-1', 1);
+      await slowClient.removeContainer('slow-1');
+    } finally {
+      await new Promise<void>((resolve) => slowServer.close(() => resolve()));
+    }
   });
 });
 
