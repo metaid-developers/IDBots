@@ -12,8 +12,15 @@ const { restore, SourceNotApplicable, EXIT_NOT_APPLICABLE } = require('../script
 const SCRIPT = path.resolve(import.meta.dirname, '../scripts/ci-source-restore.cjs');
 const canSymlink = process.platform !== 'win32';
 
-const git = (cwd, args, env = process.env) =>
-  execFileSync('git', args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+// git's own words travel with a failure: a test that dies on a CI runner has
+// to say why, where nobody can rerun it by hand.
+const git = (cwd, args, env = process.env) => {
+  try {
+    return execFileSync('git', args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  } catch (error) {
+    throw new Error(`git ${args.join(' ')} failed:\n${error.stderr}`);
+  }
+};
 const write = (file, content) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content);
@@ -42,8 +49,14 @@ function makeFixture(t) {
   const source = path.join(dir, 'source');
   fs.mkdirSync(source);
   git(source, ['init', '-q', '-b', 'main']);
-  const commit = (message) =>
-    git(source, ['-c', 'user.name=t', '-c', 'user.email=t@invalid', 'commit', '-q', '-m', message]);
+  // The identity belongs to the repository, not to the machine running the
+  // test: `git merge` insists on one even with --no-commit, and a CI runner
+  // has none. Carried only on `git commit`, this passed wherever the
+  // developer had a global identity and failed the gate job of main
+  // (2026-11-27), taking every build of the push with it.
+  git(source, ['config', 'user.name', 't']);
+  git(source, ['config', 'user.email', 't@invalid']);
+  const commit = (message) => git(source, ['commit', '-q', '-m', message]);
   const remove = (file) => {
     git(source, ['rm', '-q', '--cached', file]);
     fs.rmSync(path.join(source, file));
