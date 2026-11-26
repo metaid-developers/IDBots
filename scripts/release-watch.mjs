@@ -9,8 +9,9 @@
  * and the ad-hoc background polls alike. Two failures were noticed 34 and 44
  * minutes late because the macOS jobs were still running. And nothing watched
  * for the most expensive state of all, a job that nobody picks up: the
- * signing runner went offline at ~02:30 and the Windows job sat queued for
- * 7 h 46 min.
+ * signing machine's runner process had already been gone for two days, and
+ * the Windows job of the release sat queued for 7 h 46 min before anyone
+ * looked.
  *
  * This watcher exits the moment attention is needed rather than when the run
  * ends, so a background task wrapping it wakes the release operator (or the
@@ -28,6 +29,7 @@
  *   node scripts/release-watch.mjs <run-id> [--once] [--poll-seconds 30]
  *        [--queued-alert-seconds 300] [--max-minutes 240]
  *        [--budget "<step name substring>=<seconds>" ...]
+ *   pnpm run release:watch -- <run-id> [...]   (same; pnpm forwards the `--`)
  * Read-only: GET calls through `gh` only.
  */
 import { execFileSync } from 'node:child_process';
@@ -257,10 +259,12 @@ function withRetry(label, read) {
   throw new Error(`${label}: ${lastError instanceof Error ? lastError.message.split('\n')[0] : lastError}`);
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const options = { _: [], pollSeconds: 30, queuedAlertSeconds: 300, maxMinutes: 240, budgets: [...DEFAULT_BUDGETS], repo: process.env.IDBOTS_RELEASE_REPO || DEFAULT_REPO };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    // `pnpm run release:watch -- <run-id>` hands the `--` on to the script.
+    if (arg === '--') continue;
     if (arg === '--once') options.once = true;
     else if (arg === '--poll-seconds') options.pollSeconds = Number(argv[++index]);
     else if (arg === '--queued-alert-seconds') options.queuedAlertSeconds = Number(argv[++index]);

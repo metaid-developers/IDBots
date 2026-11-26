@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluate, classifyFailure } from '../scripts/release-watch.mjs';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { evaluate, classifyFailure, parseArgs, DEFAULT_BUDGETS } from '../scripts/release-watch.mjs';
+const SCRIPT = path.resolve(import.meta.dirname, '../scripts/release-watch.mjs');
 
 const NOW = new Date('2026-11-25T12:00:00Z');
 const minutesAgo = (minutes) => new Date(NOW.getTime() - minutes * 60_000).toISOString();
@@ -155,4 +158,32 @@ test('stateKey changes only when a job moves, so polling stays quiet', () => {
   const moved = evaluate({ run: running, jobs: [job(windows, { step: 'Build renderer (Vite)' })], now: new Date(NOW.getTime() + 30_000) });
   assert.equal(first.stateKey, later.stateKey);
   assert.notEqual(first.stateKey, moved.stateKey);
+});
+
+/* ---- command line ---- */
+
+test('parseArgs: the `--` that pnpm forwards is ignored', () => {
+  // `pnpm run release:watch -- 45842016787` hands the script `-- 45842016787`.
+  // On 2026-11-26 that documented form died with "unknown argument --" (exit 64)
+  // the first time it was used on a real run.
+  const viaPnpm = parseArgs(['--', '45842016787']);
+  assert.deepEqual(viaPnpm._, ['45842016787']);
+  assert.equal(viaPnpm.once, undefined);
+  assert.equal(viaPnpm.pollSeconds, 30);
+  assert.deepEqual(viaPnpm.budgets, DEFAULT_BUDGETS);
+});
+
+test('parseArgs: options work on either side of a `--`', () => {
+  const parsed = parseArgs(['45842016787', '--', '--once', '--poll-seconds', '5', '--budget', 'Check out Git repository=60']);
+  assert.deepEqual(parsed._, ['45842016787']);
+  assert.equal(parsed.once, true);
+  assert.equal(parsed.pollSeconds, 5);
+  assert.equal(parsed.budgets[parsed.budgets.length - 1][0], 'Check out Git repository');
+  assert.equal(parsed.budgets[parsed.budgets.length - 1][1], 60);
+});
+
+test('an unknown argument is still refused before anything is read from GitHub', () => {
+  const result = spawnSync(process.execPath, [SCRIPT, '--bogus'], { encoding: 'utf8' });
+  assert.equal(result.status, 64);
+  assert.match(result.stderr, /unknown argument --bogus/);
 });
