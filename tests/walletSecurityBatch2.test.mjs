@@ -153,11 +153,17 @@ test('source contracts: main.ts, skillManager.ts, and coworkUtil.ts never leak m
   const skillMgrSrc = fs.readFileSync(path.join(repoRoot, 'src/main/skillManager.ts'), 'utf8');
   const coworkUtilSrc = fs.readFileSync(path.join(repoRoot, 'src/main/libs/coworkUtil.ts'), 'utf8');
 
-  // getSkillSessionEnvOverrides must not inject IDBOTS_METABOT_MNEMONIC
+  // getSkillSessionEnvOverrides must not inject IDBOTS_METABOT_MNEMONIC and must
+  // read wallet paths via non-decrypting metadata getters (so safeStorage
+  // unavailability never crashes CoWork/DSH turns).
   const overridesIdx = mainSrc.indexOf('getSkillSessionEnvOverrides');
   assert.ok(overridesIdx > 0);
   const overridesSlice = mainSrc.slice(overridesIdx, overridesIdx + 5500);
   assert.ok(!overridesSlice.includes('IDBOTS_METABOT_MNEMONIC'), 'getSkillSessionEnvOverrides must not inject mnemonic');
+  assert.ok(overridesSlice.includes('getMetabotWalletMetadataByMetabotId'), 'getSkillSessionEnvOverrides must use getMetabotWalletMetadataByMetabotId');
+  assert.ok(overridesSlice.includes('getTwinWalletMetadata'), 'getSkillSessionEnvOverrides must use getTwinWalletMetadata');
+  assert.ok(!overridesSlice.includes('getMetabotWalletByMetabotId'), 'getSkillSessionEnvOverrides must not decrypt wallet mnemonic');
+  assert.ok(!overridesSlice.includes('getTwinWallet('), 'getSkillSessionEnvOverrides must not call decrypting getTwinWallet()');
 
   // skillManager must not inject IDBOTS_METABOT_MNEMONIC
   assert.ok(!skillMgrSrc.includes('IDBOTS_METABOT_MNEMONIC'), 'skillManager must not inject mnemonic');
@@ -644,6 +650,78 @@ test('mnemonicVault encrypts metabot_wallets & user_identity at rest and migrate
     assert.ok(enc.startsWith(MNEMONIC_ENC_PREFIX));
     assert.equal(decryptMnemonicAtRest(enc), TEST_SEED_PHRASE_B);
     assert.equal(encryptMnemonicAtRest(enc), enc, 'encryptMnemonicAtRest must be idempotent');
+
+    // Phase C: simulate Electron safeStorage decryption becoming unavailable
+    // (e.g. Keychain locked or signature mismatch between dev Electron and packaged IDBots.app)
+    const twinBot = metabotStore.createMetabot({
+      name: 'TwinBot',
+      metabot_type: 'twin',
+      created_by: 'local',
+      wallet_id: legacyWallet.id,
+      mvc_address: '1TwinMvc',
+      btc_address: '1TwinBtc',
+      doge_address: 'DTwinDoge',
+      public_key: 'twin-pk',
+      chat_public_key: 'twin-chat-pk',
+      metaid: 'twin-metaid',
+      role: 'twin',
+      soul: 'soul',
+      llm_id: 'deepseek-chat',
+    });
+    assert.ok(twinBot);
+
+    let decryptCalls = 0;
+    setMnemonicVaultBackendForTests({
+      isEncryptionAvailable: () => false,
+      encryptString: () => {
+        throw new Error('Encryption is not available');
+      },
+      decryptString: () => {
+        decryptCalls += 1;
+        throw new Error('Error while decrypting the ciphertext provided to safeStorage.decryptString. Decryption is not available.');
+      },
+    });
+
+    // Non-decrypting metadata/public getters succeed without touching safeStorage.decryptString
+    const metaById = metabotStore.getMetabotWalletMetadataById(legacyWallet.id);
+    assert.deepEqual(metaById, {
+      id: legacyWallet.id,
+      path: legacyWallet.path,
+      created_at: legacyWallet.created_at,
+    });
+    const metaByBot = metabotStore.getMetabotWalletMetadataByMetabotId(twinBot.id);
+    assert.deepEqual(metaByBot, {
+      id: legacyWallet.id,
+      path: legacyWallet.path,
+      created_at: legacyWallet.created_at,
+    });
+    const twinMeta = metabotStore.getTwinWalletMetadata();
+    assert.deepEqual(twinMeta, {
+      id: twinBot.id,
+      name: 'TwinBot',
+      path: legacyWallet.path,
+    });
+
+    const publicUser = userIdentityStore.getPublic();
+    assert.ok(publicUser);
+    assert.equal(publicUser.name, 'Owner');
+    assert.equal(publicUser.mvc_address, '1UserMvc');
+    assert.equal('mnemonic' in publicUser, false, 'getPublic() must not expose mnemonic');
+    assert.equal(decryptCalls, 0, 'metadata/public getters must never invoke safeStorage.decryptString');
+
+    // Decrypting getters still fail closed with an actionable error when decryption is unavailable
+    assert.throws(
+      () => decryptMnemonicAtRest(enc),
+      /safeStorage\.decryptString.*Decryption is not available.*Keychain/i,
+    );
+    assert.throws(
+      () => metabotStore.getMetabotWalletByMetabotId(twinBot.id),
+      /safeStorage\.decryptString.*Decryption is not available/i,
+    );
+    assert.throws(
+      () => userIdentityStore.get(),
+      /safeStorage\.decryptString.*Decryption is not available/i,
+    );
   } finally {
     setMnemonicVaultBackendForTests(null);
     disposeStore(sqliteStore, dir);

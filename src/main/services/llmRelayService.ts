@@ -583,7 +583,8 @@ export async function getLlmRelayQuota(input: { apiKey?: unknown; forceRefresh?:
   let quota = normalizeQuotaPayload(data);
   let localIdentity: { mvc_address?: unknown; globalmetaid?: unknown } | null = null;
   try {
-    localIdentity = getDeps().getUserIdentityStore().get() ?? null;
+    const userStore = getDeps().getUserIdentityStore();
+    localIdentity = (typeof userStore.getPublic === 'function' ? userStore.getPublic() : userStore.get()) ?? null;
   } catch {
     localIdentity = null;
   }

@@ -203,7 +203,7 @@ import {
   type PaymentReceivingInfo,
 } from './services/paymentInfoCrypto';
 import { UserIdentityStore } from './userIdentityStore';
-import type { UserIdentity } from './types/userIdentity';
+import type { UserIdentity, UserIdentityPublic } from './types/userIdentity';
 import {
   confirmDeferredUserIdentitySetup,
   createUserIdentity,
@@ -3393,7 +3393,7 @@ let fallbackBotBrowserBridgeService: BotBrowserBridgeService | null = null;
  * addresses, wallet snapshots, paths, or raw store rows.
  */
 function getSanitizedHumanBrowserActor(): HumanBridgeActor | null {
-  const identity = getUserIdentityStore().get();
+  const identity = getUserIdentityStore().getPublic();
   if (!identity || !identity.globalmetaid) return null;
   return {
     label: identity.name?.trim() || 'Account',
@@ -6480,7 +6480,7 @@ const resolveBackgroundAutomationDeferral = (): string | null => {
   try {
     let identityCreatedAtMs: number | null = null;
     try {
-      identityCreatedAtMs = getUserIdentityStore().get()?.created_at ?? null;
+      identityCreatedAtMs = getUserIdentityStore().getPublic()?.created_at ?? null;
     } catch {
       identityCreatedAtMs = null;
     }
@@ -8070,7 +8070,7 @@ const getCoworkRunner = () => {
         );
         const sessionType = session?.sessionType ?? 'standard';
         if (metabotId != null && typeof metabotId === 'number') {
-          const wallet = metabot ? metabotStore.getMetabotWalletByMetabotId(metabotId) : null;
+          const wallet = metabot ? metabotStore.getMetabotWalletMetadataByMetabotId(metabotId) : null;
           if (metabot && wallet) {
             const scopedRpcToken = issueScopedMetaidRpcToken({
               sessionId,
@@ -8101,7 +8101,7 @@ const getCoworkRunner = () => {
             return overrides;
           }
         }
-        const twin = metabotStore.getTwinWallet();
+        const twin = metabotStore.getTwinWalletMetadata();
         if (!twin && Object.keys(overrides).length === 0) return overrides;
         if (twin) {
           const scopedRpcToken = issueScopedMetaidRpcToken({
@@ -8287,7 +8287,7 @@ const getCoworkRunner = () => {
       listLocalWorkers: (sessionId: string) => buildTwinWorkerDirectory(sessionId, {
         getSession: (id) => getCoworkStore().getSession(id),
         listMetabots: () => getMetabotStore().listMetabots(),
-        getOwnerGlobalMetaId: () => getUserIdentityStore().get()?.globalmetaid ?? null,
+        getOwnerGlobalMetaId: () => getUserIdentityStore().getPublic()?.globalmetaid ?? null,
         listCapabilityEvidence: (metabotId) => getDreamStore().listDailySummaries(metabotId, 3),
         getActiveWorkload: (metabotId) => getOrchestrationStore().getActiveWorkload(metabotId),
       }),
@@ -10425,7 +10425,7 @@ const getCoworkRunner = () => {
         // model argument). Same identity the My Bots > Edit UI uses, and the
         // signer (signOwnerBindingForLocalUser) re-validates it against the
         // local user identity before any on-chain owner pin is published.
-        getOwnerGlobalMetaId: () => getUserIdentityStore().get()?.globalmetaid ?? null,
+        getOwnerGlobalMetaId: () => getUserIdentityStore().getPublic()?.globalmetaid ?? null,
         listProviders: () => {
           const appConfig = getStore().get<{ providers?: Record<string, { enabled?: boolean; apiKey?: string } | undefined> }>('app_config');
           return listConfiguredLlmProviders(appConfig?.providers);
@@ -12946,7 +12946,7 @@ const getTwinOrchestrationService = () => new TwinOrchestrationService({
   directory: {
     getSession: (id) => getCoworkStore().getSession(id),
     listMetabots: () => getMetabotStore().listMetabots(),
-    getOwnerGlobalMetaId: () => getUserIdentityStore().get()?.globalmetaid ?? null,
+    getOwnerGlobalMetaId: () => getUserIdentityStore().getPublic()?.globalmetaid ?? null,
   },
   getMetabotById: (id) => getMetabotStore().getMetabotById(id),
   getWorkerWorkspace: (metabotId) => {
@@ -13176,10 +13176,15 @@ const startAgentGameHost = (): void => {
 const getAgentGameHost = (): AgentGameHost | null => agentGameHost;
 
 /** Strip the mnemonic before handing an identity to the renderer. */
-const toPublicUserIdentity = (identity: UserIdentity | null): Omit<UserIdentity, 'mnemonic'> | null => {
+const toPublicUserIdentity = (
+  identity: UserIdentity | UserIdentityPublic | null,
+): UserIdentityPublic | null => {
   if (!identity) return null;
-  const { mnemonic: _mnemonic, ...rest } = identity;
-  return rest;
+  if ('mnemonic' in identity) {
+    const { mnemonic: _mnemonic, ...rest } = identity;
+    return rest;
+  }
+  return identity;
 };
 
 /**
@@ -13264,7 +13269,7 @@ function getMetabotManageDeps(): MetabotManageDeps {
         );
       }
     },
-    getOwnerGlobalMetaId: () => getUserIdentityStore().get()?.globalmetaid ?? null,
+    getOwnerGlobalMetaId: () => getUserIdentityStore().getPublic()?.globalmetaid ?? null,
     // Skill-assignment seam: whitelist writes through metabot updates replace
     // that bot's assignment rows (the local authorization source of truth).
     applyChatSkillAssignments: (metabotId, skillIdsOrNames) =>
@@ -15902,7 +15907,7 @@ if (!gotTheLock) {
     }
     const method = toSafeString(input?.method);
     const payload = input?.payload;
-    const actorId = toSafeString(input?.actorId) || (getUserIdentityStore().get()?.globalmetaid ?? '');
+    const actorId = toSafeString(input?.actorId) || (getUserIdentityStore().getPublic()?.globalmetaid ?? '');
     const resourceUri = toSafeString(input?.resourceUri) || undefined;
     return host.handleSessionMethod(method, payload, actorId, { resourceUri });
   });
@@ -15927,7 +15932,7 @@ if (!gotTheLock) {
   registerIpcHandler('agentGame:listSessions', async (_event, input: { appId?: string; status?: string; groupId?: string } | undefined) => {
     const host = getAgentGameHost();
     if (!host) return { sessions: [] };
-    const actorId = getUserIdentityStore().get()?.globalmetaid ?? '';
+    const actorId = getUserIdentityStore().getPublic()?.globalmetaid ?? '';
     const status = (input?.status as 'running' | 'paused' | 'stopped' | 'finished' | 'error') || undefined;
     return { sessions: host.runtime.list(actorId, { appId: input?.appId, status, groupId: input?.groupId }) };
   });
@@ -19568,7 +19573,7 @@ if (!gotTheLock) {
   // every MetaBot-signed sealed ballot (judge independence).
   const preferenceIpc = createPreferenceIpcHandlers({
     service: () => getPreferenceService(),
-    userGlobalMetaId: () => getUserIdentityStore().get()?.globalmetaid ?? null,
+    userGlobalMetaId: () => getUserIdentityStore().getPublic()?.globalmetaid ?? null,
   });
   registerIpcHandler('preference:listRounds', (_event, input: unknown) => preferenceIpc.listRounds(input));
   registerIpcHandler('preference:roundStatus', (_event, input: unknown) => preferenceIpc.roundStatus(input));
@@ -20680,7 +20685,7 @@ if (!gotTheLock) {
 
   registerIpcHandler('userIdentity:get', async () => {
     try {
-      return { success: true, identity: toPublicUserIdentity(getUserIdentityStore().get()) };
+      return { success: true, identity: toPublicUserIdentity(getUserIdentityStore().getPublic()) };
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error('[UserIdentity] userIdentity:get failed:', errMsg);
@@ -20690,7 +20695,7 @@ if (!gotTheLock) {
 
   registerIpcHandler('userIdentity:getNfts', async () => {
     try {
-      const identity = getUserIdentityStore().get();
+      const identity = getUserIdentityStore().getPublic();
       if (!identity) return { success: false, error: 'USER_IDENTITY_MISSING' };
       const items = await getMrc721NftItemsForAddress(identity.mvc_address);
       return { success: true, items };
@@ -25781,7 +25786,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     // without bots stay deferred — the user may still be about to import
     // their real identity.
     try {
-      const identity = getUserIdentityStore().get();
+      const identity = getUserIdentityStore().getPublic();
       if (
         identity?.subsidy_state === 'pending'
         && getMetabotStore().listMetabots().some((bot) => bot.metabot_type !== 'welcome')

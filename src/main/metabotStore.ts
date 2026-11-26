@@ -11,6 +11,8 @@ import type {
   MetabotUpdate,
   MetabotWallet,
   MetabotWalletInsert,
+  MetabotWalletMetadata,
+  TwinWalletMetadata,
 } from './types/metabot';
 
 const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0";
@@ -867,6 +869,25 @@ export class MetabotStore {
   }
 
   /**
+   * Read non-secret wallet metadata (`id`, `path`, `created_at`) without
+   * decrypting the mnemonic. Safe to call on read-only / non-signing paths
+   * even when OS safeStorage decryption is unavailable.
+   */
+  getMetabotWalletMetadataById(wallet_id: number): MetabotWalletMetadata | null {
+    const row = this.getOne<MetabotWalletMetadata>(
+      'SELECT id, path, created_at FROM metabot_wallets WHERE id = ?',
+      [wallet_id]
+    );
+    return row
+      ? {
+          id: row.id,
+          path: row.path,
+          created_at: row.created_at,
+        }
+      : null;
+  }
+
+  /**
    * Find wallet row by mnemonic. Append-only wallets survive MetaBot deletion, so restore must reuse the row
    * instead of INSERT (UNIQUE on mnemonic). Handles both at-rest encrypted rows (`enc:v1:...`)
    * and legacy plaintext rows, matching exact first then case-insensitive trimmed.
@@ -904,6 +925,15 @@ export class MetabotStore {
   getMetabotWalletByMetabotId(metabot_id: number): MetabotWallet | null {
     const metabot = this.getMetabotById(metabot_id);
     return metabot ? this.getMetabotWalletById(metabot.wallet_id) : null;
+  }
+
+  /**
+   * Get non-secret wallet metadata (`id`, `path`, `created_at`) for a MetaBot
+   * without decrypting its mnemonic.
+   */
+  getMetabotWalletMetadataByMetabotId(metabot_id: number): MetabotWalletMetadata | null {
+    const metabot = this.getMetabotById(metabot_id);
+    return metabot ? this.getMetabotWalletMetadataById(metabot.wallet_id) : null;
   }
 
   /** Return all non-empty wallet mnemonics for in-memory egress fingerprinting (never logged). */
@@ -960,6 +990,24 @@ export class MetabotStore {
       id: twinRow.id,
       name: twinRow.name,
       mnemonic: wallet.mnemonic,
+      path: wallet.path,
+    };
+  }
+
+  /**
+   * Get non-secret metadata (`id`, `name`, `path`) for the first Twin without
+   * decrypting its wallet mnemonic.
+   */
+  getTwinWalletMetadata(): TwinWalletMetadata | null {
+    const twinRow = this.getOne<Pick<MetabotRow, 'id' | 'name' | 'wallet_id'>>(
+      "SELECT id, name, wallet_id FROM metabots WHERE metabot_type = 'twin' ORDER BY id ASC LIMIT 1"
+    );
+    if (!twinRow) return null;
+    const wallet = this.getMetabotWalletMetadataById(twinRow.wallet_id);
+    if (!wallet) return null;
+    return {
+      id: twinRow.id,
+      name: twinRow.name,
       path: wallet.path,
     };
   }

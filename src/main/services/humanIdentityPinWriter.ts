@@ -1,6 +1,6 @@
 import type { MetaidDataPayload, MvcCreatePinSessionSnapshot } from './metaidCore';
 import type { UserIdentityStore } from '../userIdentityStore';
-import type { UserIdentity } from '../types/userIdentity';
+import type { UserIdentity, UserIdentityPublic } from '../types/userIdentity';
 import type { IdentityCreatePin } from './preference/userWriter';
 
 export type HumanIdentityPinErrorCode =
@@ -38,7 +38,9 @@ export interface HumanIdentityPinWriterDeps {
  * entirely missing. A locked signer stays visible in the Browser Actor list
  * but every write must surface an explicit error, never a Bot fallback.
  */
-export function humanIdentitySigningAvailable(identity: UserIdentity | null | undefined): boolean {
+export function humanIdentitySigningAvailable(
+  identity: UserIdentity | UserIdentityPublic | null | undefined,
+): boolean {
   if (!identity || !identity.globalmetaid) return false;
   return !(
     identity.subsidy_state === 'failed'

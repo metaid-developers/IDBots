@@ -93,6 +93,14 @@ export function encryptMnemonicAtRest(mnemonic: string): string {
   }
 }
 
+function formatSafeStorageDecryptUnavailableError(cause?: string): Error {
+  const detail = cause && cause.trim() ? cause.trim() : 'Decryption is not available.';
+  return new Error(
+    `Cannot decrypt at-rest mnemonic via safeStorage.decryptString: ${detail} `
+    + 'Check OS Keychain / Safe Storage access for this app build (or switch back to the build/signature that created the Keychain item).'
+  );
+}
+
 /**
  * Decrypt a stored mnemonic value. Legacy plaintext values pass through
  * unchanged so existing databases remain seamlessly readable.
@@ -106,9 +114,27 @@ export function decryptMnemonicAtRest(stored: string): string {
   if (!ss) {
     throw new Error('Cannot decrypt at-rest mnemonic: OS safeStorage backend is unavailable');
   }
+  let available = false;
+  try {
+    available = ss.isEncryptionAvailable() === true;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    throw formatSafeStorageDecryptUnavailableError(msg);
+  }
+  if (!available) {
+    throw formatSafeStorageDecryptUnavailableError('Decryption is not available.');
+  }
   const payload = value.slice(MNEMONIC_ENC_PREFIX.length);
   const buffer = Buffer.from(payload, 'base64');
-  return ss.decryptString(buffer);
+  try {
+    return ss.decryptString(buffer);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (/decryption is not available/i.test(msg)) {
+      throw formatSafeStorageDecryptUnavailableError(msg);
+    }
+    throw error;
+  }
 }
 
 /**
