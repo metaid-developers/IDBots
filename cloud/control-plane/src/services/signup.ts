@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { newTenantId, newUserId, newGatewaySecret } from '../ids.js';
 import { encryptSecret } from '../crypto.js';
+import { dayStartMs } from './asr/usage.js';
 
 /**
  * DB-level sign-up core (REQ-B-7 / REQ-B-9 bookkeeping). One better-sqlite3
@@ -20,6 +21,7 @@ export type SignupErrorCode =
   | 'INVITE_REQUIRED'
   | 'INVITE_INVALID'
   | 'INVITE_EXHAUSTED'
+  | 'INVITE_DAILY_CAP_FULL'
   | 'USER_DISABLED';
 
 export interface UserRow {
@@ -94,12 +96,33 @@ export interface SignupInput {
   };
   masterKey: Buffer;
   externalInviteGrant?: ExternalInviteGrantInput;
+  dailySignupCap?: number | null;
 }
 
 const DEFAULT_DISPLAY_NAME = 'IDBots User';
 const DEFAULT_LOCALE = 'zh';
 const TENANT_STATUS_PROVISIONING = 'provisioning';
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function countSignupsToday(db: Database.Database, now = Date.now()): number {
+  const start = dayStartMs(now);
+  const end = start + DAY_MS;
+  const row = db
+    .prepare('SELECT COUNT(*) AS n FROM users WHERE created_at >= ? AND created_at < ?')
+    .get(start, end) as { n: number };
+  return row.n;
+}
+
+export function isDailySignupCapReached(
+  db: Database.Database,
+  cap: number | null | undefined,
+  now = Date.now(),
+): boolean {
+  if (cap === null || cap === undefined) {
+    return false;
+  }
+  return countSignupsToday(db, now) >= cap;
+}
 
 function getUserByPhone(db: Database.Database, phone: string): UserRow | undefined {
   return db.prepare('SELECT * FROM users WHERE phone_e164 = ?').get(phone) as
@@ -139,6 +162,14 @@ function signupInner(db: Database.Database, input: SignupInput): SignupResult {
       isNewUser: false,
       inviteConsumed: false,
       redeemCodeClaimed: false,
+    };
+  }
+
+  if (isDailySignupCapReached(db, input.dailySignupCap, now)) {
+    return {
+      ok: false,
+      code: 'INVITE_DAILY_CAP_FULL',
+      message: 'daily cloud signup capacity is full; your invite code stays valid, please try again tomorrow',
     };
   }
 

@@ -103,6 +103,7 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
       hibernateAfterMs: 7 * 24 * 60 * 60 * 1000,
       wakeGraceMs: 24 * 60 * 60 * 1000,
     },
+    dailySignupCap: null,
     // Push provider comes from the environment so `push.send-test` can use
     // the real FCM credentials when the operator sources deploy.env.
     push: parsePushConfig(env),

@@ -101,6 +101,11 @@ export interface ControlPlaneConfig {
     hibernateAfterMs: number;
     wakeGraceMs: number;
   };
+  /**
+   * Optional local daily cap on new user signups (Asia/Shanghai calendar day),
+   * configured via `CP_DAILY_SIGNUP_CAP`. Null means no local daily cap.
+   */
+  dailySignupCap: number | null;
   /** ASR voice gateway (new capability; see docs/cloud-mobile/voice/asr-channel.md). */
   asr: AsrConfig;
   /**
@@ -345,6 +350,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
   }
 
   const inviteService = parseInviteServiceConfig(env);
+  const dailySignupCap = parseOptionalNonNegativeInt(env, 'CP_DAILY_SIGNUP_CAP');
   const asr = parseAsrConfig(env);
   const environment = parseEnvironment(env);
   const agentListen = env.CP_AGENT_LISTEN?.trim() || null;
@@ -384,6 +390,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
     loginBundleDir: env.CP_LOGIN_BUNDLE_DIR ?? defaultLoginBundleDir(),
     legalDir: env.CP_LEGAL_DIR ?? defaultLegalDir(),
     inviteService,
+    dailySignupCap,
     asr,
     adminApiToken: env.CP_ADMIN_API_TOKEN ? env.CP_ADMIN_API_TOKEN : null,
     push: parsePushConfig(env),
@@ -392,6 +399,18 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
 
 const DEFAULT_DOUBAO_ENDPOINT = 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async';
 const DEFAULT_DOUBAO_RESOURCE_ID = 'volc.seedasr.sauc.duration';
+
+function parseOptionalNonNegativeInt(env: NodeJS.ProcessEnv, name: string): number | null {
+  const raw = env[name]?.trim();
+  if (!raw) {
+    return null;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new ConfigError(`${name} must be a non-negative integer, got "${env[name]}"`);
+  }
+  return value;
+}
 
 function parseNonNegativeInt(env: NodeJS.ProcessEnv, name: string, defaultValue: number): number {
   const raw = env[name];

@@ -117,3 +117,34 @@ describe('loadConfig env plumbing for CP_SMS_FAKE_ORIGIN_EXPLICIT', () => {
     );
   });
 });
+
+describe('CP_DAILY_SIGNUP_CAP configuration', () => {
+  test('defaults to null when unset or empty, and parses non-negative integers', () => {
+    assert.equal(loadConfig(baseEnv({ CP_SMS_FAKE_ORIGIN_EXPLICIT: 'true' })).dailySignupCap, null);
+    assert.equal(
+      loadConfig(baseEnv({ CP_SMS_FAKE_ORIGIN_EXPLICIT: 'true', CP_DAILY_SIGNUP_CAP: '' })).dailySignupCap,
+      null,
+    );
+    assert.equal(
+      loadConfig(baseEnv({ CP_SMS_FAKE_ORIGIN_EXPLICIT: 'true', CP_DAILY_SIGNUP_CAP: '10' })).dailySignupCap,
+      10,
+    );
+    assert.equal(
+      loadConfig(baseEnv({ CP_SMS_FAKE_ORIGIN_EXPLICIT: 'true', CP_DAILY_SIGNUP_CAP: '0' })).dailySignupCap,
+      0,
+    );
+  });
+
+  test('rejects negative or non-integer values', () => {
+    for (const bad of ['-1', '1.5', 'ten']) {
+      assert.throws(
+        () => loadConfig(baseEnv({ CP_SMS_FAKE_ORIGIN_EXPLICIT: 'true', CP_DAILY_SIGNUP_CAP: bad })),
+        (error: unknown) => {
+          assert.ok(error instanceof ConfigError);
+          assert.match(error.message, /CP_DAILY_SIGNUP_CAP must be a non-negative integer/);
+          return true;
+        },
+      );
+    }
+  });
+});
