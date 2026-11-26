@@ -48,10 +48,12 @@ jobs:
           node-version: 24
 
       # The gate is tested before anything relies on it: a broken gate must
-      # stop the pipeline, never quietly skip it. Only the tests that need no
-      # node_modules run here; the full set runs in each build job.
+      # stop the pipeline, never quietly skip it. The source restore tool is
+      # tested here too, before the `source` job ships it to the signing
+      # machine. Only the tests that need no node_modules run here; the full
+      # set runs in each build job.
       - name: Test the gate and the tools that need no dependencies
-        run: node --test tests/ciGate.test.mjs tests/ciReleaseWatch.test.mjs tests/ciWorktreeEol.test.mjs tests/ciWindowsSignOnce.test.mjs
+        run: node --test tests/ciGate.test.mjs tests/ciReleaseWatch.test.mjs tests/ciWorktreeEol.test.mjs tests/ciWindowsSignOnce.test.mjs tests/ciSourceRestore.test.mjs
 
       # Two decisions: whether this run is redundant at all, and whether a tag
       # run may leave out its tests because the parent commit's main run
@@ -66,10 +68,11 @@ jobs:
   # checkout step failed on v0.9.6, v0.9.7, v0.9.8, v1.0.9, v1.1.0 and three
   # times on v1.1.3 (2026-11-25), where the forced re-clone alone took 107
   # minutes, and the release SOP had carried "prevention pending" since
-  # 2026-09-28. It reaches GitHub's artifact storage without trouble — it
-  # already uploads every build there. So a hosted runner, with a good route,
-  # takes the commit and hands it over as a git bundle; the Windows job
-  # restores from that and never talks to github.com for its source.
+  # 2026-09-28. It does reach GitHub's artifact storage — it already uploads
+  # every build there — but downloading is slow: the first run with a full
+  # bundle (2026-11-26) spent 15 minutes on 36 MB. So a hosted runner, with a
+  # good route, takes the commit and hands it over twice, and the Windows job
+  # tries the small one first (SOP §11.47).
   # (Owner decision 2026-11-26.)
   source:
     needs: gate
@@ -79,25 +82,43 @@ jobs:
       - name: Check out Git repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
-          # The bundle must not carry the token; nothing here pushes.
+          # Two commits: the delta is cut against the first parent.
+          fetch-depth: 2
+          # What is handed over must not carry the token; nothing here pushes.
           persist-credentials: false
 
+      # `shell: bash` is for pipefail: a failed rev-list must not upload an
+      # empty pack as "the delta".
       - name: Bundle the commit together with the restore tool
+        shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/source-bundle"
-          # Cut from a shallow clone, the bundle holds this commit and its whole
-          # tree; the restore marks the result shallow on the receiving side.
-          git bundle create "$RUNNER_TEMP/source-bundle/source.bundle" HEAD
-          cp scripts/ci-source-restore.cjs "$RUNNER_TEMP/source-bundle/"
+          mkdir -p "$RUNNER_TEMP/source-delta" "$RUNNER_TEMP/source-full"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          ls -la "$RUNNER_TEMP/source-bundle"
+          # The delta: what this commit reaches beyond its first parent, as a
+          # pack that declares no prerequisites. It is a few KB against the
+          # full tree's tens of MB whenever the machine still holds the
+          # previous run's commit, and refused otherwise.
+          git rev-list --objects HEAD ^HEAD^1 | git pack-objects --stdout > "$RUNNER_TEMP/source-delta/source.pack"
+          # The full commit: cut from a shallow clone, the bundle holds this
+          # commit and its whole tree.
+          git bundle create "$RUNNER_TEMP/source-full/source.bundle" HEAD
+          cp scripts/ci-source-restore.cjs "$RUNNER_TEMP/source-delta/"
+          cp scripts/ci-source-restore.cjs "$RUNNER_TEMP/source-full/"
+          ls -la "$RUNNER_TEMP/source-delta" "$RUNNER_TEMP/source-full"
 
-      - name: Upload the source bundle
+      - name: Upload the source delta
         uses: actions/upload-artifact@v4
         with:
-          name: source-bundle
-          path: ${{ runner.temp }}/source-bundle
+          name: source-delta
+          path: ${{ runner.temp }}/source-delta
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload the full source bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-full
+          path: ${{ runner.temp }}/source-full
           retention-days: 1
           if-no-files-found: error
 
@@ -167,27 +188,62 @@ jobs:
           submodules: false
 
       # The signing machine never fetches from github.com (see the `source`
-      # job). scripts/ci-source-restore.cjs deletes everything in its
-      # workspace, clones the bundle and proves the result is the commit this
-      # run is for. It travels inside the artifact because the workspace is
-      # empty by the time it runs — which also means no file of an earlier run
-      # can survive into this one (SOP §11.22, §11.43).
-      - name: Download the source bundle (Windows)
+      # job), and its downloads from GitHub's artifact storage are slow: the
+      # full bundle costs about 15 minutes. So the delta is tried first.
+      # scripts/ci-source-restore.cjs adds its objects to the repository the
+      # previous run left behind and, only once the whole tree of the new
+      # commit is proven to be there, deletes every working file and checks
+      # the commit out anew — so no file of an earlier run can survive into
+      # this one (SOP §11.22, §11.43) and a refused delta leaves the workspace
+      # as it was. The tool travels inside the artifact because the workspace
+      # has no scripts in it at that point.
+      - name: Download the source delta (Windows)
         if: runner.os == 'Windows'
         uses: actions/download-artifact@v4
         with:
-          name: source-bundle
-          path: ${{ runner.temp }}/source-bundle
+          name: source-delta
+          path: ${{ runner.temp }}/source-delta
 
-      - name: Restore the source tree from the bundle (Windows)
+      # The delta only fits a machine that still holds the previous run's
+      # commit. Exit 3 is it saying so — expected on the machine's first run
+      # and whenever another branch ran in between — and is no failure: the
+      # full bundle takes over below. Anything else is a real failure, which
+      # the full bundle covers too, visibly.
+      - name: Update the source tree from the delta (Windows)
+        id: restore_delta
         if: runner.os == 'Windows'
+        continue-on-error: true
         run: |
-          $restore = "$env:RUNNER_TEMP\source-bundle\ci-source-restore.cjs"
+          $restore = "$env:RUNNER_TEMP\source-delta\ci-source-restore.cjs"
           # A tag checkout stays detached, as actions/checkout leaves it; only a branch push gets a branch.
           if ($env:GITHUB_REF -like 'refs/heads/*') {
             node $restore --commit "$env:GITHUB_SHA" --branch "$env:GITHUB_REF_NAME"
           } else {
             node $restore --commit "$env:GITHUB_SHA"
+          }
+          if ($LASTEXITCODE -eq 3) {
+            [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "fitted=false`n")
+            Write-Host "The source delta does not fit this workspace: the tree is rebuilt from the full bundle."
+            exit 0
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "fitted=true`n")
+
+      - name: Download the full source bundle (Windows)
+        if: runner.os == 'Windows' && steps.restore_delta.outputs.fitted != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: source-full
+          path: ${{ runner.temp }}/source-full
+
+      - name: Rebuild the source tree from the full bundle (Windows)
+        if: runner.os == 'Windows' && steps.restore_delta.outputs.fitted != 'true'
+        run: |
+          $restore = "$env:RUNNER_TEMP\source-full\ci-source-restore.cjs"
+          if ($env:GITHUB_REF -like 'refs/heads/*') {
+            node $restore --fresh --commit "$env:GITHUB_SHA" --branch "$env:GITHUB_REF_NAME"
+          } else {
+            node $restore --fresh --commit "$env:GITHUB_SHA"
           }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

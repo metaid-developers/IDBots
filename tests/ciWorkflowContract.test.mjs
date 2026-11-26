@@ -33,6 +33,8 @@ test('the gate decides before any build job starts, and the build jobs honour it
   // The gate job has no node_modules: everything it runs must stay dependency-free.
   const gateTests = gate.steps[guardAt].run.match(/tests\/[\w.]+\.test\.mjs/g) ?? [];
   assert.equal(gateTests.includes('tests/ciGate.test.mjs'), true);
+  // The `source` job ships the restore tool right after the gate: it is tested here, before it travels.
+  assert.equal(gateTests.includes('tests/ciSourceRestore.test.mjs'), true);
   const toolingTests = readJson('package.json').scripts['test:ci-tooling'].match(/tests\/[\w.]+\.test\.mjs/g) ?? [];
   for (const relative of gateTests) {
     assert.equal(toolingTests.includes(relative), true, `${relative} runs in the gate but not in test:ci-tooling`);
@@ -102,10 +104,11 @@ test('nothing is packaged before the verdict, and every suite runs before it', (
   }
 });
 
-test('checkouts are shallow: one commit for builds, two for the gate diff', () => {
+test('checkouts are shallow: one commit for builds, two wherever a parent comes into play', () => {
   assert.equal(buildSteps[indexOf('Check out Git repository')].with['fetch-depth'], 1);
   const gateCheckout = workflow.jobs.gate.steps.find((step) => step.uses?.startsWith('actions/checkout'));
   assert.equal(gateCheckout.with['fetch-depth'], 2);
+  assert.equal(workflow.jobs.source.steps[0].with['fetch-depth'], 2, 'the delta is cut against the first parent');
 });
 
 test('the pnpm-store cache is for hosted runners only', () => {
@@ -119,20 +122,45 @@ test('the pnpm-store cache is for hosted runners only', () => {
 
 test('the Windows job never fetches its source from github.com', () => {
   // The direct checkout is for hosted runners only.
-  assert.equal(buildSteps[indexOf('Check out Git repository')].if, `runner.os != 'Windows'`);
-  const restoreAt = indexOf('Restore the source tree from the bundle (Windows)');
-  assert.equal(buildSteps[restoreAt].if, `runner.os == 'Windows'`);
-  assert.match(buildSteps[restoreAt].run, /ci-source-restore\.cjs/);
-  assert.match(buildSteps[restoreAt].run, /--commit "\$env:GITHUB_SHA"/, 'the restored commit is checked against the run');
-  // Node exists before the restore runs, and the restore precedes everything that needs the tree.
-  assert.equal(indexOf('Install Node.js') < indexOf('Download the source bundle (Windows)'), true);
-  assert.equal(restoreAt < indexOf('Enable pnpm'), true);
+  const checkouts = buildSteps.filter((step) => step.uses?.startsWith('actions/checkout'));
+  assert.equal(checkouts.length, 1);
+  assert.equal(checkouts[0].if, `runner.os != 'Windows'`);
+
+  const DELTA = 'Update the source tree from the delta (Windows)';
+  const REBUILD = 'Rebuild the source tree from the full bundle (Windows)';
+  const delta = buildSteps[indexOf(DELTA)];
+  const rebuild = buildSteps[indexOf(REBUILD)];
+  assert.equal(delta.if, `runner.os == 'Windows'`);
+  assert.equal(delta.id, 'restore_delta');
+  assert.equal(delta['continue-on-error'], true, 'a broken delta must not stop the job: the full bundle covers it');
+  assert.match(delta.run, /ci-source-restore\.cjs/);
+  assert.match(delta.run, /--commit "\$env:GITHUB_SHA"/, 'the restored commit is checked against the run');
+  assert.doesNotMatch(delta.run, /--fresh/, 'the delta updates the repository the previous run left behind');
+  // Exit 3 is the delta saying it does not fit — expected, and no red step.
+  assert.match(delta.run, /if \(\$LASTEXITCODE -eq 3\) \{[\s\S]*AppendAllText\(\$env:GITHUB_OUTPUT, "fitted=false`n"\)[\s\S]*exit 0/);
+  assert.match(delta.run, /AppendAllText\(\$env:GITHUB_OUTPUT, "fitted=true`n"\)/);
+  assert.match(rebuild.run, /--fresh --commit "\$env:GITHUB_SHA"/);
+  // Both steps give a branch push its branch and leave a tag checkout detached.
+  for (const step of [delta, rebuild]) {
+    assert.match(step.run, /--branch "\$env:GITHUB_REF_NAME"/);
+  }
+  // The full bundle is only fetched when the delta did not fit — or broke off
+  // before it could say, which leaves the output unset.
+  for (const name of ['Download the full source bundle (Windows)', REBUILD]) {
+    assert.equal(buildSteps[indexOf(name)].if, `runner.os == 'Windows' && steps.restore_delta.outputs.fitted != 'true'`);
+  }
+  // Node exists before anything is restored, each download precedes the step
+  // that reads it, and the tree is there before anything needs it.
+  const order = ['Install Node.js', 'Download the source delta (Windows)', DELTA, 'Download the full source bundle (Windows)', REBUILD, 'Enable pnpm'];
+  const positions = order.map(indexOf);
+  assert.equal(positions.every((position) => position >= 0), true, 'every step exists');
+  assert.deepEqual([...positions].sort((a, b) => a - b), positions, 'the steps run in this order');
   // Byte-exact from here on, whatever the machine's global git config says.
   assert.match(buildSteps[indexOf('Enable Git long paths (Windows)')].run, /core\.autocrlf false/);
-  // A restore is a fresh clone, so the stale-tree repair has nothing left to do.
+  // No stale-tree repair is left to do: a rebuild is a fresh clone, and an update checks out anew.
   assert.equal(buildSteps.some((step) => /ci-worktree-eol/.test(String(step.run))), false);
 
-  // A hosted runner bundles the commit and ships the restore tool next to it.
+  // A hosted runner cuts both and ships the restore tool next to each.
   const source = workflow.jobs.source;
   assert.equal(source.needs, 'gate');
   assert.equal(source.if, `needs.gate.outputs.skip != 'true'`);
@@ -140,15 +168,22 @@ test('the Windows job never fetches its source from github.com', () => {
   assert.deepEqual(source.steps.map((step) => step.name), [
     'Check out Git repository',
     'Bundle the commit together with the restore tool',
-    'Upload the source bundle',
+    'Upload the source delta',
+    'Upload the full source bundle',
   ]);
-  assert.equal(source.steps[0].with['persist-credentials'], false, 'the bundle must not carry a token');
-  const bundling = source.steps[1].run;
-  assert.match(bundling, /git bundle create [^\n]*HEAD/);
-  assert.match(bundling, /cp scripts\/ci-source-restore\.cjs/);
-  assert.match(bundling, /rev-parse HEAD\)" = "\$GITHUB_SHA"/, 'the bundle is cut from the commit the run is for');
-  assert.equal(source.steps[2].with.name, 'source-bundle');
-  assert.equal(buildSteps[indexOf('Download the source bundle (Windows)')].with.name, 'source-bundle');
+  assert.equal(source.steps[0].with['persist-credentials'], false, 'what is handed over must not carry a token');
+  const bundling = source.steps[1];
+  assert.equal(bundling.shell, 'bash', 'pipefail: a failed rev-list must not ship an empty pack as the delta');
+  // The delta is whatever the commit reaches beyond its first parent, as a pack with no prerequisites.
+  assert.match(bundling.run, /git rev-list --objects HEAD \^HEAD\^1 \| git pack-objects --stdout > "\$RUNNER_TEMP\/source-delta\/source\.pack"/);
+  assert.match(bundling.run, /git bundle create "\$RUNNER_TEMP\/source-full\/source\.bundle" HEAD/);
+  for (const artifact of ['source-delta', 'source-full']) {
+    assert.match(bundling.run, new RegExp(`cp scripts/ci-source-restore\\.cjs "\\$RUNNER_TEMP/${artifact}/"`), `${artifact} carries the restore tool`);
+  }
+  assert.match(bundling.run, /rev-parse HEAD\)" = "\$GITHUB_SHA"/, 'both are cut from the commit the run is for');
+  assert.deepEqual(source.steps.slice(2).map((step) => step.with.name), ['source-delta', 'source-full']);
+  assert.equal(buildSteps[indexOf('Download the source delta (Windows)')].with.name, 'source-delta');
+  assert.equal(buildSteps[indexOf('Download the full source bundle (Windows)')].with.name, 'source-full');
   assert.equal(fs.existsSync(path.join(repoRoot, 'scripts/ci-source-restore.cjs')), true);
 });
 
