@@ -708,6 +708,11 @@ const zhTranslations: MobileDictionary = {
   'mobile.me.cloudVersion': '云端版本：{version}',
   'mobile.me.protocolVersion': '通信协议版本：{version}',
   'mobile.me.protocolHint': '通信协议用于手机与云端服务之间的兼容协商，不是 App 或区块链合约版本。',
+  'mobile.me.about.checkUpdate': '检查新版本',
+  'mobile.me.about.checking': '正在检查…',
+  'mobile.me.about.update-available': '发现新版本，请按提示完成更新。',
+  'mobile.me.about.up-to-date': '当前已是最新版本。',
+  'mobile.me.about.check-failed': '检查更新失败，请稍后重试。',
   'mobile.me.contractVersion': '合约版本：{version}',
   // A6 settings IA rework (IA-PLAN v1): entries, groups, summaries, pages.
   'mobile.me.back': '返回',
@@ -1742,6 +1747,11 @@ const enTranslations: MobileDictionary = {
   'mobile.me.cloudVersion': 'Cloud version: {version}',
   'mobile.me.protocolVersion': 'Gateway protocol version: {version}',
   'mobile.me.protocolHint': 'The gateway protocol negotiates phone-cloud compatibility; it is not an app or blockchain contract version.',
+  'mobile.me.about.checkUpdate': 'Check for updates',
+  'mobile.me.about.checking': 'Checking…',
+  'mobile.me.about.update-available': 'An update is available. Follow the update dialog to continue.',
+  'mobile.me.about.up-to-date': 'You\'re up to date.',
+  'mobile.me.about.check-failed': 'Couldn\'t check for updates. Try again later.',
   'mobile.me.contractVersion': 'Contract version: {version}',
   // A6 settings IA rework (IA-PLAN v1): entries, groups, summaries, pages.
   'mobile.me.back': 'Back',

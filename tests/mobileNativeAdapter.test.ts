@@ -13,6 +13,7 @@ function capabilities(overrides: Partial<MobileNativeCapabilities> = {}): Requir
     backButton: true,
     externalUrls: true,
     secureScreen: false,
+    updateChecks: false,
     pushNotifications: false,
     haptics: false,
     ...overrides,
@@ -275,4 +276,20 @@ test('triggerHaptic uses native haptics when available and Web Vibration fallbac
   web.triggerHaptic('ready');
   web.triggerHaptic('light');
   assert.deepEqual(vibrations, [35, 10]);
+});
+
+test('manual update checks call the native method only when supported', async () => {
+  let calls = 0;
+  const supported = createNativeAdapter(target(nativeBridge({
+    getCapabilities: () => capabilities({ updateChecks: true }),
+    checkForUpdate: async () => {
+      calls += 1;
+      return 'update-available';
+    },
+  })).value);
+  assert.equal(await supported.checkForUpdate(), 'update-available');
+  assert.equal(calls, 1);
+
+  const unavailable = createNativeAdapter(target(nativeBridge()).value);
+  await assert.rejects(unavailable.checkForUpdate(), (error) => (error as { code?: string }).code === 'UNAVAILABLE');
 });

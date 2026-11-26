@@ -7,6 +7,7 @@ interface MobileNativeCapabilities {
   backButton: boolean;
   externalUrls: boolean;
   secureScreen: boolean;
+  updateChecks: boolean;
   pushNotifications: boolean;
   haptics?: boolean;
 }
@@ -42,6 +43,7 @@ interface IdbotsNativeBridge {
   setSecureScreen?(enabled: boolean): Promise<void>;
   haptic?(style?: MobileNativeHapticStyle): Promise<void>;
   openExternal?(url: string): Promise<void>;
+  checkForUpdate?(): Promise<'update-available' | 'up-to-date' | 'check-failed'>;
   onAppStateChange?(callback: (active: boolean) => void): () => void;
   onBackButton?(callback: () => boolean): () => void;
   getPushPermission?(): Promise<'granted' | 'denied' | 'prompt'>;

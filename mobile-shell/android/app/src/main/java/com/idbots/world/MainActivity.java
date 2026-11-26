@@ -9,7 +9,7 @@ import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
-    private AppUpdateManager appUpdateManager;
+    static volatile AppUpdateManager appUpdateManager;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -38,6 +38,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onDestroy() {
         appUpdateManager.onDestroy();
+        appUpdateManager = null;
         super.onDestroy();
     }
 

@@ -17,15 +17,32 @@ const LEGAL_LINKS: ReadonlyArray<{ key: string; document: 'terms' | 'privacy' | 
   { key: 'mobile.me.about.custody', document: 'custody', testId: 'about-link-custody' },
 ];
 
+type UpdateCheckStatus = 'checking' | 'update-available' | 'up-to-date' | 'check-failed';
+
 export function AboutPage(props: { onBack: () => void }): JSX.Element {
-  const nativeApp = typeof window === 'undefined' ? null : getNativeAdapter().getAppVersion();
+  const adapter = typeof window === 'undefined' ? null : getNativeAdapter();
+  const nativeApp = adapter?.getAppVersion() ?? null;
+  const updateChecks = adapter?.getCapabilities().updateChecks === true;
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateCheckStatus | null>(null);
   useEffect(() => {
     void getMobileElectron()
       .appInfo.getVersion()
       .then((version) => setAppVersion(version))
       .catch(() => setAppVersion(null));
   }, []);
+  const checkForUpdate = async (): Promise<void> => {
+    setUpdateStatus('checking');
+    if (!adapter) {
+      setUpdateStatus('check-failed');
+      return;
+    }
+    try {
+      setUpdateStatus(await adapter.checkForUpdate());
+    } catch {
+      setUpdateStatus('check-failed');
+    }
+  };
   return (
     <SecondaryPageShell title={t('mobile.me.entry.about')} onBack={props.onBack} testId="me-page-about">
       <div className="flex flex-col items-center gap-2 twin-panel twin-panel-padded">
@@ -48,6 +65,24 @@ export function AboutPage(props: { onBack: () => void }): JSX.Element {
         <p className="max-w-xs text-center text-xs text-[var(--text-secondary)]">
           {t('mobile.me.protocolHint')}
         </p>
+        {updateChecks ? (
+          <>
+            <button
+              type="button"
+              className="twin-button twin-button-secondary twin-button-full mt-2"
+              data-testid="about-check-update"
+              disabled={updateStatus === 'checking'}
+              onClick={() => void checkForUpdate()}
+            >
+              {t(updateStatus === 'checking' ? 'mobile.me.about.checking' : 'mobile.me.about.checkUpdate')}
+            </button>
+            {updateStatus && updateStatus !== 'checking' ? (
+              <p className="text-center text-xs text-[var(--text-secondary)]" data-testid="about-update-status">
+                {t(`mobile.me.about.${updateStatus}`)}
+              </p>
+            ) : null}
+          </>
+        ) : null}
       </div>
 
       <div className="twin-panel twin-panel-padded">

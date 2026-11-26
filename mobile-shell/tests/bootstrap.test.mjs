@@ -10,8 +10,8 @@ function bootstrap(origin, platform = 'android', remoteOrigin = 'https://staging
   const script = template
     .replace('__IDBOTS_REMOTE_ORIGIN_JSON__', JSON.stringify(remoteOrigin))
     .replace('__IDBOTS_PLATFORM_JSON__', JSON.stringify(platform))
-    .replace('__IDBOTS_APP_VERSION_JSON__', JSON.stringify('0.1.8'))
-    .replace('__IDBOTS_APP_VERSION_CODE_JSON__', '10');
+    .replace('__IDBOTS_APP_VERSION_JSON__', JSON.stringify('0.1.9'))
+    .replace('__IDBOTS_APP_VERSION_CODE_JSON__', '11');
   const listeners = new Map();
   const window = {
     location: {
@@ -51,8 +51,8 @@ function bootstrap(origin, platform = 'android', remoteOrigin = 'https://staging
 test('Android installs the versioned bridge at document start on the exact origin', () => {
   const window = bootstrap('https://staging.idbots.world');
   assert.equal(window.idbotsNative.nativeBridgeVersion, 1);
-  assert.equal(window.idbotsNative.appVersion, '0.1.8');
-  assert.equal(window.idbotsNative.appVersionCode, 10);
+  assert.equal(window.idbotsNative.appVersion, '0.1.9');
+  assert.equal(window.idbotsNative.appVersionCode, 11);
   assert.deepEqual({ ...window.idbotsMobile }, { isMobile: true, os: 'android', shell: 'capacitor' });
   assert.deepEqual({ ...window.idbotsNative.bootstrap }, {
     phase: 'document-start',
@@ -68,6 +68,7 @@ test('Android installs the versioned bridge at document start on the exact origi
     backButton: true,
     externalUrls: true,
     secureScreen: false,
+    updateChecks: false,
     pushNotifications: false,
     haptics: false,
   });
@@ -231,6 +232,7 @@ test('NS2 capabilities convert native files in order and preserve share and secu
     backButton: true,
     externalUrls: true,
     secureScreen: true,
+    updateChecks: false,
     pushNotifications: false,
     haptics: false,
   });

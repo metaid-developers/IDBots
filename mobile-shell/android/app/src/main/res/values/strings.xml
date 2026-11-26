@@ -23,6 +23,7 @@
     <string name="update_open_settings">Open settings</string>
     <string name="update_failed_title">Update download failed</string>
     <string name="update_failed_message">Check your connection and try again. Your current version is unaffected.</string>
+    <string name="update_failed_reason">Reason: %1$s</string>
     <string name="update_retry">Try again</string>
     <string name="notification_channel_work">Task results</string>
     <string name="notification_channel_action">Action required</string>
