@@ -7,7 +7,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { apply, store, digestTree, refusalFor, resolveCache } = require('../scripts/mingit-signed-cache.cjs');
+const { apply, store, digestTree, refusalFor, resolveCache, parseVerdicts, verifyWithPowershell } = require('../scripts/mingit-signed-cache.cjs');
 
 const sha256 = (content) => createHash('sha256').update(content).digest('hex');
 const THUMBPRINT = 'AB'.repeat(20);
@@ -166,6 +166,55 @@ test('store refuses a tree whose signatures it cannot vouch for', (t) => {
   const result = store({ repoRoot: unverifiable.repoRoot, env: unverifiable.env, log: unverifiable.log, verify: () => null });
   assert.equal(result.stored, false);
   assert.match(result.reason, /verification could not run/);
+  // The step is allowed to fail, so the refusal is said where the run summary shows it.
+  assert.ok(unverifiable.lines.some((line) => line.startsWith('::warning title=PortableGit signed cache not stored::')), unverifiable.lines.join('\n'));
+});
+
+test('a missing verification result says so, with how much of the tree was covered', () => {
+  const unsigned = { 'bin/bash.exe': '1', 'usr/bin/git.exe': '1' };
+  const signed = { 'bin/bash.exe': '2', 'usr/bin/git.exe': '2' };
+  const verdict = (file) => ({ path: file, status: 'Valid', signer: THUMBPRINT, timestamped: true });
+  const only = parseVerdicts(JSON.stringify([verdict('usr/bin/git.exe')]));
+  assert.match(
+    refusalFor({ unsigned, signed, verdicts: only, thumbprint: THUMBPRINT }),
+    /bin\/bash\.exe has no verification result \(1 results for 2 executables\)/,
+  );
+  // What Windows PowerShell 5.1 printed on the signing machine (run 45842016787): the tree may be cached.
+  const wrapped = parseVerdicts(JSON.stringify({ value: [verdict('bin/bash.exe'), verdict('usr/bin/git.exe')], Count: 2 }));
+  assert.equal(refusalFor({ unsigned, signed, verdicts: wrapped, thumbprint: THUMBPRINT }), null);
+});
+
+test('the verification output is read in either shape, and nothing less is trusted', () => {
+  const verdict = (file, status = 'Valid') => JSON.stringify({ path: file, status, signer: 'ab cd ef', timestamped: true });
+  // Windows PowerShell 5.1, which the signing machine runs, wraps an array handed down the pipeline.
+  const wrapped = parseVerdicts(`{"value":[${verdict('usr/bin/git.exe')},${verdict('usr\\bin\\bash.exe', 'NotSigned')}],"Count":2}`);
+  assert.deepEqual([...wrapped.keys()].sort(), ['usr/bin/bash.exe', 'usr/bin/git.exe']);
+  assert.deepEqual(wrapped.get('usr/bin/git.exe'), { status: 'Valid', signer: 'ABCDEF', timestamped: true });
+  assert.equal(wrapped.get('usr/bin/bash.exe').status, 'NotSigned');
+  // PowerShell 7 prints the bare array, also for a single result.
+  assert.equal(parseVerdicts(`[${verdict('usr/bin/git.exe')}]`).size, 1);
+  // A byte-order mark and noise around the JSON are not part of it.
+  assert.equal(parseVerdicts(`\uFEFF#< CLIXML\n[${verdict('a.exe')}]\n`).get('a.exe').status, 'Valid');
+  for (const bad of ['', 'garbage', '[not json]', '{"path":"a.exe"}', '[{"status":"Valid"}]', '{"value":"a.exe"}', '[null]']) {
+    assert.equal(parseVerdicts(bad), null, JSON.stringify(bad));
+  }
+});
+
+// The real script on the real shell. It runs with the CI tooling tests in the
+// Windows build job, which is the only place PowerShell 5.1 exists: the first
+// Windows run (2026-11-26) cached nothing because the output's shape there
+// was never exercised.
+test('the real verification script is read correctly on Windows', { skip: process.platform === 'win32' ? false : 'Windows PowerShell only' }, (t) => {
+  const fixture = makeFixture(t);
+  const verdicts = verifyWithPowershell(fixture.packaged, THUMBPRINT);
+  assert.ok(verdicts, 'the verification ran');
+  assert.deepEqual([...verdicts.keys()].sort(), ['usr/bin/bash.exe', 'usr/bin/git.exe']);
+  for (const [file, verdict] of verdicts) {
+    // Fake executables: whatever PowerShell calls them, it says so for each one.
+    assert.equal(typeof verdict.status, 'string', file);
+    assert.equal(verdict.signer, '', file);
+    assert.equal(verdict.timestamped, false, file);
+  }
 });
 
 test('store refuses when the packaged tree is not simply the signed extracted one', (t) => {
