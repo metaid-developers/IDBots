@@ -16,7 +16,94 @@ permissions:
   contents: write  # 允许创建 GitHub Release 和上传 Release 附件
 
 jobs:
+  # A release pushes `main` and its `v*` tag together, which starts two runs for
+  # the same commit one second apart. The main run is a strict subset of the tag
+  # run, yet its Windows job queues for the single signing runner ahead of the
+  # release — and cancelling it by hand is what takes the runner down (SOP
+  # §11.16). On 2026-11-25 (v1.1.3) the tag run waited 57 min and 1 h 43 min
+  # behind its own main runs, and a cancellation left the runner offline for
+  # 7.5 h overnight. Decide up front whether a run is redundant, so that
+  # nothing has to be cancelled later; scripts/ci-gate.mjs only skips what it
+  # can prove.
+  gate:
+    runs-on: ubuntu-latest
+    # Reading another run's jobs needs actions:read; naming any permission here
+    # drops every other one, so contents is repeated.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.gate.outputs.skip }}
+      skip_tests: ${{ steps.gate.outputs.skip_tests }}
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          # Two commits: the gate diffs the pushed commit against its parent.
+          fetch-depth: 2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # The gate is tested before anything relies on it: a broken gate must
+      # stop the pipeline, never quietly skip it. Only the tests that need no
+      # node_modules run here; the full set runs in each build job.
+      - name: Test the gate and the tools that need no dependencies
+        run: node --test tests/ciGate.test.mjs tests/ciReleaseWatch.test.mjs tests/ciWorktreeEol.test.mjs tests/ciWindowsSignOnce.test.mjs
+
+      # Two decisions: whether this run is redundant at all, and whether a tag
+      # run may leave out its tests because the parent commit's main run
+      # already ran the identical steps green on all three platforms.
+      - name: Decide whether this run is redundant
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-gate.mjs
+
+  # The signing machine's route to github.com:443 resets connections: its
+  # checkout step failed on v0.9.6, v0.9.7, v0.9.8, v1.0.9, v1.1.0 and three
+  # times on v1.1.3 (2026-11-25), where the forced re-clone alone took 107
+  # minutes, and the release SOP had carried "prevention pending" since
+  # 2026-09-28. It reaches GitHub's artifact storage without trouble — it
+  # already uploads every build there. So a hosted runner, with a good route,
+  # takes the commit and hands it over as a git bundle; the Windows job
+  # restores from that and never talks to github.com for its source.
+  # (Owner decision 2026-11-26.)
+  source:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          # The bundle must not carry the token; nothing here pushes.
+          persist-credentials: false
+
+      - name: Bundle the commit together with the restore tool
+        run: |
+          mkdir -p "$RUNNER_TEMP/source-bundle"
+          # Cut from a shallow clone, the bundle holds this commit and its whole
+          # tree; the restore marks the result shallow on the receiving side.
+          git bundle create "$RUNNER_TEMP/source-bundle/source.bundle" HEAD
+          cp scripts/ci-source-restore.cjs "$RUNNER_TEMP/source-bundle/"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          ls -la "$RUNNER_TEMP/source-bundle"
+
+      - name: Upload the source bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-bundle
+          path: ${{ runner.temp }}/source-bundle
+          retention-days: 1
+          if-no-files-found: error
+
   build:
+    needs: [gate, source]
+    if: needs.gate.outputs.skip != 'true'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -51,56 +138,78 @@ jobs:
 
     steps:
       # Windows: 必须在 checkout 之前启用长路径，否则 git 操作可能被截断
+      # It also keeps core.autocrlf off for every later git call in the job:
+      # Git for Windows defaults it to true, which rewrites all ~4,300
+      # LF-committed text files to CRLF — the whole "red on Windows only"
+      # family (kernel patches v0.9.3, xiangqi fixture v0.9.5, METAAPPs and docs
+      # commerce payloads v1.1.3), each so far patched one path at a time.
       - name: Enable Git long paths (Windows)
         if: runner.os == 'Windows'
-        run: git config --global core.longpaths true
-
-      - name: Check out Git repository
-        uses: actions/checkout@v4
-        with:
-          # fetch-depth: 0 获取完整历史和所有标签
-          # electron-builder 在 publish 时需要访问 git 标签来确定版本和发布信息
-          fetch-depth: 0
-          submodules: false
+        run: |
+          git config --global core.longpaths true
+          git config --global core.autocrlf false
 
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      # Hosted runners reach github.com without trouble and check out directly.
+      - name: Check out Git repository
+        if: runner.os != 'Windows'
+        uses: actions/checkout@v4
+        with:
+          # Shallow on purpose: nothing in a build job reads history or tags.
+          # electron-builder only needs them when publishing, and every build
+          # runs with --publish never (the version comes from package.json and
+          # GITHUB_REF_NAME).
+          fetch-depth: 1
+          submodules: false
+
+      # The signing machine never fetches from github.com (see the `source`
+      # job). scripts/ci-source-restore.cjs deletes everything in its
+      # workspace, clones the bundle and proves the result is the commit this
+      # run is for. It travels inside the artifact because the workspace is
+      # empty by the time it runs — which also means no file of an earlier run
+      # can survive into this one (SOP §11.22, §11.43).
+      - name: Download the source bundle (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/download-artifact@v4
+        with:
+          name: source-bundle
+          path: ${{ runner.temp }}/source-bundle
+
+      - name: Restore the source tree from the bundle (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $restore = "$env:RUNNER_TEMP\source-bundle\ci-source-restore.cjs"
+          # A tag checkout stays detached, as actions/checkout leaves it; only a branch push gets a branch.
+          if ($env:GITHUB_REF -like 'refs/heads/*') {
+            node $restore --commit "$env:GITHUB_SHA" --branch "$env:GITHUB_REF_NAME"
+          } else {
+            node $restore --commit "$env:GITHUB_SHA"
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Enable pnpm
         run: corepack enable
-
-      # The self-hosted win-sign runner has no bash on PATH until the
-      # "Setup MinGit (Windows)" step much later in this job, so `shell: bash`
-      # dies here with "bash: command not found" (first pnpm-era Windows run,
-      # 2026-09-24). Resolve the store path per platform instead (SOP 11.10).
-      - name: Get pnpm store directory (Windows)
-        if: runner.os == 'Windows'
-        id: pnpm-store-win
-        shell: powershell
-        run: |
-          # The runner executes PowerShell steps with $ErrorActionPreference='Stop',
-          # which turns ANY native-command stderr output into a terminating error.
-          # Corepack's first-run banner ("Corepack is about to download pnpm@...")
-          # goes to stderr and killed the first pnpm-era Windows run (2026-09-24).
-          # Keep stderr non-fatal and judge success by the parsed value instead.
-          $ErrorActionPreference = 'Continue'
-          $store = (pnpm store path | Where-Object { $_ -and "$_".Trim() } | Select-Object -Last 1)
-          if (-not $store) {
-            Write-Error "pnpm store path returned no usable path"
-            exit 1
-          }
-          # AppendAllText writes UTF-8 without a BOM (Out-File/Add-Content differ per PS version).
-          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "STORE_PATH=$($store.Trim())`n")
 
       - name: Get pnpm store directory (non-Windows)
         if: runner.os != 'Windows'
         id: pnpm-store-nix
         run: echo "STORE_PATH=$(pnpm store path)" >> "$GITHUB_OUTPUT"
 
+      # Hosted runners only. The self-hosted win-sign runner keeps its pnpm
+      # store on disk between runs; archiving and uploading that multi-GB store
+      # over the signing machine's throttled link took 24 min in the post step
+      # of every successful job (runs 44735013693, 45589655519) and up to 10 min
+      # to restore — all while the single runner stays busy and queued jobs
+      # wait. (Do not give an early Windows step `shell: bash`: bash only
+      # reaches PATH with "Setup MinGit (Windows)" further down, SOP §11.10.)
       - uses: actions/cache@v4
+        if: runner.os != 'Windows'
         with:
-          path: ${{ steps.pnpm-store-win.outputs.STORE_PATH || steps.pnpm-store-nix.outputs.STORE_PATH }}
+          path: ${{ steps.pnpm-store-nix.outputs.STORE_PATH }}
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'dsh-runtime/pnpm-lock.yaml', 'SKILLs/web-search/pnpm-lock.yaml') }}
           restore-keys: pnpm-store-${{ runner.os }}-
 
@@ -144,7 +253,19 @@ jobs:
       - name: Compile Electron main process
         run: pnpm run compile:electron
 
+      # This workflow's own tooling on a real checkout of this platform: the
+      # gate, the byte-exact checkout, the incremental compile, the sign-once
+      # hook and the workflow's wiring (scripts/ci-*.mjs).
+      - name: Guard the CI tooling itself
+        id: test_ci_tooling
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
+        run: pnpm run test:ci-tooling
+
       - name: Run Windows installer reliability tests
+        id: test_windows_installer_reliability
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: node --test tests/windowsInstallerReliability.test.mjs
 
       # Grammar gate for scripts/nsis-installer.nsh: the regex test above
@@ -155,7 +276,9 @@ jobs:
       # installed on demand: the electron-builder cache is empty on a cold
       # runner.
       - name: Compile the NSIS syntax harness (makensis -WX)
-        if: runner.os == 'Windows'
+        id: test_nsis_harness
+        continue-on-error: true
+        if: runner.os == 'Windows' && needs.gate.outputs.skip_tests != 'true'
         shell: powershell
         run: |
           # Mirror findMakensis in scripts/verify-nsis-harness.mjs: iterate
@@ -177,21 +300,33 @@ jobs:
           node scripts/verify-nsis-harness.mjs --require-makensis
 
       - name: Run LLM-safe text tests
+        id: test_llm_safe_text
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: node --test tests/llmSafeText.test.mjs
 
       # The long-term task suite guards the first-class board (redesign):
       # the entity store lifecycle, the heartbeat dispatcher, and the
       # longterm.advance escalation rules.
       - name: Run long-term task tests
+        id: test_long_term_task
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: node --test tests/longTermTaskStore.test.mjs tests/heartbeatService.test.mjs tests/longTermAdvanceService.test.mjs tests/longTermTaskAgentTools.test.mjs
 
       # Agent-Game-v2 runtime: seat.claimed identity writes, membership
       # bootstrap before the first on-chain write (room 924-2 root cause),
       # local-bot auto-approve fast lane + the RPC bot channel.
       - name: Run agent-game tests
+        id: test_agent_game
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: pnpm run test:agent-game
 
       - name: Validate runtime dependency contracts
+        id: test_runtime_dependency_contracts
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: |
           node --test tests/runtimeDependencyContract.test.mjs tests/dshRuntimeDepsCheck.test.mjs
           # Depth defense: prove the kernel patches survived every install
@@ -205,6 +340,9 @@ jobs:
       # (ask-bridge E2E, mock provider, no network), and the static test pins
       # the patch + prompt contract in source.
       - name: Run dsh ask-context tests
+        id: test_dsh_ask_context
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: |
           node dsh-runtime/test/ask-bridge.test.mjs
           node --test tests/coworkAskContextPrompt.test.mjs
@@ -213,17 +351,26 @@ jobs:
       # (AGENTS.md/CLAUDE.md injection + git branch chip). Pure file-read +
       # regex assertions: no compile step needed, safe on every matrix OS.
       - name: Run workspace-instructions contract tests
+        id: test_workspace_instructions
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: node --test tests/workspaceInstructionsBoundary.test.mjs tests/coworkSessionDetailGitBranch.test.mjs
 
       # Static source-contract tests for the pinned-skill backstop and the
       # bot-internet composer reuse (pure file-read assertions, no compile).
       - name: Run pinned-skill contract tests
+        id: test_pinned_skills
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: pnpm run test:pinned-skills
 
       # Behavioral regression suites for the review-round fixes: group-task
       # daemon/staffing/entropy, per-bot skill assignment, cowork proxy.
       # Each script runs compile:electron first (project convention).
       - name: Run group-task / skill-assignment / cowork-proxy regression tests
+        id: test_release_regressions
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: pnpm run test:release-regressions
 
       # Umbrella for the release-review test wiring (2026-11-10): 32 new test
@@ -231,6 +378,9 @@ jobs:
       # by no chain, so CI never executed them. The script runs
       # compile:electron first (14 of its node suites require dist-electron).
       - name: Run release-review umbrella tests
+        id: test_release_review
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: pnpm run test:release-review
 
       # H-64 leg B: a wake re-drive must be identifiable at the presentation
@@ -240,6 +390,9 @@ jobs:
       # [NO_REPLY] -> wake -> fired -> re-drive flow (the script runs
       # compile:electron first, project convention).
       - name: Run private-chat wake re-drive disposition tests
+        id: test_private_chat_wake
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: pnpm run test:private-chat-wake-disposition
 
       # Behavioral regression for the daily-report / follow-up gate: the
@@ -247,21 +400,36 @@ jobs:
       # gate, and the cowork follow-up flow. The script runs
       # compile:electron first (project convention).
       - name: Run daily-report / follow-up regression tests
+        id: test_daily_report
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: pnpm run test:daily-report
 
       - name: Run memory and team-culture tests
+        id: test_memory
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: pnpm run test:memory
 
       # Behavioral regression for the OpenTeam task-close fix (H-79): the
       # task-close pin list is capped so team impressions are never silently
       # dropped. Runs compile:electron first (project convention).
       - name: Run open-team impression tests
+        id: test_open_team_impression
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: pnpm run test:open-team-impression
 
       - name: Run dream retry classification tests
+        id: test_dream_retry
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: pnpm run test:dream-retry
 
       - name: Run MetaWeb agent-tool tests
+        id: test_metaweb
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: pnpm run test:metaweb
 
       # Behavioral regression for the omni_read shaping cap (H-71) and for the
@@ -272,6 +440,9 @@ jobs:
       # (omniReaderAgentTools + omniReadListTruncation); compile:electron runs
       # first (project convention).
       - name: Run omni-read agent-tool and list-page contract tests
+        id: test_omni_read
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: pnpm run test:omni-read
 
       # Behavioral regression for the gateway-wide JSON object body guard:
@@ -280,17 +451,54 @@ jobs:
       # TypeError. Starts the real compiled gateway on a random port; the
       # script runs compile:electron first (project convention).
       - name: Run MetaID RPC body-guard tests
+        id: test_rpc_body_guard
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: pnpm run test:rpc-body-guard
 
       # On-chain commerce, FT/NFT escrow & atomic-swap, Token/FT/NFT card suites,
       # and PayBuzz dual-track unlock verification gates.
       - name: Run commerce, goods-trade, FT-commerce, PayBuzz, and wallet-security tests
+        id: test_commerce_wallet
+        if: needs.gate.outputs.skip_tests != 'true'
+        continue-on-error: true
         run: |
           pnpm run test:commerce
           pnpm run test:goods-trade
           pnpm run test:ft-commerce
           pnpm run test:paybuzz
           pnpm run test:wallet-security
+
+      # One verdict for every test step above. They run with
+      # continue-on-error so one red suite no longer hides the next: v1.1.3
+      # peeled the commerce block across two 50+ minute rounds (CRLF, then a
+      # Windows-path bug behind it) and three more rounds died at agent-game
+      # without ever reaching the suites after it. Every suite runs; this step
+      # fails the job if any did — before any packaging starts.
+      - name: Fail the job if any test step failed (aggregated verdict)
+        env:
+          TEST_CI_TOOLING_OUTCOME: ${{ steps.test_ci_tooling.outcome }}
+          TEST_WINDOWS_INSTALLER_RELIABILITY_OUTCOME: ${{ steps.test_windows_installer_reliability.outcome }}
+          TEST_NSIS_HARNESS_OUTCOME: ${{ steps.test_nsis_harness.outcome }}
+          TEST_LLM_SAFE_TEXT_OUTCOME: ${{ steps.test_llm_safe_text.outcome }}
+          TEST_LONG_TERM_TASK_OUTCOME: ${{ steps.test_long_term_task.outcome }}
+          TEST_AGENT_GAME_OUTCOME: ${{ steps.test_agent_game.outcome }}
+          TEST_RUNTIME_DEPENDENCY_CONTRACTS_OUTCOME: ${{ steps.test_runtime_dependency_contracts.outcome }}
+          TEST_DSH_ASK_CONTEXT_OUTCOME: ${{ steps.test_dsh_ask_context.outcome }}
+          TEST_WORKSPACE_INSTRUCTIONS_OUTCOME: ${{ steps.test_workspace_instructions.outcome }}
+          TEST_PINNED_SKILLS_OUTCOME: ${{ steps.test_pinned_skills.outcome }}
+          TEST_RELEASE_REGRESSIONS_OUTCOME: ${{ steps.test_release_regressions.outcome }}
+          TEST_RELEASE_REVIEW_OUTCOME: ${{ steps.test_release_review.outcome }}
+          TEST_PRIVATE_CHAT_WAKE_OUTCOME: ${{ steps.test_private_chat_wake.outcome }}
+          TEST_DAILY_REPORT_OUTCOME: ${{ steps.test_daily_report.outcome }}
+          TEST_MEMORY_OUTCOME: ${{ steps.test_memory.outcome }}
+          TEST_OPEN_TEAM_IMPRESSION_OUTCOME: ${{ steps.test_open_team_impression.outcome }}
+          TEST_DREAM_RETRY_OUTCOME: ${{ steps.test_dream_retry.outcome }}
+          TEST_METAWEB_OUTCOME: ${{ steps.test_metaweb.outcome }}
+          TEST_OMNI_READ_OUTCOME: ${{ steps.test_omni_read.outcome }}
+          TEST_RPC_BODY_GUARD_OUTCOME: ${{ steps.test_rpc_body_guard.outcome }}
+          TEST_COMMERCE_WALLET_OUTCOME: ${{ steps.test_commerce_wallet.outcome }}
+        run: node scripts/ci-test-verdict.mjs
 
       - name: Install web-search skill dependencies
         working-directory: SKILLs/web-search
@@ -332,7 +540,29 @@ jobs:
           }
 
           $env:IDBOTS_PORTABLE_GIT_ARCHIVE = $archivePath
+          # Exported for scripts/mingit-signed-cache.cjs, which keys the signed PortableGit cache on the archive.
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "IDBOTS_PORTABLE_GIT_ARCHIVE=$archivePath`n")
           node scripts/setup-mingit.js --required
+
+      # PortableGit is a fixed third-party tree — 333 of the 356 binaries the
+      # Windows job signs — so its signed form is the same from build to build.
+      # Reuse the copy signed once for this archive and certificate instead of
+      # sending those signatures through the cloud signer and the timestamp
+      # servers on every build (the v1.1.3 tag run 45609195621 lost its signer
+      # on the 711th signature of the build and failed eight 90-second timeouts
+      # later). A miss falls back to normal signing: an empty or damaged cache
+      # cannot break a build.
+      - name: Reuse the signed PortableGit cache (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          WIN_CERT_SHA1: ${{ secrets.WIN_CERT_SHA1 }}
+        run: |
+          # AppendAllText writes UTF-8 without a BOM (Out-File/Add-Content differ per PS version).
+          $presigned = Join-Path $env:RUNNER_TEMP 'idbots-presigned-mingit.json'
+          if (Test-Path $presigned) { Remove-Item $presigned -Force }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "IDBOTS_PRESIGNED_MANIFEST=$presigned`n")
+          node scripts/mingit-signed-cache.cjs apply
 
       # 非 Windows: 创建 mingit 占位目录，避免 electron-builder 报"file source doesn't exist"错误
       - name: Create mingit placeholder (non-Windows)
@@ -420,6 +650,15 @@ jobs:
             exit 1
           }
           pnpm exec electron-builder ${{ matrix.build_args }} --publish never
+
+      # Fill the PortableGit cache from this build's signed tree. Best effort:
+      # the next build's cache hit is an optimization, never a requirement.
+      - name: Store the signed PortableGit cache (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        env:
+          WIN_CERT_SHA1: ${{ secrets.WIN_CERT_SHA1 }}
+        run: node scripts/mingit-signed-cache.cjs store
 
       - name: Verify Windows signatures
         if: runner.os == 'Windows'

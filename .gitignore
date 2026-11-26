@@ -1201,3 +1201,16 @@ blob-report/
 
 # Mobile smooth streaming & jitter-free auto-scroll
 !tests/mobileSmoothStreaming.test.ts
+
+# Release pipeline tooling: redundant-run gate, byte-exact Windows checkout,
+# aggregated test verdict, job-level watcher, workflow wiring, incremental
+# compile, sign-once hook, signed PortableGit cache, source-bundle restore
+!tests/ciGate.test.mjs
+!tests/ciWorktreeEol.test.mjs
+!tests/ciTestVerdict.test.mjs
+!tests/ciReleaseWatch.test.mjs
+!tests/ciWorkflowContract.test.mjs
+!tests/ciCompileElectron.test.mjs
+!tests/ciWindowsSignOnce.test.mjs
+!tests/ciMingitSignedCache.test.mjs
+!tests/ciSourceRestore.test.mjs

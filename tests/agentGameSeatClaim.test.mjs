@@ -275,11 +275,14 @@ async function startSession(host) {
 }
 
 // 15s default aligns with every sibling agent-game suite (Convergence,
-// LlmTimeout, RecoverHydration, MoveWindow, MetaUnit, CursorStateHeal) — this
-// file was the 8s outlier, and the v1.1.3 tag runs repeatedly timed out here
-// by razor margins under Windows CI load ("catch-up stamps" 8.15s/8s in run
-// 45589664847, "action write" 25.25s/25s in 45551178172). §11.35: budget
-// fix, assertions untouched.
+// LlmTimeout, RecoverHydration, MoveWindow, MetaUnit, CursorStateHeal).
+// The v1.1.3 tag runs timed out here at every budget ("catch-up stamps"
+// 8.15s/8s in run 45589664847, "action write" 25.25s/25s in 45551178172).
+// That was never a budget problem: the wait's condition had been made false
+// by a race in the runtime (a write finalize overwriting the state a
+// concurrent catch-up had just applied), now closed by per-session
+// serialization — see "a group message landing while the seat claim is being
+// finalized" below. A timeout here is a real hang again; do not widen it.
 async function waitFor(predicate, { timeoutMs = 15_000, stepMs = 20, label = 'condition' } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -505,6 +508,106 @@ test('catch-up stamps events with row metadata (senderMetaId / index / timestamp
     // 游标推进到最新消费行。
     assert.equal(host.store.getSession(session.sessionId).lastIndex, 3);
   } finally {
+    await host.dispose();
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* Concurrency: one session's work is serialized                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A sandbox whose reduce() finishes only when the test releases it; every
+ * other call answers at once. The interleaving under test — a group message
+ * landing between a write's `committed` and its post-write state update —
+ * then becomes a schedule the test chooses, not a timing accident.
+ */
+function makeGatedSandbox() {
+  const parked = [];
+  const sandbox = {
+    smokeTest: async () => {},
+    initialState: async () => ({ applied: [] }),
+    serializeState: async (state) => JSON.stringify(state),
+    reduce: (state, event) => new Promise((resolve) => {
+      const entry = { eventId: event.eventId, released: false };
+      entry.release = () => {
+        entry.released = true;
+        resolve({ applied: [...state.applied, event.eventId] });
+      };
+      parked.push(entry);
+    }),
+    // The match never reaches this seat's turn: the test is only about the
+    // seat claim being finalized while a peer row arrives.
+    getTurn: async () => ({ phase: 'waiting' }),
+    getObservation: async () => ({}),
+    getActionSchema: async () => ({}),
+    parseAction: async () => ({ error: 'not reached' }),
+    validateAction: async () => ({ valid: false, code: 'not_reached' }),
+    dispose: async () => {},
+  };
+  return { sandbox, parked };
+}
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+/** Release every parked reduce as it appears, until none shows up for a while. */
+async function drain(parked) {
+  for (let round = 0; round < 200; round += 1) {
+    const fresh = parked.filter((entry) => !entry.released);
+    for (const entry of fresh) entry.release();
+    if (fresh.length === 0 && round > 5) return;
+    await tick();
+  }
+  throw new Error('drain: reduces keep arriving');
+}
+
+test('a group message landing while the seat claim is being finalized is applied, not overwritten', { timeout: 20_000 }, async () => {
+  const adapterSandbox = require('../dist-electron/main/agentGame/adapterSandbox.js');
+  const originalLoad = adapterSandbox.loadAdapterSandbox;
+  const { sandbox, parked } = makeGatedSandbox();
+  adapterSandbox.loadAdapterSandbox = async () => sandbox;
+  const { host, db } = buildHost();
+  try {
+    const session = await startSession(host);
+    // The own claim is written and `committed`; its post-write reduce is parked.
+    await waitFor(() => parked.length === 1, { label: 'own seat.claimed parked in its post-write reduce' });
+    const ownClaimId = parked[0].eventId;
+
+    // The opponent's claim lands inside that window.
+    const peerClaimId = 'row:peer-red-claim';
+    insertRow(db, {
+      pinId: 'peer-red-claim-pin',
+      senderGlobalMetaId: RED_AGENT,
+      msgIndex: 1,
+      chainTimestamp: Date.now(),
+      content: envelopeOf('seat.claimed', { eventId: peerClaimId, payload: { requestedRole: 'red', name: 'Red Bot' } }),
+    });
+    host.onGroupMessage(GROUP_ID);
+
+    // A catch-up that does NOT wait for the finalize runs into its own reduce
+    // while the finalize is still parked. Let it get there and finish first.
+    await waitFor(() => parked.length >= 2, { label: 'unserialized catch-up reduce parked', timeoutMs: 400 }).catch(() => {});
+    for (const entry of parked.slice(1)) entry.release();
+    await tick();
+
+    // Now the finalize continues from the state it captured before the row.
+    parked[0].release();
+    await drain(parked);
+
+    const state = await serializedStateOf(host, session.sessionId);
+    assert.deepEqual(
+      state.applied,
+      [ownClaimId, peerClaimId],
+      'the peer claim must survive the finalize that started from the older state',
+    );
+    const [cursor, status] = db.exec(
+      `SELECT last_index, status FROM agent_game_sessions WHERE session_id = ?`,
+      [session.sessionId],
+    )[0].values[0];
+    assert.equal(cursor, 1, 'the peer row is consumed exactly once');
+    assert.equal(status, 'running');
+  } finally {
+    adapterSandbox.loadAdapterSandbox = originalLoad;
     await host.dispose();
   }
 });
