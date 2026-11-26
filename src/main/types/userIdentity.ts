@@ -46,6 +46,9 @@ export interface UserIdentity {
   updated_at: number;
 }
 
+/** Public local user identity fields without the secret mnemonic (safe to read when safeStorage is locked). */
+export type UserIdentityPublic = Omit<UserIdentity, 'mnemonic'>;
+
 /** Input for creating the local user identity (timestamps assigned by store). */
 export interface UserIdentityInsert {
   mnemonic: string;

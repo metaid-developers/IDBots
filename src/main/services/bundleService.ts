@@ -361,7 +361,8 @@ function readFreeRelayApiKey(): string {
 /** Local identity fields for the quota response's identity guard (null-safe). */
 function readLocalIdentityForQuotaGuard(): { mvc_address: string; globalmetaid: string } | null {
   try {
-    const identity = depsRef?.getUserIdentityStore().get() ?? null;
+    const userStore = depsRef?.getUserIdentityStore();
+    const identity = (userStore && (typeof userStore.getPublic === 'function' ? userStore.getPublic() : userStore.get())) ?? null;
     if (!identity) return null;
     return {
       mvc_address: normalizeText(identity.mvc_address),

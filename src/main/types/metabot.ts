@@ -183,6 +183,20 @@ export interface MetabotWallet {
   created_at: number;
 }
 
+/** Non-sensitive wallet metadata (never triggers at-rest mnemonic decryption). */
+export interface MetabotWalletMetadata {
+  id: number;
+  path: string;
+  created_at: number;
+}
+
+/** Non-sensitive Twin wallet metadata (never triggers at-rest mnemonic decryption). */
+export interface TwinWalletMetadata {
+  id: number;
+  name: string;
+  path: string;
+}
+
 /** Input for inserting a wallet (metabot_wallets is insert-only). No metabot_id; metabot references wallet by wallet_id. */
 export interface MetabotWalletInsert {
   mnemonic: string;

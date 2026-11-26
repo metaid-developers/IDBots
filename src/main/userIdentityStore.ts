@@ -2,6 +2,7 @@ import type { SqliteDatabase as Database } from './sqliteTypes';
 import type {
   UserIdentity,
   UserIdentityInsert,
+  UserIdentityPublic,
   UserIdentityUpdate,
 } from './types/userIdentity';
 import { decryptMnemonicAtRest, encryptMnemonicAtRest } from './security/mnemonicVault';
@@ -37,10 +38,9 @@ interface UserIdentityRow {
   updated_at: number;
 }
 
-function rowToUserIdentity(row: UserIdentityRow): UserIdentity {
+function rowToPublicUserIdentity(row: Omit<UserIdentityRow, 'mnemonic'>): UserIdentityPublic {
   return {
     id: row.id,
-    mnemonic: decryptMnemonicAtRest(row.mnemonic),
     path: row.path,
     mvc_address: row.mvc_address,
     btc_address: row.btc_address,
@@ -63,6 +63,13 @@ function rowToUserIdentity(row: UserIdentityRow): UserIdentity {
     sync_error: row.sync_error ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
+  };
+}
+
+function rowToUserIdentity(row: UserIdentityRow): UserIdentity {
+  return {
+    ...rowToPublicUserIdentity(row),
+    mnemonic: decryptMnemonicAtRest(row.mnemonic),
   };
 }
 
@@ -96,9 +103,27 @@ export class UserIdentityStore {
     return row ? rowToUserIdentity(row) : null;
   }
 
+  /**
+   * Returns public local user identity metadata without decrypting the secret
+   * mnemonic. Safe to call when OS safeStorage decryption is unavailable.
+   */
+  getPublic(): UserIdentityPublic | null {
+    const row = this.getOne<Omit<UserIdentityRow, 'mnemonic'>>(
+      `SELECT
+        id, path, mvc_address, btc_address, doge_address, public_key,
+        chat_public_key, chat_public_key_pin_id, metaid, globalmetaid, name,
+        avatar, avatar_fallback, nft_avatar_pin_id, nft_avatar_synced_reference,
+        subsidy_state, subsidy_error, name_pin_id, avatar_pin_id,
+        sync_state, sync_error, created_at, updated_at
+      FROM user_identity WHERE id = ? LIMIT 1`,
+      [USER_IDENTITY_ROW_ID],
+    );
+    return row ? rowToPublicUserIdentity(row) : null;
+  }
+
   /** Creates the local user identity. Throws when one already exists. */
   insert(data: UserIdentityInsert): UserIdentity {
-    if (this.get()) {
+    if (this.getPublic()) {
       throw new Error('User identity already exists; log out before creating or importing another one.');
     }
     const now = Date.now();

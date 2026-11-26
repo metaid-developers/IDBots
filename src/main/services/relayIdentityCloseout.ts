@@ -160,7 +160,9 @@ function readMetaIdFreeProviderEntry(
 /** mvc address of the local user identity, '' when logged out or unreadable. */
 function currentIdentityAddress(): string {
   try {
-    return normalizeText(depsRef?.getUserIdentityStore?.().get()?.mvc_address);
+    const userStore = depsRef?.getUserIdentityStore?.();
+    const identity = userStore && (typeof userStore.getPublic === 'function' ? userStore.getPublic() : userStore.get());
+    return normalizeText(identity?.mvc_address);
   } catch {
     return '';
   }

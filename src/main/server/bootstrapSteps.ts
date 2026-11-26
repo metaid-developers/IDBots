@@ -174,7 +174,8 @@ export function createServerBootstrapFacts(
     let globalMetaId: string | null = null;
     let twinMetabotId: number | null = null;
     try {
-      globalMetaId = deps.getUserIdentityStore().get()?.globalmetaid ?? null;
+      const userStore = deps.getUserIdentityStore();
+      globalMetaId = (typeof userStore.getPublic === 'function' ? userStore.getPublic() : userStore.get())?.globalmetaid ?? null;
     } catch {
       globalMetaId = null;
     }
@@ -302,7 +303,8 @@ export function createServerBootstrapStepExecutors(
           throw new Error('no usable LLM model for the twin MetaBot (llmProvider step incomplete)');
         }
         const persona = TWIN_PERSONA_BY_LOCALE[resolveBootstrapLocale(env)];
-        const ownerGlobalMetaId = deps.getUserIdentityStore().get()?.globalmetaid ?? null;
+        const userStore = deps.getUserIdentityStore();
+        const ownerGlobalMetaId = (typeof userStore.getPublic === 'function' ? userStore.getPublic() : userStore.get())?.globalmetaid ?? null;
         const result = await createMetaBotOnChainCore({
           name: pickTwinBotName(),
           avatar: pickTwinBotAvatar(),

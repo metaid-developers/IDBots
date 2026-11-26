@@ -2155,7 +2155,7 @@ export function startMetaidRpcServer(
       // — never guess wrong-session attribution.
       if (!sourceSessionId && parsed.created_by === 'twinbot') {
         try {
-          const twin = getMetabotStore().getTwinWallet();
+          const twin = getMetabotStore().getTwinWalletMetadata();
           if (twin) {
             const fallback = resolveTwinSourceSessionFallback(
               (sql, params) => getStore().getDatabase().exec(sql, params),
