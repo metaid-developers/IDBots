@@ -2,14 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  buildNftAlbumGroups,
   buildNftArtworkSources,
+  buildNftAvatarUri,
   buildNftDetailRows,
   buildNftTileViewModel,
   buildNftTransferPayload,
+  buildPaginationTokens,
+  filterAndSortNftItems,
   formatNftTime,
+  isNftItemCertified,
   MRC721_MIN_SELL_PRICE_SATS,
   metafileToSourceUrls,
   mrc721SellOrderStatusKey,
+  paginateNftItems,
   validateMrc721SellDraft,
   validateNftTransferDraft,
 } from '../src/renderer/components/metabots/metabotNftPresentation.js';
@@ -204,3 +210,131 @@ test('mrc721SellOrderStatusKey maps every sell-order status onto an i18n key', (
   assert.equal(mrc721SellOrderStatusKey('expired'), 'metabotNftListingStatusExpired');
   assert.equal(mrc721SellOrderStatusKey('nonsense'), 'metabotNftListingStatusInvalid');
 });
+
+test('isNftItemCertified matches verified CA MRC-721 collections and legacy MetaContract series only', () => {
+  const verifiedRegistry = {
+    verified: true,
+    collections: [
+      {
+        collectionPinId: 'col-official-1i0',
+        legacySeries: { genesis: 'gen-legacy-a', codehash: 'hash-a' },
+      },
+    ],
+    officialBots: [
+      {
+        active: true,
+        swapConfig: { supportedSeries: [{ genesis: 'gen-swap-b', codehash: 'hash-b' }] },
+      },
+      {
+        active: false,
+        swapConfig: { supportedSeries: [{ genesis: 'gen-inactive', codehash: 'hash-i' }] },
+      },
+    ],
+  };
+
+  const mrc721Certified = { kind: 'mrc721', key: 'p1', raw: { collectionPinId: 'COL-OFFICIAL-1I0' } };
+  const mrc721Unknown = { kind: 'mrc721', key: 'p2', raw: { collectionPinId: 'col-other' } };
+  const mcLegacy = { kind: 'metacontract', key: 'g:1', raw: { genesis: 'gen-legacy-a', codeHash: 'hash-a' } };
+  const mcSwap = { kind: 'metacontract', key: 'g:2', raw: { genesis: 'gen-swap-b', codeHash: 'hash-b' } };
+  const mcInactive = { kind: 'metacontract', key: 'g:3', raw: { genesis: 'gen-inactive', codeHash: 'hash-i' } };
+
+  assert.equal(isNftItemCertified(verifiedRegistry, mrc721Certified), true);
+  assert.equal(isNftItemCertified(verifiedRegistry, mrc721Unknown), false);
+  assert.equal(isNftItemCertified(verifiedRegistry, mcLegacy), true);
+  assert.equal(isNftItemCertified(verifiedRegistry, mcSwap), true);
+  assert.equal(isNftItemCertified(verifiedRegistry, mcInactive), false);
+
+  // Unverified or absent registry fails closed
+  assert.equal(isNftItemCertified({ ...verifiedRegistry, verified: false }, mrc721Certified), false);
+  assert.equal(isNftItemCertified(null, mrc721Certified), false);
+});
+
+test('buildNftAvatarUri constructs identity-bound nft://mrc721 URIs', () => {
+  assert.equal(
+    buildNftAvatarUri({ itemPinId: 'pin123i0', ownerAddress: '1MvcAddr', ownerGlobalMetaId: 'idq1meta' }),
+    'nft://mrc721/pin123i0?owner=1MvcAddr&metaid=idq1meta',
+  );
+  assert.equal(
+    buildNftAvatarUri({ itemPinId: 'pin123i0', ownerAddress: '1MvcAddr' }),
+    'nft://mrc721/pin123i0?owner=1MvcAddr',
+  );
+  assert.equal(buildNftAvatarUri({ itemPinId: '', ownerAddress: '1MvcAddr' }), '');
+  assert.equal(buildNftAvatarUri({ itemPinId: 'pin123i0', ownerAddress: '' }), '');
+});
+
+test('buildNftAlbumGroups groups items in acquisition order with CA badge and cover fallback', () => {
+  const registry = {
+    verified: true,
+    collections: [{ collectionPinId: 'col-a' }],
+  };
+  const items = [
+    { kind: 'mrc721', key: 'p1', name: 'A #1', collectionName: 'Alpha', raw: { collectionPinId: 'col-a' } },
+    { kind: 'mrc721', key: 'p2', name: 'B #1', collectionName: 'Beta', imageUrl: 'https://cdn/b1.png', raw: { collectionPinId: 'col-b' } },
+    { kind: 'mrc721', key: 'p3', name: 'A #2', collectionName: 'Alpha', imageUrl: 'https://cdn/a2.png', raw: { collectionPinId: 'col-a' } },
+  ];
+
+  const groups = buildNftAlbumGroups(items, registry);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].title, 'Alpha');
+  assert.equal(groups[0].count, 2);
+  assert.equal(groups[0].certified, true);
+  assert.deepEqual(groups[0].coverSources, ['https://cdn/a2.png']);
+  assert.equal(groups[1].title, 'Beta');
+  assert.equal(groups[1].count, 1);
+  assert.equal(groups[1].certified, false);
+});
+
+test('filterAndSortNftItems filters by query and verifiedOnly, and supports recent/serial/name sorting', () => {
+  const registry = { verified: true, collections: [{ collectionPinId: 'col-a' }] };
+  const items = [
+    { kind: 'mrc721', key: 'p1', name: 'Zebra', collectionName: 'Alpha', number: 10, raw: { collectionPinId: 'col-a' } },
+    { kind: 'mrc721', key: 'p2', name: 'Apple', collectionName: 'Beta', number: 2, raw: { collectionPinId: 'col-b' } },
+    { kind: 'mrc721', key: 'p3', name: 'Mango', collectionName: 'Alpha', number: 5, raw: { collectionPinId: 'col-a' } },
+  ];
+
+  assert.deepEqual(
+    filterAndSortNftItems(items, { verifiedOnly: true, registry }).map((x) => x.key),
+    ['p1', 'p3'],
+  );
+  assert.deepEqual(
+    filterAndSortNftItems(items, { query: '#5' }).map((x) => x.key),
+    ['p3'],
+  );
+  assert.deepEqual(
+    filterAndSortNftItems(items, { sortBy: 'serial' }).map((x) => x.key),
+    ['p2', 'p3', 'p1'],
+  );
+  assert.deepEqual(
+    filterAndSortNftItems(items, { sortBy: 'name' }).map((x) => x.key),
+    ['p2', 'p3', 'p1'],
+  );
+});
+
+test('paginateNftItems and buildPaginationTokens stay deterministic for 500+ holdings', () => {
+  const many = Array.from({ length: 500 }, (_, i) => ({ key: `p-${i + 1}` }));
+
+  const first = paginateNftItems(many, 1, 12);
+  assert.equal(first.totalPages, 42);
+  assert.equal(first.items.length, 12);
+  assert.equal(first.startIndex, 0);
+  assert.equal(first.endIndex, 12);
+
+  // Out-of-bounds page clamps to last page
+  const clamped = paginateNftItems(many, 999, 12);
+  assert.equal(clamped.page, 42);
+  assert.equal(clamped.items.length, 8);
+  assert.equal(clamped.items[0].key, 'p-493');
+
+  // Empty collection still reports page 1 / totalPages 1
+  const empty = paginateNftItems([], 3, 12);
+  assert.equal(empty.page, 1);
+  assert.equal(empty.totalPages, 1);
+  assert.equal(empty.items.length, 0);
+
+  // Pagination tokens
+  assert.deepEqual(buildPaginationTokens(1, 5), [1, 2, 3, 4, 5]);
+  assert.deepEqual(buildPaginationTokens(1, 42), [1, 2, 'ellipsis-end', 42]);
+  assert.deepEqual(buildPaginationTokens(20, 42), [1, 'ellipsis-start', 19, 20, 21, 'ellipsis-end', 42]);
+  assert.deepEqual(buildPaginationTokens(42, 42), [1, 'ellipsis-start', 41, 42]);
+});
+

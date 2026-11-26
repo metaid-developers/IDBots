@@ -72,7 +72,13 @@ import {
   METABOT_GROUP_NOTE_CLASS,
   METABOT_GROUP_ROW_CLASS,
   METABOT_GROUP_ROW_TOP_CLASS,
+  METABOT_ICON_BTN_CLASS,
   METABOT_MICRO_BADGE_CLASS,
+  METABOT_MODAL_BACKDROP_CLASS,
+  METABOT_MODAL_FOOTER_CLASS,
+  METABOT_MODAL_HEADER_CLASS,
+  METABOT_MODAL_SCRIM_CLASS,
+  METABOT_MODAL_SHELL_CLASS,
   METABOT_ROW_HINT_CLASS,
   METABOT_ROW_ICON_CLASS,
   METABOT_ROW_TITLE_CLASS,
@@ -538,6 +544,29 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
       });
     } catch (err) {
       setTabError(tab, err instanceof Error ? err.message : i18nService.t('metabotSaveFailed'));
+    } finally {
+      setSavingTab(null);
+    }
+  };
+
+  const handleApplyNftAvatarFromWallet = async (avatarRef: string) => {
+    const nextValues: MetaBotEditValues = { ...values, avatar: avatarRef };
+    setValues(nextValues);
+    setSavingTab('basic');
+    setTabError('basic', '');
+    try {
+      await onSaveTab('basic', {
+        ...nextValues,
+        allow_chat_skills: normalizeAllowChatSkills(nextValues.allow_chat_skills),
+      });
+      setBaseline((prev) => ({ ...prev, avatar: avatarRef }));
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', { detail: i18nService.t('metabotNftSetAvatarSuccess') }),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : i18nService.t('metabotSaveFailed');
+      setTabError('basic', msg);
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: msg }));
     } finally {
       setSavingTab(null);
     }
@@ -1501,29 +1530,51 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
 
         {/* Group 3: Wallet / NFT / Backup / Delete */}
         {metabot && onDelete && (
-          <MetaBotAdvancedActionsSection metabot={metabot} onDelete={onDelete} />
+          <MetaBotAdvancedActionsSection
+            metabot={metabot}
+            onDelete={onDelete}
+            currentAvatar={values.avatar}
+            onSetBotAvatar={handleApplyNftAvatarFromWallet}
+          />
         )}
       </div>
 
       {showTwinSwitch && twinDemoteConfirmOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          className={METABOT_MODAL_BACKDROP_CLASS}
           data-slot="metabot-twin-demote-confirm"
         >
           <div
-            className="absolute inset-0 bg-black/50 dark:bg-black/60"
+            className={METABOT_MODAL_SCRIM_CLASS}
             onClick={() => setTwinDemoteConfirmOpen(false)}
             role="presentation"
           />
-          <div className="relative w-full max-w-md rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-xl overflow-hidden">
-            <div className="px-6 py-6">
-              <h2 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">
+          <div
+            className={`${METABOT_MODAL_SHELL_CLASS} w-full max-w-[440px]`}
+            role="dialog"
+            aria-modal="true"
+            aria-label={i18nService.t('metabotTwinDemoteConfirmTitle')}
+          >
+            <div className={METABOT_MODAL_HEADER_CLASS}>
+              <h2 className="text-[14px] font-bold text-[#181d25] dark:text-[#f3f5f8]">
                 {i18nService.t('metabotTwinDemoteConfirmTitle')}
               </h2>
-              <p className="mt-2 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              <button
+                type="button"
+                onClick={() => setTwinDemoteConfirmOpen(false)}
+                className={METABOT_ICON_BTN_CLASS}
+                aria-label={i18nService.t('close')}
+              >
+                <XMarkIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-[13px] leading-relaxed text-[#5a6577] dark:text-[#94a3b8]">
                 {i18nService.t('metabotTwinDemoteConfirm')}
               </p>
-              <div className="mt-6 flex gap-3 justify-end">
+            </div>
+            <div className={METABOT_MODAL_FOOTER_CLASS}>
+              <div className="flex w-full justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setTwinDemoteConfirmOpen(false)}

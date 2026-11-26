@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IDBots · Edit MetaBot 链上钱包 / NFT 钱包 / 头像 / 助记词 全弹窗重设计方案对比台</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="wb-topbar">
+    <div class="wb-topbar-inner">
+      <div class="wb-row">
+        <div class="wb-brand">
+          <div class="wb-logo">ID</div>
+          <div>
+            <h1>Edit MetaBot 钱包与安全子面板 · Studio Linear 双方案交互对比台</h1>
+            <p>延续已定稿 Edit Bot 线性分组语言 (089aea82d) · 5 大未优化子面板全覆盖 · 支持点击切换页签 / 展开专辑 / 分页 / 转账预览</p>
+          </div>
+        </div>
+
+        <div class="wb-controls">
+          <div class="seg-bar">
+            <span class="seg-label">布局对比</span>
+            <button class="seg-item active" data-layout="ab">A/B 同屏对比</button>
+            <button class="seg-item" data-layout="onlyA">专注看套装 A</button>
+            <button class="seg-item" data-layout="onlyB">专注看套装 B</button>
+          </div>
+          <div class="seg-bar">
+            <span class="seg-label">外观主题</span>
+            <button class="seg-item active" data-theme="dark">暗色 Dark</button>
+            <button class="seg-item" data-theme="light">亮色 Light</button>
+          </div>
+        </div>
+      </div>
+
+      <nav class="wb-nav" id="wbNav"></nav>
+    </div>
+  </header>
+
+  <main class="wb-main">
+    <section class="spec-banner">
+      <div class="spec-col">
+        <h4><span class="bdg bdg-mvc">1</span> 链上钱包核心升级</h4>
+        <p>补齐 <strong>BTC / MVC (SPACE) / DOGE 官方原生链矢量图标</strong>；删除「查看更多 TOKEN 余额」二次弹窗与「从老钱包转入旧藏品升级」，改为顶栏页签直看原生链（默认）、MRC-20 与 MVC FT。</p>
+      </div>
+      <div class="spec-col">
+        <h4><span class="bdg bdg-brand">2</span> NFT 钱包专辑目录 + 分页</h4>
+        <p>新增<strong>「按专辑查看」两级目录</strong>（专辑封面聚合 → 点击展开所持单品）与<strong>底部分页栏</strong>（支持页码跳转与每页条数切换），上限 500+ 藏品不再无限长滚。</p>
+      </div>
+      <div class="spec-col">
+        <h4><span class="bdg bdg-ok">3</span> IDBots 场景专属 NFT 管理</h4>
+        <p>详情直达<strong>「✦ 设为该 Bot 头像」</strong>（MRC-721 链上外框实时生效）、<strong>「发送到对话气泡」</strong>、<strong>「创建免信任定向挂单 / 粘贴买单」</strong>与<strong>「链上转赠」</strong>。</p>
+      </div>
+      <div class="spec-col">
+        <h4><span class="bdg bdg-warn">4</span> 头像 / 助记词 / 删除恢复统一</h4>
+        <p>设置头像消除两步跳转与宽度抖动（内置 / NFT 按专辑筛选 / 本地三源直达）；备份助记词加入<strong>默认防窥模糊遮罩</strong>与派生地址核对；同步统一删除、恢复与上链弹窗。</p>
+      </div>
+    </section>
+
+    <div id="surfacesRoot"></div>
+  </main>
+
+  <div class="demo-toast" id="demoToast"></div>
+
+  <footer class="selection-dock">
+    <div class="selection-dock-inner">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="font-weight:700;">当前点选组合：</span>
+        <div class="selection-pills" id="selectionPills"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button class="btn-flat" data-act="pick-all-set" data-set="A">全选套装 A (Linear 单轴)</button>
+        <button class="btn-flat" data-act="pick-all-set" data-set="B">全选套装 B (Bento 双栏)</button>
+        <button class="btn-primary" data-act="copy-picks">复制已选方案代号</button>
+      </div>
+    </div>
+  </footer>
+
+  <script src="./mock-data.js"></script>
+  <script src="./render-wallet-nft.js"></script>
+  <script src="./render-modals.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
