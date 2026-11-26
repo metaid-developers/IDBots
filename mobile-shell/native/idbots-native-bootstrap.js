@@ -166,6 +166,7 @@
       backButton: platform === 'android' && hasAppListeners(),
       externalUrls: true,
       secureScreen: hasNativeMethod('setSecureScreen'),
+      updateChecks: hasNativeMethod('checkForUpdate'),
       pushNotifications: hasPush(),
       haptics: hasNativeMethod('haptic'),
     }),
@@ -205,6 +206,11 @@
     openExternal: async (value) => {
       const url = approvedExternalUrl(value);
       window.location.assign(url);
+    },
+    checkForUpdate: async () => {
+      if (!hasNativeMethod('checkForUpdate')) throw nativeFailure('Manual update checks are unavailable', 'UNAVAILABLE');
+      const result = await nativeCapabilitiesPlugin().checkForUpdate();
+      return result?.status || 'check-failed';
     },
     getPushPermission: async () => {
       if (!hasPush()) throw nativeFailure('Push notifications are unavailable', 'UNAVAILABLE');

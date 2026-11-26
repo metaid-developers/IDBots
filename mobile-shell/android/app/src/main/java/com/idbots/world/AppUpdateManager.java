@@ -2,18 +2,13 @@ package com.idbots.world;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.DownloadManager;
-import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
@@ -39,7 +34,6 @@ import java.util.concurrent.Executors;
 final class AppUpdateManager {
     private static final String MANIFEST_URL = "https://idbots.ai/update.json";
     private static final String PREFERENCES = "app_update";
-    private static final String KEY_DOWNLOAD_ID = "download_id";
     private static final String KEY_MANIFEST = "manifest";
     private static final String KEY_LAST_CHECK = "last_check";
     private static final String KEY_DISMISSED_VERSION = "dismissed_version";
@@ -49,17 +43,9 @@ final class AppUpdateManager {
     private static final int MAX_MANIFEST_BYTES = 1024 * 1024;
 
     private final Activity activity;
-    private final DownloadManager downloads;
     private final SharedPreferences preferences;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final BroadcastReceiver downloadReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            long completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
-            if (completedId == activeDownloadId) onDownloadComplete(true);
-        }
-    };
     private final Runnable progressUpdater = new Runnable() {
         @Override
         public void run() {
@@ -67,29 +53,30 @@ final class AppUpdateManager {
         }
     };
 
+    interface UpdateCheckListener {
+        void onUpdateAvailable();
+        void onUpToDate();
+        void onCheckFailed(String message);
+    }
+
     private AppUpdateManifest pendingManifest;
     private AlertDialog dialog;
-    private long activeDownloadId = -1;
+    private UpdateCheckListener updateCheckListener;
     private boolean resumed;
-    private boolean receiverRegistered;
     private boolean checkInFlight;
     private boolean awaitingInstallPermission;
+    private boolean downloadInFlight;
+    private boolean downloadCancelled;
+    private long directReceived;
+    private String lastError;
 
     AppUpdateManager(Activity activity) {
         this.activity = activity;
-        downloads = (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
         preferences = activity.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
     }
 
     void onResume() {
         resumed = true;
-        IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
-        if (Build.VERSION.SDK_INT >= 33) {
-            activity.registerReceiver(downloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            activity.registerReceiver(downloadReceiver, filter);
-        }
-        receiverRegistered = true;
         restoreDownload();
         if (awaitingInstallPermission && pendingManifest != null) {
             awaitingInstallPermission = false;
@@ -97,27 +84,50 @@ final class AppUpdateManager {
         } else {
             maybeCheckForUpdate();
         }
-        if (activeDownloadId >= 0 && dialog != null && dialog.isShowing()) startProgressUpdates();
+        if (downloadInFlight && dialog != null && dialog.isShowing()) startProgressUpdates();
     }
 
     void onPause() {
         resumed = false;
         handler.removeCallbacks(progressUpdater);
-        if (receiverRegistered) {
-            activity.unregisterReceiver(downloadReceiver);
-            receiverRegistered = false;
-        }
+
     }
 
     void onDestroy() {
         resumed = false;
+        downloadCancelled = true;
         handler.removeCallbacks(progressUpdater);
         dismissDialog();
         executor.shutdownNow();
     }
 
+    void checkNow(UpdateCheckListener listener) {
+        updateCheckListener = listener;
+        preferences.edit().remove(KEY_LAST_CHECK).remove(KEY_DISMISSED_VERSION).remove(KEY_DISMISSED_AT).apply();
+        if (pendingManifest != null || downloadInFlight) {
+            notifyUpdateAvailable();
+            return;
+        }
+        maybeCheckForUpdate();
+    }
+
+    private void notifyUpdateAvailable() {
+        if (updateCheckListener != null) updateCheckListener.onUpdateAvailable();
+        updateCheckListener = null;
+    }
+
+    private void notifyUpToDate() {
+        if (updateCheckListener != null) updateCheckListener.onUpToDate();
+        updateCheckListener = null;
+    }
+
+    private void notifyCheckFailed(String message) {
+        if (updateCheckListener != null) updateCheckListener.onCheckFailed(message);
+        updateCheckListener = null;
+    }
+
     private void maybeCheckForUpdate() {
-        if (checkInFlight || activeDownloadId >= 0 || pendingManifest != null) return;
+        if (checkInFlight || downloadInFlight || pendingManifest != null) return;
         long now = System.currentTimeMillis();
         if (now - preferences.getLong(KEY_LAST_CHECK, 0) < CHECK_INTERVAL_MS) return;
         checkInFlight = true;
@@ -127,7 +137,12 @@ final class AppUpdateManager {
                 AppUpdateManifest manifest = AppUpdateManifest.parse(fetchManifest());
                 handler.post(() -> {
                     checkInFlight = false;
-                    if (!resumed || manifest == null || !manifest.isNewerThan(BuildConfig.VERSION_CODE)) return;
+                    if (!resumed) return;
+                    if (manifest == null || !manifest.isNewerThan(BuildConfig.VERSION_CODE)) {
+                        notifyUpToDate();
+                        return;
+                    }
+                    notifyUpdateAvailable();
                     boolean dismissed = preferences.getInt(KEY_DISMISSED_VERSION, 0) == manifest.versionCode
                         && now - preferences.getLong(KEY_DISMISSED_AT, 0) < DISMISS_INTERVAL_MS;
                     if (dismissed && !manifest.isRequiredFor(BuildConfig.VERSION_CODE)) return;
@@ -136,7 +151,10 @@ final class AppUpdateManager {
                 });
             } catch (Exception error) {
                 if (BuildConfig.DEBUG) Log.i("AppUpdate", "Background update check failed", error);
-                handler.post(() -> checkInFlight = false);
+                handler.post(() -> {
+                    checkInFlight = false;
+                    notifyCheckFailed(error.getMessage());
+                });
             }
         });
     }
@@ -209,34 +227,35 @@ final class AppUpdateManager {
     }
 
     private void startDownload() {
-        if (pendingManifest == null) return;
+        if (pendingManifest == null || downloadInFlight) return;
         dismissDialog();
+        downloadInFlight = true;
+        downloadCancelled = false;
+        directReceived = 0;
+        lastError = null;
         try {
             File file = updateFile(pendingManifest);
-            File parent = file.getParentFile();
-            if (parent == null || (!parent.isDirectory() && !parent.mkdirs())) throw new IOException("No update directory");
+            File partial = new File(file.getPath() + ".download");
             if (file.exists() && !file.delete()) throw new IOException("Unable to replace the previous APK");
-            long previousId = preferences.getLong(KEY_DOWNLOAD_ID, -1);
-            if (previousId >= 0) downloads.remove(previousId);
-
-            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(pendingManifest.url));
-            request.setTitle(getString(R.string.update_notification_title));
-            request.setDescription(getString(R.string.update_version, pendingManifest.versionName));
-            request.setMimeType("application/vnd.android.package-archive");
-            request.setAllowedOverMetered(true);
-            request.setAllowedOverRoaming(false);
-            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            request.setDestinationInExternalFilesDir(activity, Environment.DIRECTORY_DOWNLOADS,
-                "updates/" + file.getName());
-            activeDownloadId = downloads.enqueue(request);
-            preferences.edit()
-                .putLong(KEY_DOWNLOAD_ID, activeDownloadId)
-                .putString(KEY_MANIFEST, pendingManifest.sourceJson)
-                .apply();
+            if (partial.exists() && !partial.delete()) throw new IOException("Unable to replace the partial APK");
+            preferences.edit().putString(KEY_MANIFEST, pendingManifest.sourceJson).apply();
             showProgressDialog();
+            executor.execute(() -> {
+                try {
+                    AppUpdateDownloader.download(URI.create(pendingManifest.url), file, pendingManifest.size, downloaded -> {
+                        if (downloadCancelled) throw new IOException("Download cancelled");
+                        directReceived = downloaded;
+                        handler.post(progressUpdater);
+                    });
+                    handler.post(() -> onDownloadComplete(true));
+                } catch (Exception error) {
+                    lastError = error.getMessage();
+                    handler.post(this::showDownloadFailure);
+                }
+            });
         } catch (Exception error) {
-            activeDownloadId = -1;
-            clearDownloadState();
+            downloadInFlight = false;
+            lastError = error.getMessage();
             showDownloadError();
         }
     }
@@ -264,71 +283,41 @@ final class AppUpdateManager {
     }
 
     private void updateProgress() {
-        if (!resumed || activeDownloadId < 0 || dialog == null || !dialog.isShowing()) return;
-        try (Cursor cursor = downloads.query(new DownloadManager.Query().setFilterById(activeDownloadId))) {
-            if (cursor == null || !cursor.moveToFirst()) {
-                showDownloadFailure();
-                return;
-            }
-            int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
-            if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                onDownloadComplete(true);
-                return;
-            }
-            if (status == DownloadManager.STATUS_FAILED) {
-                showDownloadFailure();
-                return;
-            }
-            long received = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
-            long total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
-            ProgressBar bar = dialog.findViewById(R.id.updateProgressBar);
-            TextView text = dialog.findViewById(R.id.updateProgressText);
-            if (bar != null && text != null) {
-                bar.setIndeterminate(total <= 0);
-                int progress = total > 0 ? (int) Math.min(1000, received * 1000 / total) : 0;
-                bar.setProgress(progress);
-                String size = String.format(Locale.getDefault(), "%.1f / %.1f MB",
-                    received / 1024.0 / 1024.0, Math.max(total, 0) / 1024.0 / 1024.0);
-                text.setText(total > 0
-                    ? getString(R.string.update_download_progress, progress / 10, size)
-                    : getString(R.string.update_downloading_size, size));
-            }
-            handler.postDelayed(progressUpdater, 750);
-        } catch (Exception error) {
-            showDownloadFailure();
+        if (!resumed || !downloadInFlight || dialog == null || !dialog.isShowing() || pendingManifest == null) return;
+        long total = pendingManifest.size;
+        ProgressBar bar = dialog.findViewById(R.id.updateProgressBar);
+        TextView text = dialog.findViewById(R.id.updateProgressText);
+        if (bar != null && text != null) {
+            bar.setIndeterminate(directReceived <= 0);
+            int progress = total > 0 ? (int) Math.min(1000, directReceived * 1000 / total) : 0;
+            bar.setProgress(progress);
+            String size = String.format(Locale.getDefault(), "%.1f / %.1f MB",
+                directReceived / 1024.0 / 1024.0, Math.max(total, 0) / 1024.0 / 1024.0);
+            text.setText(total > 0
+                ? getString(R.string.update_download_progress, progress / 10, size)
+                : getString(R.string.update_downloading_size, size));
         }
+        handler.postDelayed(progressUpdater, 750);
     }
 
     private void restoreDownload() {
-        long id = preferences.getLong(KEY_DOWNLOAD_ID, -1);
         String raw = preferences.getString(KEY_MANIFEST, null);
-        if (id < 0 || raw == null || pendingManifest != null || activeDownloadId >= 0) return;
+        if (raw == null || pendingManifest != null || downloadInFlight) return;
         try {
             AppUpdateManifest manifest = AppUpdateManifest.parseAndroid(raw);
             if (!manifest.isNewerThan(BuildConfig.VERSION_CODE)) {
-                downloads.remove(id);
                 updateFile(manifest).delete();
                 clearDownloadState();
                 return;
             }
-            pendingManifest = manifest;
-            try (Cursor cursor = downloads.query(new DownloadManager.Query().setFilterById(id))) {
-                if (cursor != null && cursor.moveToFirst()) {
-                    int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
-                    if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                        verifyDownloadedApk(false);
-                        return;
-                    }
-                    if (status != DownloadManager.STATUS_FAILED) {
-                        activeDownloadId = id;
-                        return;
-                    }
-                }
+            File file = updateFile(manifest);
+            if (file.isFile()) {
+                pendingManifest = manifest;
+                verifyDownloadedApk(false);
+            } else {
+                new File(file.getPath() + ".download").delete();
+                clearDownloadState();
             }
-            downloads.remove(id);
-            updateFile(manifest).delete();
-            clearDownloadState();
-            pendingManifest = null;
         } catch (Exception error) {
             clearDownloadState();
             pendingManifest = null;
@@ -338,7 +327,7 @@ final class AppUpdateManager {
     private void onDownloadComplete(boolean launchWhenReady) {
         if (pendingManifest == null) restoreDownload();
         if (pendingManifest == null) return;
-        activeDownloadId = -1;
+        downloadInFlight = false;
         handler.removeCallbacks(progressUpdater);
         verifyDownloadedApk(launchWhenReady);
     }
@@ -354,10 +343,10 @@ final class AppUpdateManager {
                     else showReadyDialog();
                 });
             } catch (Exception error) {
-                if (BuildConfig.DEBUG) Log.w("AppUpdate", "Downloaded APK verification failed", error);
+                Log.w("AppUpdate", "Downloaded APK verification failed", error);
+                lastError = error.getMessage();
                 handler.post(() -> {
                     if (pendingManifest != manifest) return;
-                    downloads.remove(preferences.getLong(KEY_DOWNLOAD_ID, -1));
                     updateFile(manifest).delete();
                     clearDownloadState();
                     showDownloadError();
@@ -416,18 +405,25 @@ final class AppUpdateManager {
     }
 
     private void cancelDownload() {
-        if (activeDownloadId >= 0) downloads.remove(activeDownloadId);
-        if (pendingManifest != null) updateFile(pendingManifest).delete();
-        activeDownloadId = -1;
+        downloadCancelled = true;
+        downloadInFlight = false;
+        if (pendingManifest != null) {
+            File file = updateFile(pendingManifest);
+            file.delete();
+            new File(file.getPath() + ".download").delete();
+        }
         pendingManifest = null;
         clearDownloadState();
         dismissDialog();
     }
 
     private void showDownloadFailure() {
-        downloads.remove(activeDownloadId);
-        if (pendingManifest != null) updateFile(pendingManifest).delete();
-        activeDownloadId = -1;
+        downloadInFlight = false;
+        if (pendingManifest != null) {
+            File file = updateFile(pendingManifest);
+            file.delete();
+            new File(file.getPath() + ".download").delete();
+        }
         clearDownloadState();
         showDownloadError();
     }
@@ -435,9 +431,11 @@ final class AppUpdateManager {
     private void showDownloadError() {
         if (!resumed || pendingManifest == null) return;
         dismissDialog();
+        String message = getString(R.string.update_failed_message);
+        if (lastError != null && !lastError.isBlank()) message += "\n\n" + getString(R.string.update_failed_reason, lastError);
         dialog = styledDialog()
             .setTitle(R.string.update_failed_title)
-            .setMessage(R.string.update_failed_message)
+            .setMessage(message)
             .setPositiveButton(R.string.update_retry, (ignored, which) -> startDownload())
             .setNegativeButton(R.string.update_later, (ignored, which) -> dismissVersion())
             .create();
@@ -459,17 +457,16 @@ final class AppUpdateManager {
     private void dismissReadyUpdate() {
         AppUpdateManifest dismissed = pendingManifest;
         dismissVersion();
-        downloads.remove(preferences.getLong(KEY_DOWNLOAD_ID, -1));
         if (dismissed != null) updateFile(dismissed).delete();
         clearDownloadState();
     }
 
     private void clearDownloadState() {
-        preferences.edit().remove(KEY_DOWNLOAD_ID).remove(KEY_MANIFEST).apply();
+        preferences.edit().remove("download_id").remove(KEY_MANIFEST).apply();
     }
 
     private File updateFile(AppUpdateManifest manifest) {
-        return new File(new File(activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "updates"),
+        return new File(new File(activity.getFilesDir(), "updates"),
             "idbots-update-" + manifest.versionCode + ".apk");
     }
 

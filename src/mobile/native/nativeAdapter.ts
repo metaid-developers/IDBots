@@ -9,6 +9,7 @@ const CAPABILITY_KEYS = [
   'backButton',
   'externalUrls',
   'secureScreen',
+  'updateChecks',
   'pushNotifications',
   'haptics',
 ] as const;
@@ -22,6 +23,7 @@ const WEB_CAPABILITIES: Required<MobileNativeCapabilities> = Object.freeze({
   backButton: false,
   externalUrls: false,
   secureScreen: false,
+  updateChecks: false,
   pushNotifications: false,
   haptics: false,
 });
@@ -36,6 +38,7 @@ export interface MobileNativeAdapter {
   setSecureScreen(enabled: boolean): Promise<void>;
   triggerHaptic(style?: MobileNativeHapticStyle): void;
   openExternal(url: string): Promise<void>;
+  checkForUpdate(): Promise<'update-available' | 'up-to-date' | 'check-failed'>;
   onAppStateChange(callback: (active: boolean) => void): () => void;
   onBackButton(callback: () => boolean): () => void;
   getPushPermission(): Promise<'granted' | 'denied' | 'prompt' | 'unavailable'>;
@@ -199,6 +202,16 @@ export function createNativeAdapter(target: Window): MobileNativeAdapter {
         return;
       }
       openWithWebFallback(target, url, protocol);
+    },
+    checkForUpdate: async () => {
+      if (!bridge || !hasCapability('updateChecks') || typeof bridge.checkForUpdate !== 'function') {
+        throw nativeError('UNAVAILABLE', 'Manual update checks are unavailable');
+      }
+      try {
+        return await bridge.checkForUpdate();
+      } catch (error) {
+        throw normalizeNativeError(error);
+      }
     },
     onAppStateChange: (callback) => {
       if (!bridge || !hasCapability('appState') || typeof bridge.onAppStateChange !== 'function') return unavailable();

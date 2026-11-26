@@ -14,7 +14,7 @@ NS0 provides the native foundation, NS1 adds lifecycle and navigation integratio
 - camera, photo-library, and multi-document selection into the existing upload pipeline;
 - native system artifact sharing with current signed URLs and existing web fallbacks;
 - Android secure screenshots and iOS opaque background/app-switcher masking;
-- automatic Android APK update checks, system-managed downloads, integrity/signature verification, and guided installation;
+- automatic and manual Android APK update checks, direct background downloads, integrity/signature verification, and guided installation;
 - keyboard, safe-area, theme, and iOS-native recharge policy integration;
 - focused static, adapter, lifecycle, navigation, origin-policy, build, and WebView evidence.
 
@@ -132,16 +132,16 @@ The workflow only builds and tests. It does not sign a release, deploy the PWA, 
 
 Production Android shells check `https://idbots.ai/update.json` on launch and after returning to the foreground, with a six-hour check interval. The existing desktop fields remain independent; native updates live in `data.value.android` and contain `version`, `versionCode`, `minVersionCode`, `date`, `url`, `sha256`, `size`, and bilingual `changeLog` entries. APKs use the versioned `https://app.idbots.world/downloads/` channel.
 
-A newer version opens a bilingual native update dialog. After the user chooses Update now, Android `DownloadManager` continues the download in the background and shows its own notification. The shell verifies the exact size and SHA-256, then checks the archive package name, integer version code, and complete signing-certificate set against the installed app before offering installation. Direct APK distribution cannot bypass Android's installation confirmation or, when required, the per-app unknown-sources permission.
+A newer version opens a bilingual native update dialog. After the user chooses Update now, the shell downloads directly into private app storage with progress updates, avoiding OEM DownloadManager and external-storage differences. The shell verifies the exact size and SHA-256, then checks the archive package name, integer version code, and complete signing-certificate set against the installed app before offering installation. Direct APK distribution cannot bypass Android's installation confirmation or, when required, the per-app unknown-sources permission.
 
-A user-dismissed version is not offered again for 24 hours unless its `minVersionCode` makes it required. Failed checks stay quiet and failed downloads offer Retry without affecting the installed app. Update state contains no account or product data.
+A user-dismissed version is not offered again for 24 hours unless its `minVersionCode` makes it required. Me → About provides a manual Check for updates button that bypasses the six-hour check interval and dismissed-version suppression, with update-available, up-to-date, and check-failed states. Failed checks stay quiet and failed downloads offer Retry with a specific reason, without affecting the installed app. Update state contains no account or product data.
 
 After building a signed release, generate a complete candidate manifest from the current live manifest and the exact APK:
 
 ```bash
 curl --noproxy '*' -fsSL https://idbots.ai/update.json -o artifacts/update-before.json
 pnpm run release:android:metadata -- \
-  artifacts/IDBots-Android-0.1.8.apk \
+  artifacts/IDBots-Android-0.1.9.apk \
   artifacts/update-before.json \
   artifacts/update.json
 ```

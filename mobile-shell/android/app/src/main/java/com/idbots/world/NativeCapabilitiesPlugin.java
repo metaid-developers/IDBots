@@ -40,6 +40,31 @@ public class NativeCapabilitiesPlugin extends Plugin {
     private Uri pendingCameraUri;
 
     @PluginMethod
+    public void checkForUpdate(PluginCall call) {
+        AppUpdateManager manager = MainActivity.appUpdateManager;
+        if (manager == null) {
+            call.reject("Update checks are unavailable", "UNAVAILABLE");
+            return;
+        }
+        manager.checkNow(new AppUpdateManager.UpdateCheckListener() {
+            @Override
+            public void onUpdateAvailable() {
+                call.resolve(new JSObject().put("status", "update-available"));
+            }
+
+            @Override
+            public void onUpToDate() {
+                call.resolve(new JSObject().put("status", "up-to-date"));
+            }
+
+            @Override
+            public void onCheckFailed(String message) {
+                call.resolve(new JSObject().put("status", "check-failed"));
+            }
+        });
+    }
+
+    @PluginMethod
     public void pickPhoto(PluginCall call) {
         String source = call.getString("source", "photos");
         if ("camera".equals(source)) {

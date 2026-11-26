@@ -5,17 +5,17 @@
     "ch": {
       "title": "更新说明",
       "content": [
-        "更新移动端外壳与云端 PWA，老用户可直接覆盖升级，账号和云端数据保持不变。",
-        "优化语音输入的准备状态、就绪触感与实时声波，并提升聊天流式显示流畅度。",
-        "包含最新邀请注册、Bot 自动化、结果通知与移动端体验改进。"
+        "提升部分 Android 设备的更新下载可靠性，改用应用私有目录直连下载，并显示具体失败原因。",
+        "“我的 > 关于”新增“检查新版本”，可随时手动检查。",
+        "点击“稍后”后也能通过手动按钮再次检查更新，自动提醒仍按 24 小时去重。"
       ]
     },
     "en": {
       "title": "Release Notes",
       "content": [
-        "Updates the native shell and cloud PWA. Existing users can install over the current app while keeping their account and cloud data.",
-        "Improves voice-input preparing and ready feedback, live waveform, and smooth chat streaming.",
-        "Includes the latest invite registration, Bot automation, result notifications, and mobile experience improvements."
+        "Improves update-download reliability on affected Android devices by downloading directly into private app storage, with specific error details.",
+        "Adds Check for updates under Me > About for an on-demand check at any time.",
+        "Manual checks work even after choosing Later; automatic reminders remain deduplicated for 24 hours."
       ]
     }
   }

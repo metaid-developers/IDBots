@@ -51,13 +51,13 @@ test('Android has API 26 and explicit staging and production variants', () => {
   assert.match(backPlugin, /getBridge\(\)\.getActivity\(\)\.finish\(\)/);
 });
 
-test('production startup uses declarative config, safe lifecycle, version 0.1.8, and branded launcher assets', () => {
+test('production startup uses declarative config, safe lifecycle, version 0.1.9, and branded launcher assets', () => {
   const build = read('../android/app/build.gradle');
-  assert.match(build, /versionCode 10/);
-  assert.match(build, /versionName "0\.1\.8"/);
+  assert.match(build, /versionCode 11/);
+  assert.match(build, /versionName "0\.1\.9"/);
   const iosProject = read('../ios/App/App.xcodeproj/project.pbxproj');
-  assert.equal(iosProject.match(/CURRENT_PROJECT_VERSION = 10;/g)?.length, 2);
-  assert.equal(iosProject.match(/MARKETING_VERSION = 0\.1\.8;/g)?.length, 2);
+  assert.equal(iosProject.match(/CURRENT_PROJECT_VERSION = 11;/g)?.length, 2);
+  assert.equal(iosProject.match(/MARKETING_VERSION = 0\.1\.9;/g)?.length, 2);
   assert.equal(iosProject.match(/CODE_SIGN_IDENTITY = "iPhone Distribution: SHOWPAY LIMITED \(48AW2FB7Y2\)";/g)?.length, 2);
   const bootstrap = read('../android/app/src/main/java/com/idbots/world/NativeBootstrap.java');
   assert.match(bootstrap, /BuildConfig\.VERSION_NAME/);
