@@ -69,6 +69,27 @@ export function modelAlwaysThinks(modelId: string | null | undefined): boolean {
 }
 
 /**
+ * Whether this route can express "thinking off" at all in a form the DSH
+ * dispatch will accept. Two disjoint cases fail:
+ *  - ALWAYS-THINKS families (glm-5+): every off control is rejected upstream
+ *    (HTTP 400 code 1210), so the honest floor is the lowest tier.
+ *  - UNKNOWN families: no dialect is declared for them, pi-ai materializes
+ *    `reasoning: false`, and the dsh-llm capability gate throws
+ *    UNSUPPORTED_REASONING_EFFORT on any requested 'off' before provider
+ *    I/O (2026-11-26 incident: `gemini-4-hydrogen` on a custom opencode-zen
+ *    responses route — the "Auto" effort rung resolved to 'off' and the turn
+ *    died before dispatch). Unknown means we cannot vouch for 'off', so the
+ *    auto chain must floor to 'low' instead of guessing.
+ *
+ * DeepSeek (either dialect) and GLM-4.x genuinely honor disabling and stay
+ * false here.
+ */
+export function modelCannotExpressOff(modelId: string | null | undefined): boolean {
+  const segment = lastPathSegment(modelId);
+  return thinkingWireFamily(segment) === 'unknown' || modelAlwaysThinks(segment);
+}
+
+/**
  * Responses-wire `reasoning.effort` value that best expresses "the caller
  * asked thinking OFF" for this model:
  *  - deepseek / glm-4.x → 'none' (fully disables thinking)
