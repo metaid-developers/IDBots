@@ -39,10 +39,15 @@ const DEFAULT_REPO = 'metaid-developers/IDBots';
 
 // Seconds a step may run before it is called stuck. Healthy v1.1.3 steps:
 // checkout 0.2–1.2 min, packaging 28 min, notarize ~6 min; its worst checkout
-// took 107 min.
+// took 107 min. The signing machine's downloads from GitHub's artifact
+// storage are slow: the 36 MB source bundle took 15 min on 2026-11-26.
 export const DEFAULT_BUDGETS = [
   ['Check out Git repository', 600],
   ['Run actions/cache', 900],
+  ['Download the source delta (Windows)', 300],
+  ['Download the full source bundle (Windows)', 1800],
+  ['Update the source tree from the delta (Windows)', 600],
+  ['Rebuild the source tree from the full bundle (Windows)', 900],
   ['Build Electron app package', 3000],
   ['Notarize', 1500],
   ['Codesign + notarize DMG', 1500],
@@ -51,6 +56,15 @@ export const DEFAULT_STEP_BUDGET_SECONDS = 2700;
 
 const QUEUED_STATUSES = new Set(['queued', 'pending', 'waiting', 'requested']);
 const FAILED_CONCLUSIONS = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
+
+// A step that may fail because the step behind it takes over: the source
+// delta only fits a machine that still holds the previous run's commit (it
+// says so with a clean exit 3; a broken delta fails, and is covered the same way).
+const FALLBACKS = [
+  ['Update the source tree from the delta (Windows)', 'Rebuild the source tree from the full bundle (Windows)'],
+];
+const isTakenOver = (step, steps) =>
+  FALLBACKS.some(([failed, fallback]) => step.name === failed && steps.some((other) => other.name === fallback));
 
 const minutes = (seconds) => {
   const value = Math.round(seconds / 60);
@@ -90,6 +104,12 @@ export function classifyFailure(stepName = '') {
       advice: 'Notary/staple failed. Transient Apple network errors (NSURLError -1005 / -1009) rerun clean: gh run rerun --failed <run-id> (SOP §5.1).',
     };
   }
+  if (/source (delta|bundle)|source tree/i.test(stepName)) {
+    return {
+      kind: 'infra',
+      advice: 'The source hand-over did not get through. A refused delta alone is no failure (the full bundle rebuilds the tree); a failed download or rebuild means the artifact is broken or the workspace is in use. Read the step log, then: gh run rerun --failed <run-id> (SOP §5.1).',
+    };
+  }
   if (/tests?\b|contract|harness|tooling|test step/i.test(stepName)) {
     return {
       kind: 'test',
@@ -105,13 +125,31 @@ export function classifyFailure(stepName = '') {
 function describeFailures(jobs) {
   const lines = [];
   for (const job of jobs) {
-    const failedSteps = (job.steps || []).filter((step) => FAILED_CONCLUSIONS.has(step.conclusion));
+    const steps = job.steps || [];
+    const failedSteps = steps.filter((step) => FAILED_CONCLUSIONS.has(step.conclusion) && !isTakenOver(step, steps));
     if (failedSteps.length === 0 && !FAILED_CONCLUSIONS.has(job.conclusion)) continue;
     lines.push(`  ✗ ${job.name} — ${job.conclusion || 'a step failed'}`);
     for (const step of failedSteps) {
       const { kind, advice } = classifyFailure(step.name);
       lines.push(`      step "${step.name}" [${kind}]`);
       lines.push(`      → ${advice}`);
+    }
+  }
+  return lines;
+}
+
+/** Where a fallback had to step in, for the record: it cost time, not the run. */
+function describeFallbacks(jobs) {
+  const lines = [];
+  for (const job of jobs) {
+    const steps = job.steps || [];
+    for (const [failed, fallback] of FALLBACKS) {
+      const gave = steps.find((step) => step.name === failed);
+      if (steps.find((step) => step.name === fallback)?.conclusion !== 'success') continue;
+      // The usual case is a clean "does not fit" (the machine holds another
+      // commit); a failed step means the delta itself is broken.
+      const why = gave && FAILED_CONCLUSIONS.has(gave.conclusion) ? 'failed outright' : 'did not fit';
+      lines.push(`  ℹ ${job.name} — the source delta ${why}; the tree was rebuilt from the full bundle instead (about 15 min more; the "${failed}" step log has the details).`);
     }
   }
   return lines;
@@ -170,10 +208,11 @@ export function evaluate({
     .join(';');
 
   if (run.status === 'completed') {
+    const fallbacks = describeFallbacks(jobs);
     if (run.conclusion === 'success') {
-      return { verdict: 'completed-ok', exitCode: 0, lines: [...overview, 'run succeeded'], stateKey };
+      return { verdict: 'completed-ok', exitCode: 0, lines: [...overview, ...fallbacks, 'run succeeded'], stateKey };
     }
-    return { verdict: 'completed-failed', exitCode: 1, lines: [...overview, ...describeFailures(jobs)], stateKey };
+    return { verdict: 'completed-failed', exitCode: 1, lines: [...overview, ...fallbacks, ...describeFailures(jobs)], stateKey };
   }
 
   // A failed step is reported the moment it is recorded, even while the job is
