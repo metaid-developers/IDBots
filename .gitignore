@@ -1218,3 +1218,6 @@ blob-report/
 
 # MetaBot modals redesign (W1 On-Chain Wallet, N2 NFT Wallet, A1 Avatar Picker, M1 Mnemonic Vault, S1 Lifecycle)
 !tests/metabotModalsRedesign.test.tsx
+
+!tests/assetBridgeProgress.test.ts
+!tests/assetBridgeCardRender.test.tsx

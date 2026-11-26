@@ -7,6 +7,8 @@ import FtFillCard from './FtFillCard';
 import FtMyOrdersCard from './FtMyOrdersCard';
 import FtPortfolioCard from './FtPortfolioCard';
 import FtBridgeCard from './FtBridgeCard';
+import AssetBridgeCard from './AssetBridgeCard';
+import AssetBridgeNoticeCard from './AssetBridgeNoticeCard';
 import FtActionCard from './FtActionCard';
 import NftCard, { NftCardGroup } from './NftCard';
 import NftCollectionCard from './NftCollectionCard';
@@ -53,6 +55,10 @@ export const TokenSuiteSegmentCard: React.FC<TokenSuiteSegmentCardProps> = ({
       return <FtBridgeCard data={segment.data} />;
     case 'ft-action-card':
       return <FtActionCard data={segment.data} />;
+    case 'asset-bridge-card':
+      return <AssetBridgeCard data={segment.data} />;
+    case 'asset-bridge-notice':
+      return <AssetBridgeNoticeCard data={segment.data} />;
     case 'nft-card':
       return <NftCard data={segment.data} userSide={userSide} />;
     case 'nft-card-group':

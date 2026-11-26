@@ -143,6 +143,14 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
   }
 }
 
+export function isAssetBridgeCardFenceLanguage(lang: string | undefined | null): boolean {
+  return String(lang ?? '').trim().toLowerCase() === ASSET_BRIDGE_CARD_FENCE_TAG;
+}
+
+export function isAssetBridgeNoticeFenceLanguage(lang: string | undefined | null): boolean {
+  return String(lang ?? '').trim().toLowerCase() === ASSET_BRIDGE_NOTICE_FENCE_TAG;
+}
+
 export function isAssetBridgeJobId(value: unknown): value is string {
   return typeof value === 'string' && JOB_ID_RE.test(value);
 }

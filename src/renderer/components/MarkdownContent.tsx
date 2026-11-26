@@ -101,6 +101,8 @@ import FtFillCard from './chat/FtFillCard';
 import FtMyOrdersCard from './chat/FtMyOrdersCard';
 import FtPortfolioCard from './chat/FtPortfolioCard';
 import FtBridgeCard from './chat/FtBridgeCard';
+import AssetBridgeCard from './chat/AssetBridgeCard';
+import AssetBridgeNoticeCard from './chat/AssetBridgeNoticeCard';
 import FtActionCard from './chat/FtActionCard';
 import {
   isFtActionCardFenceLanguage,
@@ -120,6 +122,12 @@ import {
   parseFtPortfolioCardFence,
   parseFtQuoteCardFence,
 } from './chat/ftCardSyntax';
+import {
+  isAssetBridgeCardFenceLanguage,
+  isAssetBridgeNoticeFenceLanguage,
+  parseAssetBridgeCardFence,
+  parseAssetBridgeNoticeFence,
+} from './chat/assetBridgeCardSyntax';
 import MobilePageCard from './chat/MobilePageCard';
 import { isMobilePageCardFenceLanguage, parseMobilePageCardFence } from './chat/mobilePageCardSyntax';
 import PaybuzzCard from './chat/PaybuzzCard';
@@ -687,6 +695,18 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
       const actionData = parseFtActionCardFence(trimmedCodeText);
       if (actionData) {
         return <FtActionCard data={actionData} />;
+      }
+    }
+    if (isAssetBridgeCardFenceLanguage(fenceLanguage)) {
+      const assetBridgeData = parseAssetBridgeCardFence(trimmedCodeText);
+      if (assetBridgeData) {
+        return <AssetBridgeCard data={assetBridgeData} />;
+      }
+    }
+    if (isAssetBridgeNoticeFenceLanguage(fenceLanguage)) {
+      const assetBridgeNoticeData = parseAssetBridgeNoticeFence(trimmedCodeText);
+      if (assetBridgeNoticeData) {
+        return <AssetBridgeNoticeCard data={assetBridgeNoticeData} />;
       }
     }
     if (isFtOrderBookCardFenceLanguage(fenceLanguage)) {
