@@ -112,7 +112,13 @@ function updateInPlace({ workspace, pack, commit, branch, env }) {
     return result.stdout.trim();
   };
 
-  for (const [key, value] of CHECKOUT_SETTINGS) mustGit(['config', key, value], options);
+  // --replace-all, because the key may already hold more than one value: on
+  // Windows git writes core.symlinks=false itself where the machine cannot
+  // create symlinks, and the clone adds the same setting again. A plain
+  // `git config key value` refuses to overwrite that and exits 5 — which is
+  // how the update failed on its first time on the signing machine (run
+  // 45888882259): every delta would have given way to the full bundle.
+  for (const [key, value] of CHECKOUT_SETTINGS) mustGit(['config', '--replace-all', key, value], options);
   // 1. Add the pack's objects; this only ever adds. The pack is cut without
   //    --thin, so it carries every delta base of its own and declares no
   //    prerequisites: it counts on the rest of the tree being here from the
