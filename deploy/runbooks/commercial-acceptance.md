@@ -12,18 +12,18 @@ checks have already run.
   Supply `PEER_HOST_ID` when checking that the two environments are distinct.
 - Required result: control plane, Prometheus, Alertmanager, node-exporter, and
   cAdvisor are running; memory is below 75%, Docker disk is at least 20% free,
-  and no Docker/PostgreSQL public listener exists.
+  and no Docker/database public listener exists.
 
 ## 2. Back up and prove restore
 
 - Run the nightly control-plane and tenant backup and verify the uploaded
   objects, then complete a tenant restore drill.
-- With PostgreSQL enabled, set `OPERATIONS_DB_REQUIRED=1`, run
-  `backup-operations-db.sh`, and verify `operations-db/DATE.pgdump.zst.enc`.
-- Restore the decrypted custom-format dump into a NEW empty PostgreSQL instance
-  with `pg_restore --clean --if-exists --create --dbname postgres`. Never test
-  restore into the live database. Start a candidate control plane against the
-  restored copy and verify jobs, waves, attempts, and leases.
+- Run `backup-control-plane.sh` and verify the encrypted SQLite archive contains
+  users, metadata, RBAC/approvals, releases, and rollout jobs.
+- Restore the decrypted SQLite backup into a NEW file and run
+  `PRAGMA integrity_check`. Never test restore into the live database. Start a
+  candidate control plane against the restored copy and verify jobs, waves,
+  attempts, and leases.
 - Required result: RPO/RTO evidence and no change to production user data.
 
 ## 3. Verify additive migrations
@@ -57,16 +57,17 @@ checks have already run.
 - Build the visual Web admin only against these APIs. The backend delivery is
   not evidence that a visual UI exists.
 
-## 6. Verify host agents and PostgreSQL for real
+## 6. Verify host agents and SQLite recovery for real
 
 - Enroll a second host with a unique client certificate. Revoke it and confirm
   the connection fails. Rotate certificates without exposing Docker or agent
   ports publicly.
 - Execute remote canary upgrade, rollback, disconnect, and reconnect drills.
   Agent logs must not contain tenant gateway secrets.
-- Enable `CP_ROLLOUT_DATABASE_URL` against the internal PostgreSQL container.
-  Run concurrent workers, restart the database and control plane, and prove no
-  duplicate tenant execution. `pg-mem` tests are not a substitute for this gate.
+- Keep exactly one active rollout scheduler per environment. Exercise concurrent
+  host-agent execution while the scheduler writes SQLite in WAL mode, restart
+  the control plane, and prove expired-lease recovery causes no duplicate tenant
+  execution. A second scheduler must never write the same SQLite file.
 
 ## 7. Scale evidence
 
@@ -84,5 +85,5 @@ remote rollout execution alone is not multi-host serving acceptance.
 
 Record image digests, source SHA, environment, operator, timestamps, test
 counts, live probe evidence, open defects, and rollback outcome. Any S1/S2
-failure, missing backup restore, unverified mTLS/PostgreSQL, or unresolved
+failure, missing backup restore, unverified mTLS/SQLite recovery, or unresolved
 multi-host serving gap keeps commercial promotion blocked.

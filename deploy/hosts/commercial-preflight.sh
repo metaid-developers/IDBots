@@ -29,12 +29,9 @@ for container in idbots-control-plane-1 idbots-prometheus-1 idbots-alertmanager-
   fi
 done
 
-if docker ps --filter 'name=^/idbots-operations-db-1$' --format '{{.Names}}' | grep -qx idbots-operations-db-1; then
-  docker exec idbots-operations-db-1 pg_isready -U idbots -d idbots_operations >/dev/null 2>&1 \
-    && pass "operations PostgreSQL is ready" || fail "operations PostgreSQL is not ready"
-else
-  pass "operations PostgreSQL is not enabled (SQLite rollout queue)"
-fi
+docker exec idbots-control-plane-1 node -e "const fs=require('fs'); const p=process.env.CP_DB_PATH; if(!p || !fs.existsSync(p)) process.exit(1)" >/dev/null 2>&1 \
+  && pass "SQLite management database and rollout queue are present" \
+  || fail "SQLite management database is missing or inaccessible"
 
 AVAIL_KB="$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2 {print $4}')"
 TOTAL_KB="$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2 {print $2}')"
@@ -48,9 +45,9 @@ MEM_USED_PERCENT="$(free -m | awk '/^Mem:/ {printf "%d", $3/$2*100}')"
 [ "$MEM_USED_PERCENT" -lt 75 ] && pass "memory used is ${MEM_USED_PERCENT}%" || fail "memory used is ${MEM_USED_PERCENT}% (75% rollout ceiling)"
 
 if ss -ltn 2>/dev/null | grep -E '0\.0\.0\.0:(2375|5432)\b|\[::\]:(2375|5432)\b' >/dev/null; then
-  fail "Docker or PostgreSQL is listening on all public interfaces"
+  fail "Docker or a database is listening on all public interfaces"
 else
-  pass "no public Docker/PostgreSQL listener detected"
+  pass "no public Docker/database listener detected"
 fi
 
 if [ "$FAILURES" -gt 0 ]; then

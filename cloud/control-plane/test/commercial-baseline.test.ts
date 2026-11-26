@@ -115,9 +115,7 @@ describe('commercial tenant metadata and safe fleet selection', () => {
       CP_AGENT_TLS_CERT_FILE: '/tls/server.crt',
       CP_AGENT_TLS_KEY_FILE: '/tls/server.key',
       CP_AGENT_TLS_CA_FILE: '/tls/ca.crt',
-      CP_ROLLOUT_DATABASE_URL: 'postgresql://operations.test/idbots',
     });
     assert.equal(operations.agent?.listen, '127.0.0.1:9101');
-    assert.equal(operations.rolloutDatabaseUrl, 'postgresql://operations.test/idbots');
   });
 });

@@ -81,15 +81,19 @@ Recommended pages are Overview, Tenants, Hosts, Releases, Rollout detail,
 Approvals, and Audit. Reuse the server-side roles; client-side hiding is not an
 authorization boundary.
 
-## PostgreSQL rollout queue and host agents
+## SQLite management database and host agents
 
-`CP_ROLLOUT_DATABASE_URL` moves the durable rollout queue to PostgreSQL;
-`compose.operations-db.yml` provides an internal-only database on the same
-operations host. This does not migrate users, login sessions, tenant secrets,
-or tenant metadata out of SQLite. Add `pg_dump` backup/restore acceptance before
-enabling it commercially. The SQL store is exercised with `pg-mem` in the
-repository suite; a real PostgreSQL migration, lock, restart, and restore drill
-remains a staging gate.
+The staging control plane uses exactly one `cp.sqlite` for users, login state,
+tenant metadata, RBAC/approvals, releases, and rollout jobs. Keep one active
+rollout scheduler per environment; do not run a second scheduler against the
+same file. SQLite WAL and the existing online backup cover this queue, so no
+separate database server is required.
+
+Remote host agents use the VPC-only mTLS listener and execute remote preflight,
+container recreation, readiness, and rollback. They do not write the central
+SQLite database, so additional execution hosts do not add SQLite writers. See
+`add-host.md` for enrollment, credential handling, and the explicit new-user
+placement/proxy-routing boundary.
 
 Remote host agents use the VPC-only mTLS listener and execute remote preflight,
 container recreation, readiness, and rollback. See `add-host.md` for enrollment,
@@ -105,4 +109,4 @@ Use `commercial-acceptance.md` as the live gate and
 - Prove self-approval, approval replay, payload substitution, and expired
   sessions are rejected.
 - Run the staged-rollout failure drills in `tenant-image-rollout.md`.
-- Do not expose Prometheus, Docker, PostgreSQL, or host-agent ports publicly.
+- Do not expose Prometheus, Docker, SQLite files, or host-agent ports publicly.

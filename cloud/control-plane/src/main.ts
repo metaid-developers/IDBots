@@ -12,7 +12,6 @@ import { MetricsRegistry } from './metrics.js';
 import type { AppContext } from './context.js';
 import { PushDeliveryService } from './services/pushDelivery.js';
 import { SqliteRolloutStore } from './rollout/sqliteStore.js';
-import { PostgresRolloutStore } from './rollout/postgresStore.js';
 import { RolloutManager } from './rollout/manager.js';
 import { HostAgentGateway } from './agent/gateway.js';
 
@@ -52,9 +51,7 @@ async function main(): Promise<void> {
   app.localHostId = localHostId;
   app.metrics.gaugeFn('cp_host_agents_connected', () => app.hostAgents?.connectedHostIds().length ?? 0);
   app.push.start();
-  const rolloutStore = config.rolloutDatabaseUrl
-    ? await PostgresRolloutStore.connect(config.rolloutDatabaseUrl)
-    : new SqliteRolloutStore(db);
+  const rolloutStore = new SqliteRolloutStore(db);
   const rolloutManager = new RolloutManager(app, rolloutStore);
   app.rollouts = rolloutManager;
   await rolloutStore.requeueInFlight(Date.now());
@@ -106,7 +103,6 @@ async function main(): Promise<void> {
     app.push.stop();
     void (async () => {
       await rolloutManager.stop();
-      if (rolloutStore instanceof PostgresRolloutStore) await rolloutStore.close();
       await app.hostAgents?.close();
       if (agentServer) await new Promise<void>((resolve) => agentServer.close(() => resolve()));
       await poller.stop();

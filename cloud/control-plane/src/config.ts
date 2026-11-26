@@ -59,7 +59,6 @@ export interface ControlPlaneConfig {
   hostId: string | null;
   hostCapacity: number;
   agent: { listen: string; tlsCertFile: string; tlsKeyFile: string; tlsCaFile: string } | null;
-  rolloutDatabaseUrl: string | null;
   masterKey: Buffer;
   dockerUrl: string;
   tenantImage: string;
@@ -371,7 +370,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
       tlsKeyFile: env.CP_AGENT_TLS_KEY_FILE!,
       tlsCaFile: env.CP_AGENT_TLS_CA_FILE!,
     } : null,
-    rolloutDatabaseUrl: env.CP_ROLLOUT_DATABASE_URL?.trim() || null,
     masterKey: parseMasterKey(env),
     dockerUrl: required(env, 'CP_DOCKER_URL'),
     tenantImage: required(env, 'CP_TENANT_IMAGE'),

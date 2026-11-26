@@ -4,8 +4,8 @@
 #
 #   backup-nightly.sh [--now] [--tenant t_x ...]
 #
-# Order: control-plane db first, optional PostgreSQL queue second, then every
-# running tenant container (idb-t_*), evenly staggered across the remaining window. Any failure alerts;
+# Order: control-plane SQLite first, then every running tenant container
+# (idb-t_*), evenly staggered across the remaining window. Any failure alerts;
 # the exit code is non-zero if anything failed.
 set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -46,15 +46,7 @@ else
   FAILED+=("control-plane")
 fi
 
-# --- 2. optional PostgreSQL rollout queue -----------------------------------------------
-if "$HERE/backup-operations-db.sh"; then
-  info "operations database backup step OK"
-else
-  err "operations database backup FAILED"
-  FAILED+=("operations-db")
-fi
-
-# --- 3. tenants ------------------------------------------------------------------------
+# --- 2. tenants ------------------------------------------------------------------------
 if [ "${#TENANTS_ARG[@]}" -gt 0 ]; then
   TENANTS=("${TENANTS_ARG[@]}")
 else
@@ -92,10 +84,10 @@ for tenant in "${TENANTS[@]}"; do
   fi
 done
 
-# --- 4. summary ---------------------------------------------------------------------------
+# --- 3. summary ---------------------------------------------------------------------------
 if [ "${#FAILED[@]}" -gt 0 ]; then
   alert backup "NIGHTLY BACKUP FAILED for: ${FAILED[*]} (host $(hostname), $(date '+%F %T %Z'))"
   err "failed: ${FAILED[*]}"
   exit 1
 fi
-info "nightly backup complete: control-plane + optional operations-db + ${#TENANTS[@]} tenant(s), 0 failures"
+info "nightly backup complete: control-plane SQLite + ${#TENANTS[@]} tenant(s), 0 failures"

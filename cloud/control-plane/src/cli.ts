@@ -77,7 +77,6 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
     hostId: env.CP_HOST_ID?.trim() || null,
     hostCapacity: num('CP_HOST_CAPACITY', environment === 'staging' ? 27 : 58),
     agent: null,
-    rolloutDatabaseUrl: null,
     masterKey,
     dockerUrl: env.CP_DOCKER_URL ?? 'http+unix:///var/run/docker.sock',
     tenantImage: env.CP_TENANT_IMAGE ?? '',
