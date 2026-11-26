@@ -100,3 +100,24 @@ export const METABOT_BTN_PRIMARY_CLASS =
 
 export const METABOT_BTN_DANGER_CLASS =
   'inline-flex h-8 shrink-0 items-center justify-center gap-1.5 px-3 text-[12px] font-semibold rounded-[7px] border border-rose-500/35 text-red-600 dark:text-rose-400 hover:bg-rose-500/10 active:scale-[0.96] transition-[background-color,transform] duration-150 disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap';
+
+export const METABOT_MODAL_BACKDROP_CLASS =
+  'fixed inset-0 z-50 flex items-center justify-center p-4';
+
+export const METABOT_MODAL_SCRIM_CLASS =
+  'absolute inset-0 bg-slate-950/55 dark:bg-black/70 backdrop-blur-[2px]';
+
+export const METABOT_MODAL_SHELL_CLASS =
+  'relative flex flex-col overflow-hidden rounded-[14px] border border-slate-900/[0.11] dark:border-white/[0.10] bg-white dark:bg-[#141e2e] shadow-[0_24px_64px_-12px_rgba(15,23,42,0.28)] dark:shadow-[0_28px_70px_-12px_rgba(0,0,0,0.65)]';
+
+export const METABOT_MODAL_HEADER_CLASS =
+  'flex items-center justify-between gap-3 border-b border-slate-900/[0.08] dark:border-white/[0.08] bg-[#f8fafc] dark:bg-[#182538] px-5 py-3.5 shrink-0';
+
+export const METABOT_MODAL_FOOTER_CLASS =
+  'flex items-center justify-between gap-3 border-t border-slate-900/[0.08] dark:border-white/[0.08] bg-[#f8fafc] dark:bg-[#182538] px-5 py-3 shrink-0';
+
+export const METABOT_MODAL_SUBSURFACE_CLASS =
+  'rounded-[10px] border border-slate-900/[0.085] dark:border-white/[0.085] bg-[#f8fafc] dark:bg-[#182538]';
+
+export const METABOT_ICON_BTN_CLASS =
+  'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] border border-transparent text-[#5a6577] dark:text-[#94a3b8] hover:bg-[#eef1f5] dark:hover:bg-white/[0.07] hover:text-[#181d25] dark:hover:text-[#f3f5f8] transition-colors disabled:opacity-45';

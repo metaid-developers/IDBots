@@ -33,11 +33,17 @@ interface MetaBotAdvancedActionsSectionProps {
   metabot: Metabot;
   /** Trigger the manager-level safe-delete flow (opens MetaBotDeleteConfirmModal). */
   onDelete: () => void;
+  /** Current Bot avatar URI so the NFT Vault highlights the active avatar. */
+  currentAvatar?: string;
+  /** Apply an MRC-721 NFT URI directly as this Bot's avatar from the NFT Vault. */
+  onSetBotAvatar?: (avatarRef: string) => Promise<void> | void;
 }
 
 const MetaBotAdvancedActionsSection: React.FC<MetaBotAdvancedActionsSectionProps> = ({
   metabot,
   onDelete,
+  currentAvatar,
+  onSetBotAvatar,
 }) => {
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showNftWalletModal, setShowNftWalletModal] = useState(false);
@@ -150,12 +156,16 @@ const MetaBotAdvancedActionsSection: React.FC<MetaBotAdvancedActionsSectionProps
           isOpen={showWalletModal}
           metabot={metabot}
           onClose={() => setShowWalletModal(false)}
+          onOpenNftWallet={() => setShowNftWalletModal(true)}
         />
       )}
       {showNftWalletModal && (
         <MetaBotNftWalletModal
+          isOpen={showNftWalletModal}
           metabot={metabot}
           onClose={() => setShowNftWalletModal(false)}
+          currentAvatar={currentAvatar ?? metabot.avatar ?? undefined}
+          onSetBotAvatar={onSetBotAvatar}
         />
       )}
       {showBackupModal && (
