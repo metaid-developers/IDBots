@@ -24,14 +24,27 @@ export function buildInviteShareUrl(code: string): string {
 
 type InviteCodeEntry = MobileMeInviteStatus['codes'][number];
 
+export function isInviteCodeUsable(code: InviteCodeEntry): boolean {
+  return code.status === 1 && code.usedCount < code.maxUses;
+}
+
 export function selectPrimaryInviteCode(codes: readonly InviteCodeEntry[]): InviteCodeEntry | null {
   if (codes.length === 0) return null;
-  const usable = codes.find((entry) => entry.status === 1 && entry.usedCount < entry.maxUses);
+  const usable = codes.find((entry) => isInviteCodeUsable(entry));
   return usable ?? codes[0] ?? null;
 }
 
 export function countUsableInviteCodes(codes: readonly InviteCodeEntry[]): number {
-  return codes.filter((entry) => entry.status === 1 && entry.usedCount < entry.maxUses).length;
+  return codes.filter((entry) => isInviteCodeUsable(entry)).length;
+}
+
+export function sortInviteCodes(codes: readonly InviteCodeEntry[]): InviteCodeEntry[] {
+  return [...codes].sort((a, b) => {
+    const aUsable = isInviteCodeUsable(a) ? 0 : 1;
+    const bUsable = isInviteCodeUsable(b) ? 0 : 1;
+    if (aUsable !== bUsable) return aUsable - bUsable;
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
 }
 
 function resolveCodeBadgeKey(code: InviteCodeEntry): string {
@@ -237,6 +250,7 @@ export function InvitePage(props: {
   const [refillSheetOpen, setRefillSheetOpen] = useState(false);
   const [posterOpen, setPosterOpen] = useState(false);
   const [posterTheme, setPosterTheme] = useState<InvitePosterTheme>('warm');
+  const [selectedCodeValue, setSelectedCodeValue] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -255,10 +269,22 @@ export function InvitePage(props: {
     };
   }, []);
 
-  const primaryCode = useMemo(
-    () => (status ? selectPrimaryInviteCode(status.codes) : null),
+  const orderedCodes = useMemo(
+    () => (status ? sortInviteCodes(status.codes) : []),
     [status],
   );
+  const primaryCode = useMemo(
+    () => (status ? selectPrimaryInviteCode(orderedCodes) : null),
+    [status, orderedCodes],
+  );
+  const activeCode = useMemo(() => {
+    if (!status) return null;
+    if (selectedCodeValue) {
+      const matched = status.codes.find((entry) => entry.code === selectedCodeValue);
+      if (matched) return matched;
+    }
+    return primaryCode;
+  }, [status, selectedCodeValue, primaryCode]);
   const usableCount = useMemo(
     () => (status ? countUsableInviteCodes(status.codes) : 0),
     [status],
@@ -274,18 +300,18 @@ export function InvitePage(props: {
     ? status.defaultGrant.periodDays
     : 14;
   const grantPlan = resolveGrantPlanLabel(status?.defaultGrant);
-  const shareUrl = primaryCode ? buildInviteShareUrl(primaryCode.code) : '';
+  const shareUrl = activeCode ? buildInviteShareUrl(activeCode.code) : '';
 
   useEffect(() => {
-    if (!posterOpen || !primaryCode || !canvasRef.current) return;
+    if (!posterOpen || !activeCode || !canvasRef.current) return;
     void renderInvitePosterCanvas(canvasRef.current, {
       theme: posterTheme,
-      code: primaryCode.code,
+      code: activeCode.code,
       days: grantDays,
       plan: grantPlan,
       inviteUrl: shareUrl,
     });
-  }, [posterOpen, posterTheme, primaryCode, grantDays, grantPlan, shareUrl]);
+  }, [posterOpen, posterTheme, activeCode, grantDays, grantPlan, shareUrl]);
 
   const handleCopy = async (value: string, successKey: string) => {
     const ok = await copyTextToClipboard(value);
@@ -294,10 +320,15 @@ export function InvitePage(props: {
 
   const handleGenerate = async () => {
     if (generating) return;
+    const prevCodes = new Set((status?.codes ?? []).map((entry) => entry.code));
     setGenerating(true);
     const res = await generateMeInvite();
     setGenerating(false);
-    if (!res.success) {
+    if (res.success) {
+      const created = res.inviteStatus.codes.find((entry) => !prevCodes.has(entry.code))
+        ?? selectPrimaryInviteCode(sortInviteCodes(res.inviteStatus.codes));
+      if (created) setSelectedCodeValue(created.code);
+    } else {
       const errMsg = 'error' in res && res.error ? res.error : t('mobile.common.error');
       showFeedback('err', errMsg);
     }
@@ -328,8 +359,8 @@ export function InvitePage(props: {
 
   const handleSaveAndSharePoster = async () => {
     const canvas = canvasRef.current;
-    if (!canvas || !primaryCode) return;
-    const filename = `idbots-invite-${primaryCode.code}.png`;
+    if (!canvas || !activeCode) return;
+    const filename = `idbots-invite-${activeCode.code}.png`;
     try {
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
       if (blob && typeof File !== 'undefined' && typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
@@ -430,29 +461,42 @@ export function InvitePage(props: {
               <span className="text-xs font-semibold text-[var(--text-secondary)]">
                 {t('mobile.me.invite.codeCardTitle')}
               </span>
-              {primaryCode ? (
+              {activeCode ? (
                 <span
                   data-testid="invite-code-badge"
                   className="rounded-full bg-[var(--bg-hover)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--text-primary)]"
                 >
-                  {t(resolveCodeBadgeKey(primaryCode))}
+                  {t(resolveCodeBadgeKey(activeCode))}
                 </span>
               ) : null}
             </div>
 
-            {primaryCode ? (
+            {status.totalQuota > 0 || usableCount > 0 || status.remainingQuota > 0 ? (
+              <p
+                data-testid="invite-quota-summary"
+                className="rounded-lg bg-[var(--bg-hover)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)]"
+              >
+                {t('mobile.me.invite.quotaSummary', {
+                  total: status.totalQuota,
+                  usable: usableCount,
+                  remaining: Math.max(0, status.remainingQuota),
+                })}
+              </p>
+            ) : null}
+
+            {activeCode ? (
               <>
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-color)] bg-[var(--bg-hover)] px-3.5 py-3">
                   <span
                     data-testid="invite-code-value"
                     className="select-all font-mono text-xl font-bold tracking-wider text-[var(--text-primary)]"
                   >
-                    {primaryCode.code}
+                    {activeCode.code}
                   </span>
                   <button
                     type="button"
                     data-testid="invite-copy-code"
-                    onClick={() => void handleCopy(primaryCode.code, 'mobile.me.invite.codeCopied')}
+                    onClick={() => void handleCopy(activeCode.code, 'mobile.me.invite.codeCopied')}
                     className="twin-button twin-button-secondary twin-button-small shrink-0"
                   >
                     {t('mobile.me.invite.copyCode')}
@@ -482,7 +526,7 @@ export function InvitePage(props: {
                   </button>
                 </div>
 
-                {usableCount === 0 && status.remainingQuota > 0 && status.issueEnabled ? (
+                {status.remainingQuota > 0 && status.issueEnabled ? (
                   <button
                     type="button"
                     data-testid="invite-generate-next-btn"
@@ -494,6 +538,10 @@ export function InvitePage(props: {
                       ? t('mobile.me.invite.generating')
                       : t('mobile.me.invite.generateNextCode', { count: status.remainingQuota })}
                   </button>
+                ) : usableCount === 0 && status.issueEnabled ? (
+                  <p data-testid="invite-quota-exhausted" className="text-center text-xs text-[var(--text-secondary)]">
+                    {t('mobile.me.invite.quotaExhausted')}
+                  </p>
                 ) : null}
               </>
             ) : (
@@ -515,6 +563,81 @@ export function InvitePage(props: {
               </>
             )}
           </section>
+
+          {orderedCodes.length > 1 ? (
+            <section className="twin-panel twin-panel-padded space-y-2.5" data-testid="invite-code-list">
+              <h3 className="text-xs font-semibold text-[var(--text-secondary)]">
+                {t('mobile.me.invite.codesListTitle', { count: orderedCodes.length })}
+              </h3>
+              <div className="divide-y divide-[var(--border-color)]">
+                {orderedCodes.map((entry) => {
+                  const usable = isInviteCodeUsable(entry);
+                  const selected = activeCode?.code === entry.code;
+                  const entryShareUrl = buildInviteShareUrl(entry.code);
+                  return (
+                    <div
+                      key={entry.code}
+                      data-testid={`invite-code-item-${entry.code}`}
+                      className="flex items-center justify-between gap-2 py-2.5"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCodeValue(entry.code)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`font-mono text-sm font-semibold ${
+                              usable ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] line-through'
+                            }`}
+                          >
+                            {entry.code}
+                          </span>
+                          {selected ? (
+                            <span className="rounded-full bg-[rgba(255,220,81,0.22)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--text-primary)]">
+                              {t('mobile.me.invite.codeCurrentTag')}
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+                          {t(resolveCodeBadgeKey(entry))}
+                        </p>
+                      </button>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <button
+                          type="button"
+                          data-testid={`invite-list-copy-${entry.code}`}
+                          onClick={() => void handleCopy(entry.code, 'mobile.me.invite.codeCopied')}
+                          className="twin-button twin-button-secondary twin-button-small px-2.5 text-xs"
+                        >
+                          {t('mobile.me.invite.copyCode')}
+                        </button>
+                        <button
+                          type="button"
+                          data-testid={`invite-list-link-${entry.code}`}
+                          onClick={() => void handleCopy(entryShareUrl, 'mobile.me.invite.linkCopied')}
+                          className="twin-button twin-button-secondary twin-button-small px-2.5 text-xs"
+                        >
+                          {t('mobile.me.invite.copyLink')}
+                        </button>
+                        <button
+                          type="button"
+                          data-testid={`invite-list-poster-${entry.code}`}
+                          onClick={() => {
+                            setSelectedCodeValue(entry.code);
+                            setPosterOpen(true);
+                          }}
+                          className="twin-button twin-button-primary twin-button-small px-2.5 text-xs"
+                        >
+                          {t('mobile.me.invite.codePosterShort')}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
 
           {renderRefillCard(status)}
         </>
@@ -677,7 +800,7 @@ export function InvitePage(props: {
         </BottomSheet>
       ) : null}
 
-      {posterOpen && primaryCode ? (
+      {posterOpen && activeCode ? (
         <BottomSheet title={t('mobile.me.invite.posterSheetTitle')} onClose={() => setPosterOpen(false)}>
           <div className="space-y-3.5" data-testid="invite-poster-sheet">
             <div className="twin-segmented">
