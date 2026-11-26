@@ -90,15 +90,19 @@ test('both per-turn effort chains route unattended turns through resolveUnattend
 });
 
 test('both per-turn effort chains pin an assistant-mode off verdict to the GLM-expressible floor', () => {
-  // A cerebellum 'off' verdict on a GLM route is a lie: the responses/
-  // anthropic wires drop an unrepresentable 'off' and the SERVER default
-  // thinking level takes over — heavier than 'low'. Both effort chains
-  // (primary + fallback-brain resume) must pin the verdict through
-  // resolveAssistantModeExpressibleRung, and the fallback-route
-  // resolveAutoEffortFallback input must carry the fallback route's GLM
-  // family so its no-verdict branch stays honest there too.
+  // A cerebellum 'off' verdict on a route that cannot express 'off' is a
+  // lie: the responses/anthropic wires drop an unrepresentable 'off' and the
+  // SERVER default thinking level takes over — heavier than 'low'; unknown
+  // families (no declaration, e.g. gemini-4-hydrogen on a custom route,
+  // 2026-11-26) are worse — the dsh-llm capability gate rejects 'off'
+  // outright. Both effort chains (primary + fallback-brain resume) must pin
+  // the verdict through resolveAssistantModeExpressibleRung via the
+  // autoRungCannotExpressOff predicate (GLM family + unknown families), and
+  // the fallback-route resolveAutoEffortFallback input must carry the
+  // fallback route's own predicate so its no-verdict branch stays honest
+  // there too.
   const pins = coworkRunnerSource.match(
-    /resolveAssistantModeExpressibleRung\(autoEffortRung, \{ assistantMode: fastOwnerChatMode, glmFamily: isGlmFamilyModelId\((route|routeOverride)\.model\) \}\)/g,
+    /resolveAssistantModeExpressibleRung\(autoEffortRung, \{ assistantMode: fastOwnerChatMode, glmFamily: autoRungCannotExpressOff\((route|routeOverride)\.model\) \}\)/g,
   ) ?? [];
   assert.ok(
     pins.length >= 2,
@@ -109,7 +113,7 @@ test('both per-turn effort chains pin an assistant-mode off verdict to the GLM-e
   );
   assert.ok(fallbackInput, 'the fallback effort chain must keep its resolveAutoEffortFallback call');
   assert.ok(
-    fallbackInput[0].includes('glmFamily: isGlmFamilyModelId(routeOverride.model)'),
+    fallbackInput[0].includes('glmFamily: autoRungCannotExpressOff(routeOverride.model)'),
     'the fallback-route no-verdict fallback must read the fallback model GLM family',
   );
 });
