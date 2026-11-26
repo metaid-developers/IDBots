@@ -89,9 +89,43 @@ function resolveCache({ archivePath, thumbprint, cacheRoot }) {
 }
 
 /**
- * Ask PowerShell for the signature state of every executable under treeDir.
+ * Read the output of scripts/mingit-verify-signatures.ps1.
  * @returns {Map<string, {status: string, signer: string|null, timestamped: boolean}> | null}
- *   null when the verification itself could not run.
+ *   null when it is not something a cache may be trusted on.
+ */
+function parseVerdicts(stdout) {
+  // Only the JSON is wanted; anything PowerShell prints around it is noise.
+  const start = stdout.search(/[[{]/);
+  const end = Math.max(stdout.lastIndexOf(']'), stdout.lastIndexOf('}'));
+  if (start < 0 || end < start) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  // PowerShell 7 prints the bare array. Windows PowerShell 5.1, which the
+  // signing machine runs, wraps an array handed down the pipeline as
+  // {"value": [...], "Count": n}; read through the wrapper rather than trust
+  // the script to never regress to it.
+  const entries = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.value) ? parsed.value : null;
+  if (!entries) return null;
+  const verdicts = new Map();
+  for (const entry of entries) {
+    if (!entry || typeof entry.path !== 'string') return null;
+    verdicts.set(entry.path.replace(/\\/g, '/'), {
+      status: String(entry.status),
+      signer: normalizeThumbprint(entry.signer),
+      timestamped: entry.timestamped === true,
+    });
+  }
+  return verdicts;
+}
+
+/**
+ * Ask PowerShell for the signature state of every executable under treeDir.
+ * @returns the verdicts by relative path, or null when the verification
+ *   itself could not run.
  */
 function verifyWithPowershell(treeDir, thumbprint) {
   const script = path.join(__dirname, 'mingit-verify-signatures.ps1');
@@ -101,25 +135,7 @@ function verifyWithPowershell(treeDir, thumbprint) {
     { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   );
   if (result.error || result.status !== 0) return null;
-  // Only the JSON is wanted; anything PowerShell prints around it is noise.
-  const start = result.stdout.search(/[[{]/);
-  const end = Math.max(result.stdout.lastIndexOf(']'), result.stdout.lastIndexOf('}'));
-  if (start < 0 || end < start) return null;
-  let parsed;
-  try {
-    parsed = JSON.parse(result.stdout.slice(start, end + 1));
-  } catch {
-    return null;
-  }
-  const verdicts = new Map();
-  for (const entry of Array.isArray(parsed) ? parsed : [parsed]) {
-    verdicts.set(String(entry.path).replace(/\\/g, '/'), {
-      status: String(entry.status),
-      signer: normalizeThumbprint(entry.signer),
-      timestamped: entry.timestamped === true,
-    });
-  }
-  return verdicts;
+  return parseVerdicts(result.stdout);
 }
 
 /** Decide whether a packaged tree may be cached. Returns null when it may. */
@@ -138,7 +154,10 @@ function refusalFor({ unsigned, signed, verdicts, thumbprint }) {
     }
     const verdict = verdicts.get(relative);
     if (signed[relative] === unsigned[relative]) return `${relative} was not signed`;
-    if (verdict?.status !== 'Valid') return `${relative} is not validly signed (${verdict?.status ?? 'unverified'})`;
+    // No result at all is a different failure from a bad one: say how much of
+    // the tree the verification actually covered.
+    if (!verdict) return `${relative} has no verification result (${verdicts.size} results for ${executables.size} executables)`;
+    if (verdict.status !== 'Valid') return `${relative} is not validly signed (${verdict.status})`;
     if (verdict.signer !== thumbprint) return `${relative} is signed by another certificate`;
     if (!verdict.timestamped) return `${relative} is signed without a timestamp`;
   }
@@ -165,6 +184,9 @@ function store({ repoRoot = process.cwd(), env = process.env, log = console.log,
   const refusal = refusalFor({ unsigned, signed, thumbprint, verdicts: verify(signedTree, thumbprint) });
   if (refusal) {
     log(`[mingit-signed-cache] store refused: ${refusal}`);
+    // This step may fail, so the refusal would otherwise stay green and quiet
+    // (it did on 2026-11-26): say it where the run summary shows it.
+    log(`::warning title=PortableGit signed cache not stored::${refusal}. Every build signs the PortableGit tree again until this is fixed.`);
     return { stored: false, reason: refusal };
   }
 
@@ -245,4 +267,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { apply, store, digestTree, listFiles, normalizeThumbprint, refusalFor, resolveCache, verifyWithPowershell };
+module.exports = { apply, store, digestTree, listFiles, normalizeThumbprint, parseVerdicts, refusalFor, resolveCache, verifyWithPowershell };

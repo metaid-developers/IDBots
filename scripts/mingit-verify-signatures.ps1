@@ -28,6 +28,10 @@ foreach ($file in Get-ChildItem -LiteralPath $Root -Recurse -File -Filter '*.exe
   }
 }
 
-# -Compress keeps the output on one line; wrap in an array so a single result
-# still serializes as JSON array syntax.
-, $results | ConvertTo-Json -Compress
+# -InputObject takes the array as one object, so the output is a JSON array
+# for any number of results and on either PowerShell version. Piping it
+# instead prints a bare object for a single file, and Windows PowerShell 5.1
+# wraps an array handed down the pipeline as {"value": [...], "Count": n} —
+# which is how the first Windows run (45842016787, 2026-11-26) found nothing
+# and cached nothing.
+ConvertTo-Json -InputObject @($results) -Compress
