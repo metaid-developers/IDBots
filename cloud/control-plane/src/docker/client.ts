@@ -134,10 +134,22 @@ class UnixSocketTransport implements Transport {
   }
 }
 
+export const DEFAULT_DOCKER_REQUEST_TIMEOUT_MS = 10_000;
+export const DEFAULT_DOCKER_MUTATION_TIMEOUT_MS = 60_000;
+
+export interface DockerClientOptions {
+  requestTimeoutMs?: number;
+  mutationTimeoutMs?: number;
+}
+
 export class DockerClient {
   private readonly transport: Transport;
+  private readonly requestTimeoutMs: number;
+  private readonly mutationTimeoutMs: number;
 
-  constructor(url: string) {
+  constructor(url: string, opts: DockerClientOptions = {}) {
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_DOCKER_REQUEST_TIMEOUT_MS;
+    this.mutationTimeoutMs = opts.mutationTimeoutMs ?? DEFAULT_DOCKER_MUTATION_TIMEOUT_MS;
     if (url.startsWith('http+unix://')) {
       this.transport = new UnixSocketTransport(decodeURIComponent(url.slice('http+unix://'.length)));
       return;
@@ -149,7 +161,12 @@ export class DockerClient {
     throw new Error(`CP_DOCKER_URL must be http(s):// or http+unix://, got "${url}"`);
   }
 
-  private requestBuffer(method: string, path: string, body?: string, timeoutMs = 10_000): Promise<{ status: number; body: Buffer }> {
+  private requestBuffer(
+    method: string,
+    path: string,
+    body?: string,
+    timeoutMs = this.requestTimeoutMs,
+  ): Promise<{ status: number; body: Buffer }> {
     const { options } = this.transport.requestOptions(path);
     return new Promise((resolve, reject) => {
       const client = options.protocol === 'https:' ? https : http;
@@ -184,8 +201,13 @@ export class DockerClient {
     });
   }
 
-  private async requestJson<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const result = await this.request(method, path, body === undefined ? undefined : JSON.stringify(body));
+  private async requestJson<T>(method: string, path: string, body?: unknown, timeoutMs?: number): Promise<T> {
+    const result = await this.request(
+      method,
+      path,
+      body === undefined ? undefined : JSON.stringify(body),
+      timeoutMs,
+    );
     if (result.status >= 300) {
       let detail = result.body;
       try {
@@ -198,8 +220,11 @@ export class DockerClient {
     return (result.body ? JSON.parse(result.body) : {}) as T;
   }
 
-  private request(method: string, path: string, body?: string): Promise<DockerRequestResult> {
-    return this.requestBuffer(method, path, body).then((r) => ({ status: r.status, body: r.body.toString('utf8') }));
+  private request(method: string, path: string, body?: string, timeoutMs?: number): Promise<DockerRequestResult> {
+    return this.requestBuffer(method, path, body, timeoutMs).then((r) => ({
+      status: r.status,
+      body: r.body.toString('utf8'),
+    }));
   }
 
   /** `GET /_ping` — true when the engine answers 200, false otherwise. */
@@ -236,12 +261,17 @@ export class DockerClient {
     if (opts.hostConfig) {
       body.HostConfig = opts.hostConfig;
     }
-    return this.requestJson('POST', `${API_VERSION}/containers/create?name=${encodeURIComponent(opts.name)}`, body);
+    return this.requestJson(
+      'POST',
+      `${API_VERSION}/containers/create?name=${encodeURIComponent(opts.name)}`,
+      body,
+      this.mutationTimeoutMs,
+    );
   }
 
   /** Start a container; 304 (already running) counts as success. */
   async startContainer(id: string): Promise<void> {
-    const result = await this.request('POST', `${API_VERSION}/containers/${id}/start`);
+    const result = await this.request('POST', `${API_VERSION}/containers/${id}/start`, undefined, this.mutationTimeoutMs);
     if (result.status !== 204 && result.status !== 304) {
       throw new DockerError(`start ${id} failed with ${result.status}: ${result.body}`, result.status);
     }
@@ -249,7 +279,8 @@ export class DockerClient {
 
   /** Stop a container (SIGTERM, then SIGKILL after the grace period). */
   async stopContainer(id: string, timeoutSec = 30): Promise<void> {
-    const result = await this.request('POST', `${API_VERSION}/containers/${id}/stop?t=${timeoutSec}`);
+    const timeoutMs = Math.max(this.mutationTimeoutMs, (timeoutSec + 15) * 1000);
+    const result = await this.request('POST', `${API_VERSION}/containers/${id}/stop?t=${timeoutSec}`, undefined, timeoutMs);
     if (result.status !== 204 && result.status !== 304) {
       throw new DockerError(`stop ${id} failed with ${result.status}: ${result.body}`, result.status);
     }
@@ -264,7 +295,7 @@ export class DockerClient {
       params.set('force', '1');
     }
     const suffix = params.size > 0 ? `?${params.toString()}` : '';
-    await this.requestJson('DELETE', `${API_VERSION}/containers/${id}${suffix}`);
+    await this.requestJson('DELETE', `${API_VERSION}/containers/${id}${suffix}`, undefined, this.mutationTimeoutMs);
   }
 
   async inspectContainer(id: string): Promise<DockerContainerInspect> {

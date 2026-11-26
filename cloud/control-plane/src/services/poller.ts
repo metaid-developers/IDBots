@@ -2,7 +2,11 @@ import type { AppContext } from '../context.js';
 import { sendAlert } from '../alerts.js';
 import { sweepExpiredTrialHibernation } from './hibernation.js';
 import { probeTenant } from './probe.js';
-import { isProvisioningInFlight } from './provisioning.js';
+import {
+  isProvisioningInFlight,
+  isRecoverableProvisionFailure,
+  triggerRetryFailedProvisioning,
+} from './provisioning.js';
 import { recoverTenant } from './recovery.js';
 import {
   DEFAULT_TIMEOUTS,
@@ -33,6 +37,8 @@ export interface PollerOptions {
   probeTimeoutMs?: number;
   /** Runtime safety net for provisioning rows stuck by a dead process. */
   staleProvisioningMs?: number;
+  /** Runtime safety net for failed provisioning rows (e.g. Docker timeout after container create). */
+  failedProvisionRetryMs?: number;
   /** Periodic interval for >7-day post-trial hibernation checks. */
   hibernationCheckIntervalMs?: number;
   now?: () => number;
@@ -59,6 +65,7 @@ export class TenantPoller {
   private readonly timeouts: Timeouts;
   private readonly probeTimeoutMs: number;
   private readonly staleProvisioningMs: number;
+  private readonly failedProvisionRetryMs: number;
   private readonly hibernationCheckIntervalMs: number;
   private readonly now: () => number;
   private timer: NodeJS.Timeout | null = null;
@@ -75,6 +82,7 @@ export class TenantPoller {
     this.timeouts = { ...DEFAULT_TIMEOUTS, ...opts.timeouts };
     this.probeTimeoutMs = opts.probeTimeoutMs ?? 2000;
     this.staleProvisioningMs = opts.staleProvisioningMs ?? 300_000;
+    this.failedProvisionRetryMs = opts.failedProvisionRetryMs ?? 30_000;
     this.hibernationCheckIntervalMs = opts.hibernationCheckIntervalMs ?? 10 * 60 * 1000;
     this.now = opts.now ?? (() => Date.now());
   }
@@ -108,6 +116,7 @@ export class TenantPoller {
 
   private async sweep(): Promise<void> {
     await this.recoverStaleProvisioningRows();
+    this.recoverFailedProvisioningRows();
     const sweepNow = this.now();
     if (sweepNow >= this.nextHibernationCheckAt) {
       this.nextHibernationCheckAt = sweepNow + this.hibernationCheckIntervalMs;
@@ -199,6 +208,38 @@ export class TenantPoller {
           }),
         );
       }
+    }
+  }
+
+  /**
+   * Runtime safety net: if initial container create/start timed out in the
+   * client while Docker completed creating the container seconds later, retry
+   * provisioning once automatically so the tenant can adopt & start it even
+   * if the user closed the browser.
+   */
+  private recoverFailedProvisioningRows(): void {
+    const now = this.now();
+    const failedRows = this.app.db
+      .prepare(
+        `SELECT id, status, last_error, updated_at FROM tenants
+         WHERE status = 'failed' AND updated_at < ?
+         ORDER BY updated_at`,
+      )
+      .all(now - this.failedProvisionRetryMs) as Array<{
+      id: string;
+      status: string;
+      last_error: string | null;
+      updated_at: number;
+    }>;
+    for (const row of failedRows) {
+      if (!isRecoverableProvisionFailure(row)) {
+        continue;
+      }
+      triggerRetryFailedProvisioning(this.app, row.id, {
+        source: 'poller',
+        cooldownMs: this.failedProvisionRetryMs,
+        now,
+      });
     }
   }
 

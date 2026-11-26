@@ -22,25 +22,36 @@ export default function PreparingScreen(props: { onSignOut: () => void }): JSX.E
   useEffect(() => {
     let cancelled = false;
     let navigated = false;
+    let retryPending = retryNonce > 0;
+    let timer: number | undefined;
     const tick = async () => {
+      const requestRetry = retryPending;
+      retryPending = false;
       try {
-        const me = await getMe();
+        const me = await getMe(requestRetry ? { retry: true } : undefined);
         if (cancelled || navigated) return;
         setTenant(me.tenant);
         setPollFailed(false);
         if (me.tenant.status === 'ready' || me.tenant.status === 'degraded') {
           navigated = true;
           window.location.replace(postLoginDestination());
+          return;
+        }
+        if (me.tenant.status === 'failed' && timer !== undefined) {
+          window.clearInterval(timer);
+          timer = undefined;
         }
       } catch {
         if (!cancelled) setPollFailed(true);
       }
     };
     void tick();
-    const timer = window.setInterval(() => void tick(), PREPARE_POLL_MS);
+    timer = window.setInterval(() => void tick(), PREPARE_POLL_MS);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== undefined) {
+        window.clearInterval(timer);
+      }
     };
   }, [retryNonce]);
 

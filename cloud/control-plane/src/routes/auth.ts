@@ -23,7 +23,12 @@ import {
   isHibernatedTrialTenant,
   triggerWakeHibernatedTenant,
 } from '../services/hibernation.js';
-import { markFailed, provisionTenant } from '../services/provisioning.js';
+import {
+  isRecoverableProvisionFailure,
+  markFailed,
+  provisionTenant,
+  triggerRetryFailedProvisioning,
+} from '../services/provisioning.js';
 import { sendAlert } from '../alerts.js';
 import { newSessionToken, newTenantId, newUserId } from '../ids.js';
 import {
@@ -425,6 +430,9 @@ async function smsVerify(app: AppContext, reqCtx: RequestCtx, body: unknown): Pr
     if (isHibernatedTrialTenant(app.db, existing.id, tenant)) {
       triggerWakeHibernatedTenant(app, existing.id, now);
       tenant = getTenantByUserId(app, existing.id);
+    } else if (tenant && isRecoverableProvisionFailure(tenant)) {
+      triggerRetryFailedProvisioning(app, tenant.id, { source: 'sms_verify', now });
+      tenant = getTenantByUserId(app, existing.id);
     }
   } else {
     const host = app.db.prepare('SELECT id FROM hosts ORDER BY rowid LIMIT 1').get() as
@@ -542,9 +550,16 @@ async function smsVerify(app: AppContext, reqCtx: RequestCtx, body: unknown): Pr
 }
 
 async function me(app: AppContext, reqCtx: RequestCtx): Promise<void> {
+  const url = new URL(reqCtx.req?.url ?? '/', 'http://localhost');
+  const explicitRetry = url.searchParams.get('retry') === '1';
   let tenant = getTenantByUserId(app, reqCtx.user!.id);
   if (isHibernatedTrialTenant(app.db, reqCtx.user!.id, tenant)) {
     triggerWakeHibernatedTenant(app, reqCtx.user!.id);
+    tenant = getTenantByUserId(app, reqCtx.user!.id);
+  } else if (tenant && isRecoverableProvisionFailure(tenant)) {
+    triggerRetryFailedProvisioning(app, tenant.id, {
+      source: explicitRetry ? 'retry_param' : 'me_auto',
+    });
     tenant = getTenantByUserId(app, reqCtx.user!.id);
   }
   writeJson(reqCtx.res, 200, { user: publicUser(reqCtx.user!), tenant: tenantShape(tenant) });

@@ -239,6 +239,18 @@ test('real getMe GETs /api/v1/me and returns the user/tenant shape', async () =>
   );
 });
 
+test('real getMe appends ?retry=1 when retry option is set', async () => {
+  await withStubbedFetch(
+    () => jsonResponse(200, { user: { id: 'u_1' }, tenant: { ...TENANT_READY, status: 'provisioning' } }),
+    async (calls) => {
+      const result = await getMe({ retry: true });
+      assert.equal(result.tenant.status, 'provisioning');
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].input, '/api/v1/me?retry=1');
+    },
+  );
+});
+
 test('real getMe maps a 401 JSON body to UNAUTHORIZED', async () => {
   await withStubbedFetch(
     () => jsonResponse(401, { error: { code: 'UNAUTHORIZED', message: 'no session' } }),

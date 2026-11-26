@@ -210,12 +210,13 @@ export async function verifyCode(
 }
 
 /** C3 `GET /api/v1/me` (session cookie). */
-export async function getMe(): Promise<GetMeResult> {
+export async function getMe(options?: { retry?: boolean }): Promise<GetMeResult> {
   if (MOCK_LOGIN_API) {
     return mockGetMe();
   }
-  console.info('[loginApi] getMe');
-  return requestJson<GetMeResult>('/api/v1/me');
+  console.info('[loginApi] getMe', options?.retry ? { retry: true } : undefined);
+  const path = options?.retry ? '/api/v1/me?retry=1' : '/api/v1/me';
+  return requestJson<GetMeResult>(path);
 }
 
 /** C3 `POST /api/v1/auth/logout` (204, cookie cleared). */
