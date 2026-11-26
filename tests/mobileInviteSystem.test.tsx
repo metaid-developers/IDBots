@@ -21,6 +21,7 @@ import {
   buildInviteShareUrl,
   countUsableInviteCodes,
   selectPrimaryInviteCode,
+  sortInviteCodes,
 } from '../src/mobile/app/screens/me/InvitePage.tsx';
 import ChatScreen from '../src/mobile/app/screens/ChatScreen.tsx';
 import TasksScreen from '../src/mobile/app/screens/TasksScreen.tsx';
@@ -195,11 +196,109 @@ test('InvitePage SSR: eligible view shows code, plan+days perk without cash pric
     );
     assert.match(html, /data-testid="invite-code-card"/);
     assert.match(html, /IDB-7K9M-X4/);
+    assert.match(html, /data-testid="invite-quota-summary"/);
+    assert.match(html, /data-testid="invite-generate-next-btn"/);
     assert.match(html, /14 天 ID\.Student/);
     assert.doesNotMatch(html, /100\s*元|¥\s*100/, 'must never mention ¥100 cash value');
     assert.match(html, /data-testid="invite-claim-refill-open"/);
     assert.match(html, /data-testid="invite-history-card"/);
     assert.match(html, /\+86 139\*\*\*\*8899/);
+  } finally {
+    resetMeStoreForTests();
+    mobileI18n.setLanguage(prevLang);
+  }
+});
+
+test('InvitePage SSR: multi-code quota shows generate-next regardless of unused codes and lists all codes', () => {
+  const prevLang = mobileI18n.getLanguage();
+  const multiCodeFixture: MobileMeInviteStatus = {
+    identityAddress: 'mvc1owner5',
+    issueEnabled: true,
+    eligible: true,
+    eligibleReason: 'extra_quota',
+    progress: {
+      accountAgeDays: 14,
+      requiredAgeDays: 7,
+      totalSpentMilli: 8_000_000,
+      requiredSpentMilli: 5_000_000,
+      paidBypassEnabled: true,
+      hasPaidSubscription: true,
+      isTrialSubscription: false,
+    },
+    totalQuota: 5,
+    usedQuota: 2,
+    remainingQuota: 3,
+    defaultGrant: {
+      planId: 'me_pro',
+      planName: 'ID.Student',
+      planNameEn: 'ID.Student',
+      periodDays: 14,
+    },
+    codes: [
+      {
+        code: 'IDB-USED-01',
+        status: 1,
+        maxUses: 1,
+        usedCount: 1,
+        activatedCount: 1,
+        createdAt: 1_780_000_000_000,
+        invitees: [],
+      },
+      {
+        code: 'IDB-OPEN-02',
+        status: 1,
+        maxUses: 1,
+        usedCount: 0,
+        activatedCount: 0,
+        createdAt: 1_780_000_100_000,
+        invitees: [],
+      },
+      {
+        code: 'IDB-OPEN-03',
+        status: 1,
+        maxUses: 1,
+        usedCount: 0,
+        activatedCount: 0,
+        createdAt: 1_780_000_200_000,
+        invitees: [],
+      },
+    ],
+    refill: {
+      availableCount: 0,
+      earnedTotal: 1,
+      usedTotal: 1,
+    },
+  };
+  try {
+    const sorted = sortInviteCodes(multiCodeFixture.codes);
+    assert.deepEqual(
+      sorted.map((c) => c.code),
+      ['IDB-OPEN-03', 'IDB-OPEN-02', 'IDB-USED-01'],
+    );
+
+    mobileI18n.setLanguage('zh');
+    patchMeStoreForTests({ inviteStatus: multiCodeFixture, inviteLoading: false });
+    const zhHtml = renderToStaticMarkup(
+      React.createElement(InvitePage, { onBack: () => undefined, onOpenSubscribe: () => undefined }),
+    );
+    assert.match(zhHtml, /共 5 个名额 · 待分享 2 · 可生成 3/);
+    assert.match(zhHtml, /data-testid="invite-generate-next-btn"/);
+    assert.match(zhHtml, /再生成 1 个邀请码（剩余 3）/);
+    assert.match(zhHtml, /data-testid="invite-code-list"/);
+    assert.match(zhHtml, /data-testid="invite-code-item-IDB-OPEN-03"/);
+    assert.match(zhHtml, /data-testid="invite-code-item-IDB-OPEN-02"/);
+    assert.match(zhHtml, /data-testid="invite-code-item-IDB-USED-01"/);
+    assert.match(zhHtml, /data-testid="invite-list-copy-IDB-OPEN-02"/);
+    assert.match(zhHtml, /data-testid="invite-list-link-IDB-OPEN-02"/);
+    assert.match(zhHtml, /data-testid="invite-list-poster-IDB-OPEN-02"/);
+
+    mobileI18n.setLanguage('en');
+    const enHtml = renderToStaticMarkup(
+      React.createElement(InvitePage, { onBack: () => undefined, onOpenSubscribe: () => undefined }),
+    );
+    assert.match(enHtml, /5 total · 2 ready · 3 ungenerated/);
+    assert.match(enHtml, /Generate another code \(3 left\)/);
+    assert.match(enHtml, /All invite codes \(3\)/);
   } finally {
     resetMeStoreForTests();
     mobileI18n.setLanguage(prevLang);
