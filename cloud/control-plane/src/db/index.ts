@@ -44,13 +44,16 @@ export interface HostSeed {
   dockerUrl: string;
   capacity: number;
   status: string;
+  environment: 'staging' | 'production';
 }
 
-/** Insert the configured host row once; never overwrite an existing one. */
+/** Seed the local host and repair only legacy zero-capacity rows on restart. */
 export function ensureHostRow(db: Database.Database, seed: HostSeed): void {
   db.prepare(
-    `INSERT INTO hosts (id, docker_url, capacity, status)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT (id) DO NOTHING`,
-  ).run(seed.id, seed.dockerUrl, seed.capacity, seed.status);
+    `INSERT INTO hosts (id, docker_url, capacity, status, environment)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET
+       environment = excluded.environment,
+       capacity = CASE WHEN hosts.capacity = 0 THEN excluded.capacity ELSE hosts.capacity END`,
+  ).run(seed.id, seed.dockerUrl, seed.capacity, seed.status, seed.environment);
 }

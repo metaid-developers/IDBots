@@ -5,6 +5,8 @@ import type { SmsProvider } from './sms.js';
 import type { TenantPoller } from './services/poller.js';
 import type { MetricsRegistry } from './metrics.js';
 import type { PushDeliveryService } from './services/pushDelivery.js';
+import type { RolloutManager } from './rollout/manager.js';
+import type { HostAgentGateway } from './agent/gateway.js';
 
 /** Shared application context passed to routes and services. */
 export interface AppContext {
@@ -15,4 +17,7 @@ export interface AppContext {
   poller: TenantPoller | null;
   metrics: MetricsRegistry;
   push: PushDeliveryService;
+  rollouts?: RolloutManager;
+  hostAgents?: HostAgentGateway;
+  localHostId?: string;
 }

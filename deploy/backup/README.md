@@ -5,7 +5,7 @@ OSS Hong Kong:
 
 ```
 tenants/{tenantId}/{yyyy-mm-dd}.tar.zst.enc      one per tenant per night
-control-plane/{yyyy-mm-dd}.sqlite.zst.enc        control-plane db (online backup)
+control-plane/{yyyy-mm-dd}.sqlite.zst.enc        control-plane db and rollout queue (online backup)
 ```
 
 The bucket is provisioned once (SSE, versioning, 30-day lifecycle) with
@@ -16,7 +16,7 @@ The bucket is provisioned once (SSE, versioning, 30-day lifecycle) with
 |---|---|
 | `backup-nightly.sh` | Driver (systemd timer 03:05 Asia/Shanghai): control-plane first, then every `idb-t_*` container staggered across the 03:00–05:00 window; alerts on any failure. `--now` for manual runs, `--tenant t_x` to scope. |
 | `backup-tenant.sh` | Crash-consistent per-tenant backup: live snapshot, `docker pause` (≤ 60 s), delta snapshot, fidelity manifest (`_backup-manifest.json`) embedded, archive, upload. |
-| `backup-control-plane.sh` | SQLite online backup (`.backup` / `VACUUM INTO`) of `cp.sqlite`, archive, upload. |
+| `backup-control-plane.sh` | SQLite online backup (`.backup` / `VACUUM INTO`) of `cp.sqlite`, including users, metadata, RBAC, and rollout jobs, archive, upload. |
 | `restore-tenant.sh` | `--mode drill` (default): restore into a NEW volume, `PRAGMA integrity_check`, **fidelity compare against the archived manifest (files/bytes/row counts)**, boot a throwaway container, tear down. `--mode replace --confirm-replace`: disaster path through the control-plane CLI with a safety volume. |
 | `lib.sh` | Shared: logging, Feishu/DingTalk alerts, OSS/local object layer, age helpers, textfile metrics, docker helpers. |
 | `integrity-check.mjs` / `cp-online-backup.mjs` | node:sqlite tools for helper containers (Docker Desktop / remote docker, where the host cannot read volume paths). |

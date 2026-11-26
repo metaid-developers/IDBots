@@ -31,7 +31,7 @@ interface TenantRow {
 }
 
 export async function reconcileAtStartup(
-  app: Pick<AppContext, 'config' | 'db' | 'docker'>,
+  app: Pick<AppContext, 'config' | 'db' | 'docker' | 'rollouts'>,
 ): Promise<string[]> {
   const log = (level: 'info' | 'warn' | 'error', msg: string, extra?: Record<string, unknown>) =>
     console.log(JSON.stringify({ level, component: 'reconcile', msg, ...extra }));
@@ -60,6 +60,9 @@ export async function reconcileAtStartup(
       continue;
     }
     if (tenant.status === 'provisioning' || tenant.status === 'upgrading') {
+      if (tenant.status === 'upgrading') {
+        if (app.rollouts && await app.rollouts.store.hasRunningItem(tenant.id)) continue;
+      }
       try {
         const outcome = await recoverTenant(app, tenant);
         log('info', 'recovered orphaned tenant row', { tenant: tenant.id, outcome });

@@ -13,6 +13,8 @@ import { MetricsRegistry } from '../src/metrics.js';
 import { encryptSecret } from '../src/crypto.js';
 import type { AppContext } from '../src/context.js';
 import { PushDeliveryService } from '../src/services/pushDelivery.js';
+import { RolloutManager } from '../src/rollout/manager.js';
+import { SqliteRolloutStore } from '../src/rollout/sqliteStore.js';
 
 /** Fresh migrated SQLite database in a unique temp directory. */
 export function freshDb(): Database.Database {
@@ -119,6 +121,8 @@ export async function startTestApp(options: {
     metrics: new MetricsRegistry(),
     push: new PushDeliveryService(options.db, config),
   };
+  app.rollouts = new RolloutManager(app, new SqliteRolloutStore(options.db));
+  app.localHostId = 'h_testhost';
   const server = createPublicServer(app, {
     ...(options.wsProxy ? { wsProxy: options.wsProxy } : {}),
     ...(options.asr ? { asr: options.asr } : {}),

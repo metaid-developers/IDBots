@@ -7,16 +7,17 @@ account is touched by this repository, and no real secret ever is
 
 | Directory | Contents | Requirements |
 |---|---|---|
-| `hosts/` | `compose.yml` + `compose.monitoring.yml`, `Caddyfile` (REQ-C-5), `firewall.sh` + systemd unit (REQ-C-6), `daemon.json` (REQ-C-2), `bootstrap.sh`, env templates | C1, C-2..C-7, C-10..C-12 |
+| `hosts/` | `compose.yml` + monitoring/host-agent overlays, `Caddyfile` (REQ-C-5), `firewall.sh` + systemd unit (REQ-C-6), `daemon.json` (REQ-C-2), `bootstrap.sh`, env templates | C1, C-2..C-7, C-10..C-12 |
 | `tenant-image/` | Production IDBots server-mode tenant image with the PWA, skills, DSH runtime, and C2 gateway + build/verification scripts | C1, REQ-C-9 |
 | `backup/` | Nightly backup driver + per-tenant/control-plane backups, restore script (drill/replace), OSS bucket provisioning, systemd timer, drill records | REQ-C-13..C-15 |
 | `monitoring/` | Prometheus rules (one per REQ-C-16 bullet), Alertmanager, blackbox probes, Feishu/DingTalk `alert-relay` | REQ-C-16, C-17 |
-| `runbooks/` | Nine operator runbooks (see below) | REQ-C deliverables |
+| `runbooks/` | Operator runbooks (see below) | REQ-C deliverables |
 
 Runbooks: `host-bootstrap.md` (start here), `deploy-control-plane.md`,
 `tenant-image-rollout.md`, `backup-and-restore.md`, `incident-response.md`,
 `secret-rotation.md`, `user-data-export-and-deletion.md`, `add-host.md`,
-`staging-reset.md`.
+`staging-reset.md`, `commercial-operations.md` (RBAC/MFA, approvals, and the
+Web admin backend), `commercial-acceptance.md` (live commercial gate).
 
 ## Conventions
 

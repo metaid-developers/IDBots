@@ -118,6 +118,23 @@ describe('tenant upgrade (REQ-B-12)', () => {
     assert.equal(audits('t_up1', 'tenant.upgrade.done').length, 1);
   });
 
+  test('an explicit canary already on the target image is skipped, not recreated', async () => {
+    seedUserAndTenant(db, { userId: 'u_skip1', phone: '+8613900005091', tenantId: 't_skip1', status: 'ready', image: IMAGE_1_1, appVersion: '1.1.0' });
+    await startTenantContainer('t_skip1', IMAGE_1_1, '1.1.0');
+    const before = (await client.listContainers({ namePrefix: 'idb-t_skip1' }))[0].Id;
+
+    const results = await upgradeTenants(app.app, ['t_skip1'], IMAGE_1_1, {
+      operator: 'tester',
+      readyTimeoutMs: 1000,
+      readyPollMs: 100,
+    });
+    assert.deepEqual(results.map((r) => r.outcome), ['skipped']);
+    const after = (await client.listContainers({ namePrefix: 'idb-t_skip1' }))[0].Id;
+    assert.equal(after, before);
+    assert.equal(audits('t_skip1', 'tenant.upgrade.skipped').length, 1);
+    assert.equal(audits('t_skip1', 'tenant.upgrade.start').length, 0);
+  });
+
   test('never-ready new image rolls back automatically to the previous image', async () => {
     seedUserAndTenant(db, { userId: 'u_up2', phone: '+8613900005002', tenantId: 't_up2', status: 'ready', image: IMAGE_1_0, appVersion: '1.0.0' });
     await startTenantContainer('t_up2', IMAGE_1_0, '1.0.0');
@@ -175,6 +192,17 @@ describe('tenant upgrade (REQ-B-12)', () => {
     assert.equal(after[0].Id, before[0].Id, 'same container, never recreated');
     assert.equal(audits('t_up4', 'tenant.upgrade.refused').length, 1);
     assert.equal(audits('t_up4', 'tenant.upgrade.start').length, 0);
+  });
+
+  test('concurrent calls for the same tenant serialize and skip the duplicate', async () => {
+    seedUserAndTenant(db, { userId: 'u_lock1', phone: '+8613900005092', tenantId: 't_lock1', status: 'ready', image: IMAGE_1_0, appVersion: '1.0.0' });
+    await startTenantContainer('t_lock1', IMAGE_1_0, '1.0.0');
+    const [first, second] = await Promise.all([
+      upgradeTenants(app.app, ['t_lock1'], IMAGE_1_1, { operator: 'tester-a', readyTimeoutMs: 5000, readyPollMs: 100 }),
+      upgradeTenants(app.app, ['t_lock1'], IMAGE_1_1, { operator: 'tester-b', readyTimeoutMs: 5000, readyPollMs: 100 }),
+    ]);
+    assert.deepEqual([first[0].outcome, second[0].outcome].sort(), ['skipped', 'upgraded']);
+    assert.equal(audits('t_lock1', 'tenant.upgrade.start').length, 1);
   });
 
   test('batch=2 upgrades three tenants, all ready', async () => {

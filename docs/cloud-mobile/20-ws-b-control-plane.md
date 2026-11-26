@@ -142,6 +142,10 @@ ships.
   image's `org.idbots.rollback-safe-to` label allows that version; otherwise
   mark `failed` and alert. Batches run one tenant at a time by default
   (`--batch` raises it). Downgrades below `rollback-safe-to` are refused.
+  The commercial rollout engine persists jobs, per-tenant leases/outcomes, and
+  per-host image preflight; it advances through canary/internal/percentage waves,
+  supports pause/resume/retry, and pauses expansion on the safety thresholds.
+  Direct `--all` selects only ready/degraded tenants that need the target image.
 
 ### Proxy
 
@@ -177,14 +181,18 @@ ships.
 
   | Command | Effect |
   |---------|--------|
+  | `release register --file MANIFEST`, `release list`, `release promote ID --status STATUS` | Immutable image digests, source/contract/schema provenance, and channel promotion |
+  | `rollout create RELEASE [FILTERS]`, `rollout list/show` | Durable staged rollout jobs and per-tenant outcomes |
+  | `rollout start/pause/resume/retry/cancel ID` | Audited rollout controls; retry while paused |
   | `invite create --uses N [--with-redeem] [--expires DATE] [--note TEXT]` | Prints the new code |
   | `invite list`, `invite disable CODE` | |
   | `redeem import --file CODES.csv [--note TEXT]` | Imports single-use codes exported from the Metaso admin console; duplicates are skipped |
   | `redeem stats` | Imported, assigned, and remaining counts (never prints codes) |
   | `user list [--phone]`, `user disable ID`, `user enable ID` | Disabling suspends the tenant |
-  | `tenant list [--status]`, `tenant show ID` | Status, image, versions, last error |
+  | `tenant list [--status] [--kind] [--cohort] [--environment]`, `tenant show ID` | Status, image/digest, rollout group, versions, last error |
   | `tenant restart ID`, `tenant stop ID`, `tenant start ID` | |
-  | `tenant upgrade (ID ... \| --all) --image TAG [--batch N]` | REQ-B-12 |
+  | `tenant classify ID --kind KIND --cohort COHORT` | Customer/internal/synthetic/demo and canary/early/stable metadata |
+  | `tenant upgrade (ID ... \| --all) --image TAG [--batch N] [--digest SHA256] [--kind KIND] [--cohort COHORT] [--environment ENV]` | REQ-B-12; fleet selects serving tenants needing the target |
   | `tenant rotate-secret ID` | New secret, container recreated |
   | `tenant logs ID [--since 1h]` | Container logs through the Docker API |
   | `tenant export ID --to PATH` | Archive of the tenant volume (stops the container briefly, then restarts it) |

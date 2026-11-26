@@ -88,7 +88,14 @@ export interface DockerListItem {
 
 export interface DockerImageInspect {
   Id: string;
+  RepoDigests?: string[];
   Config: { Labels: Record<string, string> };
+}
+
+export function dockerImageDigest(inspect: DockerImageInspect): string | null {
+  const repoDigest = inspect.RepoDigests?.find((entry) => entry.includes('@sha256:'));
+  const digest = repoDigest?.slice(repoDigest.indexOf('@') + 1) ?? inspect.Id;
+  return /^sha256:[a-f0-9]{64}$/.test(digest) ? digest : null;
 }
 
 interface Transport {
@@ -142,7 +149,7 @@ export class DockerClient {
     throw new Error(`CP_DOCKER_URL must be http(s):// or http+unix://, got "${url}"`);
   }
 
-  private requestBuffer(method: string, path: string, body?: string): Promise<{ status: number; body: Buffer }> {
+  private requestBuffer(method: string, path: string, body?: string, timeoutMs = 10_000): Promise<{ status: number; body: Buffer }> {
     const { options } = this.transport.requestOptions(path);
     return new Promise((resolve, reject) => {
       const client = options.protocol === 'https:' ? https : http;
@@ -169,7 +176,7 @@ export class DockerClient {
         },
       );
       req.on('error', reject);
-      req.setTimeout(10_000, () => req.destroy(new Error('docker request timed out')));
+      req.setTimeout(timeoutMs, () => req.destroy(new Error('docker request timed out')));
       if (body) {
         req.write(body);
       }
@@ -275,6 +282,14 @@ export class DockerClient {
 
   async imageInspect(ref: string): Promise<DockerImageInspect> {
     return this.requestJson('GET', `${API_VERSION}/images/${encodeURIComponent(ref)}/json`);
+  }
+
+  async pullImage(ref: string, timeoutMs = 30 * 60_000): Promise<void> {
+    const params = new URLSearchParams({ fromImage: ref });
+    const result = await this.requestBuffer('POST', `${API_VERSION}/images/create?${params.toString()}`, undefined, timeoutMs);
+    if (result.status >= 300) {
+      throw new DockerError(`pull ${ref} failed with ${result.status}: ${result.body.toString('utf8').slice(0, 1000)}`, result.status);
+    }
   }
 
   async containerLogs(id: string, sinceSec?: number): Promise<string> {

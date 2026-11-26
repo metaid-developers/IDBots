@@ -53,6 +53,10 @@ authoritative table.
 | `CP_LISTEN` | public listen address (default `0.0.0.0:8080`) |
 | `CP_METRICS_LISTEN` | internal metrics listen address (default `0.0.0.0:9100`) |
 | `CP_DB_PATH` | SQLite file on a persistent volume |
+| `CP_ENVIRONMENT` | `staging` or `production` (default `production`) |
+| `CP_HOST_ID` | Optional stable host ID; defaults to a hash of the Docker URL |
+| `CP_HOST_CAPACITY` | Active-tenant capacity (defaults: staging 27, production 58); legacy zero is repaired at startup |
+| `CP_AGENT_LISTEN` / `CP_AGENT_TLS_*_FILE` | Optional VPC-only mTLS listener for remote host agents; all TLS files are required when enabled |
 | `CP_MASTER_KEY` | 32 bytes base64; AES-256-GCM key for gateway secrets, redeem codes, and device push tokens |
 | `CP_DOCKER_URL` | Docker Engine API, e.g. `http://docker-proxy:2375` or `http+unix:///var/run/docker.sock` |
 | `CP_TENANT_IMAGE` | default tenant image tag |
@@ -169,6 +173,25 @@ builds; a root-context build is governed by the repository-root
 
 ## Operations notes
 
+- **SQLite is the only management database.** Users, login state, tenant
+  metadata, RBAC/approvals, releases, and rollout jobs live in the same `cp.sqlite`
+  on `cp-data`. Run exactly one active rollout scheduler per environment; host
+  agents execute remotely without writing the central database. Scale execution
+  through agents, not a second database writer.
+- **Administrator API uses RBAC and MFA.** Bootstrap with `admin create
+  USERNAME --role admin --as OPERATOR`; enroll the one-time TOTP secret, then
+  log in through `/api/v1/admin/session`. See
+  `deploy/runbooks/commercial-operations.md` for roles, endpoints, and the
+  two-person rollout approval flow.
+- **Register immutable releases before rollout.** The Cloud Images workflow
+  uploads `cloud-release-manifest.json`. Run `node dist/cli.js release register
+  --file /secure/path/cloud-release-manifest.json --as OPERATOR`, then use
+  `release list` and `release promote ID --status canary|stable`. A conflicting
+  manifest for an existing release identity is rejected rather than overwritten.
+- **Use persistent rollouts for fleet changes.** `rollout create RELEASE_ID`
+  creates a paused staged job; `rollout start`, `show`, `pause`, `resume`,
+  `retry`, and `cancel` operate it. Jobs survive restarts, preflight each host,
+  and stop expanding on canary/consecutive/threshold failures.
 - **Never expose the control plane directly.** Client IPs come from
   `X-Forwarded-For` and are trusted unconditionally — safe only behind the
   WS-C reverse proxy, which must be the single public entry. A directly

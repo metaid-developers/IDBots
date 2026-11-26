@@ -20,6 +20,9 @@ REQ-B-20 fixes the metric CONTENT but not the names. These rules assume:
 | `cp_tenants_by_status{status=...}` | gauge | tenants per C3 status (powers TenantFailed + TenantsNearCapacity) |
 | `cp_http_requests_total{route,status}` | counter | HTTP requests (powers ControlPlane5xxHigh) |
 | `cp_host_capacity` | gauge | this host's `capacity` from REQ-C-19 |
+| `cp_tenants_by_kind` / `cp_tenants_by_cohort` | gauge | tenant commercial classification counts |
+| `cp_rollout_jobs{status=...}` / `cp_rollout_items{status=...}` | gauge | persistent rollout job and item state |
+| `cp_host_agents_connected` / `cp_host_agent_last_seen_timestamp_seconds` | gauge | remote agent presence and heartbeat age |
 
 If WS-B ships different names, adjust `alert-rules.yml` in one place — the
 rule logic stays.

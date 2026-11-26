@@ -11,8 +11,9 @@
 #   secrets.ACR_USERNAME    ACR push RAM user (least privilege, push only)
 #   secrets.ACR_PASSWORD
 #
-# Both images and the conformance kit are required release artifacts. Missing
-# files or failed test legs fail the workflow; no stand-in fallback is allowed.
+# Both images, the conformance kit, and cloud-release-manifest.json are required
+# release artifacts. Missing files or failed test legs fail the workflow; no
+# stand-in fallback is allowed.
 
 name: Cloud Images
 
@@ -195,6 +196,24 @@ jobs:
 
       - name: Push control-plane image
         run: docker push "${{ steps.meta.outputs.cp_tag }}"
+
+      - name: Write immutable cloud release manifest
+        env:
+          TENANT_IMAGE: ${{ steps.meta.outputs.tenant_tag }}
+          CONTROL_PLANE_IMAGE: ${{ steps.meta.outputs.cp_tag }}
+        run: |
+          export TENANT_IMAGE_DIGEST="$(docker buildx imagetools inspect "$TENANT_IMAGE" --format '{{.Manifest.Digest}}')"
+          export CONTROL_PLANE_IMAGE_DIGEST="$(docker buildx imagetools inspect "$CONTROL_PLANE_IMAGE" --format '{{.Manifest.Digest}}')"
+          export TENANT_LABELS="$(docker buildx imagetools inspect "$TENANT_IMAGE" --format '{{ json .Image.Config.Labels }}')"
+          node cloud/control-plane/scripts/write-release-manifest.mjs
+
+      - name: Upload cloud release manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-release-manifest-${{ github.sha }}
+          path: release/cloud-release-manifest.json
+          retention-days: 30
+          if-no-files-found: error
 
       - name: Verify pushed manifests and C1 labels
         run: |

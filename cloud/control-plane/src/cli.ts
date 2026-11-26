@@ -18,6 +18,11 @@ import { FakeSmsProvider } from './sms.js';
 import { newInviteCode, newGatewaySecret } from './ids.js';
 import { encryptSecret, sha256Hex, maskPhone } from './crypto.js';
 import { upgradeTenants, findContainerId, recreateContainer } from './services/upgrade.js';
+import { selectFleetUpgradeTenantIds } from './services/upgradeSelection.js';
+import { listReleases, registerRelease, setReleaseStatus } from './services/releases.js';
+import { RolloutManager } from './rollout/manager.js';
+import { SqliteRolloutStore } from './rollout/sqliteStore.js';
+import { createAdminUser, disableAdminUser, listAdminUsers, type AdminRole } from './admin/auth.js';
 import { MetricsRegistry } from './metrics.js';
 import { PushDeliveryService } from './services/pushDelivery.js';
 import type { AppContext } from './context.js';
@@ -39,6 +44,10 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
   const masterKey = Buffer.from(masterKeyRaw, 'base64');
   if (masterKey.length !== 32) {
     throw new ConfigError(`CP_MASTER_KEY must decode to 32 bytes, got ${masterKey.length}`);
+  }
+  const environment = env.CP_ENVIRONMENT ?? 'production';
+  if (environment !== 'staging' && environment !== 'production') {
+    throw new ConfigError('CP_ENVIRONMENT must be "staging" or "production"');
   }
   const tenantEnv: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
@@ -64,6 +73,10 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
     listen: '0.0.0.0:0',
     metricsListen: '0.0.0.0:0',
     dbPath,
+    environment,
+    hostId: env.CP_HOST_ID?.trim() || null,
+    hostCapacity: num('CP_HOST_CAPACITY', environment === 'staging' ? 27 : 58),
+    agent: null,
     masterKey,
     dockerUrl: env.CP_DOCKER_URL ?? 'http+unix:///var/run/docker.sock',
     tenantImage: env.CP_TENANT_IMAGE ?? '',
@@ -205,6 +218,9 @@ interface TenantRow {
   volume_name: string;
   image: string;
   previous_image: string | null;
+  image_digest: string | null;
+  kind: 'customer' | 'internal' | 'synthetic' | 'demo';
+  cohort: 'canary' | 'early' | 'stable';
   phase: string | null;
   app_version: string | null;
   contract_version: string | null;
@@ -237,6 +253,100 @@ async function startTenantContainer(ctx: AppContext, tenant: TenantRow): Promise
 }
 
 // --- commands ---------------------------------------------------------------
+
+function cmdHostRegister(ctx: AppContext, flags: Map<string, string | boolean>, id: string, as: string): void {
+  if (!/^h_[a-zA-Z0-9_-]{1,64}$/.test(id)) throw new CliError('host id must look like h_<name>');
+  const environment = requireFlag(flags, 'environment');
+  if (environment !== 'staging' && environment !== 'production') throw new CliError('--environment must be staging or production');
+  const capacity = Number(requireFlag(flags, 'capacity'));
+  if (!Number.isInteger(capacity) || capacity < 1) throw new CliError('--capacity must be a positive integer');
+  const fingerprint = flagString(flags, 'fingerprint')?.replaceAll(':', '').toUpperCase() ?? null;
+  const token = fingerprint ? null : newGatewaySecret();
+  ctx.db.prepare(`INSERT INTO hosts (id, docker_url, capacity, status, environment, agent_token_hash, agent_fingerprint)
+    VALUES (?, ?, ?, 'active', ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET docker_url = excluded.docker_url, capacity = excluded.capacity,
+      status = 'active', environment = excluded.environment,
+      agent_token_hash = excluded.agent_token_hash, agent_fingerprint = excluded.agent_fingerprint`)
+    .run(id, `agent://${id}`, capacity, environment, token ? sha256Hex(token) : null, fingerprint);
+  audit(ctx, as, 'host.register', id, { environment, capacity, credential: fingerprint ? 'mtls' : 'token' });
+  console.log(`${id}: registered environment=${environment} capacity=${capacity}${token ? `\nagent token (shown once): ${token}` : ''}`);
+}
+
+function cmdAdminCreate(ctx: AppContext, flags: Map<string, string | boolean>, username: string, as: string): void {
+  const role = requireFlag(flags, 'role') as AdminRole;
+  const result = createAdminUser(ctx.db, ctx.config.masterKey, { username, role }, as);
+  console.log(`id: ${result.id}\nusername: ${result.username}\nrole: ${result.role}\ntoken (shown once): ${result.token}\nmfa secret (shown once): ${result.mfaSecret}\notpauth: ${result.otpauthUrl}`);
+}
+
+function cmdAdminDisable(ctx: AppContext, id: string, as: string): void {
+  disableAdminUser(ctx.db, id, as);
+  console.log(`admin ${id} disabled`);
+}
+
+function rolloutManager(ctx: AppContext): RolloutManager {
+  ctx.rollouts ??= new RolloutManager(ctx, new SqliteRolloutStore(ctx.db));
+  return ctx.rollouts;
+}
+
+async function cmdRolloutCreate(ctx: AppContext, flags: Map<string, string | boolean>, rest: string[], as: string): Promise<void> {
+  const releaseId = rest[0];
+  if (!releaseId) throw new CliError('usage: rollout create RELEASE_ID [TENANT_ID ...] [--kind KIND] [--cohort COHORT] [--environment ENV]');
+  const kind = flagString(flags, 'kind') as 'customer' | 'internal' | 'synthetic' | 'demo' | null;
+  const cohort = flagString(flags, 'cohort') as 'canary' | 'early' | 'stable' | null;
+  const environment = flagString(flags, 'environment') as 'staging' | 'production' | null;
+  const mode = flagString(flags, 'mode') ?? 'upgrade';
+  if (mode !== 'upgrade' && mode !== 'rollback') throw new CliError('--mode must be upgrade or rollback');
+  const view = await rolloutManager(ctx).create({
+    releaseId,
+    operator: as,
+    mode,
+    tenantIds: rest.length > 1 ? rest.slice(1) : undefined,
+    ...(kind ? { kind } : {}),
+    ...(cohort ? { cohort } : {}),
+    ...(environment ? { environment } : {}),
+    globalConcurrency: Number(flagString(flags, 'global-concurrency') ?? '20'),
+    perHostConcurrency: Number(flagString(flags, 'per-host-concurrency') ?? '1'),
+    ...(flagString(flags, 'soak-ms') ? { soakMs: Number(flagString(flags, 'soak-ms')) } : {}),
+  });
+  console.log(`${view.job.id}: paused release=${view.job.releaseId} tenants=${view.items.length} waves=${view.waves.length}`);
+}
+
+function printRollout(view: NonNullable<Awaited<ReturnType<SqliteRolloutStore['getJob']>>>): void {
+  const counts: Record<string, number> = {};
+  for (const item of view.items) counts[item.status] = (counts[item.status] ?? 0) + 1;
+  console.log(JSON.stringify({
+    id: view.job.id,
+    releaseId: view.job.releaseId,
+    mode: view.job.mode,
+    status: view.job.status,
+    currentWave: view.job.currentWave,
+    waves: view.waves,
+    items: counts,
+    stopReason: view.job.stopReason,
+    operator: view.job.operator,
+    createdAt: view.job.createdAt,
+    updatedAt: view.job.updatedAt,
+  }));
+}
+
+function cmdReleaseRegister(ctx: AppContext, flags: Map<string, string | boolean>, as: string): void {
+  const file = requireFlag(flags, 'file');
+  const manifest = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+  const result = registerRelease(ctx.db, manifest, as);
+  console.log(`${result.release.id}: ${result.duplicate ? 'already registered' : 'registered'} status=${result.release.status} image=${result.release.tenant.image} digest=${result.release.tenant.digest}`);
+}
+
+function cmdReleaseList(ctx: AppContext): void {
+  for (const release of listReleases(ctx.db)) {
+    console.log(`${release.id}  ${release.status}  app=${release.appVersion}  schema=${release.databaseSchemaVersion}  image=${release.tenant.image}  digest=${release.tenant.digest}`);
+  }
+}
+
+function cmdReleasePromote(ctx: AppContext, flags: Map<string, string | boolean>, id: string, as: string): void {
+  const status = requireFlag(flags, 'status') as 'candidate' | 'canary' | 'stable' | 'retired';
+  const release = setReleaseStatus(ctx.db, id, status, as);
+  console.log(`${release.id}: status=${release.status}`);
+}
 
 function cmdInviteCreate(ctx: AppContext, flags: Map<string, string | boolean>, as: string): void {
   const usesRaw = flagString(flags, 'uses') ?? '1';
@@ -464,15 +574,36 @@ async function cmdUserSetStatus(
 
 function cmdTenantList(ctx: AppContext, flags: Map<string, string | boolean>): void {
   const status = flagString(flags, 'status');
+  const kind = flagString(flags, 'kind');
+  const cohort = flagString(flags, 'cohort');
+  const environment = flagString(flags, 'environment');
   const rows = ctx.db
-    .prepare('SELECT id, user_id, status, image, app_version, container_name FROM tenants ORDER BY created_at')
-    .all() as Array<{ id: string; user_id: string; status: string; image: string; app_version: string | null; container_name: string }>;
+    .prepare(`SELECT tenants.id, tenants.user_id, tenants.status, tenants.image, tenants.app_version,
+                     tenants.container_name, tenants.kind, tenants.cohort, tenants.image_digest,
+                     hosts.environment
+              FROM tenants LEFT JOIN hosts ON hosts.id = tenants.host_id
+              ORDER BY tenants.created_at`)
+    .all() as Array<{
+      id: string;
+      user_id: string;
+      status: string;
+      image: string;
+      app_version: string | null;
+      container_name: string;
+      kind: string;
+      cohort: string;
+      image_digest: string | null;
+      environment: string | null;
+    }>;
   for (const row of rows) {
-    if (status && row.status !== status) {
-      continue;
-    }
+    if (status && row.status !== status) continue;
+    if (kind && row.kind !== kind) continue;
+    if (cohort && row.cohort !== cohort) continue;
+    if (environment && row.environment !== environment) continue;
     console.log(
-      `${row.id}  ${row.status}  image=${row.image}  appVersion=${row.app_version ?? '-'}  user=${row.user_id}  container=${row.container_name}`,
+      `${row.id}  ${row.status}  image=${row.image}  appVersion=${row.app_version ?? '-'}  ` +
+        `user=${row.user_id}  container=${row.container_name}  kind=${row.kind}  cohort=${row.cohort}  ` +
+        `environment=${row.environment ?? '-'}  digest=${row.image_digest?.slice(0, 19) ?? '-'}`,
     );
   }
 }
@@ -487,6 +618,9 @@ function cmdTenantShow(ctx: AppContext, id: string): void {
       `phase:         ${row.phase ?? '-'}`,
       `image:         ${row.image}`,
       `previous_image: ${row.previous_image ?? '-'}`,
+      `image_digest:  ${row.image_digest ?? '-'}`,
+      `kind:          ${row.kind}`,
+      `cohort:        ${row.cohort}`,
       `app_version:   ${row.app_version ?? '-'}`,
       `contract_version: ${row.contract_version ?? '-'}`,
       `last_error:    ${row.last_error ?? '-'}`,
@@ -522,6 +656,25 @@ async function cmdTenantLifecycle(
   console.log(`tenant ${id}: ${action} done`);
 }
 
+function cmdTenantClassify(ctx: AppContext, flags: Map<string, string | boolean>, id: string, as: string): void {
+  const tenant = getTenant(ctx, id);
+  const kind = flagString(flags, 'kind') ?? tenant.kind;
+  const cohort = flagString(flags, 'cohort') ?? tenant.cohort;
+  if (!['customer', 'internal', 'synthetic', 'demo'].includes(kind)) {
+    throw new CliError('--kind must be customer, internal, synthetic, or demo');
+  }
+  if (!['canary', 'early', 'stable'].includes(cohort)) {
+    throw new CliError('--cohort must be canary, early, or stable');
+  }
+  if (!flagString(flags, 'kind') && !flagString(flags, 'cohort')) {
+    throw new CliError('pass --kind and/or --cohort');
+  }
+  ctx.db.prepare('UPDATE tenants SET kind = ?, cohort = ?, updated_at = ? WHERE id = ?')
+    .run(kind, cohort, Date.now(), id);
+  audit(ctx, as, 'tenant.classify', id, { from: { kind: tenant.kind, cohort: tenant.cohort }, to: { kind, cohort } });
+  console.log(`tenant ${id}: kind=${kind} cohort=${cohort}`);
+}
+
 async function cmdTenantUpgrade(
   ctx: AppContext,
   flags: Map<string, string | boolean>,
@@ -531,11 +684,31 @@ async function cmdTenantUpgrade(
   const image = requireFlag(flags, 'image');
   let tenantIds = ids;
   if (flags.get('all') === true) {
-    tenantIds = (
-      ctx.db.prepare("SELECT id FROM tenants WHERE status != 'failed'").all() as Array<{ id: string }>
-    ).map((row) => row.id);
+    const kind = flagString(flags, 'kind');
+    const cohort = flagString(flags, 'cohort');
+    const environment = flagString(flags, 'environment');
+    if (kind && !['customer', 'internal', 'synthetic', 'demo'].includes(kind)) {
+      throw new CliError('--kind must be customer, internal, synthetic, or demo');
+    }
+    if (cohort && !['canary', 'early', 'stable'].includes(cohort)) {
+      throw new CliError('--cohort must be canary, early, or stable');
+    }
+    if (environment && !['staging', 'production'].includes(environment)) {
+      throw new CliError('--environment must be staging or production');
+    }
+    tenantIds = selectFleetUpgradeTenantIds(ctx.db, {
+      targetImage: image,
+      targetDigest: flagString(flags, 'digest'),
+      ...(kind ? { kind: kind as 'customer' | 'internal' | 'synthetic' | 'demo' } : {}),
+      ...(cohort ? { cohort: cohort as 'canary' | 'early' | 'stable' } : {}),
+      ...(environment ? { environment: environment as 'staging' | 'production' } : {}),
+    });
   }
   if (tenantIds.length === 0) {
+    if (flags.get('all') === true) {
+      console.log('no tenants require upgrade');
+      return;
+    }
     throw new CliError('no tenants selected (pass ids or --all)');
   }
   const batch = Number(flagString(flags, 'batch') ?? '1');
@@ -721,6 +894,17 @@ async function cmdDeletionComplete(
 // --- dispatch ---------------------------------------------------------------
 
 const MUTATING = new Set([
+  'host.register',
+  'admin.create',
+  'admin.disable',
+  'rollout.create',
+  'rollout.start',
+  'rollout.pause',
+  'rollout.resume',
+  'rollout.cancel',
+  'rollout.retry',
+  'release.register',
+  'release.promote',
   'invite.create',
   'invite.disable',
   'redeem.import',
@@ -731,6 +915,7 @@ const MUTATING = new Set([
   'tenant.restart',
   'tenant.stop',
   'tenant.start',
+  'tenant.classify',
   'tenant.upgrade',
   'tenant.rotate-secret',
   'tenant.export',
@@ -749,12 +934,58 @@ async function run(argv: string[]): Promise<void> {
     requireOperator(as);
   }
   if (!domain) {
-    throw new CliError('usage: cli.js <invite|redeem|credit|user|tenant|deletion|push> <command> [flags] [--as NAME]');
+    throw new CliError('usage: cli.js <host|admin|rollout|release|invite|redeem|credit|user|tenant|deletion|push> <command> [flags] [--as NAME]');
   }
 
   const ctx = loadCliContext(process.env);
   try {
     switch (action) {
+      case 'host.register':
+        cmdHostRegister(ctx, flags, rest[0], as!);
+        break;
+      case 'host.list':
+        console.log(JSON.stringify(ctx.db.prepare('SELECT id, environment, capacity, status, agent_fingerprint, agent_last_seen_at FROM hosts ORDER BY id').all(), null, 2));
+        break;
+      case 'admin.create':
+        cmdAdminCreate(ctx, flags, rest[0], as!);
+        break;
+      case 'admin.list':
+        console.log(JSON.stringify(listAdminUsers(ctx.db), null, 2));
+        break;
+      case 'admin.disable':
+        cmdAdminDisable(ctx, rest[0], as!);
+        break;
+      case 'rollout.create':
+        await cmdRolloutCreate(ctx, flags, rest, as!);
+        break;
+      case 'rollout.list':
+        for (const view of await rolloutManager(ctx).store.listJobs()) printRollout(view);
+        break;
+      case 'rollout.show':
+        printRollout(await rolloutManager(ctx).requireJob(rest[0]));
+        break;
+      case 'rollout.start':
+      case 'rollout.resume':
+        await rolloutManager(ctx).resume(rest[0]);
+        break;
+      case 'rollout.pause':
+        await rolloutManager(ctx).pause(rest[0]);
+        break;
+      case 'rollout.cancel':
+        await rolloutManager(ctx).cancel(rest[0]);
+        break;
+      case 'rollout.retry':
+        console.log(`retry items: ${await rolloutManager(ctx).retryFailed(rest[0])}`);
+        break;
+      case 'release.register':
+        cmdReleaseRegister(ctx, flags, as!);
+        break;
+      case 'release.list':
+        cmdReleaseList(ctx);
+        break;
+      case 'release.promote':
+        cmdReleasePromote(ctx, flags, rest[0], as!);
+        break;
       case 'invite.create':
         cmdInviteCreate(ctx, flags, as!);
         break;
@@ -802,6 +1033,9 @@ async function run(argv: string[]): Promise<void> {
         break;
       case 'tenant.start':
         await cmdTenantLifecycle(ctx, 'start', rest[0], as!);
+        break;
+      case 'tenant.classify':
+        cmdTenantClassify(ctx, flags, rest[0], as!);
         break;
       case 'tenant.upgrade':
         await cmdTenantUpgrade(ctx, flags, rest, as!);

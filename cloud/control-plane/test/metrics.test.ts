@@ -30,7 +30,11 @@ describe('metrics and request logging (REQ-B-20)', () => {
   test('tenant gauges, provisioning histogram, request counter, sms counter, open sockets', async () => {
     // The harness tenant provisioned to ready during setup.
     let text = await scrape(t.app.metricsUrl);
-    assert.match(text, /cp_tenants\{status="ready"\} 1/);
+    assert.match(text, /cp_tenants_by_status\{status="ready"\} 1/);
+    assert.match(text, /cp_tenants_by_kind\{kind="customer"\} 1/);
+    t.db.prepare("INSERT INTO hosts (id, docker_url, capacity, status, environment) VALUES ('h_testhost', 'http://docker.test', 27, 'active', 'staging')").run();
+    text = await scrape(t.app.metricsUrl);
+    assert.match(text, /cp_host_capacity\{host_id="h_testhost",environment="staging"\} 27/);
     assert.match(text, /cp_provisioning_duration_seconds_count\{?\}? 1/);
     assert.match(text, /cp_open_sockets 0/);
 

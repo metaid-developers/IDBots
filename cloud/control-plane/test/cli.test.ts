@@ -159,6 +159,18 @@ describe('admin CLI (REQ-B-18)', () => {
     assert.equal(inspect2.State.Running, true);
   });
 
+  test('tenant classify persists the rollout group and writes an audit row', async () => {
+    seedUserAndTenant(db, { userId: 'u_classify', phone: '+8613900006090', tenantId: 't_classify', status: 'ready' });
+    const result = await runCli('tenant', 'classify', 't_classify', '--kind', 'synthetic', '--cohort', 'canary', '--as', 'op-classify');
+    assert.equal(result.code, 0, result.stderr);
+    const row = db.prepare("SELECT kind, cohort FROM tenants WHERE id = 't_classify'").get() as { kind: string; cohort: string };
+    assert.deepEqual(row, { kind: 'synthetic', cohort: 'canary' });
+    assert.equal(auditsFor('tenant.classify').length, 1);
+    const show = await runCli('tenant', 'show', 't_classify');
+    assert.match(show.stdout, /kind:\s+synthetic/);
+    assert.match(show.stdout, /cohort:\s+canary/);
+  });
+
   test('tenant stop/start/rerestart lifecycle', async () => {
     seedUserAndTenant(db, { userId: 'u_cli2', phone: '+8613900006002', tenantId: 't_cli2', status: 'ready' });
     await startTenant('t_cli2');

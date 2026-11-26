@@ -17,6 +17,7 @@ import { proxyRoutes } from './services/httpProxy.js';
 import { loginRoutes } from './services/loginBundle.js';
 import { attachAsrGateway, type AsrGatewayOptions } from './services/asr/gateway.js';
 import { attachWsProxy, type WsProxyOptions } from './services/wsProxy.js';
+import { adminRoutes } from './admin/routes.js';
 
 /**
  * Minimal node:http server (no web framework, per REQ-B-2): a tiny
@@ -231,6 +232,7 @@ export function createRequestHandler(app: AppContext): http.RequestListener {
   // Login bundle routes come last: their `/*` catch-all serves bundle
 // assets and 404s anything unmatched above.
 const routes: Route[] = [
+  ...adminRoutes,
   ...authRoutes,
   ...sensitiveRoutes,
   ...accountRoutes,
@@ -281,7 +283,23 @@ export function createMetricsServer(app: AppContext): http.Server {
     }>;
     const lines: string[] = [];
     for (const row of tenantRows) {
-      lines.push(`cp_tenants{status="${row.status}"} ${row.n}`);
+      lines.push(`cp_tenants_by_status{status="${row.status}"} ${row.n}`);
+    }
+    for (const column of ['kind', 'cohort'] as const) {
+      const rows = app.db.prepare(`SELECT ${column} AS name, COUNT(*) AS n FROM tenants GROUP BY ${column}`).all() as Array<{ name: string; n: number }>;
+      for (const row of rows) lines.push(`cp_tenants_by_${column}{${column}="${row.name}"} ${row.n}`);
+    }
+    const hostRows = app.db.prepare('SELECT id, environment, capacity, agent_last_seen_at FROM hosts').all() as Array<{
+      id: string;
+      environment: string;
+      capacity: number;
+      agent_last_seen_at: number | null;
+    }>;
+    for (const host of hostRows) {
+      lines.push(`cp_host_capacity{host_id="${host.id}",environment="${host.environment}"} ${host.capacity}`);
+      if (host.agent_last_seen_at !== null) {
+        lines.push(`cp_host_agent_last_seen_timestamp_seconds{host_id="${host.id}"} ${host.agent_last_seen_at / 1000}`);
+      }
     }
     res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
     res.end(`${app.metrics.render()}${lines.join('\n')}\n`);

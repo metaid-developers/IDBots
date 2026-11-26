@@ -4,7 +4,7 @@
 #
 #   backup-nightly.sh [--now] [--tenant t_x ...]
 #
-# Order: control-plane db first, then every running tenant container
+# Order: control-plane SQLite first, then every running tenant container
 # (idb-t_*), evenly staggered across the remaining window. Any failure alerts;
 # the exit code is non-zero if anything failed.
 set -euo pipefail
@@ -90,4 +90,4 @@ if [ "${#FAILED[@]}" -gt 0 ]; then
   err "failed: ${FAILED[*]}"
   exit 1
 fi
-info "nightly backup complete: control-plane + ${#TENANTS[@]} tenant(s), 0 failures"
+info "nightly backup complete: control-plane SQLite + ${#TENANTS[@]} tenant(s), 0 failures"

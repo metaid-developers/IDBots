@@ -18,6 +18,7 @@ export class ConfigError extends Error {
 }
 
 export type SmsMode = 'aliyun' | 'fake';
+export type DeploymentEnvironment = 'staging' | 'production';
 
 /** Upstream selection for the ASR voice gateway (voice channel doc). */
 export type AsrUpstreamKind = 'stub' | 'doubao' | 'funasr';
@@ -54,6 +55,10 @@ export interface ControlPlaneConfig {
   listen: string;
   metricsListen: string;
   dbPath: string;
+  environment: DeploymentEnvironment;
+  hostId: string | null;
+  hostCapacity: number;
+  agent: { listen: string; tlsCertFile: string; tlsKeyFile: string; tlsCaFile: string } | null;
   masterKey: Buffer;
   dockerUrl: string;
   tenantImage: string;
@@ -234,6 +239,14 @@ function parseMasterKey(env: NodeJS.ProcessEnv): Buffer {
   return key;
 }
 
+function parseEnvironment(env: NodeJS.ProcessEnv): DeploymentEnvironment {
+  const raw = env.CP_ENVIRONMENT ?? 'production';
+  if (raw !== 'staging' && raw !== 'production') {
+    throw new ConfigError(`CP_ENVIRONMENT must be "staging" or "production", got "${raw}"`);
+  }
+  return raw;
+}
+
 function parseSmsMode(env: NodeJS.ProcessEnv): SmsMode {
   const raw = env.CP_SMS_MODE ?? 'aliyun';
   if (raw !== 'aliyun' && raw !== 'fake') {
@@ -333,6 +346,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
 
   const inviteService = parseInviteServiceConfig(env);
   const asr = parseAsrConfig(env);
+  const environment = parseEnvironment(env);
+  const agentListen = env.CP_AGENT_LISTEN?.trim() || null;
+  if (agentListen) {
+    parseListen(env, 'CP_AGENT_LISTEN', agentListen);
+    required(env, 'CP_AGENT_TLS_CERT_FILE');
+    required(env, 'CP_AGENT_TLS_KEY_FILE');
+    required(env, 'CP_AGENT_TLS_CA_FILE');
+  }
 
   return {
     publicOrigin,
@@ -340,6 +361,15 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
     listen: parseListen(env, 'CP_LISTEN', '0.0.0.0:8080'),
     metricsListen: parseListen(env, 'CP_METRICS_LISTEN', '0.0.0.0:9100'),
     dbPath: required(env, 'CP_DB_PATH'),
+    environment,
+    hostId: env.CP_HOST_ID?.trim() || null,
+    hostCapacity: parsePositiveInt(env, 'CP_HOST_CAPACITY', environment === 'staging' ? 27 : 58),
+    agent: agentListen ? {
+      listen: agentListen,
+      tlsCertFile: env.CP_AGENT_TLS_CERT_FILE!,
+      tlsKeyFile: env.CP_AGENT_TLS_KEY_FILE!,
+      tlsCaFile: env.CP_AGENT_TLS_CA_FILE!,
+    } : null,
     masterKey: parseMasterKey(env),
     dockerUrl: required(env, 'CP_DOCKER_URL'),
     tenantImage: required(env, 'CP_TENANT_IMAGE'),

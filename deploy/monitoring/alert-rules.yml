@@ -64,6 +64,27 @@ groups:
         annotations:
           summary: "tenants at 80% of host capacity (REQ-C-19)"
 
+  - name: idbots-commercial-operations
+    rules:
+      - alert: RolloutFailures
+        expr: sum(cp_rollout_items{status=~"failed|rolled-back"}) > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "rollout has failed or rolled-back tenant items; expansion must remain paused"
+      - alert: RolloutPausedTooLong
+        expr: sum(cp_rollout_jobs{status="paused"}) > 0
+        for: 6h
+        labels: {severity: warning}
+        annotations:
+          summary: "a rollout has remained paused for more than 6 hours"
+      - alert: HostAgentDown
+        expr: time() - cp_host_agent_last_seen_timestamp_seconds > 90
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "host agent {{ $labels.host_id }} has not sent a heartbeat for more than 90 seconds"
+
   - name: idbots-control-plane
     rules:
       - alert: ControlPlaneDown

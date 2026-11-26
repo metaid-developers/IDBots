@@ -1,0 +1,17 @@
+# Optional tenant-host agent. Apply together with compose.yml on a tenant host:
+# docker compose --env-file /etc/idbots/deploy.env -f compose.yml -f compose.host-agent.yml up -d host-agent
+# The agent publishes no ports and connects outbound to the control plane over mTLS.
+name: idbots
+
+services:
+  host-agent:
+    image: ${REGISTRY:?set REGISTRY}/idbots/control-plane:${CP_IMAGE_TAG:?set CP_IMAGE_TAG}
+    command: ["node", "dist/host-agent.js"]
+    restart: unless-stopped
+    env_file:
+      - /etc/idbots/agent.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/idbots/agent-tls:/etc/idbots/agent-tls:ro
+    networks:
+      - edge

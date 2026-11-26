@@ -2,7 +2,11 @@
 
 New tenant images come from CI (`cloud-v*` tags →
 `{REGISTRY}/idbots/tenant:{version}-{commit7}`, Trivy-clean, conformance-passed).
-Rollout is canary-first, then fleet. The control plane drives upgrades
+The same workflow emits `cloud-release-manifest.json` with both pushed image
+digests, source SHA, contract, database schema, and rollback floor. Register it
+before rollout: `$CP release register --file /secure/path/cloud-release-manifest.json --as admin:{you}`;
+`release list` shows the immutable release ID and `release promote ID --status canary|stable`
+records its channel. Rollout is canary-first, then fleet. The control plane drives upgrades
 (WS-B REQ-B-12): stop → recreate on the same volume with the same secret →
 wait ready → auto-rollback to `previous_image` when the new image never
 becomes ready and `org.idbots.rollback-safe-to` allows it.
@@ -51,18 +55,46 @@ $CP tenant show {t_canary}          # note previous_image
 $CP tenant upgrade {t_canary} --image {previous_image} --as admin:{you}
 ```
 
-## 2. Fleet rollout
+## 2. Persistent staged rollout (primary path)
 
-Staging first (all fake + test tenants), soak 24 h, then production:
+Staging first (all fake + test tenants), soak 24 h, then production. Create the
+job from the registered immutable release; it starts paused and expands through
+synthetic canary → internal → 1% → 10% → 25% → fleet with per-wave safety gates:
+
+```bash
+$CP rollout create {release_id} --environment staging --as admin:{you}
+# note ro_... from the output
+$CP rollout start {ro_id} --as admin:{you}
+$CP rollout show {ro_id}
+# controls: pause/resume; retry failed items while paused, then resume
+$CP rollout pause {ro_id} --as admin:{you}
+$CP rollout retry {ro_id} --as admin:{you}
+$CP rollout resume {ro_id} --as admin:{you}
+```
+
+Defaults are global concurrency 20 and one active upgrade per host. Jobs,
+leases, per-host image preflight, per-tenant attempts, outcomes, and wave soak
+state survive control-plane restarts. A canary failure, two consecutive
+failures, or the configured wave failure threshold pauses expansion; only the
+affected tenant rolls back automatically. `rollout create` also accepts
+`--kind`, `--cohort`, explicit tenant IDs, `--global-concurrency`,
+`--per-host-concurrency`, and `--soak-ms` (test drills only).
+
+The legacy direct command remains a break-glass path for an individual tenant
+or an operator-selected fleet when the scheduler is unavailable:
 
 ```bash
 $CP tenant upgrade --all --image {REGISTRY}/idbots/tenant:{tag} --as admin:{you}
-# default one tenant at a time; --batch N raises concurrency (staging only)
+# --all selects only ready/degraded tenants not already on the target.
+# Optional: --digest sha256:... --kind customer --cohort stable --environment production
 ```
 
 Upgrades close phone WebSockets with `4012`; clients reconnect on their
 backoff and see an "updating" state. No data lives in the container — only
-in the volume — so an upgrade must never lose user data (A-22).
+in the volume — so an upgrade must never lose user data (A-22). Classify
+synthetic/internal/demo/customer tenants and their canary/early/stable cohort
+with `tenant classify ID --kind KIND --cohort COHORT --as admin:{you}`. Repeating
+an explicit upgrade already on the target image or digest is a no-op.
 
 ## 3. Rollback rules (from C1)
 

@@ -4,6 +4,7 @@ import { sendAlert } from '../alerts.js';
 import { buildContainerSpec } from './provisioning.js';
 import { waitForTenantReady } from './probe.js';
 import { semverGte, semverLt } from '../semver.js';
+import { dockerImageDigest, type DockerImageInspect } from '../docker/client.js';
 
 /**
  * Tenant upgrade (REQ-B-12): stop, remove, recreate on the SAME volume with
@@ -29,7 +30,7 @@ export interface UpgradeOptions {
   readyPollMs?: number;
 }
 
-export type UpgradeOutcome = 'upgraded' | 'rolled-back' | 'failed' | 'refused';
+export type UpgradeOutcome = 'upgraded' | 'rolled-back' | 'failed' | 'refused' | 'skipped';
 
 export interface UpgradeResult {
   tenantId: string;
@@ -44,6 +45,7 @@ interface TenantRow {
   volume_name: string;
   image: string;
   previous_image: string | null;
+  image_digest: string | null;
   status: string;
   app_version: string | null;
   contract_version: string | null;
@@ -106,7 +108,7 @@ export async function recreateContainer(
   await app.docker.startContainer(created.Id);
 }
 
-async function upgradeOne(
+async function upgradeOneInner(
   app: AppContext,
   tenantId: string,
   newImage: string,
@@ -131,14 +133,27 @@ async function upgradeOne(
     return { tenantId, outcome: 'failed', detail: 'tenant not found' };
   }
   const oldImage = row.image;
+  const skip = (detail: string): UpgradeResult => {
+    audit(app, opts.operator, 'tenant.upgrade.skipped', tenantId, { to: newImage, detail });
+    return { tenantId, outcome: 'skipped', detail };
+  };
+  if (oldImage === newImage) {
+    return skip('already using target image');
+  }
 
+  let targetInspect: DockerImageInspect;
   let targetLabels: Record<string, string>;
   try {
-    targetLabels = (await app.docker.imageInspect(newImage)).Config.Labels ?? {};
+    targetInspect = await app.docker.imageInspect(newImage);
+    targetLabels = targetInspect.Config.Labels ?? {};
   } catch (err) {
     const detail = `target image not found: ${err instanceof Error ? err.message : String(err)}`;
     audit(app, opts.operator, 'tenant.upgrade.failed', tenantId, { to: newImage, detail });
     return fail(detail, detail);
+  }
+  const targetDigest = dockerImageDigest(targetInspect);
+  if (targetDigest && row.image_digest === targetDigest) {
+    return skip('already using target image digest');
   }
   let currentLabels: Record<string, string> = {};
   try {
@@ -187,13 +202,14 @@ async function upgradeOne(
       .prepare(
         `UPDATE tenants
          SET status = ?, phase = NULL, last_error = NULL, image = ?, previous_image = ?,
-             app_version = ?, contract_version = ?, updated_at = ?
+             image_digest = ?, app_version = ?, contract_version = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
         wait.outcome,
         newImage,
         oldImage,
+        targetDigest,
         wait.lastOk?.appVersion ?? null,
         wait.lastOk?.contractVersion ?? null,
         Date.now(),
@@ -242,16 +258,23 @@ async function upgradeOne(
     intervalMs: opts.readyPollMs,
   });
   if (rollbackWait.outcome === 'ready' || rollbackWait.outcome === 'degraded') {
+    let rollbackDigest: string | null = null;
+    try {
+      rollbackDigest = dockerImageDigest(await app.docker.imageInspect(rollbackImage));
+    } catch {
+      // The successful container remains authoritative when metadata is unavailable.
+    }
     app.db
       .prepare(
         `UPDATE tenants
-         SET status = ?, phase = NULL, last_error = NULL, image = ?,
+         SET status = ?, phase = NULL, last_error = NULL, image = ?, image_digest = ?,
              app_version = ?, contract_version = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
         rollbackWait.outcome,
         rollbackImage,
+        rollbackDigest,
         rollbackWait.lastOk?.appVersion ?? null,
         rollbackWait.lastOk?.contractVersion ?? null,
         Date.now(),
@@ -270,6 +293,24 @@ async function upgradeOne(
   const detail = `rollback to ${rollbackImage} also did not become ready (${rollbackWait.outcome})`;
   audit(app, opts.operator, 'tenant.upgrade.failed', tenantId, { to: rollbackImage, detail });
   return fail(detail, detail);
+}
+
+const tenantUpgradeLocks = new Map<string, Promise<UpgradeResult>>();
+
+async function upgradeOne(
+  app: AppContext,
+  tenantId: string,
+  newImage: string,
+  opts: Required<UpgradeOptions>,
+): Promise<UpgradeResult> {
+  const previous = tenantUpgradeLocks.get(tenantId) ?? Promise.resolve({ tenantId, outcome: 'skipped', detail: 'no previous upgrade' } as UpgradeResult);
+  const run = previous.catch(() => undefined).then(() => upgradeOneInner(app, tenantId, newImage, opts));
+  tenantUpgradeLocks.set(tenantId, run);
+  try {
+    return await run;
+  } finally {
+    if (tenantUpgradeLocks.get(tenantId) === run) tenantUpgradeLocks.delete(tenantId);
+  }
 }
 
 /** Upgrade the given tenants to `newImage`, at most `batch` at a time. */

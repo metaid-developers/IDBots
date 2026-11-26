@@ -1,0 +1,343 @@
+import { randomUUID } from 'node:crypto';
+import type { AppContext } from '../context.js';
+import { selectFleetUpgradeTenantIds } from '../services/upgradeSelection.js';
+import { upgradeTenants, type UpgradeResult } from '../services/upgrade.js';
+import { decryptSecret } from '../crypto.js';
+import type { RemoteUpgradeTask } from '../agent/protocol.js';
+import type { RolloutItem, RolloutJobStatus, RolloutJobView, RolloutStore } from './types.js';
+import { assignRolloutWaves, type WaveTenant } from './waves.js';
+
+export interface CreateRolloutOptions {
+  releaseId: string;
+  operator: string;
+  mode?: 'upgrade' | 'rollback';
+  tenantIds?: string[];
+  kind?: 'customer' | 'internal' | 'synthetic' | 'demo';
+  cohort?: 'canary' | 'early' | 'stable';
+  environment?: 'staging' | 'production';
+  globalConcurrency?: number;
+  perHostConcurrency?: number;
+  soakMs?: number;
+}
+
+export class RolloutManager {
+  private readonly workerId = `worker-${randomUUID()}`;
+  private timer: NodeJS.Timeout | null = null;
+  private ticking: Promise<void> | null = null;
+  private started = false;
+
+  constructor(
+    private readonly app: AppContext,
+    readonly store: RolloutStore,
+    private readonly options: {
+      tickMs?: number;
+      leaseMs?: number;
+      readyTimeoutMs?: number;
+      readyPollMs?: number;
+      executor?: (item: RolloutItem, image: string, operator: string) => Promise<UpgradeResult>;
+      preflight?: (hostId: string, image: string) => Promise<void>;
+    } = {},
+  ) {}
+
+  async create(options: CreateRolloutOptions): Promise<RolloutJobView> {
+    const release = this.app.db.prepare('SELECT tenant_image, tenant_image_digest FROM releases WHERE id = ?')
+      .get(options.releaseId) as { tenant_image: string; tenant_image_digest: string } | undefined;
+    if (!release) throw new Error(`release ${options.releaseId} not found`);
+    const selectedIds = selectFleetUpgradeTenantIds(this.app.db, {
+      targetImage: release.tenant_image,
+      targetDigest: release.tenant_image_digest,
+      ...(options.kind ? { kind: options.kind } : {}),
+      ...(options.cohort ? { cohort: options.cohort } : {}),
+      ...(options.environment ? { environment: options.environment } : {}),
+    });
+    const requested = options.tenantIds ? new Set(options.tenantIds) : null;
+    const ids = selectedIds.filter((id) => !requested || requested.has(id));
+    if (ids.length === 0) throw new Error('no eligible tenants require this rollout');
+    const placeholders = ids.map(() => '?').join(',');
+    const tenants = (this.app.db.prepare(`SELECT id, host_id, kind, cohort, created_at FROM tenants
+      WHERE id IN (${placeholders})`).all(...ids) as Array<{
+        id: string;
+        host_id: string;
+        kind: WaveTenant['kind'];
+        cohort: WaveTenant['cohort'];
+        created_at: number;
+      }>).map((row) => ({ id: row.id, hostId: row.host_id, kind: row.kind, cohort: row.cohort, createdAt: row.created_at }));
+    const { waves, items } = assignRolloutWaves(tenants, options.soakMs);
+    const now = Date.now();
+    return this.store.createJob({
+      id: `ro_${randomUUID().replaceAll('-', '')}`,
+      releaseId: options.releaseId,
+      mode: options.mode ?? 'upgrade',
+      globalConcurrency: options.globalConcurrency ?? 20,
+      perHostConcurrency: options.perHostConcurrency ?? 1,
+      failureThresholdPercent: 2,
+      failureThresholdCount: 3,
+      consecutiveFailureLimit: 2,
+      operator: options.operator,
+      waves,
+      items,
+    }).then(async (view) => {
+      this.app.db.prepare('INSERT INTO audit_log (at, actor, action, target, detail_json) VALUES (?, ?, ?, ?, ?)')
+        .run(now, `admin:${options.operator}`, 'rollout.create', view.job.id, JSON.stringify({ releaseId: options.releaseId, mode: options.mode ?? 'upgrade', tenants: items.length, waves: waves.length }));
+      return view;
+    });
+  }
+
+  async start(): Promise<void> {
+    if (this.started) return;
+    this.started = true;
+    await this.store.requeueInFlight(Date.now());
+    await this.updateMetrics();
+    this.timer = setInterval(() => this.kick(), this.options.tickMs ?? 250);
+    this.timer.unref();
+    this.kick();
+  }
+
+  async stop(): Promise<void> {
+    this.started = false;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    await this.ticking;
+  }
+
+  private kick(): void {
+    if (!this.started || this.ticking) return;
+    this.ticking = this.tick().catch((err) => {
+      console.error(JSON.stringify({ level: 'error', component: 'rollout', msg: 'scheduler tick failed', error: String(err) }));
+    }).finally(() => {
+      this.ticking = null;
+    });
+  }
+
+  private async setStatus(id: string, status: RolloutJobStatus, reason: string | null, action: string): Promise<void> {
+    await this.store.setJobStatus(id, status, reason);
+    const view = await this.requireJob(id);
+    this.app.db.prepare('INSERT INTO audit_log (at, actor, action, target, detail_json) VALUES (?, ?, ?, ?, ?)')
+      .run(Date.now(), `admin:${view.job.operator}`, action, id, JSON.stringify({ status, reason }));
+    this.kick();
+  }
+
+  async startJob(id: string): Promise<void> {
+    const view = await this.requireJob(id);
+    if (view.job.status !== 'paused') throw new Error(`cannot start rollout in ${view.job.status}`);
+    await this.setStatus(id, 'running', null, 'rollout.start');
+  }
+
+  async pause(id: string, reason = 'paused by operator'): Promise<void> {
+    await this.setStatus(id, 'paused', reason, 'rollout.pause');
+  }
+
+  async resume(id: string): Promise<void> {
+    await this.startJob(id);
+  }
+
+  async cancel(id: string): Promise<void> {
+    await this.setStatus(id, 'cancelled', 'cancelled by operator', 'rollout.cancel');
+  }
+
+  async retryFailed(id: string): Promise<number> {
+    const view = await this.requireJob(id);
+    if (view.job.status !== 'paused') throw new Error('pause the rollout before retrying failed items');
+    const count = await this.store.retryFailed(id);
+    this.app.db.prepare('INSERT INTO audit_log (at, actor, action, target, detail_json) VALUES (?, ?, ?, ?, ?)')
+      .run(Date.now(), `admin:${view.job.operator}`, 'rollout.retry', id, JSON.stringify({ count }));
+    return count;
+  }
+
+  async requireJob(id: string): Promise<RolloutJobView> {
+    const view = await this.store.getJob(id);
+    if (!view) throw new Error(`rollout ${id} not found`);
+    return view;
+  }
+
+  private async tick(): Promise<void> {
+    const jobs = await this.store.listJobs(100);
+    for (const { job } of jobs) {
+      if (job.status !== 'running') continue;
+      await this.preflight(job.id);
+      const view = await this.requireJob(job.id);
+      if (view.job.status !== 'running') continue;
+      const items = await this.store.claimItems(
+        job.id,
+        this.workerId,
+        view.job.globalConcurrency,
+        this.options.leaseMs ?? 30_000,
+        Date.now(),
+      );
+      await Promise.all(items.map((item) => this.execute(item, view.job.releaseId, view.job.operator)));
+      await this.evaluate(job.id);
+    }
+    await this.updateMetrics();
+  }
+
+  private async updateMetrics(): Promise<void> {
+    const jobs = await this.store.listJobs(200);
+    const jobCounts = new Map<string, number>();
+    const itemCounts = new Map<string, number>();
+    for (const view of jobs) {
+      jobCounts.set(view.job.status, (jobCounts.get(view.job.status) ?? 0) + 1);
+      for (const item of view.items) itemCounts.set(item.status, (itemCounts.get(item.status) ?? 0) + 1);
+    }
+    for (const status of ['paused', 'running', 'completed', 'cancelled']) {
+      this.app.metrics.setGauge('cp_rollout_jobs', { status }, jobCounts.get(status) ?? 0);
+    }
+    for (const status of ['pending', 'leased', 'succeeded', 'failed', 'rolled-back', 'skipped']) {
+      this.app.metrics.setGauge('cp_rollout_items', { status }, itemCounts.get(status) ?? 0);
+    }
+  }
+
+  private async preflight(jobId: string): Promise<void> {
+    const view = await this.requireJob(jobId);
+    const hosts = await this.store.listPreflightHosts(jobId, view.job.currentWave);
+    const release = this.app.db.prepare('SELECT tenant_image FROM releases WHERE id = ?').get(view.job.releaseId) as { tenant_image: string };
+    for (const host of hosts) {
+      if (host.status === 'ready') continue;
+      if (host.status === 'failed') {
+        await this.pause(jobId, `image preflight failed on ${host.hostId}: ${host.error ?? 'unknown error'}`);
+        continue;
+      }
+      try {
+        await this.preflightImage(host.hostId, release.tenant_image);
+        await this.store.markPreflightHost(jobId, host.hostId, view.job.currentWave, 'ready', null, Date.now());
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        await this.store.markPreflightHost(jobId, host.hostId, view.job.currentWave, 'failed', detail, Date.now());
+        await this.pause(jobId, `image preflight failed on ${host.hostId}: ${detail}`);
+      }
+    }
+  }
+
+  private async preflightImage(hostId: string, image: string): Promise<void> {
+    if (this.options.preflight) {
+      await this.options.preflight(hostId, image);
+      return;
+    }
+    if (this.app.localHostId && hostId !== this.app.localHostId) {
+      if (!this.app.hostAgents) throw new Error(`host agent ${hostId} is unavailable`);
+      await this.app.hostAgents.preflight(hostId, image);
+      return;
+    }
+    await this.app.docker.imageInspect(image);
+  }
+
+  private async execute(item: RolloutItem, releaseId: string, operator: string): Promise<void> {
+    const release = this.app.db.prepare('SELECT tenant_image FROM releases WHERE id = ?').get(releaseId) as { tenant_image: string };
+    const heartbeat = setInterval(() => {
+      void this.store.heartbeat(item.jobId, item.tenantId, this.workerId, this.options.leaseMs ?? 30_000, Date.now());
+    }, Math.max(1000, Math.floor((this.options.leaseMs ?? 30_000) / 3)));
+    heartbeat.unref();
+    try {
+      const result = await this.executeUpgrade(item, release.tenant_image, operator);
+      const status = result.outcome === 'upgraded'
+        ? 'succeeded'
+        : result.outcome === 'rolled-back'
+          ? 'rolled-back'
+          : result.outcome === 'skipped'
+            ? 'skipped'
+            : 'failed';
+      await this.store.completeItem(item.jobId, item.tenantId, this.workerId, status, result.outcome, result.outcome === 'upgraded' || result.outcome === 'skipped' ? null : result.detail, Date.now());
+      this.app.metrics.inc('cp_rollout_items_total', { outcome: status });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      await this.store.completeItem(item.jobId, item.tenantId, this.workerId, 'failed', 'error', detail, Date.now());
+      this.app.metrics.inc('cp_rollout_items_total', { outcome: 'failed' });
+    } finally {
+      clearInterval(heartbeat);
+    }
+  }
+
+  private async executeUpgrade(item: RolloutItem, image: string, operator: string): Promise<UpgradeResult> {
+    if (this.options.executor) return this.options.executor(item, image, operator);
+    if (!this.app.localHostId || item.hostId === this.app.localHostId) {
+      const [result] = await upgradeTenants(this.app, [item.tenantId], image, {
+        operator: `${operator}:${item.jobId}`,
+        readyTimeoutMs: this.options.readyTimeoutMs,
+        readyPollMs: this.options.readyPollMs,
+      });
+      return result;
+    }
+    if (!this.app.hostAgents) throw new Error(`host agent ${item.hostId} is unavailable`);
+    const row = this.app.db.prepare(`SELECT tenants.*, users.display_name, users.locale FROM tenants
+      JOIN users ON users.id = tenants.user_id WHERE tenants.id = ?`).get(item.tenantId) as Record<string, unknown>;
+    const task: RemoteUpgradeTask = {
+      tenant: {
+        id: item.tenantId,
+        userId: String(row.user_id),
+        containerName: String(row.container_name),
+        volumeName: String(row.volume_name),
+        image: String(row.image),
+        previousImage: row.previous_image === null ? null : String(row.previous_image),
+        imageDigest: row.image_digest === null ? null : String(row.image_digest),
+        status: String(row.status),
+        appVersion: row.app_version === null ? null : String(row.app_version),
+        contractVersion: row.contract_version === null ? null : String(row.contract_version),
+      },
+      user: { id: String(row.user_id), displayName: String(row.display_name), locale: String(row.locale) },
+      gatewaySecret: decryptSecret(this.app.config.masterKey, String(row.gateway_secret_enc)),
+      newImage: image,
+      config: {
+        publicOrigin: this.app.config.publicOrigin,
+        tenantNetwork: this.app.config.tenantNetwork,
+        tenantMemoryMb: this.app.config.tenantMemoryMb,
+        tenantCpus: this.app.config.tenantCpus,
+        tenantEnv: this.app.config.tenantEnv,
+      },
+      readyTimeoutMs: this.options.readyTimeoutMs,
+      readyPollMs: this.options.readyPollMs,
+    };
+    const remote = await this.app.hostAgents.upgrade(item.hostId, task);
+    this.app.db.prepare(`UPDATE tenants SET status = ?, image = ?, previous_image = ?, image_digest = ?,
+      app_version = ?, contract_version = ?, last_error = ?, updated_at = ? WHERE id = ?`)
+      .run(
+        remote.tenant.status,
+        remote.tenant.image,
+        remote.tenant.previous_image,
+        remote.tenant.image_digest,
+        remote.tenant.app_version,
+        remote.tenant.contract_version,
+        remote.tenant.last_error,
+        Date.now(),
+        item.tenantId,
+      );
+    return {
+      tenantId: remote.result.tenantId,
+      outcome: remote.result.outcome as UpgradeResult['outcome'],
+      detail: remote.result.detail,
+    };
+  }
+
+  private async evaluate(jobId: string): Promise<void> {
+    const view = await this.requireJob(jobId);
+    if (view.job.status !== 'running') return;
+    const waveItems = view.items.filter((item) => item.waveIndex === view.job.currentWave);
+    const failed = waveItems.filter((item) => item.status === 'failed' || item.status === 'rolled-back');
+    const ordered = [...waveItems].sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0));
+    let consecutive = 0;
+    for (const item of ordered) {
+      if (item.status !== 'failed' && item.status !== 'rolled-back') break;
+      consecutive += 1;
+    }
+    const terminal = waveItems.every((item) => ['succeeded', 'failed', 'rolled-back', 'skipped'].includes(item.status));
+    const failureRate = waveItems.length ? failed.length / waveItems.length * 100 : 0;
+    const thresholdReached = failed.length >= view.job.failureThresholdCount && failureRate >= view.job.failureThresholdPercent;
+    if ((view.job.currentWave === 0 && failed.length > 0) || consecutive >= view.job.consecutiveFailureLimit || thresholdReached) {
+      await this.pause(jobId, `rollout safety gate: failed=${failed.length}, consecutive=${consecutive}, rate=${failureRate.toFixed(1)}%`);
+      return;
+    }
+    if (!terminal) return;
+    if (failed.length > 0) {
+      await this.pause(jobId, 'wave has failed items; retry is required before continuing');
+      return;
+    }
+    const elapsed = Date.now() - (view.job.waveStartedAt ?? Date.now());
+    const soakMs = view.waves[view.job.currentWave]?.soakMs ?? 0;
+    if (elapsed < soakMs) return;
+    if (view.job.currentWave + 1 >= view.waves.length) {
+      await this.setStatus(jobId, 'completed', null, 'rollout.completed');
+      return;
+    }
+    await this.store.advanceWave(jobId, view.job.currentWave + 1, Date.now());
+    this.app.db.prepare('INSERT INTO audit_log (at, actor, action, target, detail_json) VALUES (?, ?, ?, ?, ?)')
+      .run(Date.now(), `admin:${view.job.operator}`, 'rollout.wave', jobId, JSON.stringify({ from: view.job.currentWave, to: view.job.currentWave + 1 }));
+  }
+}

@@ -296,6 +296,140 @@ function migration6(db: Database.Database): void {
   `);
 }
 
+function migration7(db: Database.Database): void {
+  db.exec(`
+    ALTER TABLE tenants ADD COLUMN kind TEXT NOT NULL DEFAULT 'customer'
+      CHECK (kind IN ('customer', 'internal', 'synthetic', 'demo'));
+    ALTER TABLE tenants ADD COLUMN cohort TEXT NOT NULL DEFAULT 'stable'
+      CHECK (cohort IN ('canary', 'early', 'stable'));
+    ALTER TABLE tenants ADD COLUMN image_digest TEXT;
+    ALTER TABLE hosts ADD COLUMN environment TEXT NOT NULL DEFAULT 'production'
+      CHECK (environment IN ('staging', 'production'));
+    CREATE INDEX idx_tenants_rollout_selection ON tenants(status, kind, cohort, image, image_digest);
+  `);
+}
+
+function migration8(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE releases (
+      id TEXT PRIMARY KEY,
+      tenant_image TEXT NOT NULL UNIQUE,
+      tenant_image_digest TEXT NOT NULL,
+      control_plane_image TEXT NOT NULL,
+      control_plane_image_digest TEXT NOT NULL,
+      source_sha TEXT NOT NULL,
+      app_version TEXT NOT NULL,
+      contract_version TEXT NOT NULL,
+      rollback_safe_to TEXT,
+      database_schema_version INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'candidate'
+        CHECK (status IN ('candidate', 'canary', 'stable', 'retired')),
+      manifest_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      created_by TEXT NOT NULL
+    );
+    CREATE INDEX idx_releases_status_created ON releases(status, created_at);
+  `);
+}
+
+function migration9(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE rollout_jobs (
+      id TEXT PRIMARY KEY,
+      release_id TEXT NOT NULL REFERENCES releases(id),
+      status TEXT NOT NULL CHECK (status IN ('paused', 'running', 'completed', 'cancelled')),
+      current_wave INTEGER NOT NULL DEFAULT 0,
+      waves_json TEXT NOT NULL,
+      global_concurrency INTEGER NOT NULL,
+      per_host_concurrency INTEGER NOT NULL,
+      failure_threshold_percent REAL NOT NULL DEFAULT 2,
+      failure_threshold_count INTEGER NOT NULL DEFAULT 3,
+      consecutive_failure_limit INTEGER NOT NULL DEFAULT 2,
+      stop_reason TEXT,
+      operator TEXT NOT NULL,
+      wave_started_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      completed_at INTEGER
+    );
+    CREATE TABLE rollout_items (
+      job_id TEXT NOT NULL REFERENCES rollout_jobs(id) ON DELETE CASCADE,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      host_id TEXT NOT NULL,
+      wave_index INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'leased', 'succeeded', 'failed', 'rolled-back', 'skipped')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      lease_owner TEXT,
+      lease_expires_at INTEGER,
+      started_at INTEGER,
+      finished_at INTEGER,
+      outcome TEXT,
+      error TEXT,
+      PRIMARY KEY(job_id, tenant_id)
+    );
+    CREATE INDEX idx_rollout_items_claim ON rollout_items(job_id, wave_index, status, host_id, lease_expires_at);
+    CREATE INDEX idx_rollout_items_tenant ON rollout_items(tenant_id, status);
+    CREATE TABLE rollout_hosts (
+      job_id TEXT NOT NULL REFERENCES rollout_jobs(id) ON DELETE CASCADE,
+      host_id TEXT NOT NULL,
+      wave_index INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'failed')),
+      error TEXT,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(job_id, host_id, wave_index)
+    );
+  `);
+}
+
+function migration10(db: Database.Database): void {
+  db.exec(`
+    ALTER TABLE rollout_jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'upgrade'
+      CHECK (mode IN ('upgrade', 'rollback'));
+    CREATE TABLE admin_users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL CHECK (role IN ('viewer', 'support', 'operator', 'admin')),
+      token_hash TEXT NOT NULL,
+      mfa_secret_enc TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE admin_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES admin_users(id),
+      role TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX idx_admin_sessions_expiry ON admin_sessions(expires_at);
+    CREATE TABLE admin_approvals (
+      id TEXT PRIMARY KEY,
+      action TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      requested_by TEXT NOT NULL REFERENCES admin_users(id),
+      approved_by TEXT REFERENCES admin_users(id),
+      status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'consumed', 'rejected')),
+      reason TEXT,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      decided_at INTEGER,
+      consumed_at INTEGER
+    );
+    CREATE INDEX idx_admin_approvals_pending ON admin_approvals(status, expires_at);
+  `);
+}
+
+function migration11(db: Database.Database): void {
+  db.exec(`
+    ALTER TABLE hosts ADD COLUMN agent_token_hash TEXT;
+    ALTER TABLE hosts ADD COLUMN agent_fingerprint TEXT;
+    ALTER TABLE hosts ADD COLUMN agent_last_seen_at INTEGER;
+    CREATE INDEX idx_hosts_agent_fingerprint ON hosts(agent_fingerprint);
+  `);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'initial-schema', up: migration1 },
   { version: 2, name: 'asr-usage', up: migration2 },
@@ -303,4 +437,9 @@ export const MIGRATIONS: Migration[] = [
   { version: 4, name: 'credit-apply', up: migration4 },
   { version: 5, name: 'notification-device-delivery', up: migration5 },
   { version: 6, name: 'invite-grants', up: migration6 },
+  { version: 7, name: 'tenant-rollout-metadata', up: migration7 },
+  { version: 8, name: 'immutable-releases', up: migration8 },
+  { version: 9, name: 'persistent-rollout-jobs', up: migration9 },
+  { version: 10, name: 'admin-rbac-mfa-approvals', up: migration10 },
+  { version: 11, name: 'host-agent-identity', up: migration11 },
 ];
