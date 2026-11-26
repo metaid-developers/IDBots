@@ -11,7 +11,7 @@ import {
 import { maskPhone, sha256Hex } from '../crypto.js';
 import { checkPhoneLock, checkSmsSend, incrementCodeAttempts } from '../rateLimit.js';
 import { generateSmsCode, hashSmsCode } from '../sms.js';
-import { signup } from '../services/signup.js';
+import { isDailySignupCapReached, signup } from '../services/signup.js';
 import {
   consumePartnerInvite,
   fetchInvitePublicPreview,
@@ -270,7 +270,7 @@ export function consumeSmsCode(
   verifySmsCode(app, phone, purpose, code, true);
 }
 
-function previewLocalInvite(app: AppContext, rawCode: string) {
+function previewLocalInvite(app: AppContext, rawCode: string, dailyCapFull: boolean) {
   const normalized = normalizeInviteCodeInput(rawCode);
   const now = Date.now();
   const row = (app.db.prepare('SELECT * FROM invites WHERE code = ?').get(normalized) ??
@@ -286,7 +286,7 @@ function previewLocalInvite(app: AppContext, rawCode: string) {
       planName: 'ID.Student',
       planNameEn: 'ID.Student',
       periodDays: 14,
-      dailyCapFull: false,
+      dailyCapFull,
     };
   }
   if (row.expires_at !== null && row.expires_at <= now) {
@@ -298,7 +298,7 @@ function previewLocalInvite(app: AppContext, rawCode: string) {
       planName: 'ID.Student',
       planNameEn: 'ID.Student',
       periodDays: 14,
-      dailyCapFull: false,
+      dailyCapFull,
     };
   }
   if (row.used_count >= row.max_uses) {
@@ -310,7 +310,7 @@ function previewLocalInvite(app: AppContext, rawCode: string) {
       planName: 'ID.Student',
       planNameEn: 'ID.Student',
       periodDays: 14,
-      dailyCapFull: false,
+      dailyCapFull,
     };
   }
   return {
@@ -320,7 +320,7 @@ function previewLocalInvite(app: AppContext, rawCode: string) {
     planName: 'ID.Student',
     planNameEn: 'ID.Student',
     periodDays: 14,
-    dailyCapFull: false,
+    dailyCapFull,
   };
 }
 
@@ -330,12 +330,16 @@ async function invitePreview(app: AppContext, reqCtx: RequestCtx): Promise<void>
   if (!rawCode || rawCode.length > 32) {
     throw new HttpError(400, 'INVALID_INVITE_CODE', 'code query parameter is required');
   }
+  const localCapFull = isDailySignupCapReached(app.db, app.config.dailySignupCap);
   if (app.config.inviteService.baseUrl) {
     const preview = await fetchInvitePublicPreview(app.config, rawCode);
-    writeJson(reqCtx.res, 200, preview);
+    writeJson(reqCtx.res, 200, {
+      ...preview,
+      dailyCapFull: Boolean(preview.dailyCapFull) || localCapFull,
+    });
     return;
   }
-  writeJson(reqCtx.res, 200, previewLocalInvite(app, rawCode));
+  writeJson(reqCtx.res, 200, previewLocalInvite(app, rawCode, localCapFull));
 }
 
 async function smsSend(app: AppContext, reqCtx: RequestCtx, body: unknown): Promise<void> {
@@ -356,10 +360,11 @@ async function smsSend(app: AppContext, reqCtx: RequestCtx, body: unknown): Prom
     throw new HttpError(403, 'USER_DISABLED', 'this account is disabled');
   }
 
-  // Pre-validate invite + daily cap BEFORE sending SMS for unknown phones when
-  // the upstream ABS invite service is enabled (or when the caller explicitly
-  // supplied an inviteCode in standalone mode).
+  // Pre-validate invite + daily cap BEFORE sending SMS for unknown phones.
   if (!existing) {
+    if (isDailySignupCapReached(app.db, app.config.dailySignupCap)) {
+      throw mapInviteReasonToHttpError('INVITE_DAILY_CAP_FULL');
+    }
     if (app.config.inviteService.baseUrl) {
       if (!inviteCode?.trim()) {
         throw new HttpError(403, 'INVITE_REQUIRED', 'an invite code is required to sign up');
@@ -372,7 +377,7 @@ async function smsSend(app: AppContext, reqCtx: RequestCtx, body: unknown): Prom
       if (!inviteCode.trim()) {
         throw new HttpError(403, 'INVITE_REQUIRED', 'an invite code is required to sign up');
       }
-      const localPreview = previewLocalInvite(app, inviteCode);
+      const localPreview = previewLocalInvite(app, inviteCode, false);
       if (!localPreview.valid) {
         throw mapInviteReasonToHttpError(localPreview.reasonCode);
       }
@@ -426,6 +431,10 @@ async function smsVerify(app: AppContext, reqCtx: RequestCtx, body: unknown): Pr
       | { id: string }
       | undefined;
 
+    if (isDailySignupCapReached(app.db, app.config.dailySignupCap, now)) {
+      throw mapInviteReasonToHttpError('INVITE_DAILY_CAP_FULL');
+    }
+
     if (app.config.inviteService.baseUrl) {
       if (!inviteCode?.trim()) {
         throw new HttpError(403, 'INVITE_REQUIRED', 'an invite code is required to sign up');
@@ -452,6 +461,7 @@ async function smsVerify(app: AppContext, reqCtx: RequestCtx, body: unknown): Pr
           tenantImage: app.config.tenantImage,
         },
         masterKey: app.config.masterKey,
+        dailySignupCap: app.config.dailySignupCap,
         externalInviteGrant: {
           userId: preUserId,
           tenantId: preTenantId,
@@ -465,6 +475,9 @@ async function smsVerify(app: AppContext, reqCtx: RequestCtx, body: unknown): Pr
         },
       });
       if (!result.ok) {
+        if (result.code === 'INVITE_DAILY_CAP_FULL') {
+          throw mapInviteReasonToHttpError('INVITE_DAILY_CAP_FULL');
+        }
         throw new HttpError(403, result.code, result.message);
       }
       user = result.user;
@@ -482,8 +495,12 @@ async function smsVerify(app: AppContext, reqCtx: RequestCtx, body: unknown): Pr
           tenantImage: app.config.tenantImage,
         },
         masterKey: app.config.masterKey,
+        dailySignupCap: app.config.dailySignupCap,
       });
       if (!result.ok) {
+        if (result.code === 'INVITE_DAILY_CAP_FULL') {
+          throw mapInviteReasonToHttpError('INVITE_DAILY_CAP_FULL');
+        }
         throw new HttpError(403, result.code, result.message);
       }
       user = result.user;

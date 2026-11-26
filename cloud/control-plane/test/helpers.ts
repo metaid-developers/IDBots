@@ -74,6 +74,8 @@ export async function startTestApp(options: {
     hibernateAfterMs?: number;
     wakeGraceMs?: number;
   };
+  /** Optional CP_DAILY_SIGNUP_CAP override. */
+  dailySignupCap?: number | null;
   /** Optional custom SmsProvider (e.g. AliyunSmsProvider with stubbed fetch). */
   smsProvider?: import('../src/sms.js').SmsProvider;
 }): Promise<TestApp> {
@@ -109,6 +111,9 @@ export async function startTestApp(options: {
             ? { CP_INVITE_WAKE_GRACE_MS: String(options.inviteService.wakeGraceMs) }
             : {}),
         }
+      : {}),
+    ...(options.dailySignupCap !== undefined && options.dailySignupCap !== null
+      ? { CP_DAILY_SIGNUP_CAP: String(options.dailySignupCap) }
       : {}),
   };
   const config = loadConfig(env);

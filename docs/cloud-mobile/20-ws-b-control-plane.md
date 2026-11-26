@@ -60,6 +60,7 @@ All configuration comes from environment variables (WS-C provides an env file):
 | `CP_SMS_FAKE_ORIGIN_EXPLICIT` | `true` (or `1`) opts the deployer into fake SMS on ANY origin — time-boxed invite-test window until AliyunSmsProvider ships; unset = origin guard fully enforced |
 | `CP_SMS_ACCESS_KEY_ID`, `CP_SMS_ACCESS_KEY_SECRET`, `CP_SMS_SIGN_NAME`, `CP_SMS_TEMPLATE_LOGIN`, `CP_SMS_TEMPLATE_REVERIFY` | Alibaba Cloud SMS |
 | `CP_FAKE_SMS_NUMBERS` | Staging only: comma-separated test numbers that accept the fixed code `246810` |
+| `CP_DAILY_SIGNUP_CAP` | Optional non-negative integer capping new sign-ups per Asia/Shanghai calendar day (`429 INVITE_DAILY_CAP_FULL` when reached) |
 | `CP_ALERT_WEBHOOK` | Feishu or DingTalk webhook for provisioning and upgrade failures |
 
 `CP_SMS_MODE=fake` refuses to start when `CP_PUBLIC_ORIGIN` is the production

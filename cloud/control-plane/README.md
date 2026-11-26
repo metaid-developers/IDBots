@@ -67,6 +67,7 @@ authoritative table.
 | `CP_SMS_MODE` | `aliyun` or `fake` |
 | `CP_SMS_ACCESS_KEY_ID`, `CP_SMS_ACCESS_KEY_SECRET`, `CP_SMS_SIGN_NAME`, `CP_SMS_TEMPLATE_LOGIN`, `CP_SMS_TEMPLATE_REVERIFY` | Alibaba Cloud SMS |
 | `CP_FAKE_SMS_NUMBERS` | staging-only test numbers for the fixed code `246810` |
+| `CP_DAILY_SIGNUP_CAP` | optional non-negative integer capping new user sign-ups per Asia/Shanghai calendar day (`429 INVITE_DAILY_CAP_FULL`) |
 | `CP_ALERT_WEBHOOK` | Feishu/DingTalk webhook for provisioning and upgrade failures |
 | `CP_PUSH_PROVIDER` | `disabled` (default), `fcm`, or `fake` for local/staging tests |
 | `CP_FCM_SERVICE_ACCOUNT_JSON` | FCM service-account JSON with `project_id`, `client_email`, and `private_key`; required for `fcm`, secret environment only |
