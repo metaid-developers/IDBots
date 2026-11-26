@@ -1538,6 +1538,18 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('nftSwap:orderCompleted', handler);
     },
   },
+  assetBridge: {
+    get: (input: { jobId: string }) => ipcRenderer.invoke('assetBridge:get', input),
+    confirm: (input: { jobId: string }) => ipcRenderer.invoke('assetBridge:confirm', input),
+    cancel: (input: { jobId: string }) => ipcRenderer.invoke('assetBridge:cancel', input),
+    refreshQuote: (input: { jobId: string }) => ipcRenderer.invoke('assetBridge:refreshQuote', input),
+    setFocusedSession: (input: { sessionId: string | null }) => ipcRenderer.invoke('assetBridge:setFocusedSession', input),
+    onJobUpdated: (callback: (payload: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload);
+      ipcRenderer.on('assetBridge:jobUpdated', handler);
+      return () => ipcRenderer.removeListener('assetBridge:jobUpdated', handler);
+    },
+  },
   goodsTrade: {
     getBuyerBalance: (input?: { metabotId?: number }) =>
       ipcRenderer.invoke('goodsTrade:getBuyerBalance', input ?? {}),

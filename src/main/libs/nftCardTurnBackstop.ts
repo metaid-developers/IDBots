@@ -38,6 +38,7 @@ export type NftCardBackstopTag =
   | 'ft-my-orders-card'
   | 'ft-portfolio-card'
   | 'ft-bridge-card'
+  | 'asset-bridge-card'
   | 'ft-action-card';
 
 export interface CapturedNftCardFence {
@@ -91,14 +92,15 @@ const ANNOUNCING_NFT_CARD_TOOLS = new Set<string>([
   'wallet_token_take',
   'wallet_token_portfolio',
   'wallet_token_my_orders',
-  'wallet_token_bridge_card',
+  'asset_bridge_quote',
+  'asset_bridge_status',
 ]);
 
 const NFT_CARD_FENCE_RE =
-  /```(nft-card|nft-collection-card|nft-listing-card|nftlistingcard|nft-fill-card|nftfillcard|nft-my-listings-card|nftmylistingscard|nft-portfolio-card|nftportfoliocard|nft-swap-card|nftswapcard|nft-action-card|nftactioncard|nft-negotiate-card|nftnegotiatecard|token-card|tokencard|ft-orderbook-card|ft-orders-card|ftorderbookcard|token-orderbook-card|ft-order-card|ft-quote-card|ft-fill-card|ft-my-orders-card|ft-portfolio-card|ft-bridge-card|ft-action-card)[ \t]*\r?\n([\s\S]*?)\r?\n```/gi;
+  /```(nft-card|nft-collection-card|nft-listing-card|nftlistingcard|nft-fill-card|nftfillcard|nft-my-listings-card|nftmylistingscard|nft-portfolio-card|nftportfoliocard|nft-swap-card|nftswapcard|nft-action-card|nftactioncard|nft-negotiate-card|nftnegotiatecard|token-card|tokencard|ft-orderbook-card|ft-orders-card|ftorderbookcard|token-orderbook-card|ft-order-card|ft-quote-card|ft-fill-card|ft-my-orders-card|ft-portfolio-card|ft-bridge-card|asset-bridge-card|ft-action-card)[ \t]*\r?\n([\s\S]*?)\r?\n```/gi;
 
 const FAST_BACKSTOP_HINT_RE =
-  /```(?:nft-(?:card|collection-card|listing-card|fill-card|my-listings-card|portfolio-card|swap-card|action-card|negotiate-card)|nft(?:listing|fill|mylistings|portfolio|swap|action|negotiate)card|token-card|tokencard|token-orderbook-card|ftorderbookcard|ft-(?:orderbook|orders|order|quote|fill|my-orders|portfolio|bridge|action)-card)/i;
+  /```(?:nft-(?:card|collection-card|listing-card|fill-card|my-listings-card|portfolio-card|swap-card|action-card|negotiate-card)|nft(?:listing|fill|mylistings|portfolio|swap|action|negotiate)card|token-card|tokencard|token-orderbook-card|ftorderbookcard|ft-(?:orderbook|orders|order|quote|fill|my-orders|portfolio|bridge|action)-card|asset-bridge-card)/i;
 
 const COMPACT_TAG_ALIASES: Record<string, NftCardBackstopTag> = {
   tokencard: 'token-card',
@@ -195,6 +197,11 @@ function deriveCardIdentityKey(
     const symbol = cleanKeyField(parsed.symbol);
     const dir = cleanKeyField(parsed.direction);
     return symbol ? `ft-bridge:${dir}:${symbol}` : null;
+  }
+
+  if (tag === 'asset-bridge-card') {
+    const jobId = cleanKeyField(parsed.jobId);
+    return jobId ? `asset-bridge:job:${jobId}` : null;
   }
 
   if (tag === 'ft-action-card') {

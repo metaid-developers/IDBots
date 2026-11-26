@@ -693,6 +693,7 @@ man_base_data_pebble/
 !tests/ftMandateGate.test.ts
 !tests/ftAutoFulfillDaemon.test.ts
 !tests/tokenOrderWatcher.test.ts
+!tests/assetBridge.test.ts
 !tests/ftCardsRender.test.tsx
 !tests/paybuzzCryptoAndService.test.ts
 !tests/payReadFulfillDaemon.test.ts

@@ -833,14 +833,16 @@ test('Host wallet tools, capability registry, prompts, and turn backstop wire FT
   for (const toolName of [
     'wallet_token_portfolio',
     'wallet_token_my_orders',
-    'wallet_token_bridge_card',
+    'asset_bridge_quote',
+    'asset_bridge_status',
   ]) {
     assert.equal(TOOL_CAPABILITY_REGISTRY.get(toolName)?.domain, 'financial');
     assert.equal(isMobileToolVisible(toolName, []), false);
   }
   const bridgeExpand = resolveMobileToolExpansions(undefined, '查询跨链桥进度');
   assert.ok(bridgeExpand.includes('financial'));
-  assert.equal(isMobileToolVisible('wallet_token_bridge_card', bridgeExpand), true);
+  assert.equal(isMobileToolVisible('asset_bridge_quote', bridgeExpand), true);
+  assert.equal(isMobileToolVisible('asset_bridge_status', bridgeExpand), true);
 
   // 2. Assistant & Owner prompts whitelist all new suite card fences
   const projectorZh = buildProjectorModePrompt('zh');
@@ -863,7 +865,8 @@ test('Host wallet tools, capability registry, prompts, and turn backstop wire FT
   });
   assert.ok(ownerPrompt.includes('wallet_token_portfolio'));
   assert.ok(ownerPrompt.includes('wallet_token_my_orders'));
-  assert.ok(ownerPrompt.includes('wallet_token_bridge_card'));
+  assert.ok(ownerPrompt.includes('asset_bridge_quote'));
+  assert.ok(ownerPrompt.includes('asset_bridge_status'));
 
   // 3. Execute built-in wallet tools and verify emitted fences + backstop capture
   const mockControl = {
@@ -986,14 +989,7 @@ test('Host wallet tools, capability registry, prompts, and turn backstop wire FT
   assert.equal(myOrdersSeg.data.orders.length, 1);
   assert.equal(myOrdersSeg.data.orders[0].batchGroupId, 'batch_sunny_01');
 
-  const bridgeOut = await byName.get('wallet_token_bridge_card').handler({
-    symbol: 'METAID',
-    direction: 'mvc-to-btc',
-    amount: '250',
-    txid: 'ab'.repeat(32),
-  });
-  const bridgeText = bridgeOut.content[0].text as string;
-  assert.match(bridgeText, /```ft-bridge-card/);
+
 
   const sellOut = await byName.get('wallet_token_sell').handler({
     genesis: '22'.repeat(32),

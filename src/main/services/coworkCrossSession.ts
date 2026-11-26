@@ -254,7 +254,7 @@ export class CoworkCrossSessionService {
     // namespaces up front; every other source id keeps the strict
     // normalization + existence checks.
     const rawSource = String(input.sourceSessionId ?? '').trim().replace(IDBOTS_SESSION_SCHEME, '');
-    const isHostPseudoSource = /^group-task:\d+$/.test(rawSource) || /^scheduled-task:[A-Za-z0-9._-]+$/.test(rawSource);
+    const isHostPseudoSource = /^group-task:\d+$/.test(rawSource) || /^scheduled-task:[A-Za-z0-9._-]+$/.test(rawSource) || /^asset-bridge:ab_[0-9a-fA-F-]{36}$/.test(rawSource);
     const sourceId = isHostPseudoSource
       ? { ok: true as const, sessionId: rawSource }
       : normalizeIdbotsSessionId(input.sourceSessionId);

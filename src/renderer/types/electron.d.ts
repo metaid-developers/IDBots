@@ -18,6 +18,7 @@ import type {
   AgentNotificationCursor,
   AgentNotificationListOptions,
 } from './notification';
+import type { AssetBridgeJobView } from '../components/chat/assetBridgeCardSyntax';
 import type { OpenTeamCollabSummary, OpenTeamGuestInvite } from './openTeamCollab';
 import type {
   BrowserCommandResult as CoreBrowserCommandResult,
@@ -2823,6 +2824,14 @@ interface IElectronAPI {
   };
   nftSwap: {
     onOrderCompleted: (callback: (payload: ElectronNftSwapOrderCompletedEvent) => void) => () => void;
+  };
+  assetBridge: {
+    get: (input: { jobId: string }) => Promise<AssetBridgeJobView | null>;
+    confirm: (input: { jobId: string }) => Promise<{ ok: boolean; job?: AssetBridgeJobView; error?: string }>;
+    cancel: (input: { jobId: string }) => Promise<{ ok: boolean; job?: AssetBridgeJobView; error?: string }>;
+    refreshQuote: (input: { jobId: string }) => Promise<{ ok: boolean; job?: AssetBridgeJobView; error?: string }>;
+    setFocusedSession: (input: { sessionId: string | null }) => Promise<{ ok: boolean }>;
+    onJobUpdated: (callback: (payload: AssetBridgeJobView) => void) => () => void;
   };
   goodsTrade: {
     getBuyerBalance: (input?: { metabotId?: number }) => Promise<{
