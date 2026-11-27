@@ -17,7 +17,10 @@
  *    redacted preview.
  */
 
-import { wordlists } from 'bip39';
+import {
+  findGenericCjkMnemonicPhrases,
+  findGenericEnglishMnemonicPhrases,
+} from '../security/bip39PhraseDetector';
 
 export type MemoryDefenseSeverity = 'block' | 'redact';
 
@@ -38,80 +41,17 @@ export class MemoryDefenseError extends Error {
   }
 }
 
-const loadWordlistSet = (pick: () => string[] | undefined): ReadonlySet<string> | null => {
-  try {
-    const list = pick();
-    if (!Array.isArray(list) || list.length < 2048) return null;
-    return new Set(list);
-  } catch {
-    return null;
-  }
-};
-
-const BIP39_WORDS: ReadonlySet<string> | null = loadWordlistSet(() => wordlists?.english);
-
-// Simplified + traditional Chinese share the pure single-character shape and a
-// mnemonic is written in exactly one of them, so union both lists and let the
-// run length (>= 12) do the precision work.
-const BIP39_CJK_WORDS: ReadonlySet<string> | null = loadWordlistSet(() => {
-  const simplified = wordlists?.chinese_simplified;
-  const traditional = wordlists?.chinese_traditional;
-  if (!Array.isArray(simplified) || !Array.isArray(traditional)) return undefined;
-  return [...simplified, ...traditional];
-});
-
 const previewOf = (match: string): string => {
   const text = match.replace(/\s+/g, ' ').trim();
   return text.length <= 12 ? `${text.slice(0, 2)}…` : `${text.slice(0, 4)}…${text.length} chars`;
 };
 
-/** A run of >= 12 consecutive BIP39 words — a mnemonic phrase, near-certainly. */
-function findMnemonicPhrases(text: string): RegExpMatchArray[] {
-  if (!BIP39_WORDS) return [];
-  const results: RegExpMatchArray[] = [];
-  const words = text.toLowerCase().split(/[^a-z]+/).filter(Boolean);
-  let run = 0;
-  for (let index = 0; index <= words.length; index += 1) {
-    const inList = index < words.length && BIP39_WORDS.has(words[index]);
-    if (inList) {
-      run += 1;
-      continue;
-    }
-    if (run >= 12) {
-      const phrase = words.slice(index - run, index).join(' ');
-      results.push({ 0: phrase, length: phrase.length } as RegExpMatchArray);
-    }
-    run = 0;
-  }
-  return results;
+function findMnemonicPhrases(text: string): string[] {
+  return findGenericEnglishMnemonicPhrases(text);
 }
 
-/**
- * Chinese BIP39 mnemonics: the Chinese wordlists are pure single characters,
- * so a hit is a run of >= 12 Han tokens — split on anything that is not a Han
- * character (spaces, punctuation, ASCII) — that each sit in the wordlist.
- * Unspaced CJK prose glues into multi-character tokens that can never match a
- * single-character list, so the detector only fires on the space-delimited
- * shape a mnemonic actually leaks in.
- */
-function findCjkMnemonicPhrases(text: string): RegExpMatchArray[] {
-  if (!BIP39_CJK_WORDS) return [];
-  const results: RegExpMatchArray[] = [];
-  const tokens = text.split(/[^\p{Script=Han}]+/u).filter(Boolean);
-  let run = 0;
-  for (let index = 0; index <= tokens.length; index += 1) {
-    const inList = index < tokens.length && BIP39_CJK_WORDS.has(tokens[index]);
-    if (inList) {
-      run += 1;
-      continue;
-    }
-    if (run >= 12) {
-      const phrase = tokens.slice(index - run, index).join(' ');
-      results.push({ 0: phrase, length: phrase.length } as RegExpMatchArray);
-    }
-    run = 0;
-  }
-  return results;
+function findCjkMnemonicPhrases(text: string): string[] {
+  return findGenericCjkMnemonicPhrases(text);
 }
 
 interface Detector {
@@ -147,11 +87,11 @@ const DETECTORS: Detector[] = [
 /** Scan one candidate text. Returns every violation (block first). */
 export function scanMemoryText(text: string): MemoryDefenseViolation[] {
   const violations: MemoryDefenseViolation[] = [];
-  for (const match of findMnemonicPhrases(text)) {
-    violations.push({ detector: 'bip39_mnemonic', severity: 'block', preview: previewOf(match[0]) });
+  for (const phrase of findMnemonicPhrases(text)) {
+    violations.push({ detector: 'bip39_mnemonic', severity: 'block', preview: previewOf(phrase) });
   }
-  for (const match of findCjkMnemonicPhrases(text)) {
-    violations.push({ detector: 'bip39_mnemonic', severity: 'block', preview: previewOf(match[0]) });
+  for (const phrase of findCjkMnemonicPhrases(text)) {
+    violations.push({ detector: 'bip39_mnemonic', severity: 'block', preview: previewOf(phrase) });
   }
   for (const detector of DETECTORS) {
     detector.pattern.lastIndex = 0;
