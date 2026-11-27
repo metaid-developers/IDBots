@@ -53,7 +53,7 @@ jobs:
       # machine. Only the tests that need no node_modules run here; the full
       # set runs in each build job.
       - name: Test the gate and the tools that need no dependencies
-        run: node --test tests/ciGate.test.mjs tests/ciReleaseWatch.test.mjs tests/ciWorktreeEol.test.mjs tests/ciWindowsSignOnce.test.mjs tests/ciSourceRestore.test.mjs
+        run: node --test tests/ciGate.test.mjs tests/ciReleaseWatch.test.mjs tests/ciWorktreeEol.test.mjs tests/ciWindowsSignOnce.test.mjs tests/ciSourceRestore.test.mjs tests/ciSourceCut.test.mjs
 
       # Two decisions: whether this run is redundant at all, and whether a tag
       # run may leave out its tests because the parent commit's main run
@@ -82,32 +82,29 @@ jobs:
       - name: Check out Git repository
         uses: actions/checkout@v4
         with:
-          # Two commits: the delta is cut against the first parent.
+          # Two commits: the first parent is the delta's fallback base.
           fetch-depth: 2
-          # What is handed over must not carry the token; nothing here pushes.
-          persist-credentials: false
+          # The token stays in this checkout so that the delta's base can be
+          # fetched by commit (scripts/ci-source-cut.mjs). Nothing of it is
+          # handed over: the pack and the bundle hold git objects only.
 
-      # `shell: bash` is for pipefail: a failed rev-list must not upload an
-      # empty pack as "the delta".
       - name: Bundle the commit together with the restore tool
-        shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/source-delta" "$RUNNER_TEMP/source-full"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          # The delta: what this commit reaches beyond its first parent, as a
-          # pack that declares no prerequisites. Measured at 50 KB (a merge
-          # that changed one test file) to 1 MB (one that brought a whole
-          # feature) against the full bundle's 36 MB. It fits whenever the
-          # machine still holds the previous run's commit, and is refused
-          # otherwise.
-          git rev-list --objects HEAD ^HEAD^1 | git pack-objects --stdout > "$RUNNER_TEMP/source-delta/source.pack"
+          # The delta: what this commit reaches beyond the tip main had before
+          # this push — the commit the signing machine holds — or beyond the
+          # first parent where there is no such tip (a tag). A pack that
+          # declares no prerequisites; measured at 50 KB to about 1 MB against
+          # the full bundle's 36 MB. scripts/ci-source-cut.mjs says which base
+          # it used.
+          node scripts/ci-source-cut.mjs --out "$RUNNER_TEMP/source-delta/source.pack" --base "${{ github.event.before }}"
           # The full commit: cut from a shallow clone, the bundle holds this
           # commit and its whole tree.
           git bundle create "$RUNNER_TEMP/source-full/source.bundle" HEAD
           cp scripts/ci-source-restore.cjs "$RUNNER_TEMP/source-delta/"
           cp scripts/ci-source-restore.cjs "$RUNNER_TEMP/source-full/"
           ls -la "$RUNNER_TEMP/source-delta" "$RUNNER_TEMP/source-full"
-
       - name: Upload the source delta
         uses: actions/upload-artifact@v4
         with:

@@ -207,11 +207,14 @@ test('the Windows job never fetches its source from github.com', () => {
     'Upload the source delta',
     'Upload the full source bundle',
   ]);
-  assert.equal(source.steps[0].with['persist-credentials'], false, 'what is handed over must not carry a token');
+  // The token is what lets the delta's base be fetched by commit; the pack and the bundle carry git objects only.
+  assert.notEqual(source.steps[0].with['persist-credentials'], false);
+  assert.equal(source.steps[0].with['fetch-depth'], 2, 'the delta needs the first parent as its fallback base');
   const bundling = source.steps[1];
-  assert.equal(bundling.shell, 'bash', 'pipefail: a failed rev-list must not ship an empty pack as the delta');
   // The delta is whatever the commit reaches beyond its first parent, as a pack with no prerequisites.
-  assert.match(bundling.run, /git rev-list --objects HEAD \^HEAD\^1 \| git pack-objects --stdout > "\$RUNNER_TEMP\/source-delta\/source\.pack"/);
+  // Cut by the tool, against the tip main had before the push (empty for a tag), not by a pipe whose failure could ship an empty pack.
+  assert.match(bundling.run, /node scripts\/ci-source-cut\.mjs --out "\$RUNNER_TEMP\/source-delta\/source\.pack" --base "\$\{\{ github\.event\.before \}\}"/);
+  assert.doesNotMatch(bundling.run, /pack-objects --stdout >"/);
   assert.match(bundling.run, /git bundle create "\$RUNNER_TEMP\/source-full\/source\.bundle" HEAD/);
   for (const artifact of ['source-delta', 'source-full']) {
     assert.match(bundling.run, new RegExp(`cp scripts/ci-source-restore\\.cjs "\\$RUNNER_TEMP/${artifact}/"`), `${artifact} carries the restore tool`);
