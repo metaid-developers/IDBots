@@ -272,6 +272,7 @@ tests/*
 !tests/coworkCwdSelfHeal.test.mjs
 !tests/sessionViewGrouping.test.ts
 !tests/coworkDshRuntimeDrain.test.mjs
+!tests/coworkDshHelperProcessReap.test.mjs
 !tests/coworkDshRuntimeCrashRespawn.test.mjs
 !tests/coworkDshKernelCrashDropsClient.test.mjs
 !tests/coworkDshPerRouteCredential.test.mjs

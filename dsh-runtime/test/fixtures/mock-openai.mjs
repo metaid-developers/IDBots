@@ -267,6 +267,10 @@ export function startMockServer(port = 48787) {
                 ? { command: 'echo AUTO_REVIEW_MALFORMED_CALLED', description: 'auto-review malformed probe' }
                 : lastUserText.includes('RUN_LONG_BASH')
             ? { command: 'sleep 5 && echo LONG_BASH_DONE', description: 'long-running foreground command for the stall-watchdog test' }
+            // RUN_BASH_BG_SPAWN — leave a background job behind and record its
+            // pid; the helper-process reaping tests watch that process.
+            : lastUserText.includes('RUN_BASH_BG_SPAWN')
+              ? { command: '(sleep 600 >/dev/null 2>&1 & echo $! > bg-helper.pid)', description: 'leave a background helper behind' }
             : writeMatch
               ? { command: `echo ${writeMatch[1]} > marker.txt`, description: 'write workspace marker' }
               : { command: 'echo BASH_WORKS && date', description: 'echo test' })

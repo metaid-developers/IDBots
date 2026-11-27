@@ -20792,6 +20792,15 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
+   * True when no turn is in flight and no DSH runtime slot is alive: nothing
+   * an agent started can still be in use. The server-mode helper process
+   * sweep (libs/helperProcessReap) runs only in this state.
+   */
+  isAgentQuiescent(): boolean {
+    return this.activeSessions.size === 0 && (this.dshTurnHub?.runtimeSlotCount ?? 0) === 0;
+  }
+
+  /**
    * P1-3 (task #39): `reason` names the batch cause (host storage recovery
    * restart, app shutdown) — it lands in the audit log and on each session's
    * 'stopped' event, so three sessions dying in the same second is later
