@@ -28,9 +28,9 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - tenant-data:/data
-    # C1 resource table.
+    # C1 resource table: RAM + an equal swap allowance (CR-WSA-006).
     mem_limit: 2304m
-    memswap_limit: 2304m
+    memswap_limit: 4608m
     cpus: 2.0
     pids_limit: 2048
     shm_size: 1g

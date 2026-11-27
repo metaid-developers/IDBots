@@ -21,6 +21,15 @@ becomes ready and `org.idbots.rollback-safe-to` allows it.
   docker buildx imagetools inspect {REGISTRY}/idbots/tenant:{tag} \
     --format '{{ json .Image.Config.Labels }}'
   ```
+- Swap allowance (C1, CR-WSA-006): a control plane built before that change
+  recreates containers with swap disabled. On such a host, re-apply it for
+  every tenant the rollout recreated — and for every newly provisioned one:
+
+  ```bash
+  for c in $(docker ps --filter name=idb-t_ --format '{{.Names}}'); do
+    docker update --memory-swap 4831838208 "$c"    # 2304 MB RAM + 2304 MB swap
+  done
+  ```
 
 ## 0b. Pull the image on the host first (mandatory)
 

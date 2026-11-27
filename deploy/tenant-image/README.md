@@ -65,7 +65,7 @@ build on error: `node scripts/apply-dsh-kernel-patches.cjs --check` and
 
 ```bash
 docker run -d --name idbots-tenant --init \
-  --memory 2304m --memory-swap 2304m \
+  --memory 2304m --memory-swap 4608m \
   --cpus 2 \
   --pids-limit 2048 \
   --shm-size 1g \
@@ -83,6 +83,10 @@ docker run -d --name idbots-tenant --init \
 
 Notes:
 
+- **RAM plus an equal swap allowance.** `--memory-swap` is RAM and swap
+  combined, so `4608m` leaves the 2304 MB RAM cap of the C1 table intact and
+  lets the tenant use up to 2304 MB of host swap (CR-WSA-006). Tenant hosts
+  back that swap with zram; without a swap device the allowance is unused.
 - **No published ports.** The container listens on
   `0.0.0.0:{IDBOTS_GATEWAY_PORT}` (default 8790) inside the container
   network; the control plane (WS-B/WS-C) reaches it over that network.
