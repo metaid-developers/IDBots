@@ -40,7 +40,7 @@ function makeSigningRig(t) {
     WIN_TIMESTAMP_URL: 'http://timestamp.invalid',
     SIGN_STUB_LOG: log,
   };
-  const keys = [...Object.keys(env), 'SIGN_STUB_FAIL'];
+  const keys = [...Object.keys(env), 'SIGN_STUB_FAIL', 'IDBOTS_PRESIGNED_MANIFEST'];
   const originalEnv = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   t.mock.method(console, 'log', () => {});
   t.mock.method(console, 'warn', () => {});
@@ -61,7 +61,7 @@ function makeSigningRig(t) {
     target,
     sign: (file, extraEnv = {}) => {
       for (const key of keys) {
-        if (!(key in env)) delete process.env[key];
+        if (!(key in env) && !(key in extraEnv)) delete process.env[key];
       }
       Object.assign(process.env, env, extraEnv);
       return signWindowsArtifact({ path: file });
@@ -139,4 +139,31 @@ test('a PortableGit binary handed over by the signed cache is not signed again â
   fs.writeFileSync(git, 'MZ\u0000git<signature-with-a-flipped-byte>');
   await rig.sign(git, { IDBOTS_PRESIGNED_MANIFEST: digestList });
   assert.equal(rig.calls().length, 1, 'bytes that no longer match the recorded digest are signed');
+});
+
+test('a digest list that cannot be read is said out loud, and the files are signed', { skip: process.platform === 'win32' }, async (t) => {
+  const rig = makeSigningRig(t);
+  const warnings = [];
+  t.mock.method(console, 'warn', (message) => warnings.push(String(message)));
+  const exe = rig.target(path.join('release', 'win-unpacked', 'resources', 'mingit', 'git-bash.exe'));
+  // What the first cache hit looked like (run 46037790077, 2026-11-28): the variable points
+  // at a path where the reuse step did not write the list.
+  const nowhere = path.join(path.dirname(rig.target('where-am-i')), 'idbots-presigned-mingit.json');
+
+  await rig.sign(exe, { IDBOTS_PRESIGNED_MANIFEST: nowhere });
+  await rig.sign(rig.target(path.join('release', 'win-unpacked', 'resources', 'mingit', 'bin', 'bash.exe')), { IDBOTS_PRESIGNED_MANIFEST: nowhere });
+
+  assert.equal(rig.calls().length, 2, 'files nothing vouches for are signed');
+  assert.equal(warnings.filter((message) => message.includes('cannot be read') && message.includes(nowhere)).length, 1, 'and the reason is said, once');
+});
+
+test('no digest list asked for is no warning at all', { skip: process.platform === 'win32' }, async (t) => {
+  const rig = makeSigningRig(t);
+  const warnings = [];
+  t.mock.method(console, 'warn', (message) => warnings.push(String(message)));
+
+  await rig.sign(rig.target(path.join('release', 'win-unpacked', 'resources', 'mingit', 'git-bash.exe')));
+
+  assert.equal(rig.calls().length, 1);
+  assert.deepEqual(warnings, []);
 });

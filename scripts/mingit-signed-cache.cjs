@@ -242,7 +242,10 @@ function apply({ repoRoot = process.cwd(), env = process.env, log = console.log 
 
   const manifestPath = env.IDBOTS_PRESIGNED_MANIFEST || path.join(os.tmpdir(), 'idbots-presigned-mingit.json');
   fs.writeFileSync(manifestPath, JSON.stringify({ version: 1, files: manifest.signed }));
+  // Say where the digest list went: if the signing hook of the next step looks elsewhere,
+  // it signs everything again and the only trace is this line and its own.
   log(`[mingit-signed-cache] cache hit: ${Object.keys(manifest.signed).length} files reused from ${dir}`);
+  log(`[mingit-signed-cache] digest list for the signing hook: ${manifestPath}${env.IDBOTS_PRESIGNED_MANIFEST ? '' : ' (IDBOTS_PRESIGNED_MANIFEST is not set here, so the default location was used)'}`);
   return { hit: true, files: Object.keys(manifest.signed).length };
 }
 
