@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 const {
   thinkingWireFamily,
   modelAlwaysThinks,
+  modelCannotExpressOff,
   responsesEffortForThinkingOff,
   budgetAssumesThinking,
 } = await import('../dist-electron/main/libs/modelThinking.js');
@@ -67,4 +68,22 @@ test('budgetAssumesThinking is conservative: only proven-off brains get the lean
   assert.equal(budgetAssumesThinking('deepseek-flash', 'enabled'), true);
   assert.equal(budgetAssumesThinking('deepseek-flash', undefined), true);
   assert.equal(budgetAssumesThinking('glm-4.7', undefined), true);
+});
+
+test('modelCannotExpressOff floors unknown and always-thinking families', () => {
+  // Unknown families: no dialect declared → dsh-llm materializes reasoning:false
+  // and its capability gate rejects 'off' before provider I/O (2026-11-26
+  // gemini-4-hydrogen custom-route auto-effort failure). Must floor to 'low'.
+  assert.equal(modelCannotExpressOff('gemini-4-hydrogen'), true);
+  assert.equal(modelCannotExpressOff('vendor/gemini-4-hydrogen'), true);
+  assert.equal(modelCannotExpressOff('kimi-k2.6'), true);
+  assert.equal(modelCannotExpressOff('brand-new-model'), true);
+  // Always-thinking GLM-5+: every off control is rejected upstream.
+  assert.equal(modelCannotExpressOff('glm-5.3-flash'), true);
+  assert.equal(modelCannotExpressOff('z-ai/glm-5.2'), true);
+  // Disable-capable families express 'off' honestly.
+  assert.equal(modelCannotExpressOff('deepseek-flash'), false);
+  assert.equal(modelCannotExpressOff('deepseek/deepseek-v4.1-flash'), false);
+  assert.equal(modelCannotExpressOff('glm-4.7'), false);
+  assert.equal(modelCannotExpressOff(null), true); // unknown by default
 });

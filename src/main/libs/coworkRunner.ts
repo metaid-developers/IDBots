@@ -69,6 +69,20 @@ import {
 import { mapDshReasoningEffort } from './dshReasoningEffort';
 import { shouldIncludeMetawebDeepSections, nextMetawebPromptTier, type MetawebPromptMode, type MetawebPromptTier } from './metawebPromptTier';
 import { dshModelReasoningDeclaration, dshRouteReasoningEffort, isGlmFamilyModelId, undeclaredReasoningRouteWarning } from './dshModelReasoning';
+import { modelCannotExpressOff } from './modelThinking';
+
+/**
+ * The auto-rung 'off' floor predicate: true when THIS route cannot express
+ * 'off' in a form the dispatch accepts — the GLM-5 always-thinks family plus
+ * every family with no thinking declaration (unknown families: pi-ai
+ * materializes reasoning:false and the dsh-llm capability gate rejects 'off'
+ * before provider I/O — the 2026-11-26 gemini-4-hydrogen auto-effort turn
+ * failure). GLM-4.x stays floored via the family check exactly as before;
+ * DeepSeek V4 and any declared-capable family run 'off' honestly.
+ */
+function autoRungCannotExpressOff(modelId: string): boolean {
+  return isGlmFamilyModelId(modelId) || modelCannotExpressOff(modelId);
+}
 import { resolveOpenCodeGoApiFormat, openCodeGoWireRouteKey } from './opencodeGoProtocol';
 import { maxLlmEffortLevel, toLlmEffortLevel, type LlmEffortLevel } from './llmEffort';
 import {
@@ -980,12 +994,15 @@ export interface AutoEffortFallbackInput {
   /** Override origin was the 'default' sentinel (see resolveEffectiveEffort). */
   sentinelDefault: boolean;
   /** Assistant chat-experience mode pins the no-reasoning fallback ('off',
-   * or 'low' for the GLM family — see glmFamily) whatever the origin. */
+   * or 'low' for routes that cannot express 'off' — see
+   * autoRungCannotExpressOff) whatever the origin. */
   assistantMode: boolean;
-  /** The running model belongs to the GLM family (GLM-4.5+/5.x+). GLM-5.x
-   * always thinks and cannot express 'off' on any wire, so the
-   * assistant-mode no-verdict fallback spells 'low' for it instead — 'off'
-   * would degrade to the server default thinking, heavier than low. */
+  /** True when the running model cannot express 'off' in a form the dispatch
+   * accepts (autoRungCannotExpressOff: GLM family incl. always-thinking
+   * GLM-5.x, plus undeclared/unknown families whose 'off' the dsh-llm gate
+   * rejects). The assistant-mode no-verdict fallback spells 'low' for it
+   * instead — 'off' would be rejected upstream (unknown families) or degrade
+   * to the server default thinking, heavier than low. */
   glmFamily?: boolean;
   /** Bot brain effort (primary brain for the main route, fallback brain's
    * effort on a fallback-route resume). */
@@ -1034,10 +1051,14 @@ export { resolveAutoEffortFallback };
  * The assistant-mode 'off' verdict is only honest when the running model can
  * EXPRESS 'off'. GLM-5.x always thinks, and on the responses/anthropic wires
  * an unrepresentable 'off' is dropped wholesale, leaving the SERVER default
- * thinking level in charge — heavier than 'low'. Pin the expressible floor
- * for that family so a cerebellum 'off' verdict cannot degrade into full
- * server-default thinking (same carve-out as resolveAutoEffortFallback's
- * no-verdict branch, extended to verdict results).
+ * thinking level in charge; undeclared (unknown-family) routes are worse —
+ * the dsh-llm capability gate rejects 'off' outright before provider I/O
+ * (2026-11-26 gemini-4-hydrogen auto-effort failure). The floor predicate is
+ * autoRungCannotExpressOff (GLM family + unknown families), so pin the
+ * expressible floor for those routes and a cerebellum 'off' verdict cannot
+ * degrade into a rejected turn or full server-default thinking (same
+ * carve-out as resolveAutoEffortFallback's no-verdict branch, extended to
+ * verdict results).
  */
 function resolveAssistantModeExpressibleRung(
   rung: CerebellumEffortRung,
@@ -13542,7 +13563,7 @@ export class CoworkRunner extends EventEmitter {
       // cerebellum 'off' verdict on a route that cannot express 'off' pins
       // to 'low' instead of degrading into server-default thinking.
       const pinnedAutoEffortRung = autoEffortRung != null
-        ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode: fastOwnerChatMode, glmFamily: isGlmFamilyModelId(route.model) })
+        ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode: fastOwnerChatMode, glmFamily: autoRungCannotExpressOff(route.model) })
         : null;
       // The pre-mapping effort level the PRIMARY attempt of this turn runs
       // with. Hoisted so a later GT-02 fallback attempt (runGuardedTurn's
@@ -13558,7 +13579,7 @@ export class CoworkRunner extends EventEmitter {
           : pinnedAutoEffortRung ?? resolveAutoEffortFallback({
             sentinelDefault: effortSentinelDefault,
             assistantMode: fastOwnerChatMode,
-            glmFamily: isGlmFamilyModelId(route.model),
+            glmFamily: autoRungCannotExpressOff(route.model),
             brainEffort: automationBrain?.effort,
             hasBrain: automationBrain != null,
             globalEffort: getPersistedCoworkEffortLevel(),
@@ -13818,7 +13839,7 @@ export class CoworkRunner extends EventEmitter {
           // Same GLM-family floor as the primary route above, read against
           // the fallback brain's model (the one now running the turn).
           const pinnedFallbackAutoEffortRung = autoEffortRung != null
-            ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode: fastOwnerChatMode, glmFamily: isGlmFamilyModelId(routeOverride.model) })
+            ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode: fastOwnerChatMode, glmFamily: autoRungCannotExpressOff(routeOverride.model) })
             : null;
           const fallbackEffortLevel: LlmEffortLevel | null = sessionEffortPicked
             ? toLlmEffortLevel(effectiveEffortRung)
@@ -13831,7 +13852,7 @@ export class CoworkRunner extends EventEmitter {
               : pinnedFallbackAutoEffortRung ?? resolveAutoEffortFallback({
                 sentinelDefault: effortSentinelDefault,
                 assistantMode: fastOwnerChatMode,
-                glmFamily: isGlmFamilyModelId(routeOverride.model),
+                glmFamily: autoRungCannotExpressOff(routeOverride.model),
                 brainEffort: automationBrain?.fallbackEffort,
                 hasBrain: automationBrain != null,
                 globalEffort: getPersistedCoworkEffortLevel(),
