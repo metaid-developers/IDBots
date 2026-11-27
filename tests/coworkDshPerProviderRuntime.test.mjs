@@ -130,6 +130,10 @@ test('idle provider runtimes are reaped after the configured TTL', {
     runtimeDir,
     sessionRoot,
     runtimeIdleTtlMs: 200,
+    // The kernel stamps activity at boot and on every notification, and a
+    // recently active kernel is protected for the grace window (10 minutes by
+    // default). The TTL alone must decide here, or the reap never lands.
+    kernelActivityGraceMs: 0,
     log: (level, message, detail) => logs.push({ level, message, detail: detail ?? {} }),
   })
   try {

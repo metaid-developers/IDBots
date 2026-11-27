@@ -1668,6 +1668,10 @@ export class DshTurnHub {
       // slot itself is too young/fresh to reap.
       this.settleDrains(key)
       if (this.inFlightOnSlot(key) > 0) continue
+      // A turn registers its controller only once ensureKernel has booted the
+      // process, and the kernel stamps no activity before its handshake — so a
+      // booting slot looks idle here. Retiring it would orphan the process.
+      if (slot.kernel.isBooting) continue
       // Kernel-side activity (subagent turns with no host controller) keeps
       // the slot's processes alive through the reap the same way.
       if (slot.kernel.hasRecentActivity(this.kernelActivityGraceMs)) continue
@@ -1710,6 +1714,12 @@ export class DshTurnHub {
     }
     this.attachKernel(slot)
     this.slots.set(key, slot)
+    // Arm the idle reaper from birth. runTurn's finally used to be the only
+    // place that did, so a slot that no turn ever landed on — app-start
+    // warmup, intent prewarm — never got a reap timer and outlived its TTL
+    // for as long as the app ran (2026-11-27 tenant host: 7 boot-warmed
+    // kernels across 5 of 17 tenants, four hours old, one second of CPU each).
+    this.scheduleReap()
     return slot
   }
 

@@ -174,6 +174,47 @@ test('overlapping prewarm and first turn serialize onto one runtime spawn', {
   }
 })
 
+test('a warmed slot that no turn ever lands on is still reaped after the idle TTL', {
+  skip: runtimeReady ? false : 'dsh-runtime/node_modules not installed',
+}, async () => {
+  // 2026-11-27 tenant host: the idle reaper was armed only by runTurn's
+  // finally, so boot-warmed kernels in tenants nobody talked to stayed
+  // resident for as long as the app ran.
+  const { DshTurnHub } = loaded.coworkDshTurn
+  const { startMockServer } = await import(path.join(runtimeDir, 'test', 'fixtures', 'mock-openai.mjs'))
+  const { server } = await startMockServer(48826)
+  const sessionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-dsh-warmup-reap-'))
+  const logs = []
+  const hub = new DshTurnHub({
+    runtimeDir,
+    sessionRoot,
+    runtimeIdleTtlMs: 300,
+    // A fresh kernel counts as active for the grace window; zero it so the
+    // TTL alone decides when the slot retires.
+    kernelActivityGraceMs: 0,
+    log: (level, message, detail) => logs.push({ level, message, detail: detail ?? {} }),
+  })
+  const provider = {
+    key: 'mockgw', apiFormat: 'openai', baseUrl: 'http://127.0.0.1:48826/v1',
+    apiKey: 'sk-a', model: 'mock-1',
+  }
+
+  try {
+    await hub.prewarm({ provider, workspace: { cwd: sessionRoot } })
+    assert.equal(hub.runtimeSlotCount, 1, 'warmup boots the runtime')
+    await waitFor(() => hub.runtimeSlotCount === 0, 8000, 'warmed slot reap without a turn')
+    assert.ok(
+      logs.some((l) => l.message.includes('dshTurnHub.reapIdleRuntime')),
+      'the idle reaper must record the retirement',
+    )
+    assert.equal(hub.running, false, 'the warmed runtime process must be gone')
+  } finally {
+    await hub.close().catch(() => undefined)
+    server.close()
+    fs.rmSync(sessionRoot, { recursive: true, force: true })
+  }
+})
+
 // ---------------------------------------------------------------------------
 // prewarmTurnSlot (first-sentence latency work, 2026-10-15): pre-boot the
 // runtime slot the session's NEXT turn will land on, with the real session's

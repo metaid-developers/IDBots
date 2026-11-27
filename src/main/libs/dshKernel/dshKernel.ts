@@ -143,6 +143,15 @@ export class DshKernel {
     return this.client !== null && !this.closed
   }
 
+  /** True while the runtime is being spawned and handshaked. Until that
+   *  finishes the kernel has neither a client nor an activity stamp, so to the
+   *  idle reaper it looks exactly like an unused slot: retiring it mid-boot
+   *  would orphan the process (close() has no client to close yet). Callers
+   *  that retire kernels must treat this as busy. */
+  get isBooting(): boolean {
+    return this.ensureInFlight !== null
+  }
+
   /** Diagnostics/tests: how many times the runtime process was restarted. */
   restartCount = 0
 
