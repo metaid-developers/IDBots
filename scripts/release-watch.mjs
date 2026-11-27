@@ -138,18 +138,32 @@ function describeFailures(jobs) {
   return lines;
 }
 
+/**
+ * Why the delta gave way, read from the job's log. The step's recorded
+ * conclusion cannot tell: the step is allowed to fail, so GitHub reports it
+ * as "success" whether the tool declined cleanly or crashed (run 45888882259
+ * reported a crash as a clean decline until the log was read by hand).
+ */
+export function fallbackReason(log = '') {
+  // The tool's own failure line decides first. The "does not fit" sentence
+  // cannot: the log echoes the step's script, which contains it whether or
+  // not it ever ran (reading that sentence first reported the crash of run
+  // 45888882259 as a clean decline).
+  const failure = log.match(/ci-source-restore: ([^\r\n]*)/);
+  if (failure) return `failed outright: ${failure[1].replace(/\x1b\[[0-9;]*m/g, '').slice(0, 160)}`;
+  if (/(?:^|[\t]|Z )The source delta does not fit this workspace/.test(log)) return 'did not fit';
+  return 'gave way, for a reason the log does not state';
+}
+
 /** Where a fallback had to step in, for the record: it cost time, not the run. */
-function describeFallbacks(jobs) {
+function describeFallbacks(jobs, jobLogs = {}) {
   const lines = [];
   for (const job of jobs) {
     const steps = job.steps || [];
     for (const [failed, fallback] of FALLBACKS) {
-      const gave = steps.find((step) => step.name === failed);
       if (steps.find((step) => step.name === fallback)?.conclusion !== 'success') continue;
-      // The usual case is a clean "does not fit" (the machine holds another
-      // commit); a failed step means the delta itself is broken.
-      const why = gave && FAILED_CONCLUSIONS.has(gave.conclusion) ? 'failed outright' : 'did not fit';
-      lines.push(`  ℹ ${job.name} — the source delta ${why}; the tree was rebuilt from the full bundle instead (about 15 min more; the "${failed}" step log has the details).`);
+      // 1–15 min more: the full bundle took a minute on 2026-11-27 and a quarter of an hour the night before.
+      lines.push(`  ℹ ${job.name} — the source delta ${fallbackReason(jobLogs[job.id])}; the tree was rebuilt from the full bundle instead (1–15 min more; the "${failed}" step log has the details).`);
     }
   }
   return lines;
@@ -200,6 +214,7 @@ export function evaluate({
   budgets = DEFAULT_BUDGETS,
   defaultStepBudgetSeconds = DEFAULT_STEP_BUDGET_SECONDS,
   repo = DEFAULT_REPO,
+  jobLogs = {},
 }) {
   const runStartedAt = run.startedAt || run.created_at || now.toISOString();
   const overview = describeJobs(jobs, now, runStartedAt);
@@ -208,7 +223,7 @@ export function evaluate({
     .join(';');
 
   if (run.status === 'completed') {
-    const fallbacks = describeFallbacks(jobs);
+    const fallbacks = describeFallbacks(jobs, jobLogs);
     if (run.conclusion === 'success') {
       return { verdict: 'completed-ok', exitCode: 0, lines: [...overview, ...fallbacks, 'run succeeded'], stateKey };
     }
@@ -284,6 +299,18 @@ function fetchRunners(repo) {
   return runners.map((runner) => ({ name: runner.name, status: runner.status, busy: runner.busy, labels: (runner.labels || []).map((label) => label.name) }));
 }
 
+/** A job's log, for when a fallback needs explaining. Best effort: the verdict never depends on it. */
+function fetchJobLog(jobId, repo) {
+  try {
+    return gh(['api', `repos/${repo}/actions/jobs/${jobId}/logs`]);
+  } catch {
+    return '';
+  }
+}
+
+const hasRebuiltFromFallback = (job) =>
+  FALLBACKS.some(([, fallback]) => (job.steps || []).some((step) => step.name === fallback && step.conclusion === 'success'));
+
 // A watcher must not die on one dropped response; it also must not spin forever.
 function withRetry(label, read) {
   let lastError;
@@ -349,6 +376,13 @@ async function main() {
       process.exit(6);
     }
 
+    // Why a fallback stepped in is only in the log, and the log is only worth
+    // reading once the run is over.
+    const jobLogs = {};
+    if (snapshot.run.status === 'completed') {
+      for (const job of snapshot.jobs.filter(hasRebuiltFromFallback)) jobLogs[job.id] = fetchJobLog(job.id, options.repo);
+    }
+
     const result = evaluate({
       ...snapshot,
       runners,
@@ -356,6 +390,7 @@ async function main() {
       queuedAlertSeconds: options.queuedAlertSeconds,
       budgets: options.budgets,
       repo: options.repo,
+      jobLogs,
     });
 
     if (options.once) {

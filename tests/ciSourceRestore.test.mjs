@@ -266,6 +266,26 @@ test('a merge commit arrives by delta too', (t) => {
   assert.equal(git(workspace, ['rev-list', '--count', 'HEAD'], fixture.env), '1');
 });
 
+test('the update pins the checkout settings even where the clone left one of them with two values', (t) => {
+  const fixture = makeFixture(t);
+  const workspace = path.join(fixture.dir, 'workspace');
+  fixture.restoreCommit(workspace, fixture.bundles('second').full, 'second', { branch: 'main', fresh: true });
+  const values = () => git(workspace, ['config', '--get-all', 'core.symlinks'], fixture.env).split('\n').length;
+  // Git for Windows writes core.symlinks=false by itself where the machine
+  // cannot create symlinks, and the clone's own --config adds the same setting
+  // again. A plain `git config` then refuses to overwrite the key: on the
+  // signing machine every delta gave way to the full bundle (run 45888882259).
+  git(workspace, ['config', '--add', 'core.symlinks', 'false'], fixture.env);
+  assert.ok(values() >= 2, `core.symlinks holds ${values()} values`);
+
+  const result = fixture.restoreCommit(workspace, fixture.bundles('third').delta, 'third', { branch: 'main' });
+
+  assert.equal(result.mode, 'updated');
+  assert.equal(values(), 1);
+  assert.equal(git(workspace, ['config', 'core.symlinks'], fixture.env), 'false');
+  assert.equal(git(workspace, ['status', '--porcelain'], fixture.env), '');
+});
+
 test('a workspace that is already on the commit takes the delta again', (t) => {
   const fixture = makeFixture(t);
   const workspace = path.join(fixture.dir, 'workspace');
