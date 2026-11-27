@@ -33,7 +33,7 @@
  * in the walk — and git excludes the base's objects through parentage alone
  * (see cut). So the listing asks for more than `--not`. Without that, the
  * delta of run 46051725913 was the whole tree — 5132 objects, 36.3 MB, where
- * 39 KB would have done.
+ * 804 KB would have done.
  *
  * Prints one line for the log: which base it used and how big the pack is.
  * Exit codes: 0 = pack written; 1 = could not cut (named); 64 = bad arguments.
