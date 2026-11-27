@@ -17,7 +17,8 @@
  * minutes on 36 MB. So the hosted runner hands over two things and the small
  * one is tried first:
  *   - the delta, a pack of what the commit reaches beyond its first parent:
- *     typically a few KB. It fits a workspace that already holds that parent,
+ *     tens of KB to about a megabyte, measured. It fits a workspace that
+ *     already holds that parent,
  *     which is what the previous run left behind. The working files are still
  *     deleted and checked out anew, so no file of an earlier run survives, and
  *     nothing in the workspace is touched before the pack is in and the whole

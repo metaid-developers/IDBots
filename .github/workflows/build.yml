@@ -95,9 +95,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/source-delta" "$RUNNER_TEMP/source-full"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           # The delta: what this commit reaches beyond its first parent, as a
-          # pack that declares no prerequisites. It is a few KB against the
-          # full tree's tens of MB whenever the machine still holds the
-          # previous run's commit, and refused otherwise.
+          # pack that declares no prerequisites. Measured at 50 KB (a merge
+          # that changed one test file) to 1 MB (one that brought a whole
+          # feature) against the full bundle's 36 MB. It fits whenever the
+          # machine still holds the previous run's commit, and is refused
+          # otherwise.
           git rev-list --objects HEAD ^HEAD^1 | git pack-objects --stdout > "$RUNNER_TEMP/source-delta/source.pack"
           # The full commit: cut from a shallow clone, the bundle holds this
           # commit and its whole tree.
