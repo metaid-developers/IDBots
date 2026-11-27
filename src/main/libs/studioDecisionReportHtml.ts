@@ -1,4 +1,5 @@
 import type { StudioDecisionQueueItem } from '../studioDecisionQueueStore';
+import { normalizeLocalPreviewUri } from './localPreviewUri';
 
 function esc(raw: string): string {
   return String(raw ?? '')
@@ -121,9 +122,12 @@ export function buildStudioDecisionReportHtml(input: {
       item.evidence
         .map((ev) => {
           const uri = String(ev.uri ?? '').trim();
-          const linkable = /^(?:pin|metaapp|preview-file|preview-metaapp):\/\//i.test(uri);
+          const linkable = /^(?:pin|metaapp|preview-file|preview-metaapp|file):\/\//i.test(uri);
+          const hrefUri = /^(?:preview-file|preview-metaapp|file):\/\//i.test(uri)
+            ? normalizeLocalPreviewUri(uri)
+            : uri;
           const uriHtml = linkable
-            ? `<a href="${esc(uri)}"><code>${esc(uri)}</code></a>`
+            ? `<a href="${esc(hrefUri)}"><code>${esc(uri)}</code></a>`
             : `<code>${esc(uri)}</code>`;
           return `<li><span class="ev-kind">${esc(ev.kind)}</span>${uriHtml}${ev.note ? ` — ${esc(ev.note)}` : ''}</li>`;
         })

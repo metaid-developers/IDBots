@@ -29,6 +29,23 @@ export function installLegacyWebViewUrlCompatibility(
       if (parsed.hostname || !parsed.pathname.startsWith('//')) return parsed;
 
       const rest = match[2];
+      if (rest.startsWith('/')) {
+        const pathEnd = rest.search(/[?#]/);
+        const emptyHostPathname = rest.slice(0, pathEnd === -1 ? rest.length : pathEnd);
+        for (const [name, value] of Object.entries({
+          host: '',
+          hostname: '',
+          pathname: emptyHostPathname,
+        })) {
+          Object.defineProperty(parsed, name, {
+            configurable: true,
+            enumerable: true,
+            value,
+            writable: true,
+          });
+        }
+        return parsed;
+      }
       const authority = rest.match(/^([^/?#]+)/)?.[1] ?? '';
       if (!authority) return parsed;
       const remainder = rest.slice(authority.length);

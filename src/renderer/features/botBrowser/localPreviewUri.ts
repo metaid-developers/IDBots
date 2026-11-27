@@ -31,7 +31,9 @@ export function buildLocalPreviewUri(absPath: string): string | null {
     // The Windows drive segment keeps its literal ':' — preview URIs use the
     // /C:/x/y form, and parsePreviewFileUri rejects a percent-encoded drive.
     if (/^[A-Za-z]:$/u.test(segment)) return segment;
-    return encodeURIComponent(segment);
+    return encodeURIComponent(segment)
+      .replace(/\(/g, '%28')
+      .replace(/\)/g, '%29');
   }).join('/');
 
   if (isDirectory || HTML_FILE_RE.test(trimmedPath)) {

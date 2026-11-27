@@ -514,6 +514,7 @@ man_base_data_pebble/
 !tests/studioProjectionFastModeStatic.test.mjs
 !tests/studioProjectionGate.test.mjs
 !tests/botBrowserAbc0112IntegrationStatic.test.mjs
+!tests/botBrowserSpecialCharUris.test.tsx
 !tests/botInternetComposerReuse.test.mjs
 !tests/pinnedSkillBackstop.test.mjs
 !tests/releaseRunbook.test.mjs

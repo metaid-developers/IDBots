@@ -530,6 +530,9 @@ ${buildLegacyWebViewUrlCompatibilityScript()}
 
   function localPreviewPath(uri) {
     var value = textValue(uri);
+    if (value.indexOf('preview-metaapp:///') === 0) {
+      value = 'preview-metaapp://localhost/' + value.slice('preview-metaapp:///'.length);
+    }
     if (value.indexOf('preview-metaapp://localhost/') !== 0) return '';
     if (value.indexOf('?') !== -1 || value.indexOf('#') !== -1 || value.indexOf(String.fromCharCode(92)) !== -1) return '';
     var rawPath = value.slice('preview-metaapp://localhost'.length);

@@ -20,6 +20,10 @@ import {
 } from './studioPresenceState';
 import type { TwinStampPublishItemInput } from '../libs/studioChiefOfStaffAgentTools';
 import { buildStudioDecisionReportHtml } from '../libs/studioDecisionReportHtml';
+import {
+  localFilesystemPathFromArtifactRef,
+  previewMetaappUriForPath,
+} from '../libs/localPreviewUri';
 import { formatCompactTwinTodosPromptBlock } from '../libs/twinTodoAgentTools';
 import type { TwinTodoItem } from '../twinTodoStore';
 import { isServerMode } from '../server/serverMode';
@@ -337,7 +341,7 @@ function buildSupervisionPrompt(params: {
   ].join('\n');
 }
 
-function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQueuedCount: number, language: 'zh' | 'en'): string {
+export function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQueuedCount: number, language: 'zh' | 'en'): string {
   const optionsText = item.options.length > 0
     ? item.options
         .map((opt, index) => `${index + 1}. ${opt.recommended ? '[Recommended] ' : ''}${opt.label}${opt.description ? ` — ${opt.description}` : ''}`)
@@ -357,12 +361,18 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
       `选项:\n${optionsText}`,
       `你的首推建议与理由: ${item.recommendation}`,
       `主人拍板后的下一步: ${item.nextStep}`,
-      ...(item.reportHtmlPath ? [`预备投影详情页路径: ${item.reportHtmlPath}`] : []),
+      ...(() => {
+        const cleanReportPath = localFilesystemPathFromArtifactRef(item.reportHtmlPath);
+        return cleanReportPath ? [`预备投影详情页路径: ${cleanReportPath}`] : [];
+      })(),
       '',
       '执行规则：',
       `1. **防重判据（严禁二次形式主义追问）**：先核对本会话上下文——如果主人在此前对话中**已经对这件事拍过板或选定了方案**（例如已选定某版设计稿、已明确后续发布方式、或已说「暂不动代码 / 只留文稿」），严禁为了走流程再让主人多回一次「验收」！请立即调用 \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` 静默收口，**不要调用任何投影工具，也不要再次向主人追问同一件事**（宿主看到已 resolve 就不会覆盖右侧投影屏）。`,
       `2. **严禁调用 \`ask_user_question\`，先完整呈现成果再让主人在左侧输入拍板（硬规则）**：汇报、是否验收/是否通过、选择方案时**绝对禁止调用 \`ask_user_question\` 工具**（该工具仅限任务开始前做前置调查，严禁用于汇报拍板，否则会遮挡右侧详情页、让主人在看不到文稿/成果的情况下盲选 A/B/C）！保持该队列项为当前待拍板状态（不要提前调 \`studio_decision_resolve\`）：先用 1 次 \`owner_update({ kind: "milestone", message: "..." })\` 简短交代核验结论，随后在左侧聊天回复中用 3–6 行自然简练的文字说明已完成成果、列出清晰的选项（如 \`A（推荐）：...\` / \`B：...\`）与下一步` +
-        `${item.reportHtmlPath ? `，并附上 \`[查看核验详情页](preview-metaapp://localhost/${item.reportHtmlPath})\` 链接` : ''}，` +
+        `${(() => {
+          const cleanReportPath = localFilesystemPathFromArtifactRef(item.reportHtmlPath);
+          return cleanReportPath ? `，并附上 \`[查看核验详情页](${previewMetaappUriForPath(cleanReportPath)})\` 链接` : '';
+        })()}，` +
         '然后**直接结束本轮回复**——宿主会自动将包含完整内容与选项的 HTML 页面投到右侧投影屏，主人看完右侧完整文稿/页面后直接在左侧输入框回复 A 或 B 即可！',
       '3. **实物可见硬约束**：凡涉及让主人挑选、确认或验收文稿/方案/图片/设计稿/本地产物，**必须在右侧投影页完整呈现核心内容，并在左侧回复中逐项附上可点击的本地预览链接**（如 `[文稿全文](preview-file://localhost/绝对路径)` 或 `[方案A](preview-file://localhost/绝对路径)`）与一句区分说明，绝不允许不把实际内容呈现给主人看就让主人做 A/B/C 盲选！（若涉及已上链内容，务必同时明文写出**发布账号**和完整 `pin://...i0` ID）。',
       '4. **禁止前台重复验工（秒级呈报纪律）**：后台 `[督办]` 会话在入队前**已经跑完了文件、字数与图片核验并生成了详情页**；本轮前台汇报严禁再次从头调 `bash` 跑校验脚本或重复调 `read_image` 拖慢响应——除非先做防重收口，否则直接基于上方已核验信息发出简报与链接并结束本轮！',
@@ -382,12 +392,18 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
     `Options:\n${optionsText}`,
     `Your recommendation: ${item.recommendation}`,
     `Next step after owner ruling: ${item.nextStep}`,
-    ...(item.reportHtmlPath ? [`Prepared briefing HTML path: ${item.reportHtmlPath}`] : []),
+    ...(() => {
+      const cleanReportPath = localFilesystemPathFromArtifactRef(item.reportHtmlPath);
+      return cleanReportPath ? [`Prepared briefing HTML path: ${cleanReportPath}`] : [];
+    })(),
     '',
     'Rules:',
     `1. **Deduplication check (no redundant ceremony)**: If the owner ALREADY ruled on this question or selected a candidate earlier in this conversation, NEVER re-ask them just for formal subtask sign-off — call \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` immediately and do NOT project or re-ask (the host will keep the existing projector page untouched once resolved).`,
     `2. **NEVER call \`ask_user_question\` for reporting, acceptance, or plan selection (hard rule)**: \`ask_user_question\` is strictly for pre-task requirement surveys BEFORE work begins — NEVER call it during a briefing/acceptance/ruling turn (calling it blocks the right-hand projector and forces the owner to pick A/B/C blind without seeing the deliverable!). Leave the queue item in \`presenting\` (do NOT resolve yet), send one brief \`owner_update({ kind: "milestone", message: "..." })\`, write a concise 3–6 line chat reply summarizing the verified result and clearly listing the A / B options (recommended first)` +
-      `${item.reportHtmlPath ? ` plus \`[Open full briefing](preview-metaapp://localhost/${item.reportHtmlPath})\`` : ''}, and **end your turn immediately** so the host projects the full HTML report/deliverable onto the right screen while the owner inspects it and types A or B in the left chat input.`,
+      `${(() => {
+        const cleanReportPath = localFilesystemPathFromArtifactRef(item.reportHtmlPath);
+        return cleanReportPath ? ` plus \`[Open full briefing](${previewMetaappUriForPath(cleanReportPath)})\`` : '';
+      })()}, and **end your turn immediately** so the host projects the full HTML report/deliverable onto the right screen while the owner inspects it and types A or B in the left chat input.`,
     '3. **Show full artifacts before asking**: Whenever asking the owner to review, pick, or accept articles, plans, images, designs, or files, ALWAYS present the full content on the right-hand projector and include clickable `[label](preview-file://localhost/abs/path)` links with one-line descriptions in your reply — never ask the owner to choose A/B/C over unseen artifacts! (If on-chain content was published, always state BOTH the publishing Bot identity and the verbatim `pin://...i0` ID.)',
     '4. **No redundant front-office re-verification**: Back-office supervision has ALREADY verified every artifact and built `reportHtmlPath` before enqueuing; do NOT re-run `bash` verification scripts or `read_image` checks during this front-office presentation turn — deliver the summary, clickable links, and A/B options straight away!',
     '</studio_proactive_briefing>',
@@ -1633,7 +1649,7 @@ export class StudioChiefOfStaffService {
         && !alreadyProjectedInTurn
         && this.deps.projectShowcaseHtml
       ) {
-        let reportPath = postTurnItem.reportHtmlPath;
+        let reportPath = localFilesystemPathFromArtifactRef(postTurnItem.reportHtmlPath);
         if (!reportPath || !fs.existsSync(reportPath)) {
           try {
             const workspace = this.deps.resolveTwinWorkspace(twinId);

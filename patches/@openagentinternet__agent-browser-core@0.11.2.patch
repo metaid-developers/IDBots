@@ -1,0 +1,502 @@
+diff --git a/dist/browser/browserResolver.js b/dist/browser/browserResolver.js
+index 97a323aae841c3b77ae5b63975da747965dc501e..e3602ca45f697060a757cbd8aa803668ed4f8ec7 100644
+--- a/dist/browser/browserResolver.js
++++ b/dist/browser/browserResolver.js
+@@ -377,9 +377,13 @@ export async function resolveBrowserResource(input) {
+         });
+     }
+     if (parsed.scheme === 'preview-metaapp') {
+-        // parseBrowserUri already produced a ParsedPreviewMetaAppUri-shaped result; re-parse via the
+-        // dedicated parser to obtain the structured host/path fields the resolver needs.
+-        const previewParsed = parsePreviewMetaAppUri(parsed.normalizedUri);
++        let previewParsed;
++        try {
++            previewParsed = parsePreviewMetaAppUri(parsed.normalizedUri);
++        }
++        catch (error) {
++            return browserCommandFailed('invalid_browser_uri', error instanceof Error ? error.message : String(error));
++        }
+         return resolvePreviewMetaAppResource({
+             parsed: previewParsed,
+             config: input.config,
+@@ -387,7 +391,13 @@ export async function resolveBrowserResource(input) {
+         });
+     }
+     if (parsed.scheme === 'preview-file') {
+-        const previewParsed = parsePreviewFileUri(parsed.normalizedUri);
++        let previewParsed;
++        try {
++            previewParsed = parsePreviewFileUri(parsed.normalizedUri);
++        }
++        catch (error) {
++            return browserCommandFailed('invalid_browser_uri', error instanceof Error ? error.message : String(error));
++        }
+         return resolvePreviewFileResource({
+             parsed: previewParsed,
+             config: input.config,
+diff --git a/dist/browser/previewFileUri.js b/dist/browser/previewFileUri.js
+index fcc1b7f04c2d4dafead85c8485646bce8526012b..1eb7e5ed78890f07f7037a955f55e05cb2ad14d9 100644
+--- a/dist/browser/previewFileUri.js
++++ b/dist/browser/previewFileUri.js
+@@ -4,11 +4,55 @@ function cleanText(value) {
+ function collapseSlashes(value) {
+     return value.replace(/\/\/+/g, '/');
+ }
++function sanitizePreviewInputUri(raw, isPreviewFile) {
++    let sanitized = raw.replace(/^([a-z][a-z0-9+.-]*:\/\/)(.*)$/i, (_, prefix, rest) => prefix + rest.replace(/\\/g, '/'));
++    if (isPreviewFile) {
++        const hashIdx = sanitized.indexOf('#');
++        if (hashIdx !== -1) {
++            const before = sanitized.slice(0, hashIdx);
++            const after = sanitized.slice(hashIdx + 1);
++            const baseBefore = before.slice(before.lastIndexOf('/') + 1);
++            if (!baseBefore.includes('.') && /\.[A-Za-z0-9]{1,12}$/.test(after)) {
++                sanitized = before + '%23' + after.replace(/#/g, '%23');
++            }
++        }
++        const qIdx = sanitized.indexOf('?');
++        if (qIdx !== -1) {
++            const before = sanitized.slice(0, qIdx);
++            const after = sanitized.slice(qIdx + 1);
++            const baseBefore = before.slice(before.lastIndexOf('/') + 1);
++            if (!baseBefore.includes('.') && /\.[A-Za-z0-9]{1,12}$/.test(after) && !after.includes('=')) {
++                sanitized = before + '%3F' + after.replace(/\?/g, '%3F');
++            }
++        }
++    }
++    return sanitized;
++}
++function decodePreviewPathname(pathname) {
++    try {
++        return decodeURIComponent(pathname);
++    }
++    catch {
++        return pathname.replace(/(?:%[0-9A-Fa-f]{2})+/g, (seq) => {
++            try {
++                return decodeURIComponent(seq);
++            }
++            catch {
++                return seq;
++            }
++        });
++    }
++}
++function encodePreviewUriPath(normalizedPath) {
++    return normalizedPath
++        .replace(/%/g, '%25')
++        .replace(/[\x00-\x20\x7f#?\\"'<>`()\[\]{}]/g, (ch) => '%' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
++}
+ export function parsePreviewFileUri(input) {
+     const originalUri = cleanText(input);
+     let url;
+     try {
+-        url = new URL(originalUri);
++        url = new URL(sanitizePreviewInputUri(originalUri, true));
+     }
+     catch {
+         throw new Error('Enter a complete preview-file URI such as preview-file://localhost/path/to/file.md.');
+@@ -20,26 +64,16 @@ export function parsePreviewFileUri(input) {
+     if (url.username || url.password) {
+         throw new Error('Unsupported preview-file URI userinfo.');
+     }
+-    const host = url.host; // includes port when present, so localhost:3000 never equals 'localhost'
+-    if (!host) {
+-        throw new Error('preview-file URI requires a host.');
+-    }
++    const host = url.host || 'localhost'; // empty host (preview-file:///abs/path) normalizes to localhost
+     if (host !== 'localhost') {
+         throw new Error('preview-file only supports localhost.');
+     }
+-    // url.pathname retains percent-encoding; decode it, then collapse stray duplicate slashes.
+-    let decodedPath;
+-    try {
+-        decodedPath = decodeURIComponent(url.pathname);
+-    }
+-    catch {
+-        throw new Error('preview-file URI path contains an invalid percent-escape.');
+-    }
++    const decodedPath = decodePreviewPathname(url.pathname);
+     const normalizedPath = collapseSlashes(decodedPath);
+     if (!normalizedPath.startsWith('/')) {
+         throw new Error('preview-file URI path must be absolute.');
+     }
+-    const normalizedUri = `preview-file://${host}${normalizedPath}`;
++    const normalizedUri = `preview-file://${host}${encodePreviewUriPath(normalizedPath)}`;
+     return {
+         originalUri,
+         normalizedUri,
+@@ -70,17 +104,11 @@ export function previewFileUriFromFileUri(input) {
+     if (host && host !== 'localhost') {
+         throw new Error('preview-file only supports localhost.');
+     }
+-    let decodedPath;
+-    try {
+-        decodedPath = decodeURIComponent(url.pathname);
+-    }
+-    catch {
+-        throw new Error('file URI path contains an invalid percent-escape.');
+-    }
++    const decodedPath = decodePreviewPathname(url.pathname);
+     const normalizedPath = collapseSlashes(decodedPath);
+     if (!normalizedPath.startsWith('/')) {
+         throw new Error('preview-file URI path must be absolute.');
+     }
+-    return `preview-file://localhost${normalizedPath}`;
++    return `preview-file://localhost${encodePreviewUriPath(normalizedPath)}`;
+ }
+ //# sourceMappingURL=previewFileUri.js.map
+diff --git a/dist/browser/previewHtml.js b/dist/browser/previewHtml.js
+index 0251fd97a1c4f450f922b0bc96be57d7b15f9968..4e2ea5c3a40b726e75c683f9f3ee32e2da8f12cb 100644
+--- a/dist/browser/previewHtml.js
++++ b/dist/browser/previewHtml.js
+@@ -165,7 +165,7 @@ const PREVIEW_STORAGE_SHIM = `<script>
+ </script>`;
+ const PREVIEW_NAVIGATION_BRIDGE = `<script>
+ (function __agentBrowserPreviewBridge() {
+-  var INTERNAL_HREF_RE = /^(metaid|metaapp|metafile|map|pin):\\/\\//i;
++  var INTERNAL_HREF_RE = /^(metaid|metaapp|metafile|map|pin|preview-file|preview-metaapp|file):\\/\\//i;
+   var bridge = window.AgentBrowser || {};
+   bridge.navigate = bridge.navigate || function (uri) {
+     window.parent.postMessage({
+diff --git a/dist/browser/previewMetaAppResolver.js b/dist/browser/previewMetaAppResolver.js
+index ee67a36ff3ac3c8c41b858ad0061526bb62cdbaa..b69de748ae6683202e1a193cbaed6fe8aab302df 100644
+--- a/dist/browser/previewMetaAppResolver.js
++++ b/dist/browser/previewMetaAppResolver.js
+@@ -10,7 +10,9 @@ function hasExtension(url, extensions) {
+ // Renderer selection mirrors metaAppResolver.ts:selectRendererType but is independent because
+ // that helper is private and typed to MetaAppGalleryRecord, which previews do not have.
+ function selectPreviewRendererType(contentType, url) {
+-    const ct = contentType.toLowerCase();
++    if (url && /[?&]abc-viewer=1(?:&|$)/i.test(url))
++        return 'file-viewer';
++    const ct = contentType.split(';', 1)[0].trim().toLowerCase();
+     if (ct === 'application/pdf' || hasExtension(url, ['.pdf']))
+         return 'pdf';
+     if (ct.startsWith('image/') || hasExtension(url, ['.apng', '.avif', '.gif', '.jpg', '.jpeg', '.png', '.svg', '.webp']))
+@@ -19,7 +21,7 @@ function selectPreviewRendererType(contentType, url) {
+         return 'video';
+     if (ct.startsWith('audio/') || hasExtension(url, ['.mp3', '.wav', '.oga', '.opus']))
+         return 'audio';
+-    if (ct === 'text/html' || ct === 'application/xhtml+xml' || hasExtension(url, ['.html', '.htm']))
++    if (ct === 'text/html' || ct === 'application/xhtml+xml' || hasExtension(url, ['.html', '.htm', '.xhtml']))
+         return 'html-iframe';
+     return 'unsupported';
+ }
+diff --git a/dist/browser/previewMetaAppUri.js b/dist/browser/previewMetaAppUri.js
+index c3dd635cd7c22af8397c208e30e64de32d6168fd..f2f34ab43a2296cd6ace95fa4b3c6ca579b82e73 100644
+--- a/dist/browser/previewMetaAppUri.js
++++ b/dist/browser/previewMetaAppUri.js
+@@ -4,11 +4,34 @@ function cleanText(value) {
+ function collapseSlashes(value) {
+     return value.replace(/\/\/+/g, '/');
+ }
++function sanitizePreviewInputUri(raw) {
++    return raw.replace(/^([a-z][a-z0-9+.-]*:\/\/)(.*)$/i, (_, prefix, rest) => prefix + rest.replace(/\\/g, '/'));
++}
++function decodePreviewPathname(pathname) {
++    try {
++        return decodeURIComponent(pathname);
++    }
++    catch {
++        return pathname.replace(/(?:%[0-9A-Fa-f]{2})+/g, (seq) => {
++            try {
++                return decodeURIComponent(seq);
++            }
++            catch {
++                return seq;
++            }
++        });
++    }
++}
++function encodePreviewUriPath(normalizedPath) {
++    return normalizedPath
++        .replace(/%/g, '%25')
++        .replace(/[\x00-\x20\x7f#?\\"'<>`()\[\]{}]/g, (ch) => '%' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
++}
+ export function parsePreviewMetaAppUri(input) {
+     const originalUri = cleanText(input);
+     let url;
+     try {
+-        url = new URL(originalUri);
++        url = new URL(sanitizePreviewInputUri(originalUri));
+     }
+     catch {
+         throw new Error('Enter a complete preview-metaapp URI such as preview-metaapp://localhost/path/to/index.html.');
+@@ -20,23 +43,13 @@ export function parsePreviewMetaAppUri(input) {
+     if (url.username || url.password) {
+         throw new Error('Unsupported preview-metaapp URI userinfo.');
+     }
+-    const host = url.host; // includes port when present, so localhost:3000 never equals 'localhost'
+-    if (!host) {
+-        throw new Error('preview-metaapp URI requires a host.');
+-    }
+-    // url.pathname retains percent-encoding; decode it, then collapse stray duplicate slashes.
+-    let decodedPath;
+-    try {
+-        decodedPath = decodeURIComponent(url.pathname);
+-    }
+-    catch {
+-        throw new Error('preview-metaapp URI path contains an invalid percent-escape.');
+-    }
++    const host = url.host || 'localhost'; // empty host (preview-metaapp:///abs/path) normalizes to localhost
++    const decodedPath = decodePreviewPathname(url.pathname);
+     const normalizedPath = collapseSlashes(decodedPath);
+     if (!normalizedPath.startsWith('/')) {
+         throw new Error('preview-metaapp URI path must be absolute.');
+     }
+-    const normalizedUri = `preview-metaapp://${host}${normalizedPath}`;
++    const normalizedUri = `preview-metaapp://${host}${encodePreviewUriPath(normalizedPath)}`;
+     return {
+         originalUri,
+         normalizedUri,
+diff --git a/dist-cjs/browser/browserResolver.js b/dist-cjs/browser/browserResolver.js
+index f6ce04019bfe0f6b82696f055160788e894f4396..991d9bf7b9098e626bccbb3e9dbbdf5bf3c5013b 100644
+--- a/dist-cjs/browser/browserResolver.js
++++ b/dist-cjs/browser/browserResolver.js
+@@ -381,9 +381,13 @@ async function resolveBrowserResource(input) {
+         });
+     }
+     if (parsed.scheme === 'preview-metaapp') {
+-        // parseBrowserUri already produced a ParsedPreviewMetaAppUri-shaped result; re-parse via the
+-        // dedicated parser to obtain the structured host/path fields the resolver needs.
+-        const previewParsed = (0, previewMetaAppUri_js_1.parsePreviewMetaAppUri)(parsed.normalizedUri);
++        let previewParsed;
++        try {
++            previewParsed = (0, previewMetaAppUri_js_1.parsePreviewMetaAppUri)(parsed.normalizedUri);
++        }
++        catch (error) {
++            return (0, types_js_1.browserCommandFailed)('invalid_browser_uri', error instanceof Error ? error.message : String(error));
++        }
+         return (0, previewMetaAppResolver_js_1.resolvePreviewMetaAppResource)({
+             parsed: previewParsed,
+             config: input.config,
+@@ -391,7 +395,13 @@ async function resolveBrowserResource(input) {
+         });
+     }
+     if (parsed.scheme === 'preview-file') {
+-        const previewParsed = (0, previewFileUri_js_1.parsePreviewFileUri)(parsed.normalizedUri);
++        let previewParsed;
++        try {
++            previewParsed = (0, previewFileUri_js_1.parsePreviewFileUri)(parsed.normalizedUri);
++        }
++        catch (error) {
++            return (0, types_js_1.browserCommandFailed)('invalid_browser_uri', error instanceof Error ? error.message : String(error));
++        }
+         return (0, previewFileResolver_js_1.resolvePreviewFileResource)({
+             parsed: previewParsed,
+             config: input.config,
+diff --git a/dist-cjs/browser/previewFileUri.js b/dist-cjs/browser/previewFileUri.js
+index c9bee22f27ff747c81b294b42d03664ed47e0354..abcbcba554cb85f9784550422e6503d83d871f60 100644
+--- a/dist-cjs/browser/previewFileUri.js
++++ b/dist-cjs/browser/previewFileUri.js
+@@ -8,11 +8,55 @@ function cleanText(value) {
+ function collapseSlashes(value) {
+     return value.replace(/\/\/+/g, '/');
+ }
++function sanitizePreviewInputUri(raw, isPreviewFile) {
++    let sanitized = raw.replace(/^([a-z][a-z0-9+.-]*:\/\/)(.*)$/i, (_, prefix, rest) => prefix + rest.replace(/\\/g, '/'));
++    if (isPreviewFile) {
++        const hashIdx = sanitized.indexOf('#');
++        if (hashIdx !== -1) {
++            const before = sanitized.slice(0, hashIdx);
++            const after = sanitized.slice(hashIdx + 1);
++            const baseBefore = before.slice(before.lastIndexOf('/') + 1);
++            if (!baseBefore.includes('.') && /\.[A-Za-z0-9]{1,12}$/.test(after)) {
++                sanitized = before + '%23' + after.replace(/#/g, '%23');
++            }
++        }
++        const qIdx = sanitized.indexOf('?');
++        if (qIdx !== -1) {
++            const before = sanitized.slice(0, qIdx);
++            const after = sanitized.slice(qIdx + 1);
++            const baseBefore = before.slice(before.lastIndexOf('/') + 1);
++            if (!baseBefore.includes('.') && /\.[A-Za-z0-9]{1,12}$/.test(after) && !after.includes('=')) {
++                sanitized = before + '%3F' + after.replace(/\?/g, '%3F');
++            }
++        }
++    }
++    return sanitized;
++}
++function decodePreviewPathname(pathname) {
++    try {
++        return decodeURIComponent(pathname);
++    }
++    catch {
++        return pathname.replace(/(?:%[0-9A-Fa-f]{2})+/g, (seq) => {
++            try {
++                return decodeURIComponent(seq);
++            }
++            catch {
++                return seq;
++            }
++        });
++    }
++}
++function encodePreviewUriPath(normalizedPath) {
++    return normalizedPath
++        .replace(/%/g, '%25')
++        .replace(/[\x00-\x20\x7f#?\\"'<>`()\[\]{}]/g, (ch) => '%' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
++}
+ function parsePreviewFileUri(input) {
+     const originalUri = cleanText(input);
+     let url;
+     try {
+-        url = new URL(originalUri);
++        url = new URL(sanitizePreviewInputUri(originalUri, true));
+     }
+     catch {
+         throw new Error('Enter a complete preview-file URI such as preview-file://localhost/path/to/file.md.');
+@@ -24,26 +68,16 @@ function parsePreviewFileUri(input) {
+     if (url.username || url.password) {
+         throw new Error('Unsupported preview-file URI userinfo.');
+     }
+-    const host = url.host; // includes port when present, so localhost:3000 never equals 'localhost'
+-    if (!host) {
+-        throw new Error('preview-file URI requires a host.');
+-    }
++    const host = url.host || 'localhost'; // empty host (preview-file:///abs/path) normalizes to localhost
+     if (host !== 'localhost') {
+         throw new Error('preview-file only supports localhost.');
+     }
+-    // url.pathname retains percent-encoding; decode it, then collapse stray duplicate slashes.
+-    let decodedPath;
+-    try {
+-        decodedPath = decodeURIComponent(url.pathname);
+-    }
+-    catch {
+-        throw new Error('preview-file URI path contains an invalid percent-escape.');
+-    }
++    const decodedPath = decodePreviewPathname(url.pathname);
+     const normalizedPath = collapseSlashes(decodedPath);
+     if (!normalizedPath.startsWith('/')) {
+         throw new Error('preview-file URI path must be absolute.');
+     }
+-    const normalizedUri = `preview-file://${host}${normalizedPath}`;
++    const normalizedUri = `preview-file://${host}${encodePreviewUriPath(normalizedPath)}`;
+     return {
+         originalUri,
+         normalizedUri,
+@@ -74,17 +108,11 @@ function previewFileUriFromFileUri(input) {
+     if (host && host !== 'localhost') {
+         throw new Error('preview-file only supports localhost.');
+     }
+-    let decodedPath;
+-    try {
+-        decodedPath = decodeURIComponent(url.pathname);
+-    }
+-    catch {
+-        throw new Error('file URI path contains an invalid percent-escape.');
+-    }
++    const decodedPath = decodePreviewPathname(url.pathname);
+     const normalizedPath = collapseSlashes(decodedPath);
+     if (!normalizedPath.startsWith('/')) {
+         throw new Error('preview-file URI path must be absolute.');
+     }
+-    return `preview-file://localhost${normalizedPath}`;
++    return `preview-file://localhost${encodePreviewUriPath(normalizedPath)}`;
+ }
+ //# sourceMappingURL=previewFileUri.js.map
+diff --git a/dist-cjs/browser/previewHtml.js b/dist-cjs/browser/previewHtml.js
+index f2a6cdf3bf78e41ab7a28dcd1eb4c91eb9bf4bea..f02b3eb16fb48767c5728ecdf37208720cbc1422 100644
+--- a/dist-cjs/browser/previewHtml.js
++++ b/dist-cjs/browser/previewHtml.js
+@@ -169,7 +169,7 @@ const PREVIEW_STORAGE_SHIM = `<script>
+ </script>`;
+ const PREVIEW_NAVIGATION_BRIDGE = `<script>
+ (function __agentBrowserPreviewBridge() {
+-  var INTERNAL_HREF_RE = /^(metaid|metaapp|metafile|map|pin):\\/\\//i;
++  var INTERNAL_HREF_RE = /^(metaid|metaapp|metafile|map|pin|preview-file|preview-metaapp|file):\\/\\//i;
+   var bridge = window.AgentBrowser || {};
+   bridge.navigate = bridge.navigate || function (uri) {
+     window.parent.postMessage({
+diff --git a/dist-cjs/browser/previewMetaAppResolver.js b/dist-cjs/browser/previewMetaAppResolver.js
+index fe3e26ff3056122798636505f92d4f4fe4a56d0d..862b94240234583d8b895771b8fee5b96bf9ddd2 100644
+--- a/dist-cjs/browser/previewMetaAppResolver.js
++++ b/dist-cjs/browser/previewMetaAppResolver.js
+@@ -13,7 +13,9 @@ function hasExtension(url, extensions) {
+ // Renderer selection mirrors metaAppResolver.ts:selectRendererType but is independent because
+ // that helper is private and typed to MetaAppGalleryRecord, which previews do not have.
+ function selectPreviewRendererType(contentType, url) {
+-    const ct = contentType.toLowerCase();
++    if (url && /[?&]abc-viewer=1(?:&|$)/i.test(url))
++        return 'file-viewer';
++    const ct = contentType.split(';', 1)[0].trim().toLowerCase();
+     if (ct === 'application/pdf' || hasExtension(url, ['.pdf']))
+         return 'pdf';
+     if (ct.startsWith('image/') || hasExtension(url, ['.apng', '.avif', '.gif', '.jpg', '.jpeg', '.png', '.svg', '.webp']))
+@@ -22,7 +24,7 @@ function selectPreviewRendererType(contentType, url) {
+         return 'video';
+     if (ct.startsWith('audio/') || hasExtension(url, ['.mp3', '.wav', '.oga', '.opus']))
+         return 'audio';
+-    if (ct === 'text/html' || ct === 'application/xhtml+xml' || hasExtension(url, ['.html', '.htm']))
++    if (ct === 'text/html' || ct === 'application/xhtml+xml' || hasExtension(url, ['.html', '.htm', '.xhtml']))
+         return 'html-iframe';
+     return 'unsupported';
+ }
+diff --git a/dist-cjs/browser/previewMetaAppUri.js b/dist-cjs/browser/previewMetaAppUri.js
+index 49d9e2daff05b841ed08ce2e126a73527465215c..9296d8ef1f334be5052dbc20af141f08c85d9286 100644
+--- a/dist-cjs/browser/previewMetaAppUri.js
++++ b/dist-cjs/browser/previewMetaAppUri.js
+@@ -7,11 +7,34 @@ function cleanText(value) {
+ function collapseSlashes(value) {
+     return value.replace(/\/\/+/g, '/');
+ }
++function sanitizePreviewInputUri(raw) {
++    return raw.replace(/^([a-z][a-z0-9+.-]*:\/\/)(.*)$/i, (_, prefix, rest) => prefix + rest.replace(/\\/g, '/'));
++}
++function decodePreviewPathname(pathname) {
++    try {
++        return decodeURIComponent(pathname);
++    }
++    catch {
++        return pathname.replace(/(?:%[0-9A-Fa-f]{2})+/g, (seq) => {
++            try {
++                return decodeURIComponent(seq);
++            }
++            catch {
++                return seq;
++            }
++        });
++    }
++}
++function encodePreviewUriPath(normalizedPath) {
++    return normalizedPath
++        .replace(/%/g, '%25')
++        .replace(/[\x00-\x20\x7f#?\\"'<>`()\[\]{}]/g, (ch) => '%' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
++}
+ function parsePreviewMetaAppUri(input) {
+     const originalUri = cleanText(input);
+     let url;
+     try {
+-        url = new URL(originalUri);
++        url = new URL(sanitizePreviewInputUri(originalUri));
+     }
+     catch {
+         throw new Error('Enter a complete preview-metaapp URI such as preview-metaapp://localhost/path/to/index.html.');
+@@ -23,23 +46,13 @@ function parsePreviewMetaAppUri(input) {
+     if (url.username || url.password) {
+         throw new Error('Unsupported preview-metaapp URI userinfo.');
+     }
+-    const host = url.host; // includes port when present, so localhost:3000 never equals 'localhost'
+-    if (!host) {
+-        throw new Error('preview-metaapp URI requires a host.');
+-    }
+-    // url.pathname retains percent-encoding; decode it, then collapse stray duplicate slashes.
+-    let decodedPath;
+-    try {
+-        decodedPath = decodeURIComponent(url.pathname);
+-    }
+-    catch {
+-        throw new Error('preview-metaapp URI path contains an invalid percent-escape.');
+-    }
++    const host = url.host || 'localhost'; // empty host (preview-metaapp:///abs/path) normalizes to localhost
++    const decodedPath = decodePreviewPathname(url.pathname);
+     const normalizedPath = collapseSlashes(decodedPath);
+     if (!normalizedPath.startsWith('/')) {
+         throw new Error('preview-metaapp URI path must be absolute.');
+     }
+-    const normalizedUri = `preview-metaapp://${host}${normalizedPath}`;
++    const normalizedUri = `preview-metaapp://${host}${encodePreviewUriPath(normalizedPath)}`;
+     return {
+         originalUri,
+         normalizedUri,

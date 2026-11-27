@@ -23,6 +23,7 @@ import { runServerBootstrap, ServerBootstrapStore, type ServerBootstrapRun } fro
 import { createServerBootstrapFacts, createServerBootstrapStepExecutors } from './server/bootstrapSteps';
 import { SqliteStore } from './sqliteStore';
 import { isAllowedPaymentLaunchUrl } from './paymentLaunchUrl';
+import { localFilesystemPathFromArtifactRef } from './libs/localPreviewUri';
 import {
   registerLocalSecretProvider,
   registerSensitiveUserDataPath,
@@ -12112,9 +12113,7 @@ const getLongTermTaskStore = () => {
               question: note,
               recommendation: '',
               nextStep: '按你的拍板结论立即执行或归档结项',
-              reportHtmlPath: detail.planArtifactUri && !detail.planArtifactUri.startsWith('pin://')
-                ? detail.planArtifactUri
-                : null,
+              reportHtmlPath: localFilesystemPathFromArtifactRef(detail.planArtifactUri),
             });
           }
         } catch {
@@ -12920,7 +12919,8 @@ const getStudioChiefOfStaffService = () => {
         );
         lastStudioProjectionAtMs.set(input.sessionId, Date.now());
         try {
-          const label = input.title?.trim() || tApp('本轮汇报', 'Turn report');
+          const rawLabel = input.title?.trim() || tApp('本轮汇报', 'Turn report');
+          const label = rawLabel.replace(/([[\]])/g, '\\$1');
           const content = outcome.announced
             ? tApp(
                 `📽️ [${label} 已投影到右侧投影屏](${outcome.uri})`,

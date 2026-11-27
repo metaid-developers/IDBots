@@ -1,8 +1,37 @@
 diff --git a/dist/browser/app.js b/dist/browser/app.js
-index c973ccae118ab993e181fede605ea45d0ae9ba40..0064b6a70662b34a9142403f2eb7a79a69302b84 100644
+index c973ccae118ab993e181fede605ea45d0ae9ba40..2cfabaf3b9861dad33d3ee0ca0391ef703c91759 100644
 --- a/dist/browser/app.js
 +++ b/dist/browser/app.js
-@@ -9997,12 +9997,12 @@ function htmlFrameSandbox(url) {
+@@ -2416,6 +2416,19 @@ function isBrowserInternalHref(value) {
+   return /^(metaid|metaapp|metafile|map|pin):\\/\\/[^\\x00-\\x20"'<>()\\[\\]{}\\u007f-\\uffff]/i.test(textValue(value));
+ }
+ 
++function isLocalPreviewNavigateHref(value) {
++  var v = textValue(value);
++  return /^(preview-file|preview-metaapp|file):\\/\\/\\S/i.test(v) && !/[\\x00-\\x1f\\x7f]/.test(v);
++}
++
++function activeResourceIsLocalPreview() {
++  var tab = activeTab();
++  var cur = tab && tab.current;
++  var resolver = textValue(cur && cur.source && cur.source.resolver);
++  if (resolver === 'preview-metaapp' || resolver === 'preview-file') return true;
++  return /^(preview-file|preview-metaapp):\\/\\//i.test(textValue((cur && (cur.normalizedUri || cur.uri)) || (tab && tab.uri)));
++}
++
+ function currentBrowserHtmlFrameWindow() {
+   // Resolve the frame inside the ACTIVE tab's pane only. Hidden tab panes keep
+   // running their (untrusted) apps, so a viewport-wide lookup could attribute a
+@@ -4655,7 +4668,7 @@ function handleBrowserBridgeMessage(event) {
+   if (!sourceWindow || event.source !== sourceWindow) return;
+   if (data.type === 'agent-browser:navigate') {
+     var uri = textValue(data.uri);
+-    if (!isBrowserInternalHref(uri)) return;
++    if (!isBrowserInternalHref(uri) && !(activeResourceIsLocalPreview() && isLocalPreviewNavigateHref(uri))) return;
+     navigateTo(uri);
+     return;
+   }
+@@ -9997,12 +10010,12 @@ function htmlFrameSandbox(url) {
    // safe only because it is NOT the Browser page origin, so the app can never
    // script the UI or call its same-origin API — plus downloads. Frames served
    // same-origin with the page stay fully opaque (no allow-same-origin).
@@ -17,7 +46,7 @@ index c973ccae118ab993e181fede605ea45d0ae9ba40..0064b6a70662b34a9142403f2eb7a79a
    } catch (error) {
      return base;
    }
-@@ -10139,6 +10139,10 @@ async function resolveUri(uri, options) {
+@@ -10139,6 +10152,10 @@ async function resolveUri(uri, options) {
      // tab is still the one the user is looking at. Otherwise, leave the active
      // tab's mirrors and viewport untouched (switchTab re-renders from cache).
      if (originTabId !== state.activeTabId) {
@@ -28,7 +57,7 @@ index c973ccae118ab993e181fede605ea45d0ae9ba40..0064b6a70662b34a9142403f2eb7a79a
        clearLoadingState();
        return result;
      }
-@@ -10171,6 +10175,8 @@ async function resolveUri(uri, options) {
+@@ -10171,6 +10188,8 @@ async function resolveUri(uri, options) {
      errorTab.errorCode = state.lastResolveError.code;
      // Only sync mirrors + render when the originating tab is still active.
      if (originTabId !== state.activeTabId) {
@@ -38,7 +67,7 @@ index c973ccae118ab993e181fede605ea45d0ae9ba40..0064b6a70662b34a9142403f2eb7a79a
      }
      applyActiveTabState();
 diff --git a/dist/browserClientScript.js b/dist/browserClientScript.js
-index a47038833ba822f62dd4871b5428d67d4da16a1f..69faaf5600a390a14303aeccf13df0b983f35e9b 100644
+index a47038833ba822f62dd4871b5428d67d4da16a1f..75341749ea2ff568218805e247d78b9a589daddd 100644
 --- a/dist/browserClientScript.js
 +++ b/dist/browserClientScript.js
 @@ -83,12 +83,12 @@ export function buildBrowserClientScript(input) {
@@ -56,6 +85,32 @@ index a47038833ba822f62dd4871b5428d67d4da16a1f..69faaf5600a390a14303aeccf13df0b9
      } catch {
        return base;
      }
+@@ -96,6 +96,16 @@ export function buildBrowserClientScript(input) {
+   function isBrowserInternalHref(value) {
+     return new RegExp('^(metaid|metaapp|metafile|map|pin):\\/\\/', 'i').test(textValue(value));
+   }
++  function isLocalPreviewNavigateHref(value) {
++    const v = textValue(value);
++    return /^(preview-file|preview-metaapp|file):\\/\\/\\S/i.test(v) && !/[\\x00-\\x1f\\x7f]/.test(v);
++  }
++  function currentResourceIsLocalPreview() {
++    const cur = state.resource;
++    const resolver = textValue(cur && cur.source && cur.source.resolver);
++    if (resolver === 'preview-metaapp' || resolver === 'preview-file') return true;
++    return /^(preview-file|preview-metaapp):\\/\\//i.test(currentResourceUri());
++  }
+   function currentBrowserHtmlFrameWindow() {
+     const frame = viewport && viewport.querySelector ? viewport.querySelector('iframe.browser-html-frame') : null;
+     return frame && frame.contentWindow ? frame.contentWindow : null;
+@@ -321,7 +331,7 @@ export function buildBrowserClientScript(input) {
+     if (!sourceWindow || event.source !== sourceWindow) return;
+     if (data.type === 'agent-browser:navigate') {
+       const uri = textValue(data.uri);
+-      if (!isBrowserInternalHref(uri)) return;
++      if (!isBrowserInternalHref(uri) && !(currentResourceIsLocalPreview() && isLocalPreviewNavigateHref(uri))) return;
+       navigateTo(uri).catch(() => {});
+       return;
+     }
 diff --git a/dist/renderers.js b/dist/renderers.js
 index 425639da3c5ef82b534e2dfee41d840016866bca..b231cfbbfdbdf99d9aa3e9024c0f9e1b0cfe9e7d 100644
 --- a/dist/renderers.js
@@ -72,10 +127,39 @@ index 425639da3c5ef82b534e2dfee41d840016866bca..b231cfbbfdbdf99d9aa3e9024c0f9e1b
      const origin = text(pageOrigin);
      if (!origin)
 diff --git a/dist-cjs/browser/app.js b/dist-cjs/browser/app.js
-index 47969c59d35c8ae884c88625e22eda222a38a9ec..249c5b10e53ce10c6f96452e360ce9518335bdd1 100644
+index 47969c59d35c8ae884c88625e22eda222a38a9ec..ec0b28661dfcc5791f76e268ef773cf6fbf1a954 100644
 --- a/dist-cjs/browser/app.js
 +++ b/dist-cjs/browser/app.js
-@@ -10000,12 +10000,12 @@ function htmlFrameSandbox(url) {
+@@ -2419,6 +2419,19 @@ function isBrowserInternalHref(value) {
+   return /^(metaid|metaapp|metafile|map|pin):\\/\\/[^\\x00-\\x20"'<>()\\[\\]{}\\u007f-\\uffff]/i.test(textValue(value));
+ }
+ 
++function isLocalPreviewNavigateHref(value) {
++  var v = textValue(value);
++  return /^(preview-file|preview-metaapp|file):\\/\\/\\S/i.test(v) && !/[\\x00-\\x1f\\x7f]/.test(v);
++}
++
++function activeResourceIsLocalPreview() {
++  var tab = activeTab();
++  var cur = tab && tab.current;
++  var resolver = textValue(cur && cur.source && cur.source.resolver);
++  if (resolver === 'preview-metaapp' || resolver === 'preview-file') return true;
++  return /^(preview-file|preview-metaapp):\\/\\//i.test(textValue((cur && (cur.normalizedUri || cur.uri)) || (tab && tab.uri)));
++}
++
+ function currentBrowserHtmlFrameWindow() {
+   // Resolve the frame inside the ACTIVE tab's pane only. Hidden tab panes keep
+   // running their (untrusted) apps, so a viewport-wide lookup could attribute a
+@@ -4658,7 +4671,7 @@ function handleBrowserBridgeMessage(event) {
+   if (!sourceWindow || event.source !== sourceWindow) return;
+   if (data.type === 'agent-browser:navigate') {
+     var uri = textValue(data.uri);
+-    if (!isBrowserInternalHref(uri)) return;
++    if (!isBrowserInternalHref(uri) && !(activeResourceIsLocalPreview() && isLocalPreviewNavigateHref(uri))) return;
+     navigateTo(uri);
+     return;
+   }
+@@ -10000,12 +10013,12 @@ function htmlFrameSandbox(url) {
    // safe only because it is NOT the Browser page origin, so the app can never
    // script the UI or call its same-origin API — plus downloads. Frames served
    // same-origin with the page stay fully opaque (no allow-same-origin).
@@ -90,7 +174,7 @@ index 47969c59d35c8ae884c88625e22eda222a38a9ec..249c5b10e53ce10c6f96452e360ce951
    } catch (error) {
      return base;
    }
-@@ -10142,6 +10142,10 @@ async function resolveUri(uri, options) {
+@@ -10142,6 +10155,10 @@ async function resolveUri(uri, options) {
      // tab is still the one the user is looking at. Otherwise, leave the active
      // tab's mirrors and viewport untouched (switchTab re-renders from cache).
      if (originTabId !== state.activeTabId) {
@@ -101,7 +185,7 @@ index 47969c59d35c8ae884c88625e22eda222a38a9ec..249c5b10e53ce10c6f96452e360ce951
        clearLoadingState();
        return result;
      }
-@@ -10174,6 +10178,8 @@ async function resolveUri(uri, options) {
+@@ -10174,6 +10191,8 @@ async function resolveUri(uri, options) {
      errorTab.errorCode = state.lastResolveError.code;
      // Only sync mirrors + render when the originating tab is still active.
      if (originTabId !== state.activeTabId) {
@@ -111,7 +195,7 @@ index 47969c59d35c8ae884c88625e22eda222a38a9ec..249c5b10e53ce10c6f96452e360ce951
      }
      applyActiveTabState();
 diff --git a/dist-cjs/browserClientScript.js b/dist-cjs/browserClientScript.js
-index 8a43c7fc12ff45b60315c40bc57cd555b8c87c13..f7d2d1697123775ac5e1d25a0e478e965fa33c09 100644
+index 8a43c7fc12ff45b60315c40bc57cd555b8c87c13..72bc1c758ef1aae4cbc0bb2dbef87f8623f4b5d9 100644
 --- a/dist-cjs/browserClientScript.js
 +++ b/dist-cjs/browserClientScript.js
 @@ -86,12 +86,12 @@ function buildBrowserClientScript(input) {
@@ -128,6 +212,32 @@ index 8a43c7fc12ff45b60315c40bc57cd555b8c87c13..f7d2d1697123775ac5e1d25a0e478e96
 +      return frameOrigin === origin ? base : 'allow-scripts allow-same-origin allow-downloads allow-forms';
      } catch {
        return base;
+     }
+@@ -99,6 +99,16 @@ function buildBrowserClientScript(input) {
+   function isBrowserInternalHref(value) {
+     return new RegExp('^(metaid|metaapp|metafile|map|pin):\\/\\/', 'i').test(textValue(value));
+   }
++  function isLocalPreviewNavigateHref(value) {
++    const v = textValue(value);
++    return /^(preview-file|preview-metaapp|file):\\/\\/\\S/i.test(v) && !/[\\x00-\\x1f\\x7f]/.test(v);
++  }
++  function currentResourceIsLocalPreview() {
++    const cur = state.resource;
++    const resolver = textValue(cur && cur.source && cur.source.resolver);
++    if (resolver === 'preview-metaapp' || resolver === 'preview-file') return true;
++    return /^(preview-file|preview-metaapp):\\/\\//i.test(currentResourceUri());
++  }
+   function currentBrowserHtmlFrameWindow() {
+     const frame = viewport && viewport.querySelector ? viewport.querySelector('iframe.browser-html-frame') : null;
+     return frame && frame.contentWindow ? frame.contentWindow : null;
+@@ -324,7 +334,7 @@ function buildBrowserClientScript(input) {
+     if (!sourceWindow || event.source !== sourceWindow) return;
+     if (data.type === 'agent-browser:navigate') {
+       const uri = textValue(data.uri);
+-      if (!isBrowserInternalHref(uri)) return;
++      if (!isBrowserInternalHref(uri) && !(currentResourceIsLocalPreview() && isLocalPreviewNavigateHref(uri))) return;
+       navigateTo(uri).catch(() => {});
+       return;
      }
 diff --git a/dist-cjs/renderers.js b/dist-cjs/renderers.js
 index c5d63259917a72c5e72c8644dff0a88dea1f808a..832520ea3c85e0f5c2c80b1c734d05f3dcf4e06e 100644

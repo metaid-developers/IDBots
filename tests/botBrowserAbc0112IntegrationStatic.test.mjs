@@ -28,6 +28,8 @@ const ABC_DIRECT_DEPS = [
 const ABC_ALL_PACKAGES = [...ABC_DIRECT_DEPS];
 const PATCHED_UI_PACKAGE = '@openagentinternet/agent-browser-ui';
 const PATCH_KEY = `${PATCHED_UI_PACKAGE}@0.11.2`;
+const PATCHED_CORE_PACKAGE = '@openagentinternet/agent-browser-core';
+const CORE_PATCH_KEY = `${PATCHED_CORE_PACKAGE}@0.11.2`;
 
 test('all five direct ABC dependencies pin 0.11.2 in package.json', () => {
   const manifest = readJson('package.json');
@@ -172,6 +174,43 @@ test('installed agent-browser-ui ships native tab drag (the host injection layer
     assert.ok(
       source.includes('function clampTabInsertIndex('),
       `${file} must clamp free tabs out of the pinned segment`,
+    );
+    assert.ok(
+      source.includes('function isLocalPreviewNavigateHref('),
+      `${file} must gate local-preview link navigation to local-preview tabs`,
+    );
+  }
+});
+
+test('patchedDependencies registers the 0.11.2 agent-browser-core special-char URI patch', () => {
+  const workspaceYaml = readText('pnpm-workspace.yaml');
+  const patchEntry = workspaceYaml.match(
+    new RegExp(`'${CORE_PATCH_KEY.replace('.', '\\.')}':\\s*(patches/[^'\\s}]+)`),
+  );
+  assert.ok(patchEntry, `patchedDependencies must key ${CORE_PATCH_KEY}`);
+  const patchFile = patchEntry[1];
+  assert.ok(existsSync(new URL(`./${patchFile}`, rootUrl)), `patch file must exist: ${patchFile}`);
+
+  const lockfile = readText('pnpm-lock.yaml');
+  const hashMatch = lockfile.match(/'@openagentinternet\/agent-browser-core@0\.11\.2': ([0-9a-f]{64})/);
+  assert.ok(hashMatch, 'lockfile must register the 0.11.2 agent-browser-core patch hash');
+
+  const coreRoot = 'node_modules/@openagentinternet/agent-browser-core';
+  for (const variant of ['dist', 'dist-cjs']) {
+    assert.match(
+      readText(`${coreRoot}/${variant}/browser/previewFileUri.js`),
+      /encodePreviewUriPath/,
+      `${variant}/browser/previewFileUri.js must carry the special-char URI patch`,
+    );
+    assert.match(
+      readText(`${coreRoot}/${variant}/browser/previewMetaAppUri.js`),
+      /encodePreviewUriPath/,
+      `${variant}/browser/previewMetaAppUri.js must carry the special-char URI patch`,
+    );
+    assert.match(
+      readText(`${coreRoot}/${variant}/browser/previewHtml.js`),
+      /preview-file\|preview-metaapp\|file/,
+      `${variant}/browser/previewHtml.js must forward local preview internal links`,
     );
   }
 });

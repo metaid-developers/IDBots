@@ -22,8 +22,9 @@ overrides:
   rimraf: 2.7.1
 
 patchedDependencies:
+  '@openagentinternet/agent-browser-core@0.11.2': 6ef27d1b09f082f4d6786fc127989824536adb5871f4db894ae62c4c5ef53329
   '@openagentinternet/agent-browser-ui@0.11.1': b9415f370eb478f3d77effce3b4d17d42d8694610c567117c4e36ad259c990b1
-  '@openagentinternet/agent-browser-ui@0.11.2': 8e3c92db884af40ea08b20435544de20ea5fd7e71e8c03805736f9d1a6103bb7
+  '@openagentinternet/agent-browser-ui@0.11.2': e97287e37c580fb0ac3a0c9d4f87d30c26d142d6790283fb5da98938d7e3bc9e
 
 importers:
 
@@ -58,7 +59,7 @@ importers:
         version: 4.1.1(typescript@5.9.3)
       '@openagentinternet/agent-browser-core':
         specifier: 0.11.2
-        version: 0.11.2
+        version: 0.11.2(patch_hash=6ef27d1b09f082f4d6786fc127989824536adb5871f4db894ae62c4c5ef53329)
       '@openagentinternet/agent-browser-host-contract':
         specifier: 0.11.2
         version: 0.11.2
@@ -70,7 +71,7 @@ importers:
         version: 0.11.2
       '@openagentinternet/agent-browser-ui':
         specifier: 0.11.2
-        version: 0.11.2(patch_hash=8e3c92db884af40ea08b20435544de20ea5fd7e71e8c03805736f9d1a6103bb7)
+        version: 0.11.2(patch_hash=e97287e37c580fb0ac3a0c9d4f87d30c26d142d6790283fb5da98938d7e3bc9e)
       '@reduxjs/toolkit':
         specifier: ^2.2.1
         version: 2.11.2(react-redux@9.2.0(@types/react@18.3.28)(react@18.3.1)(redux@5.0.1))(react@18.3.1)
@@ -5481,7 +5482,7 @@ snapshots:
       - encoding
       - typescript
 
-  '@openagentinternet/agent-browser-core@0.11.2':
+  '@openagentinternet/agent-browser-core@0.11.2(patch_hash=6ef27d1b09f082f4d6786fc127989824536adb5871f4db894ae62c4c5ef53329)':
     dependencies:
       '@openagentinternet/agent-browser-host-contract': 0.11.2
 
@@ -5489,7 +5490,7 @@ snapshots:
 
   '@openagentinternet/agent-browser-name-resolvers@0.11.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)':
     dependencies:
-      '@openagentinternet/agent-browser-core': 0.11.2
+      '@openagentinternet/agent-browser-core': 0.11.2(patch_hash=6ef27d1b09f082f4d6786fc127989824536adb5871f4db894ae62c4c5ef53329)
       viem: 2.0.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)
     transitivePeerDependencies:
       - bufferutil
@@ -5503,9 +5504,9 @@ snapshots:
       highlight.js: 11.12.0
       marked: 18.0.13
 
-  '@openagentinternet/agent-browser-ui@0.11.2(patch_hash=8e3c92db884af40ea08b20435544de20ea5fd7e71e8c03805736f9d1a6103bb7)':
+  '@openagentinternet/agent-browser-ui@0.11.2(patch_hash=e97287e37c580fb0ac3a0c9d4f87d30c26d142d6790283fb5da98938d7e3bc9e)':
     dependencies:
-      '@openagentinternet/agent-browser-core': 0.11.2
+      '@openagentinternet/agent-browser-core': 0.11.2(patch_hash=6ef27d1b09f082f4d6786fc127989824536adb5871f4db894ae62c4c5ef53329)
       '@openagentinternet/agent-browser-host-contract': 0.11.2
       '@openagentinternet/agent-browser-renderers': 0.11.2
 
