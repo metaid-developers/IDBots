@@ -153,6 +153,118 @@ test('SecretEgressGuard avoids false positives on normal prose, addresses, txids
   });
 });
 
+test('SecretEgressGuard allows long Chinese articles, mixed CN+EN tech posts, code blocks, tables, and Windows CRLF simplenote JSON payloads', () => {
+  const longChineseArticle = [
+    '# 2026年度智能体互联网生态深度复盘报告',
+    '',
+    '第1章 行业背景与总体演进。在过去1年中，链上智能体从早期实验走向规模化落地，形成了以身份、记忆、技能与协作为核心的四层底座。',
+    '第2章 月度增长轨迹：1月120万，2月135万，3月158万，4月180万，5月205万，6月230万，7月260万，8月295万，9月320万，10月355万，11月390万，12月450万。',
+    '第3章 细分指标拆解：(一) 活跃节点数增长3倍；(二) 日均消息量提升5倍；(三) 跨团队任务完成率达到92%的行业新高；(四) 单笔结算成本下降80%。',
+    '第4章 传统民生场景覆盖：围绕衣、食、住、行、生、老、病、死、喜、怒、哀、乐十二类高频需求，社区开发者构建了超过200个可组合服务。',
+    '第5章 系统协同关系：前端A与B模块解耦，网关X和Y双活容灾，存储层支持M或N多副本校验，确保7天24小时连续在线。',
+    '',
+    '| 指标项 | Q1 | Q2 | Q3 | Q4 | 趋势 | 评级 | 备注 |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| 节点在线 | 是 | 是 | 是 | 是 | 高 | 优 | 稳定运行 |',
+    '| 跨链结算 | 是 | 是 | 是 | 是 | 中 | 良 | 持续优化 |',
+    '| 异常告警 | 否 | 否 | 否 | 否 | 低 | 优 | 零重大事故 |',
+  ].join('\n');
+
+  const mixedTechLongArticle = [
+    '# Building Autonomous Agent Workflows on MetaWeb',
+    '',
+    '今天我们系统性介绍 Agent 的核心工程架构。首先看 Model 的路由策略，再看本地 Memory 机制如何配合链上 Token 激励完成闭环。',
+    '在跨链商业场景下，用户的 Asset 可以通过 Bridge 安全进入 Market，由策略模块自动生成 Order 并根据实时 Price 完成 Trade 与 Swap，整个 Online 的 System 在 Local 沙箱中全自动运行。',
+    '工程实践路径参考 Windows 工作目录 `C:\\notes\\task\\agent\\model\\report.md`，常用调试参数包括：`--agent --model --memory --token --local --file --path --system --verify --check --update --version`。',
+    '',
+    '```ts',
+    'function check(input: { size: number; value: string }) {',
+    '  if (!input.size) return { success: false, error: true, result: null };',
+    '  return { success: true, error: false, result: input.value };',
+    '}',
+    'const schema = { "title": "view", "round": "brief", "category": "subject", "model": "agent", "token": "asset", "market": "price" };',
+    'const flags = ["open", "close", "open", "close", "open", "close", "open", "close", "open", "close", "open", "close"];',
+    '```',
+    '',
+    // Distant local-wallet words separated by long Chinese sections (> 30 tokens apart) must not trigger overlap/concat:
+    '第一部分合规说明：本方案完全遵循当地 legal 框架要求，所有链上交互均由用户本地签名授权，平台不托管任何私钥材料，也不触碰用户本地存储的数据文件与会话配置。',
+    '第二部分激励机制：在季度竞赛中获得第一名的 winner 将由社区治理合约自动发放徽章奖励，全流程公开透明并可在区块浏览器上独立核验每一笔交易记录与时间戳证明。',
+    '第三部分社区致谢：我们要特别 thank 过去一年持续提交代码补丁、复现问题并撰写详细长文教程的每一位开源贡献者与测试志愿者，是大家的反馈让产品更加稳健可靠。',
+    '第四部分年度展望：展望新的 year 周期，团队将继续打磨跨端同步、长文发布与多智能体协作体验，让每一位创作者都能顺畅地在链上发表深度思考与技术洞察。',
+  ].join('\n');
+
+  const localCjkWallet = '天 地 玄 黄 宇 宙 洪 荒 日 月 盈 昃';
+  guard.registerLocalSecretProvider(() => ({
+    mnemonics: [LOCAL_MNEMONIC, localCjkWallet],
+    tokens: [FAKE_RPC_TOKEN],
+  }));
+
+  try {
+    for (const [label, rawDoc] of [
+      ['long-chinese-lf', longChineseArticle],
+      ['long-chinese-crlf', longChineseArticle.replace(/\n/g, '\r\n')],
+      ['mixed-cn-en-tech-lf', mixedTechLongArticle],
+      ['mixed-cn-en-tech-crlf', mixedTechLongArticle.replace(/\n/g, '\r\n')],
+    ]) {
+      assert.deepEqual(
+        guard.scanSecretEgressText(rawDoc),
+        [],
+        `expected zero false positives for raw ${label}`,
+      );
+      const simplenotePayload = JSON.stringify({
+        title: `测试长文 ${label}`,
+        contentType: 'text/markdown',
+        content: rawDoc,
+        encryption: '0',
+        version: '1.0.0',
+      });
+      assert.deepEqual(
+        guard.scanSecretEgressText(simplenotePayload),
+        [],
+        `expected zero false positives for simplenote JSON payload ${label}`,
+      );
+    }
+  } finally {
+    guard.registerLocalSecretProvider(null);
+  }
+});
+
+test('SecretEgressGuard still blocks multiline, CRLF, numbered, JSON-escaped, and CJK-interleaved mnemonics', () => {
+  const localCjkWallet = '天 地 玄 黄 宇 宙 洪 荒 日 月 盈 昃';
+  const genericEn12 = 'abandon ability able about above absent absorb abstract absurd abuse access accident';
+  const genericEnWords = genericEn12.split(' ');
+  const cjkWords = CJK_MNEMONIC.split(' ');
+  const localWords = LOCAL_MNEMONIC.split(' ');
+
+  guard.registerLocalSecretProvider(() => ({
+    mnemonics: [LOCAL_MNEMONIC, localCjkWallet],
+    tokens: [FAKE_RPC_TOKEN],
+  }));
+
+  try {
+    const leakSamples = [
+      ['multiline-en-json-lf', JSON.stringify({ title: 'Note', content: `备份：\n${genericEnWords.join('\n')}` })],
+      ['multiline-en-json-crlf', JSON.stringify({ title: 'Note', content: `备份：\r\n${genericEnWords.join('\r\n')}` })],
+      ['multiline-cjk-json-crlf', JSON.stringify({ title: 'Note', content: `助记词：\r\n${cjkWords.join('\r\n')}` })],
+      ['local-4word-json-newlines', JSON.stringify({ content: localWords.slice(2, 6).join('\n') })],
+      ['numbered-en-list', genericEnWords.map((w, i) => `${i + 1}. ${w}`).join('\n')],
+      ['numbered-cjk-dunhao-list', cjkWords.map((w, i) => `${i + 1}、${w}`).join(' ')],
+      ['json-array-mnemonic', JSON.stringify(genericEnWords)],
+      ['env-assign-uppercase', `MNEMONIC=${genericEn12.toUpperCase()}`],
+      ['cjk-interleaved-local-overlap', `我 ${localWords[0]} 你 ${localWords[1]} 他 ${localWords[2]} 她 ${localWords[3]} 它 ${localWords[4]} 们 ${localWords[5]}`],
+      ['local-cjk-4char-window', '这里泄露了：玄 黄 宇 宙 请勿外传'],
+      ['local-cjk-6char-spaceless', '无空格拼接：天地玄黄宇宙'],
+    ];
+
+    for (const [label, sample] of leakSamples) {
+      const hits = guard.scanSecretEgressText(sample);
+      assert.ok(hits.length > 0, `expected SecretEgressGuard to block ${label}`);
+    }
+  } finally {
+    guard.registerLocalSecretProvider(null);
+  }
+});
+
 test('SecretEgressGuard blocks sensitive host file paths and files containing secrets', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-egress-files-'));
   const fakeUserData = path.join(tmpDir, 'userdata');

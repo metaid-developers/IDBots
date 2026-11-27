@@ -25,7 +25,11 @@
 import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { wordlists } from 'bip39';
+import {
+  findGenericCjkMnemonicPhrases,
+  findGenericEnglishMnemonicPhrases,
+  unescapeCommonStringEscapes,
+} from './bip39PhraseDetector';
 
 export interface SecretEgressViolation {
   detector: string;
@@ -75,24 +79,6 @@ export function registerSensitiveUserDataPath(dirPath: string | null | undefined
 export function clearSensitiveUserDataPathsForTest(): void {
   registeredSensitiveUserDataDirs.clear();
 }
-
-const loadWordlistSet = (pick: () => string[] | undefined): ReadonlySet<string> | null => {
-  try {
-    const list = pick();
-    if (!Array.isArray(list) || list.length < 2048) return null;
-    return new Set(list);
-  } catch {
-    return null;
-  }
-};
-
-const BIP39_ENGLISH_WORDS: ReadonlySet<string> | null = loadWordlistSet(() => wordlists?.english);
-const BIP39_CJK_WORDS: ReadonlySet<string> | null = loadWordlistSet(() => {
-  const simplified = wordlists?.chinese_simplified;
-  const traditional = wordlists?.chinese_traditional;
-  if (!Array.isArray(simplified) || !Array.isArray(traditional)) return undefined;
-  return [...simplified, ...traditional];
-});
 
 const previewOf = (value: string): string => {
   const clean = value.replace(/\s+/g, ' ').trim();
@@ -159,8 +145,8 @@ interface CompiledMnemonicEntry {
 }
 
 interface CompiledSecretRegistry {
-  latinWindow4Hashes: Set<string>;
-  cjkWindow4Hashes: Set<string>;
+  latinWindow4Set: Set<string>;
+  cjkWindow4Set: Set<string>;
   spacelessWindows: string[];
   encodedFragments: string[];
   mnemonicEntries: CompiledMnemonicEntry[];
@@ -168,23 +154,47 @@ interface CompiledSecretRegistry {
 }
 
 const LOCAL_WINDOW_SIZE = 4;
+const LOCAL_CJK_SPACELESS_WINDOW_SIZE = 6;
 const LOCAL_OVERLAP_SPAN = 30;
 const LOCAL_OVERLAP_THRESHOLD = 6;
 const MIN_SPACELESS_WINDOW_LEN = 16;
 const MIN_ENCODED_FRAGMENT_LEN = 24;
 const MIN_TOKEN_LEN = 16;
 
+const UNIFIED_WORD_OR_HAN_RE = /[a-z]+|\p{Script=Han}+/gu;
+const HAN_RUN_RE = /\p{Script=Han}+/gu;
+
 function tokenizeLatinWords(text: string): string[] {
   return text.toLowerCase().split(/[^a-z]+/).filter(Boolean);
 }
 
-function tokenizeCjkSingleChars(text: string): string[] {
-  return text.split(/[^\p{Script=Han}]+/u).filter((tok) => tok.length === 1);
+/**
+ * Tokenize into lowercase ASCII words plus contiguous Han runs.
+ * Multi-character Han clauses remain in the stream as boundary tokens so
+ * isolated single characters or sparse English words across distant Chinese
+ * paragraphs are never glued into false consecutive windows.
+ */
+function tokenizeUnifiedWordsAndHan(text: string): string[] {
+  const matches: string[] | null = text.toLowerCase().match(UNIFIED_WORD_OR_HAN_RE);
+  return matches ?? [];
+}
+
+function extractCjkMnemonicChars(mnemonic: string): string[] {
+  const runs: string[] | null = mnemonic.match(HAN_RUN_RE);
+  if (!runs || runs.length === 0) return [];
+  if (runs.length >= LOCAL_WINDOW_SIZE && runs.every((r) => r.length === 1)) {
+    return runs;
+  }
+  if (runs.length === 1) {
+    const chars = Array.from(runs[0]);
+    if (chars.length >= 12) return chars;
+  }
+  return [];
 }
 
 function compileSecretRegistry(mnemonics: readonly string[], tokens: readonly string[]): CompiledSecretRegistry {
-  const latinWindow4Hashes = new Set<string>();
-  const cjkWindow4Hashes = new Set<string>();
+  const latinWindow4Set = new Set<string>();
+  const cjkWindow4Set = new Set<string>();
   const spacelessWindowSet = new Set<string>();
   const encodedFragmentSet = new Set<string>();
   const mnemonicEntries: CompiledMnemonicEntry[] = [];
@@ -209,13 +219,13 @@ function compileSecretRegistry(mnemonics: readonly string[], tokens: readonly st
     if (!trimmed) continue;
 
     const latinWords = tokenizeLatinWords(trimmed);
-    const cjkWords = tokenizeCjkSingleChars(trimmed);
+    const cjkWords = extractCjkMnemonicChars(trimmed);
 
     if (latinWords.length >= LOCAL_WINDOW_SIZE) {
       for (let i = 0; i <= latinWords.length - LOCAL_WINDOW_SIZE; i += 1) {
         const slice = latinWords.slice(i, i + LOCAL_WINDOW_SIZE);
-        latinWindow4Hashes.add(sha256Hex(slice.join(' ')));
-        latinWindow4Hashes.add(sha256Hex([...slice].reverse().join(' ')));
+        latinWindow4Set.add(slice.join(' '));
+        latinWindow4Set.add([...slice].reverse().join(' '));
         const joined = slice.join('');
         if (joined.length >= MIN_SPACELESS_WINDOW_LEN) {
           spacelessWindowSet.add(joined);
@@ -242,8 +252,13 @@ function compileSecretRegistry(mnemonics: readonly string[], tokens: readonly st
     } else if (cjkWords.length >= LOCAL_WINDOW_SIZE) {
       for (let i = 0; i <= cjkWords.length - LOCAL_WINDOW_SIZE; i += 1) {
         const slice = cjkWords.slice(i, i + LOCAL_WINDOW_SIZE);
-        cjkWindow4Hashes.add(sha256Hex(slice.join(' ')));
-        cjkWindow4Hashes.add(sha256Hex([...slice].reverse().join(' ')));
+        cjkWindow4Set.add(slice.join(' '));
+        cjkWindow4Set.add([...slice].reverse().join(' '));
+      }
+      if (cjkWords.length >= LOCAL_CJK_SPACELESS_WINDOW_SIZE) {
+        for (let i = 0; i <= cjkWords.length - LOCAL_CJK_SPACELESS_WINDOW_SIZE; i += 1) {
+          spacelessWindowSet.add(cjkWords.slice(i, i + LOCAL_CJK_SPACELESS_WINDOW_SIZE).join(''));
+        }
       }
       const distinct = new Set(cjkWords);
       if (distinct.size >= 8) {
@@ -271,8 +286,8 @@ function compileSecretRegistry(mnemonics: readonly string[], tokens: readonly st
   );
 
   return {
-    latinWindow4Hashes,
-    cjkWindow4Hashes,
+    latinWindow4Set,
+    cjkWindow4Set,
     spacelessWindows: Array.from(spacelessWindowSet),
     encodedFragments: Array.from(encodedFragmentSet),
     mnemonicEntries,
@@ -305,8 +320,8 @@ function resolveCompiledRegistry(
   ];
   if (mnemonics.length === 0 && tokens.length === 0) {
     return {
-      latinWindow4Hashes: new Set(),
-      cjkWindow4Hashes: new Set(),
+      latinWindow4Set: new Set(),
+      cjkWindow4Set: new Set(),
       spacelessWindows: [],
       encodedFragments: [],
       mnemonicEntries: [],
@@ -329,37 +344,7 @@ const WIF_BTC_MVC_RE = /\b[5KL][1-9A-HJ-NP-Za-km-z]{50,51}\b/g;
 const WIF_DOGE_TESTNET_RE = /\b[6Q9c][1-9A-HJ-NP-Za-km-z]{50,51}\b/g;
 const HD_MASTER_KEY_RE = /\b(?:xprv|yprv|zprv|tprv|vprv)[1-9A-HJ-NP-Za-km-z]{50,}\b/g;
 const HEX_PRIVATE_KEY_RE =
-  /\b0x[0-9a-fA-F]{64}\b|\b(?:priv(?:ate)?[_-]?key|seed|wif|secret[_-]?key)\s*[:=]\s*["']?[0-9a-fA-F]{64}["']?/gi;
-
-function findGenericEnglishMnemonics(words: readonly string[]): number {
-  if (!BIP39_ENGLISH_WORDS) return 0;
-  let hits = 0;
-  let run = 0;
-  for (let i = 0; i <= words.length; i += 1) {
-    if (i < words.length && BIP39_ENGLISH_WORDS.has(words[i])) {
-      run += 1;
-      continue;
-    }
-    if (run >= 12) hits += 1;
-    run = 0;
-  }
-  return hits;
-}
-
-function findGenericCjkMnemonics(tokens: readonly string[]): number {
-  if (!BIP39_CJK_WORDS) return 0;
-  let hits = 0;
-  let run = 0;
-  for (let i = 0; i <= tokens.length; i += 1) {
-    if (i < tokens.length && BIP39_CJK_WORDS.has(tokens[i])) {
-      run += 1;
-      continue;
-    }
-    if (run >= 12) hits += 1;
-    run = 0;
-  }
-  return hits;
-}
+  /\b0x[0-9a-fA-F]{64}\b|\b(?:priv(?:ate)?[_-]?key|seed|wif|secret[_-]?key)\s*[:=]\s*(?:\\?["'])?[0-9a-fA-F]{64}(?:\\?["'])?/gi;
 
 function hasOverlapInWindow(
   tokens: readonly string[],
@@ -411,54 +396,81 @@ export function scanSecretEgressText(
   const violations: SecretEgressViolation[] = [];
   const registry = resolveCompiledRegistry(options?.extraMnemonics, options?.extraTokens);
 
-  const latinWords = tokenizeLatinWords(text);
-  const cjkTokens = tokenizeCjkSingleChars(text);
+  const unescaped = unescapeCommonStringEscapes(text);
+  const views = unescaped !== text ? [text, unescaped] : [text];
+  const tokenizedViews =
+    registry.latinWindow4Set.size > 0 ||
+    registry.cjkWindow4Set.size > 0 ||
+    registry.mnemonicEntries.length > 0
+      ? views.map((v) => tokenizeUnifiedWordsAndHan(v))
+      : [];
 
   // 1a. Local mnemonic 4-word sliding window (Latin)
-  if (registry.latinWindow4Hashes.size > 0 && latinWords.length >= LOCAL_WINDOW_SIZE) {
-    for (let i = 0; i <= latinWords.length - LOCAL_WINDOW_SIZE; i += 1) {
-      const hash = sha256Hex(
-        `${latinWords[i]} ${latinWords[i + 1]} ${latinWords[i + 2]} ${latinWords[i + 3]}`,
-      );
-      if (registry.latinWindow4Hashes.has(hash)) {
-        violations.push({ detector: 'local_mnemonic_window', preview: '4-word match' });
-        break;
+  if (registry.latinWindow4Set.size > 0) {
+    let matched = false;
+    for (const tokens of tokenizedViews) {
+      if (tokens.length < LOCAL_WINDOW_SIZE) continue;
+      for (let i = 0; i <= tokens.length - LOCAL_WINDOW_SIZE; i += 1) {
+        const key = `${tokens[i]} ${tokens[i + 1]} ${tokens[i + 2]} ${tokens[i + 3]}`;
+        if (registry.latinWindow4Set.has(key)) {
+          violations.push({ detector: 'local_mnemonic_window', preview: '4-word match' });
+          matched = true;
+          break;
+        }
       }
+      if (matched) break;
     }
   }
 
   // 1b. Local mnemonic 4-word sliding window (CJK)
-  if (registry.cjkWindow4Hashes.size > 0 && cjkTokens.length >= LOCAL_WINDOW_SIZE) {
-    for (let i = 0; i <= cjkTokens.length - LOCAL_WINDOW_SIZE; i += 1) {
-      const hash = sha256Hex(
-        `${cjkTokens[i]} ${cjkTokens[i + 1]} ${cjkTokens[i + 2]} ${cjkTokens[i + 3]}`,
-      );
-      if (registry.cjkWindow4Hashes.has(hash)) {
-        violations.push({ detector: 'local_mnemonic_window', preview: '4-char CJK match' });
-        break;
+  if (registry.cjkWindow4Set.size > 0) {
+    let matched = false;
+    for (const tokens of tokenizedViews) {
+      if (tokens.length < LOCAL_WINDOW_SIZE) continue;
+      for (let i = 0; i <= tokens.length - LOCAL_WINDOW_SIZE; i += 1) {
+        const key = `${tokens[i]} ${tokens[i + 1]} ${tokens[i + 2]} ${tokens[i + 3]}`;
+        if (registry.cjkWindow4Set.has(key)) {
+          violations.push({ detector: 'local_mnemonic_window', preview: '4-char CJK match' });
+          matched = true;
+          break;
+        }
       }
+      if (matched) break;
     }
   }
 
   // 1c. Local mnemonic spaceless concatenation (e.g. word1word2word3word4)
   if (registry.spacelessWindows.length > 0) {
-    const squashed = text.toLowerCase().replace(/[^a-z]/g, '');
-    if (squashed.length >= MIN_SPACELESS_WINDOW_LEN) {
+    let matched = false;
+    for (const view of views) {
+      // Keep Han runs intact so English words in separate Chinese paragraphs do
+      // not collapse together, while stripping ASCII punctuation/spaces so
+      // `word1word2word3word4` and `w.o.r.d.1...` still match.
+      const squashed = view.toLowerCase().replace(/[^a-z\p{Script=Han}]+/gu, '');
+      if (squashed.length < LOCAL_CJK_SPACELESS_WINDOW_SIZE) continue;
       for (const fragment of registry.spacelessWindows) {
         if (squashed.includes(fragment)) {
           violations.push({ detector: 'local_mnemonic_concat', preview: 'concat match' });
+          matched = true;
           break;
         }
       }
+      if (matched) break;
     }
   }
 
-  // 1d. Local mnemonic scrambled / interleaved overlap within a 30-word span
-  for (const entry of registry.mnemonicEntries) {
-    const tokens = entry.kind === 'latin' ? latinWords : cjkTokens;
-    if (hasOverlapInWindow(tokens, entry.distinctWords, entry.minOverlapHits, LOCAL_OVERLAP_SPAN)) {
-      violations.push({ detector: 'local_mnemonic_overlap', preview: '>=6 local mnemonic words' });
-      break;
+  // 1d. Local mnemonic scrambled / interleaved overlap within a 30-token span
+  if (registry.mnemonicEntries.length > 0) {
+    let matched = false;
+    for (const entry of registry.mnemonicEntries) {
+      for (const tokens of tokenizedViews) {
+        if (hasOverlapInWindow(tokens, entry.distinctWords, entry.minOverlapHits, LOCAL_OVERLAP_SPAN)) {
+          violations.push({ detector: 'local_mnemonic_overlap', preview: '>=6 local mnemonic words' });
+          matched = true;
+          break;
+        }
+      }
+      if (matched) break;
     }
   }
 
@@ -475,17 +487,17 @@ export function scanSecretEgressText(
 
   // 1f. Active local RPC token / registered secret tokens
   for (const token of registry.tokens) {
-    if (text.includes(token)) {
+    if (views.some((v) => v.includes(token))) {
       violations.push({ detector: 'local_rpc_token', preview: previewOf(token) });
       break;
     }
   }
 
   // 2a. Generic BIP-39 >= 12-word mnemonics (catches unknown wallets too)
-  if (findGenericEnglishMnemonics(latinWords) > 0) {
+  if (findGenericEnglishMnemonicPhrases(text).length > 0) {
     violations.push({ detector: 'bip39_mnemonic', preview: '>=12 English BIP-39 words' });
   }
-  if (findGenericCjkMnemonics(cjkTokens) > 0) {
+  if (findGenericCjkMnemonicPhrases(text).length > 0) {
     violations.push({ detector: 'bip39_mnemonic', preview: '>=12 CJK BIP-39 words' });
   }
 

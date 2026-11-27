@@ -129,6 +129,28 @@ test('defense: CJK prose survives credential redaction; Chinese mnemonics block'
   // and short spaced runs stay under the >= 12 threshold.
   assert.equal(scanMemoryText('我今天在这里学习了很多新的东西，感觉很好').length, 0);
   assert.equal(scanMemoryText('谢 谢 你 的 帮 助 和 陪 伴').length, 0);
+
+  // Long Chinese + English technical prose, Chinese enumeration idioms, and code
+  // snippets must NOT false-positive as generic BIP-39 mnemonics.
+  const benignLongSamples = [
+    '用户正在设计 Agent 核心架构，采用本地 Model 与 Memory 模块配合链上 Token 激励，让 Asset 通过 Bridge 进入 Market 自动生成 Order 并按实时 Price 完成 Trade，整个 Online 的 System 已在生产环境稳定运行。',
+    '常见人生十二态枚举：衣、食、住、行、生、老、病、死、喜、怒、哀、乐，均属于日常汉语并列顿号修辞而非助记词。',
+    '1月120万，2月135万，3月158万，4月180万，5月205万，6月230万，7月260万，8月295万，9月320万，10月355万，11月390万，12月450万。',
+    'function check(input) { if (!input.size) return { success: false, error: true }; return { success: true, result: input.value }; }',
+  ];
+  for (const sample of benignLongSamples) {
+    assert.equal(scanMemoryText(sample).length, 0, `unexpected memory false positive: ${sample}`);
+    assert.equal(applyMemoryDefense(sample), sample);
+  }
+
+  // Numbered, multiline, and JSON-escaped mnemonics still block at memory write time.
+  const numberedEn = MNEMONIC.split(' ').map((w, idx) => `${idx + 1}. ${w}`).join('\n');
+  assert.ok(scanMemoryText(numberedEn).some((v) => v.detector === 'bip39_mnemonic' && v.severity === 'block'));
+  assert.ok(
+    scanMemoryText(JSON.stringify({ note: MNEMONIC.split(' ').join('\r\n') })).some(
+      (v) => v.detector === 'bip39_mnemonic' && v.severity === 'block',
+    ),
+  );
 });
 
 test('defense: evidence quotes are screened and evolution rewrites are re-screened', async () => {
