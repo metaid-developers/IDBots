@@ -1,0 +1,24 @@
+# earlyoom runtime parameters for an IDBots tenant host (CR-WSA-006).
+#
+# A tenant host runs one container per user, each capped at 2304 MB of RAM,
+# while the host holds far less than the sum of those caps. earlyoom turns a
+# host-wide page-cache livelock into one failed task in one tenant.
+# 2026-11-27, before it was installed: 33 tenants on 15 GiB, constant
+# 233 MB/s of file reads, host unreachable until a forced reboot.
+#
+#   -m 8,6      SIGTERM the victim when MemAvailable <= 8%, SIGKILL when <= 6%.
+#               Do not raise these to 10,8: the observed normal floor on a
+#               loaded host is about 10%, and a 10,8 first cut SIGTERMed 237
+#               small chromium processes on an ordinary dip.
+#   -s 100,100  Makes both swap tests always true, so the rule is about RAM
+#               alone exactly as it was before zram. Both numbers matter: a
+#               single value sets only the SIGTERM test and leaves the SIGKILL
+#               one at half, i.e. no escalation until swap is half used.
+#   -r 60       Status line once a minute (polling stays at 1s).
+#   --avoid     Platform and system daemons are only killed when nothing else
+#               is eligible. No --prefer on purpose: the victim is the largest
+#               non-avoided process, i.e. the actual culprit.
+#
+# Priority (Nice, OOMScoreAdjust) comes from the systemd drop-in
+# earlyoom-priority.conf: earlyoom -p cannot work under DynamicUser.
+EARLYOOM_ARGS="-m 8,6 -s 100,100 -r 60 --avoid ^(dockerd|containerd.*|runc.*|systemd.*|sshd|cron|rsyslogd|dbus-daemon|dbus-daem|journald|aliyun.*|AssistDaemon|AliYunDun.*|Aegis.*|caddy|snapd|earlyoom|agetty|multipath.*|unattended.*|sssd|chronyd|polkitd|fwupd.*|packagekit.*)$"

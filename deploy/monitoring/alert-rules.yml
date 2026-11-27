@@ -1,4 +1,5 @@
-# WS-C REQ-C-16 — alert rules. One rule per requirement bullet.
+# WS-C REQ-C-16 — alert rules. One rule per requirement bullet, plus the two
+# swap rules CR-WSA-006 adds to idbots-host.
 # Control-plane metric names follow the convention documented in
 # deploy/monitoring/README.md (WS-B REQ-B-20 does not fix names; adjust here
 # if WS-B ships different ones).
@@ -26,6 +27,23 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "host CPU above 85% for 10m ({{ $value | printf \"%.0f\" }}%) — Phase 0 saw tenants near 80% after onboarding"
+
+      # CR-WSA-006: tenant swap is zram-backed (idbots-zram-swap.service).
+      # Without a swap device idle tenants pin their cold memory again, and a
+      # full host can only thrash page cache — the 2026-11-27 livelock.
+      - alert: HostSwapMissing
+        expr: node_memory_SwapTotal_bytes == 0
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "no swap device for 10m — idbots-zram-swap.service is down or inactive; idle tenants pin their memory again (CR-WSA-006)"
+
+      - alert: HostSwapNearlyFull
+        expr: (1 - node_memory_SwapFree_bytes / node_memory_SwapTotal_bytes) * 100 > 90
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "zram swap above 90% used for 5m ({{ $value | printf \"%.0f\" }}%) — idle-tenant memory has nowhere left to compress; check tenant count before earlyoom starts killing"
 
   - name: idbots-tenants
     rules:
