@@ -127,31 +127,67 @@ test('the Windows job never fetches its source from github.com', () => {
   assert.equal(checkouts[0].if, `runner.os != 'Windows'`);
 
   const DELTA = 'Update the source tree from the delta (Windows)';
+  const DELTA_AGAIN = 'Update the source tree from the delta again (Windows)';
   const REBUILD = 'Rebuild the source tree from the full bundle (Windows)';
-  const delta = buildSteps[indexOf(DELTA)];
-  const rebuild = buildSteps[indexOf(REBUILD)];
+  const REBUILD_AGAIN = 'Rebuild the source tree from the full bundle again (Windows)';
+  const step = (name) => buildSteps[indexOf(name)];
+  const delta = step(DELTA);
+  const deltaAgain = step(DELTA_AGAIN);
+  const rebuild = step(REBUILD);
+  const rebuildAgain = step(REBUILD_AGAIN);
+  const DAMAGED = "runner.os == 'Windows' && steps.restore_delta.outputs.fitted == 'damaged'";
+  const NOT_FIT = "runner.os == 'Windows' && steps.restore_delta.outputs.fitted != 'true' && steps.restore_delta_retry.outputs.fitted != 'true'";
+
   assert.equal(delta.if, `runner.os == 'Windows'`);
   assert.equal(delta.id, 'restore_delta');
-  assert.equal(delta['continue-on-error'], true, 'a broken delta must not stop the job: the full bundle covers it');
+  assert.equal(delta['continue-on-error'], true, 'a delta that does not work out must not stop the job');
   assert.match(delta.run, /ci-source-restore\.cjs/);
   assert.match(delta.run, /--commit "\$env:GITHUB_SHA"/, 'the restored commit is checked against the run');
   assert.doesNotMatch(delta.run, /--fresh/, 'the delta updates the repository the previous run left behind');
   // Exit 3 is the delta saying it does not fit — expected, and no red step.
-  assert.match(delta.run, /if \(\$LASTEXITCODE -eq 3\) \{[\s\S]*AppendAllText\(\$env:GITHUB_OUTPUT, "fitted=false`n"\)[\s\S]*exit 0/);
+  assert.match(delta.run, /if \(\$code -eq 3\) \{[\s\S]*AppendAllText\(\$env:GITHUB_OUTPUT, "fitted=false`n"\)[\s\S]*exit 0/);
   assert.match(delta.run, /AppendAllText\(\$env:GITHUB_OUTPUT, "fitted=true`n"\)/);
+  // Anything else — exit 4, a pack that arrived cut short, included — is "damaged":
+  // said so, the files removed so that the next download starts clean, and no red step.
+  assert.match(delta.run, /if \(\$code -ne 0\) \{[\s\S]*AppendAllText\(\$env:GITHUB_OUTPUT, "fitted=damaged`n"\)[\s\S]*Remove-Item[^\n]*source-delta[\s\S]*exit 0/);
+
+  // One second chance: the delta is downloaded and applied once more, by the very same script.
+  assert.equal(step('Download the source delta again (Windows)').if, DAMAGED);
+  assert.equal(step('Download the source delta again (Windows)').with.name, 'source-delta');
+  assert.equal(deltaAgain.id, 'restore_delta_retry');
+  assert.equal(deltaAgain.if, DAMAGED);
+  assert.equal(deltaAgain['continue-on-error'], true);
+  assert.equal(deltaAgain.run, delta.run, 'the retry runs the very same script');
+
   assert.match(rebuild.run, /--fresh --commit "\$env:GITHUB_SHA"/);
-  // Both steps give a branch push its branch and leave a tag checkout detached.
-  for (const step of [delta, rebuild]) {
-    assert.match(step.run, /--branch "\$env:GITHUB_REF_NAME"/);
+  // Both kinds of step give a branch push its branch and leave a tag checkout detached.
+  for (const s of [delta, rebuild]) {
+    assert.match(s.run, /--branch "\$env:GITHUB_REF_NAME"/);
   }
-  // The full bundle is only fetched when the delta did not fit — or broke off
-  // before it could say, which leaves the output unset.
+  // The full bundle only when the delta did not work out, second chance included
+  // (a step that never ran leaves its output unset, which is not 'true' either).
   for (const name of ['Download the full source bundle (Windows)', REBUILD]) {
-    assert.equal(buildSteps[indexOf(name)].if, `runner.os == 'Windows' && steps.restore_delta.outputs.fitted != 'true'`);
+    assert.equal(step(name).if, NOT_FIT);
   }
-  // Node exists before anything is restored, each download precedes the step
-  // that reads it, and the tree is there before anything needs it.
-  const order = ['Install Node.js', 'Download the source delta (Windows)', DELTA, 'Download the full source bundle (Windows)', REBUILD, 'Enable pnpm'];
+  // The rebuild gets one second chance too: its first attempt may fail, its second may not.
+  assert.equal(rebuild.id, 'rebuild_full');
+  assert.equal(rebuild['continue-on-error'], true);
+  for (const name of ['Download the full source bundle again (Windows)', REBUILD_AGAIN]) {
+    assert.equal(step(name).if, `runner.os == 'Windows' && steps.rebuild_full.outcome == 'failure'`);
+  }
+  assert.equal(rebuildAgain['continue-on-error'], undefined, 'the second attempt is the last word');
+  assert.equal(rebuildAgain.run, rebuild.run, 'the retry runs the very same script');
+  assert.match(rebuild.run, /if \(\$LASTEXITCODE -ne 0\) \{[\s\S]*Remove-Item[^\n]*source-full[\s\S]*exit \$LASTEXITCODE/);
+  // Node exists before anything is restored, each download precedes the step that
+  // reads it, and the tree is there before anything needs it.
+  const order = [
+    'Install Node.js',
+    'Download the source delta (Windows)', DELTA,
+    'Download the source delta again (Windows)', DELTA_AGAIN,
+    'Download the full source bundle (Windows)', REBUILD,
+    'Download the full source bundle again (Windows)', REBUILD_AGAIN,
+    'Enable pnpm',
+  ];
   const positions = order.map(indexOf);
   assert.equal(positions.every((position) => position >= 0), true, 'every step exists');
   assert.deepEqual([...positions].sort((a, b) => a - b), positions, 'the steps run in this order');

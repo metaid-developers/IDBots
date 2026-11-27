@@ -176,6 +176,7 @@ test('a finished run says why the source delta gave way to the full bundle, read
   const done = (name, conclusion) => ({ name, status: 'completed', conclusion, started_at: minutesAgo(40) });
   const DELTA = 'Update the source tree from the delta (Windows)';
   const REBUILD = 'Rebuild the source tree from the full bundle (Windows)';
+  const REBUILD_AGAIN = 'Rebuild the source tree from the full bundle again (Windows)';
   const rebuilt = [done(REBUILD, 'success')];
   const finished = (steps, jobLogs = {}) => evaluate({
     run: { status: 'completed', conclusion: 'success' },
@@ -186,18 +187,35 @@ test('a finished run says why the source delta gave way to the full bundle, read
   const text = (result) => result.lines.join('\n');
   // GitHub records the step as "success" either way, because it is allowed to fail.
   const gaveWay = [done(DELTA, 'success'), ...rebuilt];
-  // Every job log echoes the step's script first, sentence included.
-  const echoedScript = '2026-11-26T20:09:58.1000000Z   Write-Host "The source delta does not fit this workspace: the tree is rebuilt from the full bundle."\r\n';
+  // Every job log echoes the step's script first, sentences included (with "$code" where a run has a number).
+  const echoedScript = '2026-11-26T20:09:58.1000000Z   Write-Host "The source delta does not fit this workspace: the tree is rebuilt from the full bundle."\r\n2026-11-26T20:09:58.1000001Z   Write-Host "The source delta could not be used (exit $code): it is downloaded once more."\r\n';
+  const at = (time, line) => `2026-11-27T15:${time}.0000000Z ${line}\r\n`;
 
   // The usual case: the machine holds another commit, and the tool says so.
-  const declined = finished(gaveWay, { 7: `${echoedScript}2026-11-26T20:09:59.2000000Z The source delta does not fit this workspace: the tree is rebuilt from the full bundle.\r\n[ci-source-restore] rebuilt to cdb11305b\n` });
+  const declined = finished(gaveWay, { 7: echoedScript + at('43:36', 'The source delta does not fit this workspace: the tree is rebuilt from the full bundle.') });
   assert.equal(declined.verdict, 'completed-ok');
-  assert.match(text(declined), /the source delta did not fit; the tree was rebuilt from the full bundle/);
+  assert.match(text(declined), /the source delta did not fit; the tree was rebuilt from the full bundle instead \(1–15 min more;/);
 
-  // A crash in the tool (run 45888882259): named, with git's own words, and without colour codes.
-  const crashed = finished(gaveWay, {
-    7: `${echoedScript}2026-11-26T20:09:59.2000000Z \x1b[31m✗ ci-source-restore: git config core.symlinks false exited 5: warning: core.symlinks has multiple values\x1b[0m\r\n[ci-source-restore] rebuilt to cdb11305b`,
+  // A download that ended early (run 46015445714): named, and the second download counted.
+  const cutShort = finished([done(DELTA, 'success'), done('Update the source tree from the delta again (Windows)', 'success'), ...rebuilt], {
+    7: echoedScript
+      + at('43:37', '\x1b[31m✗ ci-source-restore: git index-pack --stdin exited 128: fatal: early EOF\x1b[0m')
+      + at('43:37', 'The source delta could not be used (exit 4): it is downloaded once more.')
+      + at('43:53', 'The source delta does not fit this workspace: the tree is rebuilt from the full bundle.'),
   });
+  assert.match(text(cutShort), /the source delta was unusable once, and after a second download did not fit; the tree was rebuilt/);
+  assert.doesNotMatch(text(cutShort), /\x1b/);
+
+  // The full bundle, too, arrived cut short and had to be fetched twice.
+  const both = finished([done(DELTA, 'success'), done(REBUILD, 'failure'), done(REBUILD_AGAIN, 'success')], {
+    7: echoedScript
+      + at('49:31', '✗ ci-source-restore: git clone --quiet source.bundle C:\\actions-runner\\_work\\IDBots\\IDBots exited 128: fatal: early EOF')
+      + echoedScript,
+  });
+  assert.match(text(both), /had to be downloaded twice/);
+
+  // The tool failing in a way that printed nothing else: its own line, with git's words.
+  const crashed = finished(gaveWay, { 7: echoedScript + at('59:58', '\x1b[31m✗ ci-source-restore: git config core.symlinks false exited 5: warning: core.symlinks has multiple values\x1b[0m') });
   assert.match(text(crashed), /the source delta failed outright: git config core.symlinks false exited 5: warning: core.symlinks has multiple values; the tree was rebuilt/);
   assert.doesNotMatch(text(crashed), /\x1b|did not fit/);
 
@@ -212,7 +230,28 @@ test('a finished run says why the source delta gave way to the full bundle, read
     done(REBUILD, 'skipped'),
   ]);
   assert.equal(byDelta.verdict, 'completed-ok');
-  assert.doesNotMatch(text(byDelta), /gave way|did not fit|failed outright/);
+  assert.doesNotMatch(text(byDelta), /gave way|did not fit|failed outright|was unusable/);
+});
+
+test('a first try that failed is no job failure while its second try is still ahead', () => {
+  const done = (name, conclusion, minutes) => ({ name, status: 'completed', conclusion, started_at: minutesAgo(minutes) });
+  const tries = (last) => ({
+    ...job(windows, last ? { status: 'completed', conclusion: 'failure' } : { step: 'Rebuild the source tree from the full bundle again (Windows)' }),
+    steps: [
+      done('Update the source tree from the delta (Windows)', 'failure', 12),
+      done('Update the source tree from the delta again (Windows)', 'failure', 10),
+      done('Download the full source bundle (Windows)', 'success', 9),
+      done('Rebuild the source tree from the full bundle (Windows)', 'failure', 8),
+      done('Download the full source bundle again (Windows)', 'success', 6),
+      last
+        ? done('Rebuild the source tree from the full bundle again (Windows)', 'failure', 3)
+        : { name: 'Rebuild the source tree from the full bundle again (Windows)', status: 'in_progress', conclusion: null, started_at: minutesAgo(2) },
+    ],
+  });
+  assert.equal(evaluate({ run: running, jobs: [tries(false)], now: NOW }).verdict, 'wait');
+  const failed = evaluate({ run: running, jobs: [tries(true)], now: NOW });
+  assert.equal(failed.exitCode, 2);
+  assert.match(failed.lines.join('\n'), /step "Rebuild the source tree from the full bundle again \(Windows\)" \[infra\]/);
 });
 
 test('the most specific budget wins for a step name', () => {

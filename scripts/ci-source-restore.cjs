@@ -39,8 +39,15 @@
  * GITHUB_WORKSPACE, GITHUB_SHA and no branch (a tag checkout is detached, as
  * actions/checkout leaves it).
  * Exit codes: 0 = restored and verified;
- *            3 = the delta does not fit the workspace, which was not changed
- *                — the job rebuilds from the full bundle instead;
+ *            3 = the delta does not fit the workspace (it holds another
+ *                commit, or no repository), which was not changed — the job
+ *                rebuilds from the full bundle instead;
+ *            4 = what was handed over cannot be read — a pack that is cut
+ *                short, most likely. The workspace was not changed; the job
+ *                downloads the delta again. (On 2026-11-27 two downloads in
+ *                a row ended early and actions/download-artifact@v4 still
+ *                reported success for both: its last two log lines were
+ *                missing, the files were truncated.);
  *            1 = not restored (the job must stop); 64 = unknown argument.
  */
 const fs = require('node:fs');
@@ -48,9 +55,13 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const EXIT_NOT_APPLICABLE = 3;
+const EXIT_DAMAGED = 4;
 
 /** The delta does not fit the workspace, which was left as it was. */
 class SourceNotApplicable extends Error {}
+
+/** What was handed over cannot be read. The workspace was not touched. */
+class SourceDamaged extends Error {}
 
 // What a byte-exact, Windows-safe checkout needs. Written into the repository
 // itself, so every later git call in the job sees the same thing instead of
@@ -107,9 +118,9 @@ function hasRepository(workspace, env) {
  */
 function updateInPlace({ workspace, pack, commit, branch, env }) {
   const options = { cwd: workspace, env };
-  const step = (args, input) => {
+  const step = (args, input, Broken = SourceNotApplicable) => {
     const result = git(args, { ...options, input });
-    if (result.status !== 0) throw new SourceNotApplicable(describeFailure(args, result));
+    if (result.status !== 0) throw new Broken(describeFailure(args, result));
     return result.stdout.trim();
   };
 
@@ -123,8 +134,11 @@ function updateInPlace({ workspace, pack, commit, branch, env }) {
   // 1. Add the pack's objects; this only ever adds. The pack is cut without
   //    --thin, so it carries every delta base of its own and declares no
   //    prerequisites: it counts on the rest of the tree being here from the
-  //    previous run, which only the next step can tell.
-  step(['index-pack', '--stdin'], fs.readFileSync(pack));
+  //    previous run, which only the next step can tell. A pack that cannot be
+  //    read at all is a different thing — a download cut short — and is
+  //    reported as such, so the job fetches it again instead of giving up on
+  //    the delta.
+  step(['index-pack', '--stdin'], fs.readFileSync(pack), SourceDamaged);
   // 2. Every object of the tree about to be checked out is here.
   step(['rev-list', '--objects', '--missing=error', `${commit}^{tree}`]);
 
@@ -224,8 +238,8 @@ if (require.main === module) {
     });
   } catch (error) {
     console.error(`✗ ci-source-restore: ${error instanceof Error ? error.message : error}`);
-    process.exit(error instanceof SourceNotApplicable ? EXIT_NOT_APPLICABLE : 1);
+    process.exit(error instanceof SourceDamaged ? EXIT_DAMAGED : error instanceof SourceNotApplicable ? EXIT_NOT_APPLICABLE : 1);
   }
 }
 
-module.exports = { restore, emptyDirectory, SourceNotApplicable, EXIT_NOT_APPLICABLE };
+module.exports = { restore, emptyDirectory, SourceNotApplicable, SourceDamaged, EXIT_NOT_APPLICABLE, EXIT_DAMAGED };
