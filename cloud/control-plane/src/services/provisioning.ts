@@ -23,6 +23,15 @@ const MIB = 1024 * 1024;
 const GIB = 1024 * MIB;
 const GATEWAY_PORT = 8790;
 
+/**
+ * Docker's MemorySwap is RAM + swap combined, so this multiple of the RAM cap
+ * leaves a tenant as much host swap as RAM (CR-WSA-006). An idle tenant's
+ * anonymous memory is cold; on a zram-backed host it compresses into swap
+ * instead of pinning memory, while the RAM cap itself is unchanged. A host
+ * without a swap device never uses the allowance — it is only an upper bound.
+ */
+export const TENANT_SWAP_MULTIPLIER = 2;
+
 interface TenantRow {
   id: string;
   user_id: string;
@@ -110,7 +119,7 @@ export function buildContainerSpec(
     exposedPorts: [`${GATEWAY_PORT}/tcp`],
     hostConfig: {
       Memory: memoryBytes,
-      MemorySwap: memoryBytes,
+      MemorySwap: memoryBytes * TENANT_SWAP_MULTIPLIER,
       NanoCpus: app.config.tenantCpus * 1e9,
       PidsLimit: 2048,
       ShmSize: GIB,
