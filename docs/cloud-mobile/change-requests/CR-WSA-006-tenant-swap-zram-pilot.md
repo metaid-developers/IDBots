@@ -19,7 +19,7 @@ touched).
 | `--memory` (cgroup `memory.max`) | `2304m` | unchanged |
 | `--memory-swap` (cgroup `memory.swap.max`) | `2304m` → no swap | 2304 MB of swap per container, inside the host's single zram device |
 | Host swap | none; `vm.swappiness = 0` | one zram device (zstd, 6 GiB before compression); `vm.swappiness = 150`; `vm.page-cluster = 0` |
-| earlyoom | `-m 8,6` | `-m 8,6 -s 100` |
+| earlyoom | `-m 8,6` | `-m 8,6 -s 100,100` |
 
 `--cpus`, `--pids-limit`, `--shm-size`, `--cap-drop`, `--security-opt` and the
 restart policy do not change. A container still cannot use more than 2304 MB of
@@ -73,15 +73,19 @@ sysctl vm.swappiness vm.page-cluster
 
 ### earlyoom
 
-earlyoom 1.7 kills only when memory **and** swap are both below their
+earlyoom 1.7 acts only when memory **and** swap are both below their
 thresholds (swap default 10 %). With a zram device present it would stand by
-while zram fills, including with data that does not compress. `-s 100` makes
-it ignore swap, so the RAM rule stays exactly what it is today:
+while zram fills, including with data that does not compress. `-s 100,100`
+makes both of its swap tests always true, so the RAM rule stays exactly what
+it is today. Both numbers matter: `-s 100` alone sets only the SIGTERM
+threshold and leaves the SIGKILL one at its default of half, i.e. no
+escalation to SIGKILL until swap is half used.
 
 ```bash
 cp -a /etc/default/earlyoom "/etc/default/earlyoom.bak.$(date +%Y%m%d-%H%M%S)"
-sed -i 's/^EARLYOOM_ARGS="-m 8,6 /EARLYOOM_ARGS="-m 8,6 -s 100 /' /etc/default/earlyoom
+sed -i 's/^EARLYOOM_ARGS="-m 8,6 /EARLYOOM_ARGS="-m 8,6 -s 100,100 /' /etc/default/earlyoom
 systemctl restart earlyoom
+journalctl -u earlyoom -n 4   # both lines must read "swap <= 100.00%"
 ```
 
 ### Tenant cgroups
@@ -130,7 +134,7 @@ because the sample was small.
 
 | Risk | Mitigation |
 |---|---|
-| Pages that do not compress fill zram with RAM-sized data | earlyoom keeps its RAM-only rule (`-s 100`); device size is bounded (§4) |
+| Pages that do not compress fill zram with RAM-sized data | earlyoom keeps its RAM-only rule (`-s 100,100`); device size is bounded (§4) |
 | Reclaim spends CPU on compression | zstd level 1, per-CPU streams; the host is memory-bound, CPU is idle at 20 tenants and below |
 | A tenant touches cold pages after a long idle | faults are served from RAM (decompression per 4 KiB page); far below the 88–133 s cold start of a stopped container |
 | One tenant fills the device | each container is capped at 2304 MB of swap (§3) |
@@ -172,8 +176,13 @@ Recorded in the pilot log below as it is measured.
   (`zramctl --find`). Nothing else had been applied when it failed.
 - Final state: `idbots-zram-swap.service` enabled and active; `/dev/zram0`,
   zstd, 6 GiB, priority 100; `vm.swappiness = 150`, `vm.page-cluster = 0`;
-  earlyoom `-m 8,6 -s 100 -r 60 --avoid …`; all 17 tenants at
+  earlyoom `-m 8,6 -s 100,100 -r 60 --avoid …`; all 17 tenants at
   `memory.max = 2304M`, `memory.swap.max = 2304M` through `docker update`.
+- Correction, 01:45 CST: earlyoom had first been started with `-s 100`,
+  which lifts only the SIGTERM swap test; its banner showed the SIGKILL
+  test still at `swap <= 50%`, so escalation would have waited for zram to
+  half-fill. Changed to `-s 100,100`; the banner now reads
+  `swap <= 100.00%` for both. No earlyoom kill had occurred in between.
 - §7.1: both control planes `healthy`, 17/17 tenants `ready`, `/health` on
   the production and staging origins 200 in about 6 ms, no earlyoom or kernel
   OOM kill.
