@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { evaluate, classifyFailure, parseArgs, DEFAULT_BUDGETS } from '../scripts/release-watch.mjs';
+import { evaluate, classifyFailure, parseArgs, readFailureVerdict, DEFAULT_BUDGETS } from '../scripts/release-watch.mjs';
 const SCRIPT = path.resolve(import.meta.dirname, '../scripts/release-watch.mjs');
 
 const NOW = new Date('2026-11-25T12:00:00Z');
@@ -116,8 +116,28 @@ test('the source downloads on the signing machine have budgets of their own', ()
   // The full bundle took 15 min; twice that means the download is hung.
   assert.equal(evaluate({ run: running, jobs: [downloading('Download the full source bundle (Windows)', 14)], now: NOW }).verdict, 'wait');
   assert.equal(evaluate({ run: running, jobs: [downloading('Download the full source bundle (Windows)', 31)], now: NOW }).exitCode, 4);
-  // The delta is a few KB: minutes, not tens of them.
+  // The delta is tens of KB: minutes, not tens of them.
   assert.equal(evaluate({ run: running, jobs: [downloading('Download the source delta (Windows)', 6)], now: NOW }).exitCode, 4);
+});
+
+test('a run that cannot be read is waited out for a while, then given up', () => {
+  // 2026-11-27: one rough minute at GitHub ended the watch of a healthy run.
+  assert.equal(readFailureVerdict({ unreadableSeconds: 40, limitSeconds: 900 }), 'wait');
+  assert.equal(readFailureVerdict({ unreadableSeconds: 899, limitSeconds: 900 }), 'wait');
+  assert.equal(readFailureVerdict({ unreadableSeconds: 900, limitSeconds: 900 }), 'give-up');
+  assert.equal(readFailureVerdict({ unreadableSeconds: 5000, limitSeconds: 900 }), 'give-up');
+  // One snapshot was asked for: there is nothing to wait for.
+  assert.equal(readFailureVerdict({ unreadableSeconds: 1, limitSeconds: 900, once: true }), 'give-up');
+  // The default gives it a quarter of an hour, and the option can change that.
+  assert.equal(parseArgs(['123']).readFailureLimitSeconds, 900);
+  assert.equal(parseArgs(['123', '--read-failure-limit-seconds', '60']).readFailureLimitSeconds, 60);
+});
+
+test('a signing service that fails its smoke test is an infrastructure failure with the way back', () => {
+  const { kind, advice } = classifyFailure('Smoke-test the signing service (Windows)');
+  assert.equal(kind, 'infra');
+  assert.match(advice, /Re-login SimplySign on the signing machine/);
+  assert.match(advice, /rerun --failed/);
 });
 
 test('a source delta that does not fit, or breaks, is a fallback and not a failure', () => {

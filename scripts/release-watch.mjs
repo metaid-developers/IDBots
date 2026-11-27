@@ -23,11 +23,13 @@
  *      busy elsewhere, or wedged) — runner state and the fix are printed
  *   4  a step has been running past its budget
  *   5  --max-minutes exceeded without a verdict
- *   6  could not read the run from GitHub
+ *   6  could not read the run from GitHub for --read-failure-limit-seconds
+ *      (default 15 min) — a shorter outage is waited out
  *
  * Usage:
  *   node scripts/release-watch.mjs <run-id> [--once] [--poll-seconds 30]
  *        [--queued-alert-seconds 300] [--max-minutes 240]
+ *        [--read-failure-limit-seconds 900]
  *        [--budget "<step name substring>=<seconds>" ...]
  *   pnpm run release:watch -- <run-id> [...]   (same; pnpm forwards the `--`)
  * Read-only: GET calls through `gh` only.
@@ -102,6 +104,12 @@ export function classifyFailure(stepName = '') {
     return {
       kind: 'infra',
       advice: 'Notary/staple failed. Transient Apple network errors (NSURLError -1005 / -1009) rerun clean: gh run rerun --failed <run-id> (SOP §5.1).',
+    };
+  }
+  if (/Smoke-test the signing service/i.test(stepName)) {
+    return {
+      kind: 'infra',
+      advice: 'The signing service did not sign a test file. Re-login SimplySign on the signing machine, do the smoke signature of release SOP 11.18, then rerun the failed jobs: gh run rerun --failed <run-id>.',
     };
   }
   if (/source (delta|bundle)|source tree/i.test(stepName)) {
@@ -326,7 +334,7 @@ function withRetry(label, read) {
 }
 
 export function parseArgs(argv) {
-  const options = { _: [], pollSeconds: 30, queuedAlertSeconds: 300, maxMinutes: 240, budgets: [...DEFAULT_BUDGETS], repo: process.env.IDBOTS_RELEASE_REPO || DEFAULT_REPO };
+  const options = { _: [], pollSeconds: 30, queuedAlertSeconds: 300, maxMinutes: 240, readFailureLimitSeconds: 900, budgets: [...DEFAULT_BUDGETS], repo: process.env.IDBOTS_RELEASE_REPO || DEFAULT_REPO };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     // `pnpm run release:watch -- <run-id>` hands the `--` on to the script.
@@ -335,6 +343,7 @@ export function parseArgs(argv) {
     else if (arg === '--poll-seconds') options.pollSeconds = Number(argv[++index]);
     else if (arg === '--queued-alert-seconds') options.queuedAlertSeconds = Number(argv[++index]);
     else if (arg === '--max-minutes') options.maxMinutes = Number(argv[++index]);
+    else if (arg === '--read-failure-limit-seconds') options.readFailureLimitSeconds = Number(argv[++index]);
     else if (arg === '--repo') options.repo = argv[++index];
     else if (arg === '--budget') {
       const [fragment, seconds] = String(argv[++index]).split('=');
@@ -348,16 +357,29 @@ export function parseArgs(argv) {
   return options;
 }
 
+/**
+ * What to do when the run cannot be read: keep waiting, or give up (exit 6).
+ * A watcher that dies on a dropped response wakes nobody — on 2026-11-27 one
+ * rough minute at GitHub ended the watch of a healthy run — so it waits, but
+ * not forever.
+ */
+export function readFailureVerdict({ unreadableSeconds, limitSeconds, once = false }) {
+  if (once || unreadableSeconds >= limitSeconds) return 'give-up';
+  return 'wait';
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const runId = options._[0];
   if (!runId) {
-    console.error('Usage: node scripts/release-watch.mjs <run-id> [--once] [--poll-seconds 30] [--queued-alert-seconds 300] [--max-minutes 240] [--budget "<step substring>=<seconds>"]');
+    console.error('Usage: node scripts/release-watch.mjs <run-id> [--once] [--poll-seconds 30] [--queued-alert-seconds 300] [--max-minutes 240] [--read-failure-limit-seconds 900] [--budget "<step substring>=<seconds>"');
     process.exit(64);
   }
 
   const startedAt = Date.now();
   let lastStateKey = '';
+  // Since when the run has been unreadable; null as soon as it can be read again.
+  let unreadableSince = null;
   for (;;) {
     let snapshot;
     let runners = [];
@@ -371,9 +393,18 @@ async function main() {
           runners = [];
         }
       }
+      unreadableSince = null;
     } catch (error) {
-      console.error(`[release-watch] ${error instanceof Error ? error.message : error}`);
-      process.exit(6);
+      unreadableSince ??= Date.now();
+      const unreadableSeconds = (Date.now() - unreadableSince) / 1000;
+      const message = error instanceof Error ? error.message : error;
+      if (readFailureVerdict({ unreadableSeconds, limitSeconds: options.readFailureLimitSeconds, once: options.once }) === 'give-up') {
+        console.error(`\n[release-watch] could not read the run for ${minutes(unreadableSeconds)}: ${message}`);
+        process.exit(6);
+      }
+      console.error(`[release-watch] could not read the run: ${message}\n[release-watch] trying again in ${options.pollSeconds} s; gives up after ${minutes(options.readFailureLimitSeconds)} of this.`);
+      await new Promise((resolve) => setTimeout(resolve, options.pollSeconds * 1000));
+      continue;
     }
 
     // Why a fallback stepped in is only in the log, and the log is only worth
