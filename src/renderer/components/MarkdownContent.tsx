@@ -232,10 +232,13 @@ const BOT_BROWSER_URI_PROTOCOL_RE = /^(metaid|metaapp|map|metafile|pin|preview-m
 /** Whether an href points into the Bot Browser (metaid://, metaapp://, …) rather than the external browser. */
 export const isBotBrowserUri = (href: string): boolean => BOT_BROWSER_URI_PROTOCOL_RE.test(href.trim());
 
-const AGENT_INTERNET_URI_RE = /\b(?:metaid|metaapp|map|metafile|pin|preview-metaapp|preview-file|idbots):\/\/[A-Za-z0-9][A-Za-z0-9._~%/@-]*/gi;
+const AGENT_INTERNET_URI_RE = /\b(?:(?:preview-metaapp|preview-file):\/\/[^\s<>"'`，。；：！？、“”‘’《》「」『』]+|(?:metaid|metaapp|map|metafile|pin|idbots):\/\/[A-Za-z0-9][A-Za-z0-9._~%/@-]*)/gi;
 const AGENT_INTERNET_URI_HINT_RE = /(?:metaid|metaapp|map|metafile|pin|preview-metaapp|preview-file|idbots):\/\//i;
+const LOCAL_PREVIEW_SCHEME_PREFIX_RE = /^(?:preview-metaapp|preview-file):\/\//i;
 const CODE_SEGMENT_RE = /(```[\s\S]*?```|`[^`\n]*`)/g;
+const FENCED_CODE_BLOCK_RE = /(```[\s\S]*?```)/g;
 const TRAILING_URI_PUNCTUATION_RE = /[.,;:!?]+$/;
+const TRAILING_LOCAL_URI_PUNCTUATION_RE = /[.,;:!?]+$/;
 /**
  * R3: a bare on-chain pin id (64 hex + the MetaID "i0" suffix) written without a
  * scheme. Bots paste these constantly; recognise them as pin:// links so they
@@ -254,6 +257,151 @@ const BARE_PINID_RE = /(?<![/:=\w])([0-9a-f]{64}i0)(?![0-9a-f])/gi;
  */
 const WEB2_PIN_VIEWER_RE = /\bhttps?:\/\/(?:www\.)?(?:metaid\.io|openagentinternet\.org\/browser)\/(pin|buzz|metaapp|metafile)\/([0-9a-f]{64}i0)(?:[?#][^\s)\]]*)?(?![0-9a-f])/gi;
 const WEB2_PIN_VIEWER_HINT_RE = /\bhttps?:\/\/(?:www\.)?(?:metaid\.io|openagentinternet\.org\/browser)\/(?:pin|buzz|metaapp|metafile)\/[0-9a-f]{64}i0/i;
+
+const countChar = (input: string, target: string): number => {
+  let count = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    if (input[i] === target) count += 1;
+  }
+  return count;
+};
+
+const escapeMarkdownLinkLabel = (label: string): string => {
+  if (!label.includes('[') && !label.includes(']')) return label;
+  return label.replace(/([[\]])/g, '\\$1');
+};
+
+const encodeUriPathPreservingEscapes = (pathPart: string): string => {
+  let out = '';
+  for (let i = 0; i < pathPart.length; ) {
+    const ch = pathPart[i];
+    if (ch === '%' && /^[0-9A-Fa-f]{2}$/.test(pathPart.slice(i + 1, i + 3))) {
+      out += pathPart.slice(i, i + 3);
+      i += 3;
+      continue;
+    }
+    if (ch === '%') {
+      out += '%25';
+      i += 1;
+      continue;
+    }
+    if (/^[A-Za-z0-9._~:@!$&*+,;=/\-]$/.test(ch)) {
+      out += ch;
+      i += 1;
+      continue;
+    }
+    const cp = pathPart.codePointAt(i)!;
+    const charStr = String.fromCodePoint(cp);
+    out += encodeURIComponent(charStr)
+      .replace(/\(/g, '%28')
+      .replace(/\)/g, '%29')
+      .replace(/'/g, '%27');
+    i += charStr.length;
+  }
+  return out;
+};
+
+/**
+ * Normalize a `preview-file://`, `preview-metaapp://`, or `file://` URI for use
+ * as a CommonMark link destination: normalizes triple-slash local preview URIs
+ * (`preview-file:///Users/...` -> `preview-file://localhost/Users/...`), Windows
+ * backslashes, unencoded `#`/`?` inside `preview-file://` filenames, spaces,
+ * parentheses, CJK characters, and stray `%` without double-encoding existing
+ * `%XX` sequences. `file://` keeps its `file://` scheme so `LocalFileLink`
+ * routing stays intact.
+ */
+export const normalizeLocalPreviewMarkdownUri = (rawUri: string): string => {
+  const trimmed = rawUri.trim();
+  const match = trimmed.match(/^(file|preview-file|preview-metaapp):\/\/(.*)$/i);
+  if (!match) return trimmed;
+
+  const scheme = match[1].toLowerCase();
+  const rest = match[2].replace(/\\/g, '/');
+
+  if (scheme === 'file') {
+    const splitIdx = rest.search(/[?#]/);
+    const pathPart = splitIdx === -1 ? rest : rest.slice(0, splitIdx);
+    const suffix = splitIdx === -1 ? '' : rest.slice(splitIdx);
+    return `file://${encodeUriPathPreservingEscapes(pathPart)}${suffix}`;
+  }
+
+  let host = 'localhost';
+  let remainder = '';
+  if (rest.startsWith('/')) {
+    remainder = rest;
+  } else if (/^[A-Za-z]:\//.test(rest)) {
+    remainder = `/${rest}`;
+  } else {
+    const slashIdx = rest.indexOf('/');
+    if (slashIdx === -1) return trimmed;
+    host = rest.slice(0, slashIdx) || 'localhost';
+    remainder = rest.slice(slashIdx);
+  }
+
+  let pathPart = remainder;
+  let suffix = '';
+  if (scheme === 'preview-file') {
+    const hashIdx = pathPart.indexOf('#');
+    if (hashIdx !== -1) {
+      const before = pathPart.slice(0, hashIdx);
+      const after = pathPart.slice(hashIdx + 1);
+      const baseBefore = before.slice(before.lastIndexOf('/') + 1);
+      if (!baseBefore.includes('.') && /\.[A-Za-z0-9]{1,12}$/.test(after)) {
+        pathPart = `${before}%23${after.replace(/#/g, '%23')}`;
+      } else {
+        pathPart = before;
+        suffix = `#${after}`;
+      }
+    }
+    const qIdx = pathPart.indexOf('?');
+    if (qIdx !== -1) {
+      const before = pathPart.slice(0, qIdx);
+      const after = pathPart.slice(qIdx + 1);
+      const baseBefore = before.slice(before.lastIndexOf('/') + 1);
+      if (!baseBefore.includes('.') && /\.[A-Za-z0-9]{1,12}$/.test(after) && !after.includes('=')) {
+        pathPart = `${before}%3F${after.replace(/\?/g, '%3F')}`;
+      } else {
+        pathPart = before;
+        suffix = `?${after}${suffix}`;
+      }
+    }
+  } else {
+    const splitIdx = pathPart.search(/[?#]/);
+    if (splitIdx !== -1) {
+      suffix = pathPart.slice(splitIdx);
+      pathPart = pathPart.slice(0, splitIdx);
+    }
+  }
+
+  const encodedPath = encodeUriPathPreservingEscapes(pathPart).replace(/\/\/+/g, '/');
+  return `${scheme}://${host}${encodedPath}${suffix}`;
+};
+
+const trimBareLocalPreviewUri = (rawMatch: string): string => {
+  let match = rawMatch;
+  while (match.length > 0) {
+    const prev = match;
+    match = match.replace(TRAILING_LOCAL_URI_PUNCTUATION_RE, '');
+    while (match.endsWith(')') && countChar(match, '(') < countChar(match, ')')) {
+      match = match.slice(0, -1);
+    }
+    while (match.endsWith(']') && countChar(match, '[') < countChar(match, ']')) {
+      match = match.slice(0, -1);
+    }
+    while (match.endsWith('）') && countChar(match, '（') < countChar(match, '）')) {
+      match = match.slice(0, -1);
+    }
+    while (match.endsWith('】') && countChar(match, '【') < countChar(match, '】')) {
+      match = match.slice(0, -1);
+    }
+    if (match === prev) break;
+  }
+  // Bare scheme prefixes like `preview-file://` or `preview-file:///` in prose are not links.
+  if (/^(?:preview-metaapp|preview-file):\/\/\/?$/i.test(match)) {
+    return '';
+  }
+  return match;
+};
 
 const rewriteWeb2PinViewerUris = (segment: string): string => {
   if (!WEB2_PIN_VIEWER_HINT_RE.test(segment)) return segment;
@@ -290,6 +438,12 @@ const linkifyChunk = (chunk: string): string => {
     if (full.slice(Math.max(0, offset - 2), offset) === '](') return rawMatch;
     // Already inside a <uri> autolink — leave it alone.
     if (full[offset - 1] === '<') return rawMatch;
+    if (LOCAL_PREVIEW_SCHEME_PREFIX_RE.test(rawMatch)) {
+      const match = trimBareLocalPreviewUri(rawMatch);
+      if (!match) return rawMatch;
+      const href = normalizeLocalPreviewMarkdownUri(match);
+      return `[${escapeMarkdownLinkLabel(match)}](${href})${rawMatch.slice(match.length)}`;
+    }
     const match = rawMatch.replace(TRAILING_URI_PUNCTUATION_RE, '');
     if (!match) return rawMatch;
     return `[${match}](${match})${rawMatch.slice(match.length)}`;
@@ -338,7 +492,7 @@ const linkifyPlainSegment = (segment: string): string => {
 
 /**
  * Turn bare Agent Internet URIs (metaid://, metaapp://, map://, metafile://,
- * pin://, preview-metaapp://) and in-app session deep links
+ * pin://, preview-metaapp://, preview-file://) and in-app session deep links
  * (idbots://session/<id>) in markdown text into markdown links so they
  * render clickable everywhere (CoWork, A2A, Bot Browser panel), and rewrite
  * Web2 pin-viewer URLs (metaid.io/pin/…, openagentinternet.org/browser/…)
@@ -346,7 +500,7 @@ const linkifyPlainSegment = (segment: string): string => {
  * alone (rewrites only replace the URL itself). Code BLOCKS (triple
  * backticks) stay verbatim; INLINE code spans are rewritten/linkified too,
  * because bots habitually wrap metaweb URIs in backticks and those must
- * remain clickable.
+ * remain clickable — including local preview paths containing spaces.
  */
 export const linkifyAgentInternetUris = (content: string): string => {
   if (!content) return content;
@@ -362,20 +516,26 @@ export const linkifyAgentInternetUris = (content: string): string => {
       // backticks and those must still be clickable.
       if (segment.startsWith('```')) return segment;
       const inner = segment.slice(1, -1);
+      const trimmedInner = inner.trim();
+      // When the entire inline code span is a local preview URI (often wrapped
+      // in backticks specifically because its path contains spaces/CJK/parens),
+      // linkify the full span instead of splitting at the first space.
+      if (
+        /^(?:preview-metaapp|preview-file):\/\/(?:localhost\/|\/|[A-Za-z]:[\\/])/i.test(trimmedInner)
+        && !trimmedInner.includes('](')
+      ) {
+        const href = normalizeLocalPreviewMarkdownUri(trimmedInner);
+        return `[${escapeMarkdownLinkLabel(trimmedInner)}](${href})`;
+      }
       const linkified = linkifyPlainSegment(inner);
       return linkified !== inner ? linkified : segment;
     })
     .join('');
 };
 
-const encodeFileUrl = (url: string): string => {
-  const encoded = encodeURI(url);
-  return encoded.replace(/\(/g, '%28').replace(/\)/g, '%29');
-};
-
-const encodeFileUrlDestination = (dest: string): string => {
+const encodeLocalUrlDestination = (dest: string): string => {
   const trimmed = dest.trim();
-  if (!/^<?file:\/\//i.test(trimmed)) {
+  if (!/^<?(?:file|preview-file|preview-metaapp):\/\//i.test(trimmed)) {
     return dest;
   }
 
@@ -388,12 +548,13 @@ const encodeFileUrlDestination = (dest: string): string => {
     core = core.slice(1, -1);
   }
 
-  const encoded = encodeFileUrl(core);
+  const encoded = normalizeLocalPreviewMarkdownUri(core);
   return dest.replace(trimmed, `${prefix}${encoded}${suffix}`);
 };
 
 const findMarkdownLinkEnd = (input: string, start: number): number => {
   let depth = 1;
+  let lineEnd = input.length;
   for (let i = start; i < input.length; i += 1) {
     const char = input[i];
     if (char === '\\') {
@@ -411,40 +572,57 @@ const findMarkdownLinkEnd = (input: string, start: number): number => {
       }
     }
     if (char === '\n') {
-      return -1;
+      lineEnd = i;
+      break;
+    }
+  }
+  // Rescue unbalanced '(' inside local file/preview filenames on the same line,
+  // e.g. `[报告](preview-file://localhost/Users/a/报告 (草稿.md)`.
+  const lineSlice = input.slice(start, lineEnd);
+  if (/^\s*<?(?:file|preview-file|preview-metaapp):\/\//i.test(lineSlice) && !lineSlice.includes('](')) {
+    for (let j = lineEnd - 1; j >= start; j -= 1) {
+      if (input[j] === ')' && input[j - 1] !== '\\') {
+        return j;
+      }
     }
   }
   return -1;
 };
 
-const encodeFileUrlsInMarkdown = (content: string): string => {
-  if (!content.includes('file://')) {
-    return content;
-  }
-
+const encodeLocalUrlsInSegment = (segment: string): string => {
   let result = '';
   let cursor = 0;
-  while (cursor < content.length) {
-    const openIndex = content.indexOf('](', cursor);
+  while (cursor < segment.length) {
+    const openIndex = segment.indexOf('](', cursor);
     if (openIndex === -1) {
-      result += content.slice(cursor);
+      result += segment.slice(cursor);
       break;
     }
 
-    result += content.slice(cursor, openIndex + 2);
+    result += segment.slice(cursor, openIndex + 2);
     const destStart = openIndex + 2;
-    const destEnd = findMarkdownLinkEnd(content, destStart);
+    const destEnd = findMarkdownLinkEnd(segment, destStart);
     if (destEnd === -1) {
-      result += content.slice(destStart);
+      result += segment.slice(destStart);
       break;
     }
 
-    const dest = content.slice(destStart, destEnd);
-    result += encodeFileUrlDestination(dest);
+    const dest = segment.slice(destStart, destEnd);
+    result += encodeLocalUrlDestination(dest);
     result += ')';
     cursor = destEnd + 1;
   }
   return result;
+};
+
+const encodeFileUrlsInMarkdown = (content: string): string => {
+  if (!/(?:file|preview-metaapp):\/\//i.test(content)) {
+    return content;
+  }
+  return content
+    .split(FENCED_CODE_BLOCK_RE)
+    .map((segment) => (segment.startsWith('```') ? segment : encodeLocalUrlsInSegment(segment)))
+    .join('');
 };
 
 const safeUrlTransform = (url: string): string => {

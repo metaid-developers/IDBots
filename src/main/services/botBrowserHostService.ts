@@ -586,8 +586,24 @@ async function resolveLocalPreviewPath(
     indexFile = path.basename(fsPath);
     // classifyLocalFile covers the whole previewable surface (md/pdf/media/…),
     // so a single file preview resolves its real MIME instead of the former
-    // 'text/html' fallback that pushed unknown types into html-iframe.
-    contentType = classifyLocalFile(indexFile).contentType;
+    // 'text/html' fallback that pushed unknown types into html-iframe. When a
+    // caller (or TwinBot projection) opens a markdown/text/code/csv file under
+    // preview-metaapp:// instead of preview-file://, enable the sanitized file
+    // viewer so the page opens cleanly rather than failing as unsupported.
+    const fileClass = classifyLocalFile(indexFile);
+    contentType = fileClass.contentType;
+    if (fileClass.viewer) {
+      const session = await input.createLocalPreviewSession({
+        artifactDir,
+        indexFile,
+        viewer: true,
+      });
+      return {
+        previewId: session.previewId,
+        localPreviewUrl: `${session.localPreviewUrl}?abc-viewer=1`,
+        contentType,
+      };
+    }
   }
 
   const session = await input.createLocalPreviewSession({ artifactDir, indexFile });
