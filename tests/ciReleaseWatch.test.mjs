@@ -152,28 +152,47 @@ test('a source delta that does not fit, or breaks, is a fallback and not a failu
   assert.match(text, /step "Rebuild the source tree from the full bundle \(Windows\)" \[infra\]/);
 });
 
-test('a finished run says when the source delta gave way to the full bundle, and why', () => {
+test('a finished run says why the source delta gave way to the full bundle, read from the job log', () => {
   const done = (name, conclusion) => ({ name, status: 'completed', conclusion, started_at: minutesAgo(40) });
-  const finished = (steps) => evaluate({
+  const DELTA = 'Update the source tree from the delta (Windows)';
+  const REBUILD = 'Rebuild the source tree from the full bundle (Windows)';
+  const rebuilt = [done(REBUILD, 'success')];
+  const finished = (steps, jobLogs = {}) => evaluate({
     run: { status: 'completed', conclusion: 'success' },
-    jobs: [{ ...job(windows, { status: 'completed', conclusion: 'success' }), steps }],
+    jobs: [{ id: 7, ...job(windows, { status: 'completed', conclusion: 'success' }), steps }],
     now: NOW,
+    jobLogs,
   });
-  const rebuilt = [done('Rebuild the source tree from the full bundle (Windows)', 'success')];
-  const didNotFit = finished([done('Update the source tree from the delta (Windows)', 'success'), ...rebuilt]);
-  assert.equal(didNotFit.verdict, 'completed-ok');
-  assert.match(didNotFit.lines.join('\n'), /the source delta did not fit; the tree was rebuilt from the full bundle/);
+  const text = (result) => result.lines.join('\n');
+  // GitHub records the step as "success" either way, because it is allowed to fail.
+  const gaveWay = [done(DELTA, 'success'), ...rebuilt];
+  // Every job log echoes the step's script first, sentence included.
+  const echoedScript = '2026-11-26T20:09:58.1000000Z   Write-Host "The source delta does not fit this workspace: the tree is rebuilt from the full bundle."\r\n';
 
-  const failedOutright = finished([done('Update the source tree from the delta (Windows)', 'failure'), ...rebuilt]);
-  assert.match(failedOutright.lines.join('\n'), /the source delta failed outright; the tree was rebuilt from the full bundle/);
+  // The usual case: the machine holds another commit, and the tool says so.
+  const declined = finished(gaveWay, { 7: `${echoedScript}2026-11-26T20:09:59.2000000Z The source delta does not fit this workspace: the tree is rebuilt from the full bundle.\r\n[ci-source-restore] rebuilt to cdb11305b\n` });
+  assert.equal(declined.verdict, 'completed-ok');
+  assert.match(text(declined), /the source delta did not fit; the tree was rebuilt from the full bundle/);
+
+  // A crash in the tool (run 45888882259): named, with git's own words, and without colour codes.
+  const crashed = finished(gaveWay, {
+    7: `${echoedScript}2026-11-26T20:09:59.2000000Z \x1b[31m✗ ci-source-restore: git config core.symlinks false exited 5: warning: core.symlinks has multiple values\x1b[0m\r\n[ci-source-restore] rebuilt to cdb11305b`,
+  });
+  assert.match(text(crashed), /the source delta failed outright: git config core.symlinks false exited 5: warning: core.symlinks has multiple values; the tree was rebuilt/);
+  assert.doesNotMatch(text(crashed), /\x1b|did not fit/);
+
+  // Nothing but the echoed script: that is no outcome at all.
+  assert.match(text(finished(gaveWay, { 7: echoedScript })), /the source delta gave way, for a reason the log does not state/);
+  // No log to read: it says that, rather than guessing a clean decline.
+  assert.match(text(finished(gaveWay)), /the source delta gave way, for a reason the log does not state/);
 
   const byDelta = finished([
-    done('Update the source tree from the delta (Windows)', 'success'),
+    done(DELTA, 'success'),
     done('Download the full source bundle (Windows)', 'skipped'),
-    done('Rebuild the source tree from the full bundle (Windows)', 'skipped'),
+    done(REBUILD, 'skipped'),
   ]);
   assert.equal(byDelta.verdict, 'completed-ok');
-  assert.doesNotMatch(byDelta.lines.join('\n'), /gave way|did not fit|failed outright/);
+  assert.doesNotMatch(text(byDelta), /gave way|did not fit|failed outright/);
 });
 
 test('the most specific budget wins for a step name', () => {
