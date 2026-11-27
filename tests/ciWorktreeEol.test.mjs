@@ -125,3 +125,30 @@ test('normalizeWorktreeEol refuses while checkout would convert the files straig
   git(['config', 'core.autocrlf', 'true']);
   assert.throws(() => normalizeWorktreeEol({ cwd: dir }), /core\.autocrlf=true/);
 });
+
+test('normalizeWorktreeEol rewrites the carry-over even once git stops treating the files as "racily clean"', (t) => {
+  const { dir, git } = makeWindowsWorkspace(t);
+  git(['config', 'core.autocrlf', 'true']);
+  for (const relative of ['lf.txt', 'sub/with space.txt', 'deep/nested/module.ts']) fs.rmSync(path.join(dir, relative));
+  git(['checkout', '--', '.']);
+  git(['config', 'core.autocrlf', 'false']);
+  // checkout-index skips a file whose cached stat still matches the one on
+  // disk — with --force too (entry.c: "if (!changed) return 0;") — and compares
+  // contents only for entries as young as the index file itself. The cached
+  // stat describes the CRLF copy, so the rewrite silently leaves the file
+  // alone. Put the index file's timestamp ahead of every entry, which is what
+  // a checkout that straddles a second boundary does to the files it wrote
+  // first (run 46014677636, 2026-11-27: two of three files left as CRLF).
+  const ahead = new Date(Date.now() + 5000);
+  fs.utimesSync(path.join(dir, '.git', 'index'), ahead, ahead);
+  assert.equal(git(['status', '--porcelain']).trim(), '', "precondition: git takes the CRLF copies for the committed bytes");
+
+  const result = normalizeWorktreeEol({ cwd: dir });
+
+  assert.equal(result.rewritten, 3);
+  assert.equal(result.remaining, 0);
+  assert.equal(read(dir, 'lf.txt'), 'a\nb\n');
+  assert.equal(read(dir, 'sub/with space.txt'), 'x\ny\n');
+  assert.equal(read(dir, 'deep/nested/module.ts'), 'export const n = 1;\n');
+  assert.equal(git(['status', '--porcelain']), '');
+});

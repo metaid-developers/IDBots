@@ -25,6 +25,8 @@
  * Exit codes: 0 = working tree byte-exact, 1 = could not normalize (named).
  */
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 /**
@@ -87,6 +89,17 @@ export function normalizeWorktreeEol({ cwd = process.cwd() } = {}) {
   }
 
   const paths = `${targets.join('\0')}\0`;
+  // Delete the carry-over copies before checking them out again. checkout-index
+  // skips any entry whose cached stat still matches the file on disk, --force
+  // or not (entry.c: "if (!changed) return 0;"), and compares contents only for
+  // entries as young as the index file. The cached stat describes the CRLF
+  // copy, so without this the rewrite depends on timing: it worked while a
+  // checkout stayed within one timestamp second, and left the files it wrote
+  // before that boundary alone when it did not (run 46014677636, 2026-11-27:
+  // two of three files still CRLF). A missing file is always written.
+  for (const relative of targets) {
+    fs.rmSync(path.join(cwd, relative), { force: true });
+  }
   must(['checkout-index', '--force', '--stdin', '-z'], paths);
   // checkout-index writes the index bytes but leaves the index stat data sized
   // for the old CRLF copy, which git would then report as modified (a size
