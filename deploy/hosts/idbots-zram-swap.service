@@ -1,0 +1,18 @@
+# CR-WSA-006 pilot — zram compressed swap for the tenant host.
+# Runs /opt/idbots/zram-swap.sh (from deploy/hosts/zram-swap.sh).
+#
+# Deliberately NOT ordered Before=swap.target: nothing on this host needs swap
+# to exist at boot (swap can be added at any time), and ordering against
+# swap.target from a unit with default dependencies would form a cycle.
+[Unit]
+Description=IDBots tenant host: zram compressed swap (CR-WSA-006 pilot)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/idbots/zram-swap.sh start
+ExecStop=/opt/idbots/zram-swap.sh stop
+
+[Install]
+WantedBy=multi-user.target
