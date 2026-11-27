@@ -167,6 +167,51 @@
       "kind": "value"
     },
     {
+      "path": "assetBridge.cancel",
+      "kind": "invoke",
+      "channel": "assetBridge:cancel",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "assetBridge.confirm",
+      "kind": "invoke",
+      "channel": "assetBridge:confirm",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "assetBridge.get",
+      "kind": "invoke",
+      "channel": "assetBridge:get",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "assetBridge.onJobUpdated",
+      "kind": "on",
+      "channel": "assetBridge:jobUpdated"
+    },
+    {
+      "path": "assetBridge.refreshQuote",
+      "kind": "invoke",
+      "channel": "assetBridge:refreshQuote",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "assetBridge.setFocusedSession",
+      "kind": "invoke",
+      "channel": "assetBridge:setFocusedSession",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "autoLaunch.get",
       "kind": "invoke",
       "channel": "app:getAutoLaunch",

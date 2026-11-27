@@ -401,6 +401,10 @@ import {
   type NftSwapToolsControl,
 } from './nftSwapAgentTools';
 import {
+  buildAssetBridgeAgentTools,
+  type AssetBridgeToolsControl,
+} from './assetBridgeAgentTools';
+import {
   buildGoodsTradeAgentTools,
   type GoodsPurchaseConfirmationInfo,
   type GoodsQuoteAcceptConfirmationInfo,
@@ -2735,6 +2739,8 @@ export interface CoworkRunnerOptions {
    * (nft_swap_verify_official_station, nft_swap_submit_batch, nft_swap_order_status).
    */
   nftSwapTools?: NftSwapToolsControl;
+  /** Built-in Octopus asset bridge quote/status tools. */
+  assetBridgeTools?: AssetBridgeToolsControl;
   /**
    * WS-D: Digital goods discovery & ME Points Escrow buyer tools
    * (goods_market_summary, goods_market_search, goods_holder_lookup,
@@ -3164,6 +3170,7 @@ export class CoworkRunner extends EventEmitter {
   private btcMultisigTools?: BtcMultisigToolsControl;
   private mrc721Tools?: Mrc721ToolsControl;
   private nftSwapTools?: NftSwapToolsControl;
+  private assetBridgeTools?: AssetBridgeToolsControl;
   private goodsTradeTools?: GoodsTradeToolsControl;
   private escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
   private meChargeTools?: MeChargeToolsControl;
@@ -3404,6 +3411,7 @@ export class CoworkRunner extends EventEmitter {
     this.btcMultisigTools = options?.btcMultisigTools;
     this.mrc721Tools = options?.mrc721Tools;
     this.nftSwapTools = options?.nftSwapTools;
+    this.assetBridgeTools = options?.assetBridgeTools;
     this.goodsTradeTools = options?.goodsTradeTools;
     this.escrowTools = options?.escrowTools;
     this.meChargeTools = options?.meChargeTools;
@@ -16870,6 +16878,16 @@ export class CoworkRunner extends EventEmitter {
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
           confirmBatchSwap: (info) => this.confirmBatchSwap(sessionId, info),
+        })
+      );
+    }
+    if (this.assetBridgeTools && mountFinancialTools) {
+      memoryTools.push(
+        ...buildAssetBridgeAgentTools({
+          tool,
+          control: this.assetBridgeTools,
+          sessionId,
+          resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
         })
       );
     }

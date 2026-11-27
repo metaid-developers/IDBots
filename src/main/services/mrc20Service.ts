@@ -41,7 +41,16 @@ export interface Mrc20Asset {
 export interface ExecuteMrc20TransferResult {
   commitTxId: string;
   revealTxId: string;
+  commitTxHex: string;
+  revealTxHex: string;
   totalFeeSats: number;
+}
+
+export interface ExecuteMrc20TransferOptions {
+  service?: { address: string; satoshis: number };
+  submitSigned?: (signed: { commitTxHex: string; revealTxHex: string; totalFeeSats: number }) => Promise<{ commitTxId: string; revealTxId: string }>;
+  /** Sign and return exact fees without broadcasting, submitting, or priming caches. */
+  dryRun?: boolean;
 }
 
 interface RawMrc20BalanceRow {
@@ -132,6 +141,7 @@ interface Mrc20ServiceDeps {
       toAddress: string;
       amount: string;
       feeRate: number;
+      service?: { address: string; satoshis: number };
     };
     amountAtomic: string;
   }) => Promise<SignTransferResult>;
@@ -675,6 +685,7 @@ async function signTransferDefault(params: {
     toAddress: string;
     amount: string;
     feeRate: number;
+    service?: { address: string; satoshis: number };
   };
   amountAtomic: string;
 }): Promise<SignTransferResult> {
@@ -686,6 +697,7 @@ async function signTransferDefault(params: {
     feeRate: params.input.feeRate,
     changeAddress: params.context.address,
     fundingUtxos: params.fundingUtxos as Array<Record<string, unknown>>,
+    ...(params.input.service ? { service: params.input.service } : {}),
     tokenUtxos: params.tokenUtxos,
   });
 
@@ -751,6 +763,7 @@ export async function executeMrc20Transfer(
     feeRate: number;
   },
   deps: Partial<Mrc20ServiceDeps> = defaultDeps,
+  options?: ExecuteMrc20TransferOptions,
 ): Promise<ExecuteMrc20TransferResult> {
   if (!Number.isInteger(input?.metabotId) || input.metabotId <= 0) {
     throw new Error('metabotId must be a positive integer');
@@ -771,11 +784,12 @@ export async function executeMrc20Transfer(
   if (fundingUtxos.length === 0) throw new Error('No BTC funding UTXOs available');
   if (tokenUtxos.length === 0) throw new Error('No MRC20 UTXOs available');
 
+  const signInput = options?.service ? { ...input, service: options.service } : input;
   const signed = await resolvedDeps.signTransfer({
     context,
     fundingUtxos,
     tokenUtxos,
-    input,
+    input: signInput,
     amountAtomic,
   });
 
@@ -783,9 +797,34 @@ export async function executeMrc20Transfer(
     throw new Error('Failed to sign MRC20 transfer');
   }
 
+  if (options?.dryRun) {
+    return {
+      commitTxId: '',
+      revealTxId: '',
+      commitTxHex: signed.commitTxHex,
+      revealTxHex: signed.revealTxHex,
+      totalFeeSats: signed.totalFeeSats,
+    };
+  }
+
   try {
-    const commitTxId = await resolvedDeps.broadcastCommit(signed.commitTxHex);
-    const revealTxId = await resolvedDeps.broadcastReveal(signed.revealTxHex);
+    let commitTxId: string;
+    let revealTxId: string;
+    if (options?.submitSigned) {
+      const submitted = await options.submitSigned({
+        commitTxHex: signed.commitTxHex,
+        revealTxHex: signed.revealTxHex,
+        totalFeeSats: signed.totalFeeSats,
+      });
+      if (!submitted?.commitTxId || !submitted?.revealTxId) {
+        throw new Error('submitSigned did not return commitTxId and revealTxId');
+      }
+      commitTxId = submitted.commitTxId;
+      revealTxId = submitted.revealTxId;
+    } else {
+      commitTxId = await resolvedDeps.broadcastCommit(signed.commitTxHex);
+      revealTxId = await resolvedDeps.broadcastReveal(signed.revealTxHex);
+    }
     try {
       const cachedFundingUtxos = buildCachedPendingFundingUtxos({
         address: context.address,
@@ -815,6 +854,8 @@ export async function executeMrc20Transfer(
     return {
       commitTxId,
       revealTxId,
+      commitTxHex: signed.commitTxHex,
+      revealTxHex: signed.revealTxHex,
       totalFeeSats: signed.totalFeeSats,
     };
   } catch (error) {

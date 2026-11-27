@@ -259,6 +259,8 @@ import {
 import { convertToGlobalMetaId } from './services/globalMetaid';
 import { executeMvcFtIssue, executeMvcFtMint, listMvcFtIssuances } from './services/mvcFtIssueService';
 import { executeMrc20Transfer, listMrc20Assets } from './services/mrc20Service';
+import { AssetBridgeService } from './services/assetBridgeService';
+import { formatAssetBridgeNoticeFence } from '../renderer/components/chat/assetBridgeCardSyntax';
 import {
   buildPassiveSellFillCardMessage,
   TokenOrderWatcher,
@@ -4477,6 +4479,77 @@ function getEscrowOrderStore(): EscrowOrderStore {
     getStore().getSaveFunction(),
   );
   return escrowOrderStore;
+}
+
+let assetBridgeFocusedSessionId: string | null = null;
+let assetBridgeService: AssetBridgeService | null = null;
+function getAssetBridgeService(): AssetBridgeService {
+  if (!assetBridgeService) {
+    assetBridgeService = new AssetBridgeService(getMetabotStore(), getStore().getDatabase(), {
+      saveDb: getStore().getSaveFunction(),
+      emitJobUpdated: (view) => broadcastToRenderers('assetBridge:jobUpdated', view),
+      resolveNoticeSession: (record) => {
+        try {
+          const cStore = getCoworkStore();
+          const focused = assetBridgeFocusedSessionId ? cStore.getSessionWithoutMessages(assetBridgeFocusedSessionId) : null;
+          if (focused && focused.sessionType !== 'a2a' && Number(focused.metabotId) === record.metabotId) return assetBridgeFocusedSessionId as string;
+        } catch {
+          // fall back to the origin session
+        }
+        return record.sessionId;
+      },
+      notifyJob: (record, targetSessionId) => {
+        try {
+          const cStore = getCoworkStore();
+          if (!cStore.getSessionWithoutMessages(targetSessionId)) return;
+          const view = record.view;
+          const durationSec = Math.max(0, Math.floor(((view.completedAt ?? Date.now()) - (view.broadcastAt ?? view.updatedAt)) / 1000));
+          const durationText = tApp(`${Math.floor(durationSec / 60)} 分 ${durationSec % 60} 秒`, `${Math.floor(durationSec / 60)}m ${durationSec % 60}s`);
+          const sentence = view.state === 'completed'
+            ? tApp(`桥接已到账：+${view.receiveAmountDisplay} ${view.targetSymbol} 已到 ${view.targetChain.toUpperCase()}（用时 ${durationText}）。`, `Bridge arrived: +${view.receiveAmountDisplay} ${view.targetSymbol} on ${view.targetChain.toUpperCase()} (took ${durationText}).`)
+            : tApp(`桥接失败：${view.error?.messageZh || '未知错误'}。${view.error?.fundsMoved ? '源资金已转出，请联系桥服务支持。' : '资金未转出。'}`, `Bridge failed: ${view.error?.messageEn || 'unknown error'}. ${view.error?.fundsMoved ? 'Source funds were moved; contact bridge support.' : 'No funds were moved.'}`);
+          const fence = formatAssetBridgeNoticeFence({
+            v: 1,
+            jobId: view.jobId,
+            status: view.state === 'completed' ? 'completed' : 'failed',
+            scenario: view.scenario,
+            symbol: view.symbol,
+            targetSymbol: view.targetSymbol,
+            amountDisplay: view.amountDisplay,
+            targetChain: view.targetChain,
+            durationSec,
+            ...(view.targetTxid ? { targetTxid: view.targetTxid } : {}),
+            ...(view.error ? { reasonEn: view.error.messageEn, reasonZh: view.error.messageZh } : {}),
+          });
+          const msg = cStore.addMessage(targetSessionId, {
+            type: 'assistant',
+            content: `${sentence}\n\n${fence}`,
+            metadata: { assetBridgeNotice: { jobId: view.jobId, status: view.state === 'completed' ? 'completed' : 'failed' } },
+          });
+          emitCoworkStreamMessage(targetSessionId, msg);
+        } catch (error) {
+          console.warn('[AssetBridge] failed to post completion notice:', error);
+        }
+      },
+      wakeOnComplete: (record, targetSessionId) => {
+        const view = record.view;
+        const note = [
+          `Asset bridge job ${view.jobId} completed: ${view.amountDisplay} ${view.symbol} arrived as ${view.receiveAmountDisplay} ${view.targetSymbol} on ${view.targetChain.toUpperCase()}.`,
+          view.targetTxid ? `Target txid: ${view.targetTxid}.` : '',
+          `The owner asked earlier: "${view.onComplete}". Carry it out now; any spend still goes through the normal owner confirmation.`,
+        ].filter(Boolean).join(' ');
+        const result = getCoworkRunner().insertCrossSessionMessageAndQueue({
+          sourceSessionId: `asset-bridge:${view.jobId}`,
+          targetSessionId,
+          message: note,
+          deliveryId: `asset_bridge:${view.jobId}`,
+        });
+        if (!result.insert.ok) console.warn('[AssetBridge] on_complete wake insert failed:', result.insert);
+      },
+    });
+    void assetBridgeService.recoverStartup().catch((error) => console.warn('[AssetBridge] startup recovery failed:', error));
+  }
+  return assetBridgeService;
 }
 
 let swapOrderTrackerService: SwapOrderTrackerService | null = null;
@@ -10118,6 +10191,11 @@ const getCoworkRunner = () => {
         getOrder: (requestId) => getSwapOrderTrackerService().getOrder(requestId),
         listOrders: (metabotId) => getSwapOrderTrackerService().listOrders(metabotId),
       },
+      assetBridgeTools: {
+        createQuote: (input) => getAssetBridgeService().createQuote(input),
+        getJob: (jobId) => getAssetBridgeService().get(jobId),
+        listJobs: (metabotId, limit) => getAssetBridgeService().listByMetabot(metabotId, limit),
+      },
       goodsTradeTools: {
         getMetabotIdentity: (metabotId) => {
           const bot = getMetabotStore().getMetabotById(metabotId);
@@ -15212,6 +15290,26 @@ if (!gotTheLock) {
   // Sleep guard status for the harness frontend (badge).
   registerIpcHandler('powerGuard:status', () => {
     return getSleepGuard().getState();
+  });
+
+  registerIpcHandler('assetBridge:get', async (_event, input: { jobId?: string }) => {
+    return input?.jobId ? getAssetBridgeService().get(input.jobId) : null;
+  });
+  registerIpcHandler('assetBridge:confirm', async (_event, input: { jobId?: string }) => {
+    if (!input?.jobId) return { ok: false, error: 'jobId is required' };
+    return await getAssetBridgeService().confirm(input.jobId);
+  });
+  registerIpcHandler('assetBridge:cancel', async (_event, input: { jobId?: string }) => {
+    if (!input?.jobId) return { ok: false, error: 'jobId is required' };
+    return getAssetBridgeService().cancel(input.jobId);
+  });
+  registerIpcHandler('assetBridge:refreshQuote', async (_event, input: { jobId?: string }) => {
+    if (!input?.jobId) return { ok: false, error: 'jobId is required' };
+    return await getAssetBridgeService().refreshQuote(input.jobId);
+  });
+  registerIpcHandler('assetBridge:setFocusedSession', async (_event, input: { sessionId?: string | null }) => {
+    assetBridgeFocusedSessionId = typeof input?.sessionId === 'string' && input.sessionId.trim() ? input.sessionId.trim() : null;
+    return { ok: true };
   });
 
   // Host setting: 「阻止设备休眠」 (General settings). Stored in the app kv
@@ -25229,6 +25327,12 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
 
     store = await initStore();
     startupLog('store ready');
+
+    try {
+      getAssetBridgeService();
+    } catch (assetBridgeError) {
+      console.warn('[AssetBridge] startup recovery failed to initialize:', assetBridgeError);
+    }
 
     // T-C layer (b): startup self-check of the session-log first-frame
     // invariant. Read-only — it reports 0-byte / header-less artifacts (path +

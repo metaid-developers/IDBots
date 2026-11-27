@@ -26,6 +26,7 @@ import { ensureMetawebSurfSchema } from './metawebSurfStore';
 import { ensureChainContentHistorySchema } from './chainContentHistoryStore';
 import { ensureBotWalletTransferSchema } from './services/botWalletTransferStore';
 import { ensureNftSwapClientOrderSchema } from './services/swapOrderTrackerService';
+import { ensureAssetBridgeSchema } from './services/assetBridgeStore';
 import { ensureMeNftSellerFulfillmentsSchema } from './services/sellerAutoFulfillDaemon';
 import { ensureFtOrderTables } from './services/ftOrderStore';
 import { ensureTokenForGoodsSchema } from './services/tokenForGoodsService';
@@ -3113,6 +3114,8 @@ export class SqliteStore {
     // WS-A client swap orders ledger (nft_swap_client_orders): tracks legacy
     // MetaContract -> MRC-721 swap batches submitted by Twin MetaBots.
     ensureNftSwapClientOrderSchema(this.db);
+    // Octopus asset bridge jobs: owner-confirmed quote/sign/bridge lifecycle.
+    ensureAssetBridgeSchema(this.db);
     // WS-D seller auto-fulfill ledger (me_nft_seller_fulfillments): crash-safe
     // idempotency for ME points escrow auto-delivery.
     ensureMeNftSellerFulfillmentsSchema(this.db);

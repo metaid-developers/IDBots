@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IDBots 资产桥接卡 — 三方向设计评审</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="topbar-row">
+        <div class="brand-title">
+          <div class="brand-mark">ID</div>
+          <div>
+            <h1>Octopus 资产桥接卡 · 三方向设计评审</h1>
+            <span>同一状态机 / 同一进度模型 / 三种不可互换的信息骨架</span>
+          </div>
+        </div>
+        <div class="controls-row">
+          <div class="seg-group" id="scenarioGroup">
+            <span class="seg-label">场景</span>
+            <button class="seg-btn" data-scenario="S1">S1 BTC → WBTC</button>
+            <button class="seg-btn active" data-scenario="S2">S2 METAID → MVC</button>
+            <button class="seg-btn" data-scenario="S3">S3 WBTC → BTC</button>
+          </div>
+          <div class="seg-group" id="themeGroup">
+            <span class="seg-label">主题</span>
+            <button class="seg-btn active" data-theme="dark">暗色</button>
+            <button class="seg-btn" data-theme="light">亮色</button>
+          </div>
+          <div class="seg-group" id="widthGroup">
+            <span class="seg-label">气泡宽度</span>
+            <button class="seg-btn active" data-width="392">392</button>
+            <button class="seg-btn" data-width="375">375</button>
+            <button class="seg-btn" data-width="320">320</button>
+          </div>
+        </div>
+      </div>
+      <div class="topbar-row controls-secondary">
+        <div class="controls-row">
+          <div class="seg-group" id="stateGroup">
+            <span class="seg-label">状态</span>
+            <button class="seg-btn active" data-state="quote">报价</button>
+            <button class="seg-btn" data-state="quote-insufficient">余额不足</button>
+            <button class="seg-btn" data-state="signing">签名中</button>
+            <button class="seg-btn" data-state="bridging">桥接中</button>
+            <button class="seg-btn" data-state="bridging-slow">出块偏慢</button>
+            <button class="seg-btn" data-state="completed">已完成</button>
+            <button class="seg-btn" data-state="failed">失败</button>
+            <button class="seg-btn" data-state="expired">已过期</button>
+          </div>
+        </div>
+        <div class="controls-row demo-actions">
+          <button class="tool-toggle" id="timeLapseBtn" aria-pressed="false">时间加速 ×60</button>
+          <button class="tool-btn" id="findBlockBtn">立即发现一个区块</button>
+          <button class="tool-btn" id="slowBlockBtn">让当前区块变慢</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="review-grid" aria-label="三个设计方向">
+      <article class="direction-panel" data-direction-panel="a">
+        <header class="direction-header">
+          <div>
+            <h2>A · 实时活动 Live Activity</h2>
+            <p>形态来自 Apple Live Activities / 灵动岛的配送与骑行进度追踪。</p>
+          </div>
+        </header>
+        <div class="chat-stage-wrap">
+          <div class="chat-column">
+            <div class="chat-user" data-user-msg></div>
+            <div class="chat-bot-prose" data-bot-lead></div>
+            <div class="standalone-hint"><span class="standalone-dot"></span>独立卡片气泡 · 状态原地演化</div>
+            <div id="card-a" class="card-mount"></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="direction-panel" data-direction-panel="b">
+        <header class="direction-header">
+          <div>
+            <h2>B · 单据台账 Ledger Receipt</h2>
+            <p>形态由已定稿 B1/B2 双链流向盒与交易台账卡演进。</p>
+          </div>
+        </header>
+        <div class="chat-stage-wrap">
+          <div class="chat-column">
+            <div class="chat-user" data-user-msg></div>
+            <div class="chat-bot-prose" data-bot-lead></div>
+            <div class="standalone-hint"><span class="standalone-dot"></span>独立卡片气泡 · 状态原地演化</div>
+            <div id="card-b" class="card-mount"></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="direction-panel" data-direction-panel="c">
+        <header class="direction-header">
+          <div>
+            <h2>C · 区块计 Block Meter</h2>
+            <p>形态参考 Teenage Engineering 乐器面板与 mempool.space 区块条。</p>
+          </div>
+        </header>
+        <div class="chat-stage-wrap">
+          <div class="chat-column">
+            <div class="chat-user" data-user-msg></div>
+            <div class="chat-bot-prose" data-bot-lead></div>
+            <div class="standalone-hint"><span class="standalone-dot"></span>独立卡片气泡 · 状态原地演化</div>
+            <div id="card-c" class="card-mount"></div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="arrival-section" id="arrivalSection">
+      <div class="arrival-heading">
+        <span class="scenario-kicker">跨会话收尾</span>
+        <h2>另一个对话中的到账播报</h2>
+        <p>桥接 settle 后，Twin Bot 会把紧凑播报投到主人当时所在的会话；三方向各自保持自己的视觉语言。</p>
+      </div>
+      <div class="arrival-grid">
+        <article class="arrival-context">
+          <div class="context-title">对话 · 资产配置复盘</div>
+          <div class="mini-chat">
+            <div class="chat-user">到账后提醒我重新看一次仓位。</div>
+            <div class="chat-bot-prose">好的，我会盯住这笔桥接。</div>
+            <div id="arrival-a"></div>
+          </div>
+        </article>
+        <article class="arrival-context">
+          <div class="context-title">群聊 · 订单协作</div>
+          <div class="mini-chat">
+            <div class="chat-user">那笔资产到了就可以直接挂单。</div>
+            <div class="chat-bot-prose">收到，我只播报结果，不打扰当前讨论。</div>
+            <div id="arrival-b"></div>
+          </div>
+        </article>
+        <article class="arrival-context">
+          <div class="context-title">对话 · 每日简报</div>
+          <div class="mini-chat">
+            <div class="chat-user">今晚把重要链上动态汇总给我。</div>
+            <div class="chat-bot-prose">有一条刚完成的桥接需要先告诉你。</div>
+            <div id="arrival-c"></div>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="./engine.js"></script>
+  <script src="./a.js"></script>
+  <script src="./b.js"></script>
+  <script src="./c.js"></script>
+  <script>
+    window.AssetBridgeDemo.boot();
+  </script>
+</body>
+</html>

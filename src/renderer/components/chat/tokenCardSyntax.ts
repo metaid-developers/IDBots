@@ -73,6 +73,14 @@ import {
   parseEscrowCardFence,
   type EscrowCardData,
 } from './escrowCardCore';
+import {
+  isAssetBridgeCardFenceLanguage,
+  isAssetBridgeNoticeFenceLanguage,
+  parseAssetBridgeCardFence,
+  parseAssetBridgeNoticeFence,
+  type AssetBridgeCardFenceData,
+  type AssetBridgeNoticeFenceData,
+} from './assetBridgeCardSyntax';
 
 export const TOKEN_CARD_FENCE_TAG = 'token-card';
 
@@ -176,6 +184,8 @@ export type TokenCardMessageSegment =
   | { kind: 'ft-my-orders-card'; data: FtMyOrdersCardData; rawFence: string }
   | { kind: 'ft-portfolio-card'; data: FtPortfolioCardData; rawFence: string }
   | { kind: 'ft-bridge-card'; data: FtBridgeCardData; rawFence: string }
+  | { kind: 'asset-bridge-card'; data: AssetBridgeCardFenceData; rawFence: string }
+  | { kind: 'asset-bridge-notice'; data: AssetBridgeNoticeFenceData; rawFence: string }
   | { kind: 'ft-action-card'; data: FtActionCardData; rawFence: string }
   | { kind: 'ft-orderbook-card'; data: FtOrderBookCardData; rawFence: string }
   | { kind: 'nft-card'; data: NftCardData; rawFence: string }
@@ -397,7 +407,7 @@ export function serializeTokenCardFence(data: TokenCardData): string {
 }
 
 const FAST_HINT_RE =
-  /```[ \t]*(?:token-card|tokencard|ft-(?:quote|order|orderbook|orders|fill|my-orders|portfolio|bridge|action|receipt)(?:-card)?|ft(?:quote|order|orderbook|fill|myorders|portfolio|bridge|action)card|token-(?:orderbook|my-orders|portfolio|bridge|action)-card|nft-card-group|nft-collection-card|nft-(?:listing|fill|my-listings|portfolio|swap|action|negotiate)-card|nft(?:listing|fill|mylistings|portfolio|swap|action|negotiate)card|nft-card|nftcard|nft|escrow-card|escrowcard)\b/i;
+  /```[ \t]*(?:token-card|tokencard|ft-(?:quote|order|orderbook|orders|fill|my-orders|portfolio|bridge|action|receipt)(?:-card)?|ft(?:quote|order|orderbook|fill|myorders|portfolio|bridge|action)card|token-(?:orderbook|my-orders|portfolio|bridge|action)-card|nft-card-group|nft-collection-card|nft-(?:listing|fill|my-listings|portfolio|swap|action|negotiate)-card|nft(?:listing|fill|mylistings|portfolio|swap|action|negotiate)card|nft-card|nftcard|nft|escrow-card|escrowcard|asset-bridge-card|asset-bridge-notice)\b/i;
 
 function isAnyStandaloneNftOrEscrowFence(lang: string): boolean {
   return (
@@ -449,6 +459,14 @@ function parseStandaloneTokenSuiteFence(
   if (isFtActionCardFenceLanguage(fenceLang)) {
     const data = parseFtActionCardFence(rawBody);
     return data ? { kind: 'ft-action-card', data, rawFence } : null;
+  }
+  if (isAssetBridgeCardFenceLanguage(fenceLang)) {
+    const data = parseAssetBridgeCardFence(rawBody);
+    return data ? { kind: 'asset-bridge-card', data, rawFence } : null;
+  }
+  if (isAssetBridgeNoticeFenceLanguage(fenceLang)) {
+    const data = parseAssetBridgeNoticeFence(rawBody);
+    return data ? { kind: 'asset-bridge-notice', data, rawFence } : null;
   }
   if (isNftCardGroupFenceLanguage(fenceLang)) {
     const data = parseNftCardGroupFence(rawBody);
@@ -595,6 +613,8 @@ export function splitTokenCardMessageSegments(
       fenceChar === '`' &&
       (isTokenCardFenceLanguage(fenceLang) ||
         isAnyFtSuiteFenceLanguage(fenceLang) ||
+        isAssetBridgeCardFenceLanguage(fenceLang) ||
+        isAssetBridgeNoticeFenceLanguage(fenceLang) ||
         isAnyStandaloneNftOrEscrowFence(fenceLang));
 
     if (isSuiteCandidate) {

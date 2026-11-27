@@ -36,6 +36,7 @@ export function buildMrc20TransferSignOptions(input: {
   changeAddress: string;
   fundingUtxos: Array<Record<string, unknown>>;
   tokenUtxos: Mrc20TokenUtxoLike[];
+  service?: { address: string; satoshis: number };
 }): {
   amount: string;
   body: string;
@@ -47,6 +48,7 @@ export function buildMrc20TransferSignOptions(input: {
   changeAddress: string;
   utxos: Array<Record<string, unknown>>;
   mrc20Utxos: Mrc20TokenUtxoLike[];
+  service?: { address: string; satoshis: number };
 } {
   const amount = normalizeDisplayAmount(input.amount, input.decimal);
 
@@ -65,6 +67,7 @@ export function buildMrc20TransferSignOptions(input: {
     changeAddress: String(input.changeAddress || '').trim(),
     utxos: input.fundingUtxos,
     mrc20Utxos: input.tokenUtxos,
+    ...(input.service ? { service: input.service } : {}),
   };
 }
 

@@ -296,7 +296,7 @@ function createTerminalMvcStaleFundingFailure(metabotId: number): MvcTransferWor
   };
 }
 
-function getBtcWalletForTransfer(mnemonic: string, addressIndex: number): BtcWallet {
+export function getBtcWalletForTransfer(mnemonic: string, addressIndex: number): BtcWallet {
   return new BtcWallet({
     coinType: CoinType.MVC,
     addressType: AddressType.SameAsMvc,
@@ -306,7 +306,7 @@ function getBtcWalletForTransfer(mnemonic: string, addressIndex: number): BtcWal
   });
 }
 
-async function fetchBtcUtxosForTransfer(address: string): Promise<{ txId: string; outputIndex: number; satoshis: number; address: string; rawTx?: string; confirmed?: boolean }[]> {
+export async function fetchBtcUtxosForTransfer(address: string): Promise<{ txId: string; outputIndex: number; satoshis: number; address: string; rawTx?: string; confirmed?: boolean }[]> {
   return await fetchBtcUtxosViaProvider(address, true);
 }
 

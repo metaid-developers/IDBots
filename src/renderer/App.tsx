@@ -352,6 +352,18 @@ const App: React.FC = () => {
   useEffect(() => {
     void coworkService.init();
   }, []);
+
+  // Asset bridge confirmations belong to the owner-facing focused session.
+  // Report the current chat target whenever it changes and when the window
+  // regains focus; main keeps only the latest in-memory value.
+  useEffect(() => {
+    const reportFocusedSession = () => {
+      void window.electron.assetBridge?.setFocusedSession({ sessionId: currentSessionId ?? null }).catch(() => undefined);
+    };
+    reportFocusedSession();
+    window.addEventListener('focus', reportFocusedSession);
+    return () => window.removeEventListener('focus', reportFocusedSession);
+  }, [currentSessionId]);
   const pendingConsents = useSelector((state: RootState) => state.agentGame.pendingConsents);
 
   const pendingConsent = pendingConsents[0] ?? null;

@@ -3602,108 +3602,7 @@ export function buildWalletAgentTools(deps: {
     },
   );
 
-  const walletTokenBridgeCard = tool(
-    'wallet_token_bridge_card',
-    [
-      'Build and emit a visual ```ft-bridge-card (`B1` Octopus Cross-Chain Asset Bridge flow & confirmation tracker) for bridging tokens between MVC (`MetaContract`) and BTC (`MRC-20`).',
-      'Use whenever the user asks to bridge tokens across MVC and BTC ("把 METAID 跨链到 BTC / BTC 转 MVC 跨链桥状态"), checks a bridge transaction confirmation progress, or encounters a paused direction (`btc-to-mvc` maintenance advisory with zero-bridge PSBT / ME Points listing options).',
-      'Read-only preview/status emitter. Include the returned ```ft-bridge-card block VERBATIM in your reply.',
-    ].join(' '),
-    {
-      symbol: z.string().min(1).describe('Token ticker symbol, e.g. "METAID" or "MSP".'),
-      direction: z
-        .enum(['mvc-to-btc', 'btc-to-mvc'])
-        .describe('Bridge direction: "mvc-to-btc" (MVC MetaContract -> BTC MRC-20) or "btc-to-mvc" (BTC MRC-20 -> MVC MetaContract).'),
-      amount: z
-        .string()
-        .optional()
-        .describe('Amount of tokens being bridged or previewed in display units, e.g. "1000".'),
-      status: z
-        .enum(['quote', 'bridging', 'completed', 'paused'])
-        .optional()
-        .describe('Bridge status ("quote" for route preview, "bridging" for in-flight confirmations, "completed" when credited, "paused" when direction is under maintenance).'),
-      txid: z
-        .string()
-        .optional()
-        .describe('Optional 64-hex source-chain bridge txid to inspect on-chain confirmation status.'),
-      asset_key: z
-        .string()
-        .optional()
-        .describe('Optional canonical assetKey.'),
-    },
-    async (args: {
-      symbol: string;
-      direction: 'mvc-to-btc' | 'btc-to-mvc';
-      amount?: string;
-      status?: 'quote' | 'bridging' | 'completed' | 'paused';
-      txid?: string;
-      asset_key?: string;
-    }) => {
-      const symbol = asString(args.symbol).replace(/^\$+/, '').toUpperCase() || 'TOKEN';
-      const txid = asString(args.txid);
-      const sendAmountDisplay = formatTokenAmountDisplay(asString(args.amount) || '0', 6);
-      let status: 'quote' | 'bridging' | 'completed' | 'paused' =
-        args.status ?? (txid ? 'bridging' : args.direction === 'btc-to-mvc' ? 'paused' : 'quote');
-      let confirmationsText: string | undefined;
-      let stepCurrent: 1 | 2 | 3 | undefined = txid ? 2 : 1;
 
-      if (txid && /^[0-9a-fA-F]{64}$/.test(txid) && typeof control.getTxStatus === 'function') {
-        try {
-          const sourceChain = args.direction === 'mvc-to-btc' ? 'mvc' : 'btc';
-          const txStat = await control.getTxStatus({ chain: sourceChain, txid });
-          if (txStat.confirmed) {
-            confirmationsText =
-              txStat.confirmations != null
-                ? `${txStat.confirmations} block confirmation(s)`
-                : 'Confirmed on source chain';
-            if ((txStat.confirmations ?? 1) >= 2 && args.status !== 'bridging') {
-              status = 'completed';
-              stepCurrent = 3;
-            } else {
-              stepCurrent = 2;
-            }
-          } else {
-            confirmationsText = '0 confirmations (mempool)';
-            stepCurrent = 1;
-          }
-        } catch {
-          // Non-fatal
-        }
-      }
-
-      const fence = formatFtBridgeCardFence({
-        symbol,
-        ...(asString(args.asset_key) ? { assetKey: asString(args.asset_key) } : {}),
-        direction: args.direction,
-        status,
-        sendAmountDisplay: sendAmountDisplay === '0' ? '—' : sendAmountDisplay,
-        ...(status !== 'paused' && sendAmountDisplay !== '0'
-          ? { receiveAmountDisplay: sendAmountDisplay }
-          : {}),
-        feeLabel:
-          args.direction === 'mvc-to-btc'
-            ? '1:1 Peg · Octopus Relayer'
-            : '1:1 Peg',
-        ...(stepCurrent ? { stepCurrent } : {}),
-        ...(confirmationsText ? { confirmationsText } : {}),
-        etaText:
-          status === 'paused'
-            ? undefined
-            : args.direction === 'mvc-to-btc'
-              ? '~10–20 min (BTC block)'
-              : '~2–5 min',
-        ...(txid ? { txid } : {}),
-      });
-
-      return textResult(
-        appendFtSuiteFence(
-          `Octopus Bridge ${args.direction} card prepared for $${symbol} (status: ${status}).`,
-          fence,
-          FT_BRIDGE_CARD_FENCE_TAG,
-        ),
-      );
-    },
-  );
 
   return [
     walletResolveGlobalMetaId,
@@ -3714,7 +3613,6 @@ export function buildWalletAgentTools(deps: {
     walletTokenQuote,
     walletTokenPortfolio,
     walletTokenMyOrders,
-    walletTokenBridgeCard,
     walletTransfer,
     walletNftBalance,
     walletNftTransfer,
