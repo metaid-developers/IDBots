@@ -140,26 +140,34 @@ test('the bridge exits by itself once idle, and its health probe reports the pol
 });
 
 test('served requests keep the bridge up; health probes alone do not', { skip: notBuilt }, async () => {
-  await withIdleExit(700, async (bridge) => {
+  // The window is seconds wide on purpose. Node's first fetch pays the HTTP
+  // client's start-up, and on a loaded machine that alone can outrun a
+  // sub-second window: the served bridge then looks idle before its first
+  // request ever lands (seen on main, 2026-11-28, with a 700 ms window).
+  const idleMs = 3000;
+  await withIdleExit(idleMs, async (bridge) => {
     const served = await bridge();
     const probed = await bridge();
     try {
-      // About 1.6 s: twice the idle period, longer than the served bridge
-      // would ever survive on its own.
-      for (let i = 0; i < 8; i += 1) {
+      // Longer than one idle period: the served bridge gets a request every
+      // ~250 ms throughout, the other bridge nothing but health probes, the
+      // way search.sh checks before each use.
+      const serveUntil = Date.now() + idleMs + 1500;
+      let servedRequests = 0;
+      while (Date.now() < serveUntil) {
         const status = await getJson(`http://127.0.0.1:${served.port}/api/browser/status`);
         assert.equal(status?.success, true);
-        // The other bridge is only ever health-probed, the way search.sh
-        // checks before each use.
         await getJson(`http://127.0.0.1:${probed.port}/api/health`);
-        await sleep(200);
+        servedRequests += 1;
+        await sleep(250);
       }
+      assert.ok(servedRequests >= 5, `the served bridge must actually have been used (${servedRequests} requests)`);
       assert.deepEqual(served.exits, [], 'a bridge that is being used must not exit');
 
-      await waitFor(() => probed.exits.length > 0, 4000, 'the merely probed bridge to exit');
+      await waitFor(() => probed.exits.length > 0, idleMs + 2000, 'the merely probed bridge to exit');
       assert.deepEqual(probed.exits, [0], 'probing is not activity: an unused bridge still leaves');
 
-      await waitFor(() => served.exits.length > 0, 4000, 'the served bridge to exit once requests stop');
+      await waitFor(() => served.exits.length > 0, idleMs + 3000, 'the served bridge to exit once requests stop');
       assert.deepEqual(served.exits, [0]);
     } finally {
       await served.server.stop().catch(() => undefined);
