@@ -9,6 +9,7 @@ import { app } from 'electron';
 import { getEnhancedEnv } from './libs/coworkUtil';
 import { resolveElectronSkillExecutablePath } from './libs/runtimePaths';
 import { resolveBundledSkillsRoot, resolveWritableSkillsRoot } from './libs/skillRoots';
+import { isServerMode } from './server/serverMode';
 
 const WEB_SEARCH_HEALTH_POLL_INTERVAL_MS = 200;
 const WEB_SEARCH_HEALTH_WAIT_MS = 3000;
@@ -191,11 +192,36 @@ export class SkillServiceManager {
     console.log(`[SkillServices] Skill service env ready after ${Date.now() - startedAt}ms`);
 
     try {
-      await this.startWebSearchService();
+      if (isServerMode()) {
+        await this.prepareWebSearchRuntime();
+      } else {
+        await this.startWebSearchService();
+      }
     } catch (error) {
       console.error('[SkillServices] Error starting services:', error);
     }
     console.log(`[SkillServices] startAll complete in ${Date.now() - startedAt}ms`);
+  }
+
+  /**
+   * Server mode: bring the web-search runtime into a usable state WITHOUT
+   * starting the bridge. The skill's search.sh starts the bridge on first use,
+   * and the bridge leaves by itself after ten idle minutes (see
+   * SKILLs/web-search/server/idle.ts). An always-on bridge is about 95 MiB of
+   * Node plus a Chromium after the first search, on a host that runs every
+   * tenant — in most of them nobody ever searches.
+   *
+   * Desktop keeps the pre-started bridge: its QEMU skill sandbox can only
+   * reach a server the app started on the host.
+   */
+  private async prepareWebSearchRuntime(): Promise<void> {
+    const skillPath = this.getWebSearchPath();
+    if (!skillPath) {
+      console.log('[SkillServices] Web Search skill not found, skipping');
+      return;
+    }
+    await this.ensureWebSearchRuntimeReady(skillPath);
+    console.log('[SkillServices] Web Search bridge left stopped; the skill starts it on first use');
   }
 
   /**
