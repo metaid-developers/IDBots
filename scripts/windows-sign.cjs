@@ -49,8 +49,15 @@ function presignedDigestFor(filePath) {
       for (const [relative, digest] of Object.entries(manifest.files ?? {})) {
         presignedDigests.set(String(relative).replace(/\\/g, "/"), String(digest));
       }
-    } catch {
-      // no digest list: nothing is pre-signed
+    } catch (error) {
+      // No variable set is normal (no cache hit, or a machine without the cache):
+      // nothing is pre-signed. A variable that points at a file that cannot be read is
+      // not — it is why the first cache hit went unnoticed (run 46037790077, 2026-11-28:
+      // the list had been written to another directory) — so it is said out loud.
+      if (process.env.IDBOTS_PRESIGNED_MANIFEST) {
+        console.warn(`[windows-sign] the digest list of pre-signed PortableGit files cannot be read (${process.env.IDBOTS_PRESIGNED_MANIFEST}): ${error instanceof Error ? error.message : error}. They will be signed again.`);
+      }
+      presignedDigests = new Map();
     }
   }
   const match = String(filePath).match(/[\\/]resources[\\/]mingit[\\/](.+)$/i);

@@ -253,3 +253,33 @@ test('store and apply are no-ops without a certificate or an archive', (t) => {
   assert.equal(apply({ repoRoot: fixture.repoRoot, env: bareEnv, log: fixture.log }).hit, false);
   assert.equal(fs.existsSync(path.join(fixture.env.IDBOTS_SIGNING_CACHE_DIR, 'mingit-signed')), false);
 });
+
+test('on a cache hit the tool says where it put the digest list the signing hook will read', (t) => {
+  const directed = makeFixture(t);
+  store({ repoRoot: directed.repoRoot, env: directed.env, log: directed.log, verify: directed.verify() });
+  assert.equal(apply({ repoRoot: directed.repoRoot, env: directed.env, log: directed.log }).hit, true);
+  // Told where to put it: there it is, and the log names the place.
+  assert.ok(directed.lines.includes(`[mingit-signed-cache] digest list for the signing hook: ${directed.hookManifest}`), directed.lines.join('\n'));
+  assert.equal(JSON.parse(fs.readFileSync(directed.hookManifest, 'utf8')).files['usr/bin/git.exe'], sha256('MZ\u0000git<signature>'));
+
+  // Not told — how the reuse step ran before 2026-11-28, when its variable reached the
+  // next steps but not itself: the list goes to the default place, and the log says so.
+  const undirected = makeFixture(t);
+  const { IDBOTS_PRESIGNED_MANIFEST, ...env } = undirected.env;
+  store({ repoRoot: undirected.repoRoot, env, log: undirected.log, verify: undirected.verify() });
+  const defaultList = path.join(os.tmpdir(), 'idbots-presigned-mingit.json');
+  t.after(() => {
+    try {
+      fs.rmSync(defaultList, { force: true });
+    } catch {
+      // best effort
+    }
+  });
+  assert.equal(apply({ repoRoot: undirected.repoRoot, env, log: undirected.log }).hit, true);
+  assert.equal(fs.existsSync(defaultList), true, 'the list is not lost, only elsewhere');
+  assert.equal(fs.existsSync(undirected.hookManifest), false);
+  assert.ok(
+    undirected.lines.some((line) => line.includes(`digest list for the signing hook: ${defaultList}`) && line.includes('IDBOTS_PRESIGNED_MANIFEST is not set here')),
+    undirected.lines.join('\n'),
+  );
+});
