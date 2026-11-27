@@ -546,6 +546,7 @@ import { normalizeGlobalMetaID } from './shared/globalMetaId';
 import { createMetasoFriendControl } from './libs/friendAgentTools';
 import { A2A_GUIDANCE_MAX_LENGTH, a2aGuidanceQueue, normalizeA2AGuidanceText } from './services/a2aGuidance';
 import { coworkLog } from './libs/coworkLogger';
+import { HelperProcessReaper, createProcfsHelperProcessDeps } from './libs/helperProcessReap';
 import {
   buildA2AGuidanceRestartPrompt,
   composeA2AGuidanceRestartDelivery,
@@ -3218,6 +3219,9 @@ let coworkStoreHeavyMaintenanceFinished = false;
 let mcpStore: McpStore | null = null;
 let projectStore: ProjectStore | null = null;
 let coworkRunner: CoworkRunner | null = null;
+// Server-mode helper process sweep (libs/helperProcessReap). Stays null on
+// desktop and wherever there is no procfs to walk.
+let serverHelperProcessReaper: HelperProcessReaper | null = null;
 let coworkTurnSubmissionController: CoworkTurnSubmissionController | null = null;
 let sleepGuard: SleepGuard | null = null;
 let sleepGuardRefreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -25097,6 +25101,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         }
       },
       closeDshRuntime: async () => {
+        // Stop the sweep first: closing every runtime leaves the agent
+        // "quiescent", and a sweep racing shutdown would only add noise.
+        serverHelperProcessReaper?.stop();
         if (coworkRunner) {
           console.log('[Main] Closing DSH runtime...');
           await coworkRunner.closeDshRuntime();
@@ -25828,6 +25835,26 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         scheduleCoworkStoreHeavyMaintenance();
         getScheduler().start();
         startupLog('server mode: task scheduler + heavy maintenance started');
+      });
+      // Server mode: a helper that detached from its runtime (setsid, a
+      // daemonising launcher — the two idle headless Chromium instances on the
+      // 2026-11-27 tenant host) used to live until the container stopped. The
+      // sweep only acts while no turn and no runtime is alive.
+      scheduleStartupTier('server: helper process sweep start', 0, () => {
+        const deps = createProcfsHelperProcessDeps();
+        if (!deps) {
+          startupLog('server mode: helper process sweep needs procfs; not started on this platform');
+          return;
+        }
+        serverHelperProcessReaper = new HelperProcessReaper({
+          ...deps,
+          isAgentQuiescent: () => getCoworkRunner().isAgentQuiescent(),
+          selfPid: process.pid,
+          log: (level, message, detail) =>
+            coworkLog(level === 'warn' ? 'WARN' : 'INFO', 'helperProcessReap', message, detail),
+        });
+        serverHelperProcessReaper.start();
+        startupLog('server mode: helper process sweep started');
       });
     } else {
       // 创建窗口
