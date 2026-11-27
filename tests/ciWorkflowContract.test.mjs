@@ -187,6 +187,25 @@ test('the Windows job never fetches its source from github.com', () => {
   assert.equal(fs.existsSync(path.join(repoRoot, 'scripts/ci-source-restore.cjs')), true);
 });
 
+test('the signing service is asked to sign before the Windows job spends any time on it', () => {
+  const smoke = buildSteps[indexOf('Smoke-test the signing service (Windows)')];
+  assert.equal(smoke.if, `runner.os == 'Windows'`);
+  assert.equal(smoke.shell, 'powershell');
+  assert.equal(smoke.env.WIN_CERT_SHA1, '${{ secrets.WIN_CERT_SHA1 }}');
+  assert.match(smoke.run, /'sign', '\/sha1', \$env:WIN_CERT_SHA1/, 'it really signs, with the certificate the build signs with');
+  assert.match(smoke.run, /Join-Path \$env:RUNNER_TEMP/, 'it signs a throwaway copy in the temp directory, nothing of the machine');
+  assert.doesNotMatch(smoke.run, /\/tr\b|WIN_TIMESTAMP_URL/, 'without a timestamp: only the private key is asked for');
+  assert.match(smoke.run, /WaitForExit\(90000\)/, 'a hung signer is cut off after 90 seconds, as the build cuts it off');
+  assert.match(smoke.run, /The signing service is not usable/, 'the failure says what it is and what to do');
+  // Ahead of everything that costs time.
+  for (const later of ['Install Node.js', 'Download the source delta (Windows)', 'Build renderer (Vite)', 'Build Electron app package (Windows signed)']) {
+    assert.equal(indexOf(smoke.name) < indexOf(later), true, `before ${later}`);
+  }
+  // Nothing runs ahead of it but the git settings, which it does not even depend on.
+  const before = buildSteps.slice(0, indexOf(smoke.name)).filter((step) => step.if !== `runner.os != 'Windows'`).map((step) => step.name);
+  assert.deepEqual(before, ['Enable Git long paths (Windows)']);
+});
+
 test('package.json and electron-builder.json carry the matching wiring', () => {
   const scripts = readJson('package.json').scripts;
   assert.match(scripts['compile:electron'], /^node scripts\/compile-electron\.cjs && node scripts\/copy-electron-js\.cjs$/);

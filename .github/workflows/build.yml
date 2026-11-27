@@ -170,6 +170,61 @@ jobs:
           git config --global core.longpaths true
           git config --global core.autocrlf false
 
+      # The signing service is the one thing a Windows job cannot work around,
+      # and it has given out at the far end of the job more than once: after
+      # 54 minutes on 2026-11-27 (run 45937850363), after 708 signatures on
+      # 2026-11-25. One real signature on a throwaway copy, before anything
+      # else runs, turns that into a failure in the first minute, with the
+      # cause named (release SOP §11.18).
+      - name: Smoke-test the signing service (Windows)
+        if: runner.os == 'Windows'
+        env:
+          WIN_CERT_SHA1: ${{ secrets.WIN_CERT_SHA1 }}
+          WIN_SIGNTOOL_PATH: ${{ vars.WIN_SIGNTOOL_PATH }}
+        shell: powershell
+        run: |
+          $signTool = if ($env:WIN_SIGNTOOL_PATH) { $env:WIN_SIGNTOOL_PATH } else { 'C:\sign\signtool.exe' }
+          if (-not $env:WIN_CERT_SHA1) {
+            Write-Error "Missing WIN_CERT_SHA1 secret for Windows code signing."
+            exit 1
+          }
+          if (-not (Test-Path $signTool)) {
+            Write-Error "signtool not found at: $signTool"
+            exit 1
+          }
+          # A copy of signtool itself, in the job's temp directory: nothing of the machine's is signed or changed.
+          $copy = Join-Path $env:RUNNER_TEMP ('sign-smoke-' + [guid]::NewGuid().ToString('N') + '.exe')
+          $out = Join-Path $env:RUNNER_TEMP 'sign-smoke.out.txt'
+          $err = Join-Path $env:RUNNER_TEMP 'sign-smoke.err.txt'
+          Copy-Item -LiteralPath $signTool -Destination $copy
+          # No timestamp: this asks only whether the private key can be used.
+          # The arguments are those of the SOP's smoke signature, no more:
+          # signtool's /n selects a certificate by subject name, it is not
+          # "no prompt" — with it the search finds no certificate at all.
+          $process = Start-Process -FilePath $signTool -ArgumentList @('sign', '/sha1', $env:WIN_CERT_SHA1, '/fd', 'SHA256', '/v', $copy) -NoNewWindow -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          # A handle taken before the process ends is what makes ExitCode readable afterwards in Windows PowerShell.
+          $null = $process.Handle
+          if (-not $process.WaitForExit(90000)) {
+            try { $process.Kill() } catch {}
+            $why = 'signtool did not answer within 90 seconds'
+          } elseif ($process.ExitCode -ne 0) {
+            $why = 'signtool exited with code ' + $process.ExitCode
+          } else {
+            $why = $null
+          }
+          $log = ''
+          foreach ($file in @($out, $err)) {
+            if (Test-Path -LiteralPath $file) { $log += ' ' + [System.IO.File]::ReadAllText($file) }
+          }
+          $log = ($log -replace '\s+', ' ').Trim()
+          Remove-Item -LiteralPath $copy, $out, $err -Force -ErrorAction SilentlyContinue
+          if ($log) { Write-Host $log }
+          if ($why) {
+            Write-Error ("The signing service is not usable: " + $why + ". Re-login SimplySign on the signing machine, do the smoke signature of release SOP 11.18, then rerun this job.")
+            exit 1
+          }
+          Write-Host "The signing service signed a test file."
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
