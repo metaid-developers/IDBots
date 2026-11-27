@@ -7,7 +7,7 @@ account is touched by this repository, and no real secret ever is
 
 | Directory | Contents | Requirements |
 |---|---|---|
-| `hosts/` | `compose.yml` + monitoring/host-agent overlays, `Caddyfile` (REQ-C-5), `firewall.sh` + systemd unit (REQ-C-6), `daemon.json` (REQ-C-2), `bootstrap.sh`, env templates | C1, C-2..C-7, C-10..C-12 |
+| `hosts/` | `compose.yml` + monitoring/host-agent overlays, `Caddyfile` (REQ-C-5), `firewall.sh` + systemd unit (REQ-C-6), `daemon.json` (REQ-C-2), `bootstrap.sh`, env templates, zram swap (`zram-swap.sh`, unit, sysctl) and the earlyoom baseline (CR-WSA-006) | C1, C-2..C-7, C-10..C-12 |
 | `tenant-image/` | Production IDBots server-mode tenant image with the PWA, skills, DSH runtime, and C2 gateway + build/verification scripts | C1, REQ-C-9 |
 | `backup/` | Nightly backup driver + per-tenant/control-plane backups, restore script (drill/replace), OSS bucket provisioning, systemd timer, drill records | REQ-C-13..C-15 |
 | `monitoring/` | Prometheus rules (one per REQ-C-16 bullet), Alertmanager, blackbox probes, Feishu/DingTalk `alert-relay` | REQ-C-16, C-17 |
@@ -36,6 +36,11 @@ Web admin backend), `commercial-acceptance.md` (live commercial gate).
 - Objects in OSS: `tenants/{tenantId}/{yyyy-mm-dd}.tar.zst.enc`,
   `control-plane/{yyyy-mm-dd}.sqlite.zst.enc`, 30-day lifecycle, SSE +
   versioning on the bucket.
+- Tenant swap is zram-backed (CR-WSA-006): every host gets one zram device
+  (`idbots-zram-swap.service`), a tenant may use as much swap as RAM
+  (`--memory-swap 4608m`), and earlyoom keeps acting on RAM alone
+  (`-s 100,100`). An idle tenant's cold memory compresses into zram instead
+  of pinning the host.
 
 ## From zero to serving (summary)
 

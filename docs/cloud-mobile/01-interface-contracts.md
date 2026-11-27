@@ -5,6 +5,12 @@ change from here on, including review findings from the parties, follows the
 change-request process in `00-program-plan.md`. One item is known to come as
 a minor change: WS-D's partner-policy mechanism (end of C4), version 1.1.0.
 
+Amendments since the freeze:
+
+| Date | Contract § | Change | CR | Compatibility |
+|------|------------|--------|----|---------------|
+| 2026-11-28 | C1 §Resources | A tenant may use up to 2304 MB of host swap next to its 2304 MB of RAM; the host backs that swap with zram. Was "no swap". | `change-requests/CR-WSA-006-tenant-swap-zram-pilot.md` | Backward compatible; nothing on the wire changes, so `contractVersion` stays 1.0.0 |
+
 | Contract | Provider | Consumers |
 |----------|----------|-----------|
 | C1 Tenant runtime | WS-A (image), WS-C (runs it) | WS-B, WS-C |
@@ -91,7 +97,8 @@ of data.
 
 | Setting | Value |
 |---------|-------|
-| `--memory` and `--memory-swap` | `2304m` (no swap; pptx peak 1630 MB × 1.3, rounded up to a multiple of 256. S05b's corrected web-search peak was 508 MB) |
+| `--memory` | `2304m` (pptx peak 1630 MB × 1.3, rounded up to a multiple of 256. S05b's corrected web-search peak was 508 MB) |
+| `--memory-swap` | `4608m` — the RAM cap plus up to 2304 MB of host swap, which the host backs with zram (CR-WSA-006). An idle tenant's cold memory compresses into it instead of pinning the host; the RAM cap itself is unchanged. On a host with no swap device the value is only an upper bound and changes nothing. |
 | `--cpus` | `2` |
 | `--pids-limit` | `2048` |
 | `--shm-size` | `1g` (the value Phase 0 ran with) |

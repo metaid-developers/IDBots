@@ -30,6 +30,16 @@ $CP tenant logs t_xxx --since 1h # container logs through the Docker API
 3. Fleet-wide pressure near capacity: this host is full — start the
    `add-host.md` procedure and stop new provisioning (set the host row's
    capacity to the current tenant count via the control plane).
+4. `HostSwapMissing` — the host lost its zram device, so idle tenants pin
+   their cold memory again (CR-WSA-006): `systemctl status idbots-zram-swap`,
+   then `systemctl restart idbots-zram-swap` and confirm with `swapon --show`.
+5. `HostSwapNearlyFull` — zram is more than 90 % used: `zramctl` shows the
+   compression ratio, `free -m` the swap line. Cold tenant memory has nowhere
+   left to go, so this is the moment for step 3, not for adding tenants. To
+   take swap out of service entirely follow CR-WSA-006 §6 — and never
+   `swapoff` while memory is tight; it pulls every page back into RAM.
+6. earlyoom acts on RAM alone (`-s 100,100`): SIGTERM at 8 % available,
+   SIGKILL at 6 %. `journalctl -u earlyoom` lists what it killed and when.
 
 ## 3. Control plane down (`ControlPlaneDown`, 502 at the edge)
 

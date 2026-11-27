@@ -171,7 +171,11 @@ test("README and compose encode the C1 resource values", () => {
     assert.match(text, /2304m/);
     assert.match(text, /1g/);
   }
-  assert.match(readme, /--memory 2304m --memory-swap 2304m/);
+  // CR-WSA-006: the RAM cap is unchanged; the swap allowance equals it
+  // (Docker's memory-swap is RAM + swap combined).
+  assert.match(readme, /--memory 2304m --memory-swap 4608m/);
+  assert.match(compose, /mem_limit: 2304m/);
+  assert.match(compose, /memswap_limit: 4608m/);
   assert.match(readme, /--cpus 2/);
   assert.match(readme, /--pids-limit 2048/);
   assert.match(readme, /--shm-size 1g/);

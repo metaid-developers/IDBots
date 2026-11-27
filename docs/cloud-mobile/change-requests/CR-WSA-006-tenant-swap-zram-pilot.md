@@ -1,8 +1,17 @@
-# CR-WSA-006 · Tenant swap through zram (pilot)
+# CR-WSA-006 · Tenant swap through zram
 
-- Status: pilot approved by the owner on 2026-11-28 and running on the tenant
-  host since 2026-11-28 00:55 CST (§7, pilot log). The C1 amendment is
-  deferred until the pilot has been evaluated (§8).
+- Status: **adopted**. The owner approved the pilot on 2026-11-28; it has run
+  on the tenant host since 2026-11-28 00:55 CST (§7, pilot log). Later the
+  same day the owner asked for the follow-ups (§9) to be closed rather than
+  leaving the pilot open, so C1 is amended. §7.3 — behaviour under real
+  memory pressure — has not been observed yet (the host had about 9 GiB
+  available throughout); §6 stays the way out if it ever turns against the
+  host.
+- Affected parties: WS-A (C1 resources, `deploy/tenant-image/README.md`),
+  WS-B (the control plane sets the container limits), WS-C (the host provides
+  the swap device and the earlyoom rule).
+- Compatibility: backward compatible. Nothing on the wire changes, so
+  `contractVersion` stays 1.0.0.
 - Date: 2026-11-28
 - Related: `docs/cloud-mobile/01-interface-contracts.md` C1 "Resources"
   (frozen), `docs/cloud-mobile/10-ws-a-idbots-server-mode.md` REQ-A-31,
@@ -10,11 +19,11 @@
 
 ## 1. What this changes
 
-C1 fixes `--memory` and `--memory-swap` at `2304m` — "no swap". This CR lets
+C1 fixed `--memory` and `--memory-swap` at `2304m` — "no swap". This CR lets
 tenant containers use **zram-backed swap** (compressed RAM; the disk is never
 touched).
 
-| Setting | C1 today | Pilot |
+| Setting | C1 before | After this CR |
 |---|---|---|
 | `--memory` (cgroup `memory.max`) | `2304m` | unchanged |
 | `--memory-swap` (cgroup `memory.swap.max`) | `2304m` → no swap | 2304 MB of swap per container, inside the host's single zram device |
@@ -48,8 +57,9 @@ no product change, so it is tried first.
 
 ## 3. Host-level changes
 
-All files are in `deploy/hosts/` and installed by hand for the pilot
-(bootstrap.sh is not changed until the pilot is adopted).
+All files are in `deploy/hosts/`. They were installed by hand for the pilot;
+since adoption `bootstrap.sh` step 9 installs them on every host, together
+with the earlyoom baseline below (`earlyoom.default`, `earlyoom-priority.conf`).
 
 | File | Installed as |
 |---|---|
@@ -200,25 +210,55 @@ Recorded in the pilot log below as it is measured.
   tenant answered in 0.3–0.5 ms, the same as a tenant with nothing swapped.
 - §7.3: not yet observed; the host had about 9.5 GiB available throughout.
 
+**2026-11-28, later the same day — adopted.**
+
+- The owner asked for the follow-ups to be closed. The control plane now
+  creates containers with a swap allowance equal to the RAM cap
+  (`TENANT_SWAP_MULTIPLIER` in `services/provisioning.ts`, shared by
+  provisioning and the upgrade-time recreation), `bootstrap.sh` installs the
+  zram files and the earlyoom baseline, C1 and the runbooks carry the new
+  values, and `deploy/monitoring/alert-rules.yml` alerts on a missing or
+  nearly full swap device.
+- Two things stay open, both about deploying rather than about this branch:
+  the running control planes were built before the change, so until a new
+  control-plane image is rolled out a tenant created or recreated on the host
+  still starts with swap disabled (the `docker update` in §3 covers it), and
+  the monitoring stack this repository defines does not run on the tenant
+  host yet, so the new alerts are not firing anywhere.
+
 ## 8. Acceptance
 
-The pilot is adopted, and C1 §Resources is amended, when all of these hold:
+The adoption criteria written for the pilot were:
 
 - §7.1 and §7.2 are green and the measured compression ratio is at least 2:1.
 - §7.3 has been observed at least once, or the host has run for two weeks with
   swap enabled and no livelock or earlyoom kill at a tenant count that used to
   reach the earlyoom line.
 
-Otherwise the pilot is reverted with §6.
+The first holds (4.58:1). The second does not yet; the owner chose to adopt
+anyway on 2026-11-28 and close the follow-ups. That makes §7.3 the thing to
+watch: the first time the host runs near capacity again, check that
+`MemAvailable` holds up while swap usage rises — and if it does not, §6 is
+still the rollback.
 
-## 9. Follow-ups if adopted
+## 9. Follow-ups
 
-1. Control plane: set `MemorySwap` explicitly (for example `memoryBytes * 2`)
-   in `provisioning.ts` and `upgrade.ts`, with a test. Until then, repeat the
-   `docker update` in §3 for every tenant created or upgraded during the
-   pilot.
-2. `deploy/hosts/bootstrap.sh`: install the three files and the earlyoom
-   argument; add them to `runbooks/host-bootstrap.md`.
-3. Amend the C1 `--memory` / `--memory-swap` row in `01-interface-contracts.md`
-   and the `--memory-swap` statement in `deploy/README.md`.
-4. Monitoring: alert on zram usage and on `memory.swap.events` per tenant.
+All four are done in the adopting change:
+
+1. Control plane: `MemorySwap` is twice the RAM cap through one constant,
+   `TENANT_SWAP_MULTIPLIER`, in `services/provisioning.ts`. Both provisioning
+   and `upgrade.ts` build their container definition there, so one place
+   covers both. Pinned by `cloud/control-plane/test/tenant-container-resources.test.ts`.
+2. `deploy/hosts/bootstrap.sh` step 9 installs the three zram files, the
+   earlyoom baseline (`earlyoom.default` → `/etc/default/earlyoom`, with
+   `-s 100,100`) and its priority drop-in, and applies only the two zram
+   sysctl keys. `runbooks/host-bootstrap.md` §2 lists how to verify it.
+3. C1 §Resources is amended (listed under "Amendments since the freeze" at
+   the top of `01-interface-contracts.md`); `deploy/README.md`,
+   `deploy/tenant-image/README.md` and `docker-compose.yml` carry
+   `--memory-swap 4608m`.
+4. Monitoring: `HostSwapMissing` and `HostSwapNearlyFull` in
+   `deploy/monitoring/alert-rules.yml`. A per-tenant `memory.swap.events`
+   alert is deliberately left out: it needs a per-tenant exporter the
+   monitoring stack does not have today, and the two host-level rules already
+   fire before any tenant can exhaust its share of the device.

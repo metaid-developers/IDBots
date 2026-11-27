@@ -35,13 +35,16 @@ sudo deploy/hosts/bootstrap.sh --role {ENV}
 ```
 
 What it does: packages (Docker CE, zstd, sqlite3, age, rsync, jq, fail2ban,
-auditd, unattended-upgrades), `/etc/docker/daemon.json` (REQ-C-2 DNS
+auditd, unattended-upgrades, earlyoom), `/etc/docker/daemon.json` (REQ-C-2 DNS
 `223.5.5.5/223.6.6.6`, C1 log rotation), sysctl bridge settings, the
 `idbots-firewall.service` tenant isolation (REQ-C-6), sshd hardening
 (keys only, no root — skipped with a loud warning if no key exists),
 fail2ban/auditd/auto-upgrades (REQ-C-3), assets to `/opt/idbots`, env
-templates to `/etc/idbots` (0600). Re-runnable (idempotent); it never
-overwrites a filled env file.
+templates to `/etc/idbots` (0600), zram swap + earlyoom (CR-WSA-006: tenant
+swap is zram-backed, and earlyoom keeps acting on RAM alone). Re-runnable
+(idempotent); it never overwrites a filled env file, and an edited
+`/etc/docker/daemon.json` or `/etc/default/earlyoom` is backed up before it is
+replaced with the baseline.
 
 Verify:
 
@@ -53,6 +56,10 @@ systemctl status idbots-firewall.service           # active
 sudo iptables -L DOCKER-USER -n | head             # jump to IDBOTS-TENANT
 sudo iptables -L IDBOTS-TENANT -nv                 # the 6 REQ-C-6 rule groups
 fail2ban-client status sshd                        # sshd jail enabled
+swapon --show                                      # /dev/zram0 — tenant swap (CR-WSA-006)
+systemctl is-active idbots-zram-swap earlyoom      # both "active"
+sysctl vm.swappiness                               # = 150 (99-idbots-zram.conf)
+journalctl -u earlyoom -n 4 | grep swap            # BOTH lines read "swap <= 100.00%"
 ```
 
 ## 3. Fill the secrets files

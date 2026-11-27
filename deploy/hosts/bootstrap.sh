@@ -9,7 +9,7 @@
 #
 # What it does:
 #   1. installs packages (Docker CE + buildx/compose plugins, zstd, sqlite3,
-#      age, rsync, jq, fail2ban, auditd, unattended-upgrades)
+#      age, rsync, jq, fail2ban, auditd, unattended-upgrades, earlyoom)
 #   2. installs /etc/docker/daemon.json (REQ-C-2 DNS, C1 log rotation)
 #   3. installs sysctl settings (bridge-nf-call-iptables for REQ-C-6)
 #   4. installs + enables idbots-firewall.service (REQ-C-6)
@@ -18,6 +18,8 @@
 #   7. copies deploy assets to /opt/idbots, env examples to /etc/idbots
 #      (0600), renders prometheus.yml from deploy.env
 #   8. installs the nightly-backup systemd timer (disabled until backup.env)
+#   9. installs zram swap + earlyoom (CR-WSA-006): tenant swap is zram-backed,
+#      and earlyoom keeps acting on RAM alone (-s 100,100)
 #
 # It does NOT: create docker networks/containers (compose does that), write any
 # secret, or contact any cloud API. After it finishes, follow
@@ -64,7 +66,7 @@ export DEBIAN_FRONTEND=noninteractive
 log "installing base packages"
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl gnupg zstd sqlite3 age rsync jq \
-  fail2ban auditd unattended-upgrades apt-transport-https
+  fail2ban auditd unattended-upgrades apt-transport-https earlyoom
 
 if ! command -v docker >/dev/null 2>&1; then
   log "installing Docker CE"
@@ -183,6 +185,35 @@ if grep -q 'REPLACE_ME' "$ETC/backup.env" 2>/dev/null; then
 else
   systemctl enable --now idbots-backup.timer
   log "idbots-backup.timer enabled (03:00 Asia/Shanghai, staggered)"
+fi
+
+# --- 9. zram swap + earlyoom (CR-WSA-006) --------------------------------------------
+# An idle tenant holds about 235 MiB of cold anonymous memory. With no swap
+# that memory can never be reclaimed, and a full host can only thrash page
+# cache (2026-11-27 livelock). zram gives it somewhere to compress into;
+# earlyoom keeps a lid on RAM with its swap tests disabled.
+install -m 0755 "$SRC/zram-swap.sh" "$OPT/zram-swap.sh"
+install -m 0644 "$SRC/idbots-zram-swap.service" /etc/systemd/system/idbots-zram-swap.service
+install -m 0644 "$SRC/sysctl.d/99-idbots-zram.conf" /etc/sysctl.d/99-idbots-zram.conf
+if [ -f /etc/default/earlyoom ] && ! cmp -s "$SRC/earlyoom.default" /etc/default/earlyoom; then
+  cp -a /etc/default/earlyoom "/etc/default/earlyoom.bak.$(date +%Y%m%d%H%M%S)"
+  warn "existing /etc/default/earlyoom backed up; replaced with the IDBots baseline (-m 8,6 -s 100,100)"
+fi
+install -m 0644 "$SRC/earlyoom.default" /etc/default/earlyoom
+install -d -m 0755 /etc/systemd/system/earlyoom.service.d
+install -m 0644 "$SRC/earlyoom-priority.conf" /etc/systemd/system/earlyoom.service.d/10-idbots-priority.conf
+systemctl daemon-reload
+systemctl enable --now earlyoom
+systemctl restart earlyoom
+systemctl enable --now idbots-zram-swap.service
+# Only the two zram keys. `sysctl --system` would also replay every other file
+# over anything an operator tuned by hand since boot.
+sysctl -q -p /etc/sysctl.d/99-idbots-zram.conf
+log "zram swap + earlyoom enabled: $(swapon --show=NAME,SIZE,USED --noheadings | tr -s ' ' | tr '\n' ' ')"
+# The file name must keep sorting AFTER the cloud image's 99-apsara-sysctl.conf
+# (vm.swappiness = 0); sysctl.d applies files in lexical order.
+if [ "$(sysctl -n vm.swappiness)" != "150" ]; then
+  warn "vm.swappiness is $(sysctl -n vm.swappiness), expected 150 — a later sysctl.d file overrides 99-idbots-zram.conf"
 fi
 
 cat <<EOF
