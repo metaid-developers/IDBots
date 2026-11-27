@@ -23,11 +23,13 @@
  *      busy elsewhere, or wedged) — runner state and the fix are printed
  *   4  a step has been running past its budget
  *   5  --max-minutes exceeded without a verdict
- *   6  could not read the run from GitHub
+ *   6  could not read the run from GitHub for --read-failure-limit-seconds
+ *      (default 15 min) — a shorter outage is waited out
  *
  * Usage:
  *   node scripts/release-watch.mjs <run-id> [--once] [--poll-seconds 30]
  *        [--queued-alert-seconds 300] [--max-minutes 240]
+ *        [--read-failure-limit-seconds 900]
  *        [--budget "<step name substring>=<seconds>" ...]
  *   pnpm run release:watch -- <run-id> [...]   (same; pnpm forwards the `--`)
  * Read-only: GET calls through `gh` only.
@@ -44,10 +46,11 @@ const DEFAULT_REPO = 'metaid-developers/IDBots';
 export const DEFAULT_BUDGETS = [
   ['Check out Git repository', 600],
   ['Run actions/cache', 900],
-  ['Download the source delta (Windows)', 300],
-  ['Download the full source bundle (Windows)', 1800],
-  ['Update the source tree from the delta (Windows)', 600],
-  ['Rebuild the source tree from the full bundle (Windows)', 900],
+  // Fragments on purpose: each matches the first try and the "again" one.
+  ['Download the source delta', 300],
+  ['Download the full source bundle', 1800],
+  ['Update the source tree from the delta', 600],
+  ['Rebuild the source tree from the full bundle', 900],
   ['Build Electron app package', 3000],
   ['Notarize', 1500],
   ['Codesign + notarize DMG', 1500],
@@ -57,14 +60,17 @@ export const DEFAULT_STEP_BUDGET_SECONDS = 2700;
 const QUEUED_STATUSES = new Set(['queued', 'pending', 'waiting', 'requested']);
 const FAILED_CONCLUSIONS = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
 
-// A step that may fail because the step behind it takes over: the source
-// delta only fits a machine that still holds the previous run's commit (it
-// says so with a clean exit 3; a broken delta fails, and is covered the same way).
-const FALLBACKS = [
-  ['Update the source tree from the delta (Windows)', 'Rebuild the source tree from the full bundle (Windows)'],
-];
+// The source hand-over gets two tries each, and none of its steps but the
+// last is allowed to end the job: the delta steps hand over to a second
+// download and, failing that, to the full bundle; the first rebuild hands over
+// to the second. The delta only fits a machine that still holds the previous
+// run's commit, and a download from the signing machine can arrive cut short
+// (2026-11-27: twice in a row), so both happen.
+const DELTA_STEPS = ['Update the source tree from the delta (Windows)', 'Update the source tree from the delta again (Windows)'];
+const REBUILD_STEPS = ['Rebuild the source tree from the full bundle (Windows)', 'Rebuild the source tree from the full bundle again (Windows)'];
 const isTakenOver = (step, steps) =>
-  FALLBACKS.some(([failed, fallback]) => step.name === failed && steps.some((other) => other.name === fallback));
+  (DELTA_STEPS.includes(step.name) && steps.some((other) => REBUILD_STEPS.includes(other.name)))
+  || (step.name === REBUILD_STEPS[0] && steps.some((other) => other.name === REBUILD_STEPS[1]));
 
 const minutes = (seconds) => {
   const value = Math.round(seconds / 60);
@@ -102,6 +108,12 @@ export function classifyFailure(stepName = '') {
     return {
       kind: 'infra',
       advice: 'Notary/staple failed. Transient Apple network errors (NSURLError -1005 / -1009) rerun clean: gh run rerun --failed <run-id> (SOP §5.1).',
+    };
+  }
+  if (/Smoke-test the signing service/i.test(stepName)) {
+    return {
+      kind: 'infra',
+      advice: 'The signing service did not sign a test file. Re-login SimplySign on the signing machine, do the smoke signature of release SOP 11.18, then rerun the failed jobs: gh run rerun --failed <run-id>.',
     };
   }
   if (/source (delta|bundle)|source tree/i.test(stepName)) {
@@ -145,13 +157,20 @@ function describeFailures(jobs) {
  * reported a crash as a clean decline until the log was read by hand).
  */
 export function fallbackReason(log = '') {
-  // The tool's own failure line decides first. The "does not fit" sentence
-  // cannot: the log echoes the step's script, which contains it whether or
-  // not it ever ran (reading that sentence first reported the crash of run
-  // 45888882259 as a clean decline).
-  const failure = log.match(/ci-source-restore: ([^\r\n]*)/);
-  if (failure) return `failed outright: ${failure[1].replace(/\x1b\[[0-9;]*m/g, '').slice(0, 160)}`;
+  // Every try that could not use the delta prints this with the exit code in
+  // it. The echoed step script has "$code" there, so the echo never counts.
+  const said = (log.match(/The source delta could not be used \(exit \d+\)/g) || []).length;
+  // One try leaves two lines, the tool's and the step's; before the step said so in words, only the tool's line did.
+  const tries = said || (log.match(/ci-source-restore: git index-pack /g) || []).length;
+  if (tries > 1) return 'was unusable twice (a download cut short, most likely)';
+  if (tries === 1) return 'was unusable once, and after a second download did not fit';
+  // The "does not fit" sentence counts only as a line of its own: the log
+  // echoes the step's script, which contains it whether or not it ever ran
+  // (reading the echo first once reported a crash as a clean decline).
   if (/(?:^|[\t]|Z )The source delta does not fit this workspace/.test(log)) return 'did not fit';
+  // Any other line in which the tool itself gave up. A clone from the bundle is the rebuild's own story, which the caller tells.
+  const failure = log.match(/ci-source-restore: (?!git clone )([^\r\n]*)/);
+  if (failure) return `failed outright: ${failure[1].replace(/\x1b\[[0-9;]*m/g, '').slice(0, 160)}`;
   return 'gave way, for a reason the log does not state';
 }
 
@@ -160,11 +179,12 @@ function describeFallbacks(jobs, jobLogs = {}) {
   const lines = [];
   for (const job of jobs) {
     const steps = job.steps || [];
-    for (const [failed, fallback] of FALLBACKS) {
-      if (steps.find((step) => step.name === fallback)?.conclusion !== 'success') continue;
-      // 1–15 min more: the full bundle took a minute on 2026-11-27 and a quarter of an hour the night before.
-      lines.push(`  ℹ ${job.name} — the source delta ${fallbackReason(jobLogs[job.id])}; the tree was rebuilt from the full bundle instead (1–15 min more; the "${failed}" step log has the details).`);
-    }
+    if (!REBUILD_STEPS.some((name) => steps.find((step) => step.name === name)?.conclusion === 'success')) continue;
+    const log = jobLogs[job.id] || '';
+    // The tool failing to clone from the bundle is what made a second download of it necessary.
+    const bundleTwice = /ci-source-restore: git clone /.test(log) ? ', and the full bundle had to be downloaded twice' : '';
+    // 1–15 min more: the full bundle took a minute on 2026-11-27 and a quarter of an hour the night before.
+    lines.push(`  ℹ ${job.name} — the source delta ${fallbackReason(log)}; the tree was rebuilt from the full bundle instead (1–15 min more${bundleTwice}; the hand-over steps' logs have the details).`);
   }
   return lines;
 }
@@ -309,7 +329,7 @@ function fetchJobLog(jobId, repo) {
 }
 
 const hasRebuiltFromFallback = (job) =>
-  FALLBACKS.some(([, fallback]) => (job.steps || []).some((step) => step.name === fallback && step.conclusion === 'success'));
+  REBUILD_STEPS.some((name) => (job.steps || []).some((step) => step.name === name && step.conclusion === 'success'));
 
 // A watcher must not die on one dropped response; it also must not spin forever.
 function withRetry(label, read) {
@@ -326,7 +346,7 @@ function withRetry(label, read) {
 }
 
 export function parseArgs(argv) {
-  const options = { _: [], pollSeconds: 30, queuedAlertSeconds: 300, maxMinutes: 240, budgets: [...DEFAULT_BUDGETS], repo: process.env.IDBOTS_RELEASE_REPO || DEFAULT_REPO };
+  const options = { _: [], pollSeconds: 30, queuedAlertSeconds: 300, maxMinutes: 240, readFailureLimitSeconds: 900, budgets: [...DEFAULT_BUDGETS], repo: process.env.IDBOTS_RELEASE_REPO || DEFAULT_REPO };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     // `pnpm run release:watch -- <run-id>` hands the `--` on to the script.
@@ -335,6 +355,7 @@ export function parseArgs(argv) {
     else if (arg === '--poll-seconds') options.pollSeconds = Number(argv[++index]);
     else if (arg === '--queued-alert-seconds') options.queuedAlertSeconds = Number(argv[++index]);
     else if (arg === '--max-minutes') options.maxMinutes = Number(argv[++index]);
+    else if (arg === '--read-failure-limit-seconds') options.readFailureLimitSeconds = Number(argv[++index]);
     else if (arg === '--repo') options.repo = argv[++index];
     else if (arg === '--budget') {
       const [fragment, seconds] = String(argv[++index]).split('=');
@@ -348,16 +369,29 @@ export function parseArgs(argv) {
   return options;
 }
 
+/**
+ * What to do when the run cannot be read: keep waiting, or give up (exit 6).
+ * A watcher that dies on a dropped response wakes nobody — on 2026-11-27 one
+ * rough minute at GitHub ended the watch of a healthy run — so it waits, but
+ * not forever.
+ */
+export function readFailureVerdict({ unreadableSeconds, limitSeconds, once = false }) {
+  if (once || unreadableSeconds >= limitSeconds) return 'give-up';
+  return 'wait';
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const runId = options._[0];
   if (!runId) {
-    console.error('Usage: node scripts/release-watch.mjs <run-id> [--once] [--poll-seconds 30] [--queued-alert-seconds 300] [--max-minutes 240] [--budget "<step substring>=<seconds>"]');
+    console.error('Usage: node scripts/release-watch.mjs <run-id> [--once] [--poll-seconds 30] [--queued-alert-seconds 300] [--max-minutes 240] [--read-failure-limit-seconds 900] [--budget "<step substring>=<seconds>"');
     process.exit(64);
   }
 
   const startedAt = Date.now();
   let lastStateKey = '';
+  // Since when the run has been unreadable; null as soon as it can be read again.
+  let unreadableSince = null;
   for (;;) {
     let snapshot;
     let runners = [];
@@ -371,9 +405,18 @@ async function main() {
           runners = [];
         }
       }
+      unreadableSince = null;
     } catch (error) {
-      console.error(`[release-watch] ${error instanceof Error ? error.message : error}`);
-      process.exit(6);
+      unreadableSince ??= Date.now();
+      const unreadableSeconds = (Date.now() - unreadableSince) / 1000;
+      const message = error instanceof Error ? error.message : error;
+      if (readFailureVerdict({ unreadableSeconds, limitSeconds: options.readFailureLimitSeconds, once: options.once }) === 'give-up') {
+        console.error(`\n[release-watch] could not read the run for ${minutes(unreadableSeconds)}: ${message}`);
+        process.exit(6);
+      }
+      console.error(`[release-watch] could not read the run: ${message}\n[release-watch] trying again in ${options.pollSeconds} s; gives up after ${minutes(options.readFailureLimitSeconds)} of this.`);
+      await new Promise((resolve) => setTimeout(resolve, options.pollSeconds * 1000));
+      continue;
     }
 
     // Why a fallback stepped in is only in the log, and the log is only worth

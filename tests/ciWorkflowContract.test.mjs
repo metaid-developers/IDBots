@@ -127,31 +127,67 @@ test('the Windows job never fetches its source from github.com', () => {
   assert.equal(checkouts[0].if, `runner.os != 'Windows'`);
 
   const DELTA = 'Update the source tree from the delta (Windows)';
+  const DELTA_AGAIN = 'Update the source tree from the delta again (Windows)';
   const REBUILD = 'Rebuild the source tree from the full bundle (Windows)';
-  const delta = buildSteps[indexOf(DELTA)];
-  const rebuild = buildSteps[indexOf(REBUILD)];
+  const REBUILD_AGAIN = 'Rebuild the source tree from the full bundle again (Windows)';
+  const step = (name) => buildSteps[indexOf(name)];
+  const delta = step(DELTA);
+  const deltaAgain = step(DELTA_AGAIN);
+  const rebuild = step(REBUILD);
+  const rebuildAgain = step(REBUILD_AGAIN);
+  const DAMAGED = "runner.os == 'Windows' && steps.restore_delta.outputs.fitted == 'damaged'";
+  const NOT_FIT = "runner.os == 'Windows' && steps.restore_delta.outputs.fitted != 'true' && steps.restore_delta_retry.outputs.fitted != 'true'";
+
   assert.equal(delta.if, `runner.os == 'Windows'`);
   assert.equal(delta.id, 'restore_delta');
-  assert.equal(delta['continue-on-error'], true, 'a broken delta must not stop the job: the full bundle covers it');
+  assert.equal(delta['continue-on-error'], true, 'a delta that does not work out must not stop the job');
   assert.match(delta.run, /ci-source-restore\.cjs/);
   assert.match(delta.run, /--commit "\$env:GITHUB_SHA"/, 'the restored commit is checked against the run');
   assert.doesNotMatch(delta.run, /--fresh/, 'the delta updates the repository the previous run left behind');
   // Exit 3 is the delta saying it does not fit — expected, and no red step.
-  assert.match(delta.run, /if \(\$LASTEXITCODE -eq 3\) \{[\s\S]*AppendAllText\(\$env:GITHUB_OUTPUT, "fitted=false`n"\)[\s\S]*exit 0/);
+  assert.match(delta.run, /if \(\$code -eq 3\) \{[\s\S]*AppendAllText\(\$env:GITHUB_OUTPUT, "fitted=false`n"\)[\s\S]*exit 0/);
   assert.match(delta.run, /AppendAllText\(\$env:GITHUB_OUTPUT, "fitted=true`n"\)/);
+  // Anything else — exit 4, a pack that arrived cut short, included — is "damaged":
+  // said so, the files removed so that the next download starts clean, and no red step.
+  assert.match(delta.run, /if \(\$code -ne 0\) \{[\s\S]*AppendAllText\(\$env:GITHUB_OUTPUT, "fitted=damaged`n"\)[\s\S]*Remove-Item[^\n]*source-delta[\s\S]*exit 0/);
+
+  // One second chance: the delta is downloaded and applied once more, by the very same script.
+  assert.equal(step('Download the source delta again (Windows)').if, DAMAGED);
+  assert.equal(step('Download the source delta again (Windows)').with.name, 'source-delta');
+  assert.equal(deltaAgain.id, 'restore_delta_retry');
+  assert.equal(deltaAgain.if, DAMAGED);
+  assert.equal(deltaAgain['continue-on-error'], true);
+  assert.equal(deltaAgain.run, delta.run, 'the retry runs the very same script');
+
   assert.match(rebuild.run, /--fresh --commit "\$env:GITHUB_SHA"/);
-  // Both steps give a branch push its branch and leave a tag checkout detached.
-  for (const step of [delta, rebuild]) {
-    assert.match(step.run, /--branch "\$env:GITHUB_REF_NAME"/);
+  // Both kinds of step give a branch push its branch and leave a tag checkout detached.
+  for (const s of [delta, rebuild]) {
+    assert.match(s.run, /--branch "\$env:GITHUB_REF_NAME"/);
   }
-  // The full bundle is only fetched when the delta did not fit — or broke off
-  // before it could say, which leaves the output unset.
+  // The full bundle only when the delta did not work out, second chance included
+  // (a step that never ran leaves its output unset, which is not 'true' either).
   for (const name of ['Download the full source bundle (Windows)', REBUILD]) {
-    assert.equal(buildSteps[indexOf(name)].if, `runner.os == 'Windows' && steps.restore_delta.outputs.fitted != 'true'`);
+    assert.equal(step(name).if, NOT_FIT);
   }
-  // Node exists before anything is restored, each download precedes the step
-  // that reads it, and the tree is there before anything needs it.
-  const order = ['Install Node.js', 'Download the source delta (Windows)', DELTA, 'Download the full source bundle (Windows)', REBUILD, 'Enable pnpm'];
+  // The rebuild gets one second chance too: its first attempt may fail, its second may not.
+  assert.equal(rebuild.id, 'rebuild_full');
+  assert.equal(rebuild['continue-on-error'], true);
+  for (const name of ['Download the full source bundle again (Windows)', REBUILD_AGAIN]) {
+    assert.equal(step(name).if, `runner.os == 'Windows' && steps.rebuild_full.outcome == 'failure'`);
+  }
+  assert.equal(rebuildAgain['continue-on-error'], undefined, 'the second attempt is the last word');
+  assert.equal(rebuildAgain.run, rebuild.run, 'the retry runs the very same script');
+  assert.match(rebuild.run, /if \(\$LASTEXITCODE -ne 0\) \{[\s\S]*Remove-Item[^\n]*source-full[\s\S]*exit \$LASTEXITCODE/);
+  // Node exists before anything is restored, each download precedes the step that
+  // reads it, and the tree is there before anything needs it.
+  const order = [
+    'Install Node.js',
+    'Download the source delta (Windows)', DELTA,
+    'Download the source delta again (Windows)', DELTA_AGAIN,
+    'Download the full source bundle (Windows)', REBUILD,
+    'Download the full source bundle again (Windows)', REBUILD_AGAIN,
+    'Enable pnpm',
+  ];
   const positions = order.map(indexOf);
   assert.equal(positions.every((position) => position >= 0), true, 'every step exists');
   assert.deepEqual([...positions].sort((a, b) => a - b), positions, 'the steps run in this order');
@@ -171,11 +207,14 @@ test('the Windows job never fetches its source from github.com', () => {
     'Upload the source delta',
     'Upload the full source bundle',
   ]);
-  assert.equal(source.steps[0].with['persist-credentials'], false, 'what is handed over must not carry a token');
+  // The token is what lets the delta's base be fetched by commit; the pack and the bundle carry git objects only.
+  assert.notEqual(source.steps[0].with['persist-credentials'], false);
+  assert.equal(source.steps[0].with['fetch-depth'], 2, 'the delta needs the first parent as its fallback base');
   const bundling = source.steps[1];
-  assert.equal(bundling.shell, 'bash', 'pipefail: a failed rev-list must not ship an empty pack as the delta');
   // The delta is whatever the commit reaches beyond its first parent, as a pack with no prerequisites.
-  assert.match(bundling.run, /git rev-list --objects HEAD \^HEAD\^1 \| git pack-objects --stdout > "\$RUNNER_TEMP\/source-delta\/source\.pack"/);
+  // Cut by the tool, against the tip main had before the push (empty for a tag), not by a pipe whose failure could ship an empty pack.
+  assert.match(bundling.run, /node scripts\/ci-source-cut\.mjs --out "\$RUNNER_TEMP\/source-delta\/source\.pack" --base "\$\{\{ github\.event\.before \}\}"/);
+  assert.doesNotMatch(bundling.run, /pack-objects --stdout >"/);
   assert.match(bundling.run, /git bundle create "\$RUNNER_TEMP\/source-full\/source\.bundle" HEAD/);
   for (const artifact of ['source-delta', 'source-full']) {
     assert.match(bundling.run, new RegExp(`cp scripts/ci-source-restore\\.cjs "\\$RUNNER_TEMP/${artifact}/"`), `${artifact} carries the restore tool`);
@@ -185,6 +224,25 @@ test('the Windows job never fetches its source from github.com', () => {
   assert.equal(buildSteps[indexOf('Download the source delta (Windows)')].with.name, 'source-delta');
   assert.equal(buildSteps[indexOf('Download the full source bundle (Windows)')].with.name, 'source-full');
   assert.equal(fs.existsSync(path.join(repoRoot, 'scripts/ci-source-restore.cjs')), true);
+});
+
+test('the signing service is asked to sign before the Windows job spends any time on it', () => {
+  const smoke = buildSteps[indexOf('Smoke-test the signing service (Windows)')];
+  assert.equal(smoke.if, `runner.os == 'Windows'`);
+  assert.equal(smoke.shell, 'powershell');
+  assert.equal(smoke.env.WIN_CERT_SHA1, '${{ secrets.WIN_CERT_SHA1 }}');
+  assert.match(smoke.run, /'sign', '\/sha1', \$env:WIN_CERT_SHA1/, 'it really signs, with the certificate the build signs with');
+  assert.match(smoke.run, /Join-Path \$env:RUNNER_TEMP/, 'it signs a throwaway copy in the temp directory, nothing of the machine');
+  assert.doesNotMatch(smoke.run, /\/tr\b|WIN_TIMESTAMP_URL/, 'without a timestamp: only the private key is asked for');
+  assert.match(smoke.run, /WaitForExit\(90000\)/, 'a hung signer is cut off after 90 seconds, as the build cuts it off');
+  assert.match(smoke.run, /The signing service is not usable/, 'the failure says what it is and what to do');
+  // Ahead of everything that costs time.
+  for (const later of ['Install Node.js', 'Download the source delta (Windows)', 'Build renderer (Vite)', 'Build Electron app package (Windows signed)']) {
+    assert.equal(indexOf(smoke.name) < indexOf(later), true, `before ${later}`);
+  }
+  // Nothing runs ahead of it but the git settings, which it does not even depend on.
+  const before = buildSteps.slice(0, indexOf(smoke.name)).filter((step) => step.if !== `runner.os != 'Windows'`).map((step) => step.name);
+  assert.deepEqual(before, ['Enable Git long paths (Windows)']);
 });
 
 test('package.json and electron-builder.json carry the matching wiring', () => {

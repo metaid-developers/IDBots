@@ -53,7 +53,7 @@ jobs:
       # machine. Only the tests that need no node_modules run here; the full
       # set runs in each build job.
       - name: Test the gate and the tools that need no dependencies
-        run: node --test tests/ciGate.test.mjs tests/ciReleaseWatch.test.mjs tests/ciWorktreeEol.test.mjs tests/ciWindowsSignOnce.test.mjs tests/ciSourceRestore.test.mjs
+        run: node --test tests/ciGate.test.mjs tests/ciReleaseWatch.test.mjs tests/ciWorktreeEol.test.mjs tests/ciWindowsSignOnce.test.mjs tests/ciSourceRestore.test.mjs tests/ciSourceCut.test.mjs
 
       # Two decisions: whether this run is redundant at all, and whether a tag
       # run may leave out its tests because the parent commit's main run
@@ -82,30 +82,29 @@ jobs:
       - name: Check out Git repository
         uses: actions/checkout@v4
         with:
-          # Two commits: the delta is cut against the first parent.
+          # Two commits: the first parent is the delta's fallback base.
           fetch-depth: 2
-          # What is handed over must not carry the token; nothing here pushes.
-          persist-credentials: false
+          # The token stays in this checkout so that the delta's base can be
+          # fetched by commit (scripts/ci-source-cut.mjs). Nothing of it is
+          # handed over: the pack and the bundle hold git objects only.
 
-      # `shell: bash` is for pipefail: a failed rev-list must not upload an
-      # empty pack as "the delta".
       - name: Bundle the commit together with the restore tool
-        shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/source-delta" "$RUNNER_TEMP/source-full"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          # The delta: what this commit reaches beyond its first parent, as a
-          # pack that declares no prerequisites. It is a few KB against the
-          # full tree's tens of MB whenever the machine still holds the
-          # previous run's commit, and refused otherwise.
-          git rev-list --objects HEAD ^HEAD^1 | git pack-objects --stdout > "$RUNNER_TEMP/source-delta/source.pack"
+          # The delta: what this commit reaches beyond the tip main had before
+          # this push — the commit the signing machine holds — or beyond the
+          # first parent where there is no such tip (a tag). A pack that
+          # declares no prerequisites; measured at 50 KB to about 1 MB against
+          # the full bundle's 36 MB. scripts/ci-source-cut.mjs says which base
+          # it used.
+          node scripts/ci-source-cut.mjs --out "$RUNNER_TEMP/source-delta/source.pack" --base "${{ github.event.before }}"
           # The full commit: cut from a shallow clone, the bundle holds this
           # commit and its whole tree.
           git bundle create "$RUNNER_TEMP/source-full/source.bundle" HEAD
           cp scripts/ci-source-restore.cjs "$RUNNER_TEMP/source-delta/"
           cp scripts/ci-source-restore.cjs "$RUNNER_TEMP/source-full/"
           ls -la "$RUNNER_TEMP/source-delta" "$RUNNER_TEMP/source-full"
-
       - name: Upload the source delta
         uses: actions/upload-artifact@v4
         with:
@@ -170,6 +169,61 @@ jobs:
           git config --global core.longpaths true
           git config --global core.autocrlf false
 
+      # The signing service is the one thing a Windows job cannot work around,
+      # and it has given out at the far end of the job more than once: after
+      # 54 minutes on 2026-11-27 (run 45937850363), after 708 signatures on
+      # 2026-11-25. One real signature on a throwaway copy, before anything
+      # else runs, turns that into a failure in the first minute, with the
+      # cause named (release SOP §11.18).
+      - name: Smoke-test the signing service (Windows)
+        if: runner.os == 'Windows'
+        env:
+          WIN_CERT_SHA1: ${{ secrets.WIN_CERT_SHA1 }}
+          WIN_SIGNTOOL_PATH: ${{ vars.WIN_SIGNTOOL_PATH }}
+        shell: powershell
+        run: |
+          $signTool = if ($env:WIN_SIGNTOOL_PATH) { $env:WIN_SIGNTOOL_PATH } else { 'C:\sign\signtool.exe' }
+          if (-not $env:WIN_CERT_SHA1) {
+            Write-Error "Missing WIN_CERT_SHA1 secret for Windows code signing."
+            exit 1
+          }
+          if (-not (Test-Path $signTool)) {
+            Write-Error "signtool not found at: $signTool"
+            exit 1
+          }
+          # A copy of signtool itself, in the job's temp directory: nothing of the machine's is signed or changed.
+          $copy = Join-Path $env:RUNNER_TEMP ('sign-smoke-' + [guid]::NewGuid().ToString('N') + '.exe')
+          $out = Join-Path $env:RUNNER_TEMP 'sign-smoke.out.txt'
+          $err = Join-Path $env:RUNNER_TEMP 'sign-smoke.err.txt'
+          Copy-Item -LiteralPath $signTool -Destination $copy
+          # No timestamp: this asks only whether the private key can be used.
+          # The arguments are those of the SOP's smoke signature, no more:
+          # signtool's /n selects a certificate by subject name, it is not
+          # "no prompt" — with it the search finds no certificate at all.
+          $process = Start-Process -FilePath $signTool -ArgumentList @('sign', '/sha1', $env:WIN_CERT_SHA1, '/fd', 'SHA256', '/v', $copy) -NoNewWindow -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          # A handle taken before the process ends is what makes ExitCode readable afterwards in Windows PowerShell.
+          $null = $process.Handle
+          if (-not $process.WaitForExit(90000)) {
+            try { $process.Kill() } catch {}
+            $why = 'signtool did not answer within 90 seconds'
+          } elseif ($process.ExitCode -ne 0) {
+            $why = 'signtool exited with code ' + $process.ExitCode
+          } else {
+            $why = $null
+          }
+          $log = ''
+          foreach ($file in @($out, $err)) {
+            if (Test-Path -LiteralPath $file) { $log += ' ' + [System.IO.File]::ReadAllText($file) }
+          }
+          $log = ($log -replace '\s+', ' ').Trim()
+          Remove-Item -LiteralPath $copy, $out, $err -Force -ErrorAction SilentlyContinue
+          if ($log) { Write-Host $log }
+          if ($why) {
+            Write-Error ("The signing service is not usable: " + $why + ". Re-login SimplySign on the signing machine, do the smoke signature of release SOP 11.18, then rerun this job.")
+            exit 1
+          }
+          Write-Host "The signing service signed a test file."
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
@@ -188,15 +242,25 @@ jobs:
           submodules: false
 
       # The signing machine never fetches from github.com (see the `source`
-      # job), and its downloads from GitHub's artifact storage are slow: the
-      # full bundle costs about 15 minutes. So the delta is tried first.
-      # scripts/ci-source-restore.cjs adds its objects to the repository the
-      # previous run left behind and, only once the whole tree of the new
-      # commit is proven to be there, deletes every working file and checks
-      # the commit out anew — so no file of an earlier run can survive into
-      # this one (SOP §11.22, §11.43) and a refused delta leaves the workspace
-      # as it was. The tool travels inside the artifact because the workspace
-      # has no scripts in it at that point.
+      # job). Its downloads from GitHub's artifact storage are slow at the
+      # best of times, and on a bad evening they end early without a word: on
+      # 2026-11-27 the delta and then the full bundle both arrived cut short,
+      # and actions/download-artifact@v4 reported success for both — its last
+      # two log lines were simply missing. So the step that downloads is not
+      # trusted; the steps that use the files decide.
+      #
+      # scripts/ci-source-restore.cjs adds the delta's objects to the
+      # repository the previous run left behind and, only once the whole tree
+      # of the new commit is proven to be there, deletes every working file
+      # and checks the commit out anew — so no file of an earlier run can
+      # survive into this one (SOP §11.22, §11.43), and a refused delta leaves
+      # the workspace as it was. The tool travels inside the artifact because
+      # the workspace has no scripts in it at that point. Its exit code tells
+      # three things apart: 3, the delta does not fit (the machine holds
+      # another commit) and the full bundle takes over; 4, what arrived
+      # cannot be read, and the delta is downloaded once more; anything else
+      # is a real failure, which gets that same second chance once and then
+      # hands over to the full bundle.
       - name: Download the source delta (Windows)
         if: runner.os == 'Windows'
         uses: actions/download-artifact@v4
@@ -204,11 +268,6 @@ jobs:
           name: source-delta
           path: ${{ runner.temp }}/source-delta
 
-      # The delta only fits a machine that still holds the previous run's
-      # commit. Exit 3 is it saying so — expected on the machine's first run
-      # and whenever another branch ran in between — and is no failure: the
-      # full bundle takes over below. Anything else is a real failure, which
-      # the full bundle covers too, visibly.
       - name: Update the source tree from the delta (Windows)
         id: restore_delta
         if: runner.os == 'Windows'
@@ -221,23 +280,72 @@ jobs:
           } else {
             node $restore --commit "$env:GITHUB_SHA"
           }
-          if ($LASTEXITCODE -eq 3) {
+          $code = $LASTEXITCODE
+          if ($code -eq 3) {
             [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "fitted=false`n")
             Write-Host "The source delta does not fit this workspace: the tree is rebuilt from the full bundle."
             exit 0
           }
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($code -ne 0) {
+            # 4 is "what arrived cannot be read" — a download cut short, most likely. Any other failure gets the
+            # same second chance, once. What was downloaded is removed first, so the next download starts clean.
+            [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "fitted=damaged`n")
+            Write-Host "The source delta could not be used (exit $code): it is downloaded once more."
+            Remove-Item -LiteralPath "$env:RUNNER_TEMP\source-delta" -Recurse -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 15
+            exit 0
+          }
           [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "fitted=true`n")
 
+      - name: Download the source delta again (Windows)
+        if: runner.os == 'Windows' && steps.restore_delta.outputs.fitted == 'damaged'
+        uses: actions/download-artifact@v4
+        with:
+          name: source-delta
+          path: ${{ runner.temp }}/source-delta
+
+      - name: Update the source tree from the delta again (Windows)
+        id: restore_delta_retry
+        if: runner.os == 'Windows' && steps.restore_delta.outputs.fitted == 'damaged'
+        continue-on-error: true
+        run: |
+          $restore = "$env:RUNNER_TEMP\source-delta\ci-source-restore.cjs"
+          # A tag checkout stays detached, as actions/checkout leaves it; only a branch push gets a branch.
+          if ($env:GITHUB_REF -like 'refs/heads/*') {
+            node $restore --commit "$env:GITHUB_SHA" --branch "$env:GITHUB_REF_NAME"
+          } else {
+            node $restore --commit "$env:GITHUB_SHA"
+          }
+          $code = $LASTEXITCODE
+          if ($code -eq 3) {
+            [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "fitted=false`n")
+            Write-Host "The source delta does not fit this workspace: the tree is rebuilt from the full bundle."
+            exit 0
+          }
+          if ($code -ne 0) {
+            # 4 is "what arrived cannot be read" — a download cut short, most likely. Any other failure gets the
+            # same second chance, once. What was downloaded is removed first, so the next download starts clean.
+            [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "fitted=damaged`n")
+            Write-Host "The source delta could not be used (exit $code): it is downloaded once more."
+            Remove-Item -LiteralPath "$env:RUNNER_TEMP\source-delta" -Recurse -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 15
+            exit 0
+          }
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "fitted=true`n")
+
+
+      # The full bundle: only when the delta did not work out, second chance included.
       - name: Download the full source bundle (Windows)
-        if: runner.os == 'Windows' && steps.restore_delta.outputs.fitted != 'true'
+        if: runner.os == 'Windows' && steps.restore_delta.outputs.fitted != 'true' && steps.restore_delta_retry.outputs.fitted != 'true'
         uses: actions/download-artifact@v4
         with:
           name: source-full
           path: ${{ runner.temp }}/source-full
 
       - name: Rebuild the source tree from the full bundle (Windows)
-        if: runner.os == 'Windows' && steps.restore_delta.outputs.fitted != 'true'
+        id: rebuild_full
+        if: runner.os == 'Windows' && steps.restore_delta.outputs.fitted != 'true' && steps.restore_delta_retry.outputs.fitted != 'true'
+        continue-on-error: true
         run: |
           $restore = "$env:RUNNER_TEMP\source-full\ci-source-restore.cjs"
           if ($env:GITHUB_REF -like 'refs/heads/*') {
@@ -245,7 +353,37 @@ jobs:
           } else {
             node $restore --fresh --commit "$env:GITHUB_SHA"
           }
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($LASTEXITCODE -ne 0) {
+            # Most likely the bundle arrived cut short. It is removed so that the next download starts clean.
+            Remove-Item -LiteralPath "$env:RUNNER_TEMP\source-full" -Recurse -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 15
+            exit $LASTEXITCODE
+          }
+
+      - name: Download the full source bundle again (Windows)
+        if: runner.os == 'Windows' && steps.rebuild_full.outcome == 'failure'
+        uses: actions/download-artifact@v4
+        with:
+          name: source-full
+          path: ${{ runner.temp }}/source-full
+
+      # No second chance left: this one ends the job if the bundle is still unusable.
+      - name: Rebuild the source tree from the full bundle again (Windows)
+        if: runner.os == 'Windows' && steps.rebuild_full.outcome == 'failure'
+        run: |
+          $restore = "$env:RUNNER_TEMP\source-full\ci-source-restore.cjs"
+          if ($env:GITHUB_REF -like 'refs/heads/*') {
+            node $restore --fresh --commit "$env:GITHUB_SHA" --branch "$env:GITHUB_REF_NAME"
+          } else {
+            node $restore --fresh --commit "$env:GITHUB_SHA"
+          }
+          if ($LASTEXITCODE -ne 0) {
+            # Most likely the bundle arrived cut short. It is removed so that the next download starts clean.
+            Remove-Item -LiteralPath "$env:RUNNER_TEMP\source-full" -Recurse -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 15
+            exit $LASTEXITCODE
+          }
+
 
       - name: Enable pnpm
         run: corepack enable

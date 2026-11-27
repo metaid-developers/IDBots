@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { restore, SourceNotApplicable, EXIT_NOT_APPLICABLE } = require('../scripts/ci-source-restore.cjs');
+const { restore, SourceNotApplicable, SourceDamaged, EXIT_NOT_APPLICABLE, EXIT_DAMAGED } = require('../scripts/ci-source-restore.cjs');
 const SCRIPT = path.resolve(import.meta.dirname, '../scripts/ci-source-restore.cjs');
 const canSymlink = process.platform !== 'win32';
 
@@ -323,6 +323,32 @@ test('a workspace that is not on the previous commit refuses the delta untouched
   assert.equal(result.mode, 'rebuilt');
   assert.equal(fs.existsSync(marker), false);
   assert.equal(git(workspace, ['status', '--porcelain'], fixture.env), '');
+});
+
+test('a delta that arrived cut short is reported as damaged, not as "does not fit", and the workspace is untouched', (t) => {
+  const fixture = makeFixture(t);
+  const workspace = path.join(fixture.dir, 'workspace');
+  fixture.restoreCommit(workspace, fixture.bundles('second').full, 'second', { branch: 'main', fresh: true });
+  const marker = path.join(workspace, 'left-by-the-earlier-run.txt');
+  write(marker, 'still here\n');
+  const { delta } = fixture.bundles('third');
+  const pack = path.join(delta, 'source.pack');
+  // What a download that ended early leaves behind (run 46015445714, 2026-11-27).
+  fs.writeFileSync(pack, fs.readFileSync(pack).subarray(0, 40));
+
+  // A different answer from a clean decline: the job should fetch the delta again, not give up on it.
+  assert.throws(() => fixture.restoreCommit(workspace, delta, 'third', { branch: 'main' }), (error) => error instanceof SourceDamaged && /index-pack/.test(error.message));
+  assert.equal(git(workspace, ['rev-parse', 'HEAD'], fixture.env), fixture.head('second'));
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'still here\n');
+  const run = spawnSync(process.execPath, [path.join(delta, 'ci-source-restore.cjs'), '--workspace', workspace, '--commit', fixture.head('third'), '--branch', 'main'], {
+    cwd: fixture.dir,
+    env: { ...fixture.env, GITHUB_WORKSPACE: '', GITHUB_SHA: '' },
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, EXIT_DAMAGED, run.stderr);
+  // And what is left of the workspace still takes an intact delta afterwards.
+  const { delta: intact } = fixture.bundles('third');
+  assert.equal(fixture.restoreCommit(workspace, intact, 'third', { branch: 'main' }).mode, 'updated');
 });
 
 test('a workspace without a repository refuses the delta and stays as it was', (t) => {
