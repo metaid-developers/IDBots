@@ -9,47 +9,51 @@
 # RAM instead. The disk is never touched.
 #
 # Installed to /opt/idbots/zram-swap.sh and started by
-# idbots-zram-swap.service. Idempotent: `start` is a no-op while the device is
-# active.
+# idbots-zram-swap.service. Idempotent: `start` is a no-op while a zram swap
+# device is active.
 #
 # Rollback under memory pressure: do NOT call `stop` (swapoff pulls every
 # swapped page back into RAM). Run `systemctl disable idbots-zram-swap` and let
 # the next reboot remove it, or stop it once MemAvailable is comfortable.
 set -euo pipefail
 
-DEVICE="${IDBOTS_ZRAM_DEVICE:-/dev/zram0}"
 SIZE="${IDBOTS_ZRAM_SIZE:-6G}"
 ALGORITHM="${IDBOTS_ZRAM_ALGORITHM:-zstd}"
 PRIORITY="${IDBOTS_ZRAM_PRIORITY:-100}"
 
 log() { printf '[zram-swap] %s\n' "$*"; }
 
-is_active() {
-  swapon --show=NAME --noheadings | grep -qx "$DEVICE"
+# zram devices currently in use as swap, one per line.
+active_devices() {
+  swapon --show=NAME --noheadings | awk '{print $1}' | grep -E '^/dev/zram[0-9]+$' || true
 }
 
 start() {
   modprobe zram
-  if is_active; then
-    log "$DEVICE already active"
-    zramctl "$DEVICE" --output NAME,ALGORITHM,DISKSIZE,DATA,COMPR,TOTAL
+  local active
+  active="$(active_devices)"
+  if [ -n "$active" ]; then
+    log "already active: $(echo "$active" | tr '\n' ' ')"
+    # shellcheck disable=SC2086  # one device path per word is intended
+    zramctl $active --output NAME,ALGORITHM,DISKSIZE,DATA,COMPR,TOTAL
     return 0
   fi
-  [ -b "$DEVICE" ] || { echo "[zram-swap] $DEVICE missing after modprobe" >&2; exit 1; }
-  # A device left over from an earlier run keeps its size and algorithm otherwise.
-  zramctl --reset "$DEVICE" 2>/dev/null || true
-  zramctl "$DEVICE" --algorithm "$ALGORITHM" --size "$SIZE"
-  mkswap "$DEVICE" >/dev/null
-  swapon --priority "$PRIORITY" "$DEVICE"
+  # --find takes an unused zram device or adds one. Deliberately no pre-reset:
+  # on util-linux 2.39 `zramctl --reset` REMOVES a device that was never sized.
+  local device
+  device="$(zramctl --find --algorithm "$ALGORITHM" --size "$SIZE")"
+  mkswap "$device" >/dev/null
+  swapon --priority "$PRIORITY" "$device"
   log "enabled"
-  zramctl "$DEVICE" --output NAME,ALGORITHM,DISKSIZE,DATA,COMPR,TOTAL
+  zramctl "$device" --output NAME,ALGORITHM,DISKSIZE,DATA,COMPR,TOTAL
 }
 
 stop() {
-  if is_active; then
-    swapoff "$DEVICE"
-  fi
-  zramctl --reset "$DEVICE" 2>/dev/null || true
+  local device
+  for device in $(active_devices); do
+    swapoff "$device"
+    zramctl --reset "$device" 2>/dev/null || true
+  done
   log "disabled"
 }
 
