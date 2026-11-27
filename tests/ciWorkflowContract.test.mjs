@@ -268,6 +268,16 @@ test('the signed PortableGit cache is reused before packaging and filled after i
   assert.equal(storeAt < indexOf('Verify Windows signatures'), true);
   for (const at of [reuseAt, storeAt]) assert.equal(buildSteps[at].if, `runner.os == 'Windows'`);
   assert.match(buildSteps[reuseAt].run, /mingit-signed-cache\.cjs apply/);
+  // The digest list must land where the signing hook of the NEXT step reads it. GITHUB_ENV
+  // reaches later steps only, so the process that writes the list needs the variable in
+  // its own environment as well. Without that line the first cache hit saved nothing:
+  // the list went to the account's temp directory, the hook found nothing under RUNNER_TEMP
+  // and signed all 343 PortableGit executables again (run 46037790077, 2026-11-28).
+  const reuse = buildSteps[reuseAt].run;
+  const forLaterSteps = reuse.indexOf('[System.IO.File]::AppendAllText($env:GITHUB_ENV, "IDBOTS_PRESIGNED_MANIFEST=$presigned`n")');
+  const forThisStep = reuse.indexOf('$env:IDBOTS_PRESIGNED_MANIFEST = $presigned');
+  const apply = reuse.indexOf('node scripts/mingit-signed-cache.cjs apply');
+  assert.equal(forLaterSteps >= 0 && forThisStep > forLaterSteps && apply > forThisStep, true, 'set for later steps, set for this one, then apply');
   assert.match(buildSteps[storeAt].run, /mingit-signed-cache\.cjs store/);
   // Filling the cache is an optimization for the NEXT build: it must never fail this one.
   assert.equal(buildSteps[storeAt]['continue-on-error'], true);

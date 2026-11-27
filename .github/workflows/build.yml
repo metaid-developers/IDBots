@@ -755,7 +755,13 @@ jobs:
           # AppendAllText writes UTF-8 without a BOM (Out-File/Add-Content differ per PS version).
           $presigned = Join-Path $env:RUNNER_TEMP 'idbots-presigned-mingit.json'
           if (Test-Path $presigned) { Remove-Item $presigned -Force }
+          # GITHUB_ENV reaches the steps after this one, not this one: the process that
+          # writes the digest list needs the variable here as well. Without this line
+          # the list went to the account's temp directory, the signing hook of the next
+          # step looked under RUNNER_TEMP, found nothing, and signed all 343 PortableGit
+          # executables again on the first cache hit (run 46037790077, 2026-11-28).
           [System.IO.File]::AppendAllText($env:GITHUB_ENV, "IDBOTS_PRESIGNED_MANIFEST=$presigned`n")
+          $env:IDBOTS_PRESIGNED_MANIFEST = $presigned
           node scripts/mingit-signed-cache.cjs apply
 
       # 非 Windows: 创建 mingit 占位目录，避免 electron-builder 报"file source doesn't exist"错误
