@@ -12,9 +12,13 @@ import { GoogleSearch } from './search/google';
 import { navigate, screenshot, getContent, getTextContent } from './playwright/operations';
 import { Config, mergeConfig } from './config';
 import { SearchResponse } from './search/types';
+import { resolveIdleExitMs, isIdle } from './idle';
 
 type SearchEngine = 'google' | 'bing';
 type SearchEnginePreference = SearchEngine | 'auto';
+
+/** Upper bound on the cleanup an idle exit waits for before leaving anyway. */
+const STOP_GRACE_MS = 5_000;
 
 function collectStringValues(input: unknown, out: string[]): void {
   if (typeof input === 'string') {
@@ -104,9 +108,19 @@ export class BridgeServer {
   private browserInstance: BrowserInstance | null = null;
   private httpServer: Server | null = null;
   private config: Config;
+  /** Idle-exit policy (see ./idle): 0 keeps the server up forever. */
+  private idleExitMs: number;
+  private lastActivityAt = Date.now();
+  private inFlightRequests = 0;
+  private idleTimer: ReturnType<typeof setInterval> | null = null;
+  private exiting = false;
+  /** Called once the server stopped itself; the entry point exits the process. */
+  private readonly onExit: (code: number) => void;
 
-  constructor(config?: Partial<Config>) {
+  constructor(config?: Partial<Config>, hooks: { exit?: (code: number) => void } = {}) {
     this.config = mergeConfig(config);
+    this.idleExitMs = resolveIdleExitMs();
+    this.onExit = hooks.exit ?? (() => undefined);
     this.app = express();
     this.playwrightManager = new PlaywrightManager();
     this.bingSearch = new BingSearch(this.playwrightManager);
@@ -117,6 +131,17 @@ export class BridgeServer {
   }
 
   private setupMiddleware(): void {
+    // Idle accounting comes first: every request but the health probe counts
+    // as activity for as long as it is being served. The probe is left out on
+    // purpose — search.sh checks it before each use, and a poller must not be
+    // able to keep an unused server alive.
+    this.app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.path !== '/api/health') {
+        this.noteActivity(res);
+      }
+      next();
+    });
+
     this.app.use(express.raw({
       type: ['application/json', 'application/*+json'],
       limit: '2mb',
@@ -196,6 +221,64 @@ export class BridgeServer {
     this.app.get('/api/connections', this.handleListConnections.bind(this));
   }
 
+  /** The port the server listens on, null while it is not listening. */
+  get listeningPort(): number | null {
+    const address = this.httpServer?.address();
+    return address && typeof address === 'object' ? address.port : null;
+  }
+
+  private noteActivity(res: Response): void {
+    this.lastActivityAt = Date.now();
+    this.inFlightRequests += 1;
+    let counted = true;
+    const settle = (): void => {
+      if (!counted) return;
+      counted = false;
+      this.inFlightRequests -= 1;
+      this.lastActivityAt = Date.now();
+    };
+    // 'close' also fires after 'finish'; the guard keeps the count exact.
+    res.once('finish', settle);
+    res.once('close', settle);
+  }
+
+  /**
+   * Exit by itself after a quiet period (see ./idle). Unref'd, so with the
+   * exit disabled it can never keep the process alive.
+   */
+  private scheduleIdleExit(): void {
+    if (this.idleExitMs <= 0 || this.idleTimer) return;
+    this.idleTimer = setInterval(() => void this.exitIfIdle(), Math.min(60_000, this.idleExitMs));
+    this.idleTimer.unref();
+  }
+
+  /** Stop the server and report through the exit hook when it has gone idle. */
+  async exitIfIdle(): Promise<boolean> {
+    if (this.exiting || !isIdle(Date.now(), this.lastActivityAt, this.inFlightRequests, this.idleExitMs)) {
+      return false;
+    }
+    this.exiting = true;
+    console.log(
+      `[Bridge Server] No request for ${Math.round(this.idleExitMs / 60_000)} minutes, exiting `
+      + '(the skill starts it again on the next search)'
+    );
+    // A wedged browser must not hold the process open: the exit goes ahead
+    // after the grace period whatever the cleanup managed to do.
+    try {
+      await Promise.race([
+        this.stop(),
+        new Promise<void>((resolve) => {
+          const deadline = setTimeout(resolve, STOP_GRACE_MS);
+          deadline.unref();
+        }),
+      ]);
+    } catch (error) {
+      console.warn('[Bridge Server] Cleanup failed before the idle exit:', error);
+    }
+    this.onExit(0);
+    return true;
+  }
+
   private isBrowserProcessAlive(instance: BrowserInstance | null): boolean {
     if (!instance) {
       return false;
@@ -261,7 +344,9 @@ export class BridgeServer {
       data: {
         status: 'healthy',
         uptime: process.uptime(),
-        connections: this.playwrightManager.getConnectionCount()
+        connections: this.playwrightManager.getConnectionCount(),
+        idleExitMs: this.idleExitMs,
+        idleForSeconds: Math.floor((Date.now() - this.lastActivityAt) / 1000)
       }
     });
   }
@@ -618,7 +703,11 @@ export class BridgeServer {
 
       server.once('listening', () => {
         console.log(`\n[Bridge Server] Started on http://${this.config.server.host}:${this.config.server.port}`);
-        console.log(`[Bridge Server] Health check: http://${this.config.server.host}:${this.config.server.port}/api/health\n`);
+        console.log(`[Bridge Server] Health check: http://${this.config.server.host}:${this.config.server.port}/api/health`);
+        console.log(this.idleExitMs > 0
+          ? `[Bridge Server] Idle exit: after ${Math.round(this.idleExitMs / 60_000)} minute(s) without requests`
+          : '[Bridge Server] Idle exit: disabled');
+        this.scheduleIdleExit();
         resolve();
       });
     });
@@ -629,6 +718,11 @@ export class BridgeServer {
    */
   async stop(): Promise<void> {
     console.log('\n[Bridge Server] Shutting down...');
+
+    if (this.idleTimer) {
+      clearInterval(this.idleTimer);
+      this.idleTimer = null;
+    }
 
     // Disconnect all Playwright connections
     await this.playwrightManager.disconnectAll();
@@ -658,7 +752,7 @@ export class BridgeServer {
 
 // Main entry point
 if (require.main === module) {
-  const server = new BridgeServer();
+  const server = new BridgeServer(undefined, { exit: (code) => process.exit(code) });
 
   // Handle graceful shutdown
   process.on('SIGINT', async () => {

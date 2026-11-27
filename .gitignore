@@ -127,6 +127,7 @@ tests/*
 !tests/gatewayCore.test.mjs
 !tests/startupTiers.test.mjs
 !tests/webSearchRuntimeDir.test.mjs
+!tests/webSearchOnDemand.test.mjs
 !tests/gatewayServer.test.mjs
 !tests/reverifyTokenCrossImpl.test.mjs
 !tests/bundleService.test.mjs
