@@ -93,8 +93,23 @@ function makeFixture(t) {
     const run = spawnSync(process.execPath, args, { cwd: repo, encoding: 'utf8' });
     return { run, out };
   };
+  let readers = 0;
+  /** The objects a pack holds, read the way the restore tool reads one: indexed into an empty repository. */
+  const packObjects = (pack) => {
+    const repo = path.join(dir, `pack-reader-${(readers += 1)}`);
+    fs.mkdirSync(repo);
+    git(repo, ['init', '-q']);
+    const indexed = spawnSync('git', ['index-pack', '--stdin'], { cwd: repo, input: fs.readFileSync(pack), encoding: 'utf8' });
+    assert.equal(indexed.status, 0, indexed.stderr);
+    return git(repo, ['cat-file', '--batch-all-objects', '--batch-check=%(objectname)']).split('\n');
+  };
+  /** Every tree and blob of a commit's tree: what a machine holding that commit already has. */
+  const treeObjects = (repo, commitSha) =>
+    git(repo, ['ls-tree', '-r', '-t', commitSha])
+      .split('\n')
+      .map((line) => line.split(/\s+/)[2]);
   const read = (workspace, relative) => fs.readFileSync(path.join(workspace, relative), 'utf8');
-  return { dir, origin, url, write, commit, session, tip, hosted, machineAt, cutOnHosted, read };
+  return { dir, origin, url, write, commit, session, tip, hosted, machineAt, cutOnHosted, packObjects, treeObjects, read };
 }
 
 test('the delta is cut against the tip main had before the push, which is what the machine holds', (t) => {
@@ -120,6 +135,9 @@ test('the delta is cut against the tip main had before the push, which is what t
   const { run, out } = fixture.cutOnHosted(repo, before);
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, new RegExp(`beyond ${before.slice(0, 9)} \\(base\\)`));
+  // Nothing the machine already has travels again.
+  const carried = fixture.packObjects(out);
+  assert.deepEqual(fixture.treeObjects(fixture.origin, before).filter((oid) => carried.includes(oid)), []);
 
   const workspace = fixture.machineAt('at-the-tip', before);
   assert.equal(fixture.read(workspace, 'base.txt'), 'one\n', 'precondition: the machine is on the previous tip');
@@ -141,22 +159,35 @@ test('the delta is cut against the tip main had before the push, which is what t
   );
 });
 
-test('several commits pushed at once fit a machine that holds the tip from before them', (t) => {
+test('several commits pushed at once fit a machine that holds the tip from before them, and carry nothing it already has', (t) => {
   const fixture = makeFixture(t);
   const dev = fixture.session('dev');
+  // A directory the push leaves alone: the delta has no business carrying it.
+  fixture.write(dev, 'docs/untouched-a.txt', 'a file the push does not touch\n');
+  fixture.write(dev, 'docs/untouched-b.txt', 'another one\n');
+  const before = fixture.commit(dev, 'a directory the push will leave alone');
+  git(dev, ['push', '--quiet', 'origin', 'main']);
   fixture.write(dev, 'only-in-the-first.txt', 'added by the first of two commits, untouched by the second\n');
   fixture.commit(dev, 'first');
   fixture.write(dev, 'added-by-the-second.txt', 'second\n');
   const head = fixture.commit(dev, 'second');
-  const before = fixture.tip();
   git(dev, ['push', '--quiet', 'origin', 'main']);
   assert.equal(fixture.tip(), head);
 
-  // The base is three commits back from here: the hosted checkout has to fetch it.
+  // The base is three levels back from here, out of the hosted checkout's reach: the cut has to fetch it.
   const repo = fixture.hosted();
+  assert.notEqual(spawnSync('git', ['cat-file', '-e', `${before}^{commit}`], { cwd: repo }).status, 0, 'precondition: the checkout does not hold the base');
   const { run, out } = fixture.cutOnHosted(repo, before);
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /beyond [0-9a-f]{9} \(base\)/);
+  // Fetched at depth one, the base stands beside the history, not in it.
+  assert.equal(spawnSync('git', ['merge-base', 'HEAD', before], { cwd: repo }).status, 1, "precondition: the base is nobody's ancestor in the checkout");
+  // Two commits, their two root trees, the two new files: nothing else.
+  assert.match(run.stdout, /^\[ci-source-cut\] 6 objects, \d+ bytes, beyond [0-9a-f]{9} \(base\)/m);
+  const carried = fixture.packObjects(out);
+  assert.deepEqual(fixture.treeObjects(fixture.origin, before).filter((oid) => carried.includes(oid)), []);
+  for (const relative of ['only-in-the-first.txt', 'added-by-the-second.txt']) {
+    assert.ok(carried.includes(git(fixture.origin, ['rev-parse', `HEAD:${relative}`])), `${relative} travels in the delta`);
+  }
 
   const result = restore({ workspace: fixture.machineAt('before-both', before), source: out, commit: head, branch: 'main', ...quiet });
 

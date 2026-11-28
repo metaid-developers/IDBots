@@ -28,6 +28,12 @@
  * The checkout this runs in is shallow. The base is brought in at depth one,
  * which is exactly the machine's view of it — its tree, and nothing behind —
  * so "beyond the base" is computed against what the machine really has.
+ * A push that stacks two commits or more puts the base a third level back or
+ * further, outside the checkout's own two levels, where it is nobody's parent
+ * in the walk — and git excludes the base's objects through parentage alone
+ * (see cut). So the listing asks for more than `--not`. Without that, the
+ * delta of run 46051725913 was the whole tree — 5132 objects, 36.3 MB, where
+ * 804 KB would have done.
  *
  * Prints one line for the log: which base it used and how big the pack is.
  * Exit codes: 0 = pack written; 1 = could not cut (named); 64 = bad arguments.
@@ -73,16 +79,29 @@ export function resolveBase({ cwd, ref, wanted }) {
   return { base: wanted, used: 'base' };
 }
 
-/** Objects `ref` reaches beyond `base`, as a pack with no prerequisites. */
+/**
+ * Objects `ref` reaches beyond `base`, as a pack with no prerequisites.
+ *
+ * `--not <base>` alone does not keep the base's objects out of the list. git
+ * marks the tree of an excluded commit only when that commit is the parent of
+ * a commit being listed (list-objects.c, mark_edges_uninteresting); a base
+ * fetched on its own beside a two-level checkout is no one's parent, so the
+ * walk listed the whole tree — a "delta" the size of the full bundle.
+ * `--objects-edge-aggressive` has git mark the excluded commits named on the
+ * command line as well, whoever their children are. It also prints each
+ * excluded commit once, as a line starting with a dash; those are edges, not
+ * objects, and are left out of what goes to pack-objects.
+ */
 export function cut({ cwd = process.cwd(), out, base, ref = 'HEAD' }) {
   const head = must(['rev-parse', `${ref}^{commit}`], { cwd });
-  const objects = must(['rev-list', '--objects', head, '--not', base], { cwd });
+  const listed = must(['rev-list', '--objects', '--objects-edge-aggressive', head, '--not', base], { cwd });
+  const objects = listed.split('\n').filter((line) => !line.startsWith('-'));
   if (objects.length === 0) throw new Error(`the commit reaches nothing beyond ${base.slice(0, 9)}`);
-  const pack = git(['pack-objects', '--stdout'], { cwd, input: `${objects}\n` });
+  const pack = git(['pack-objects', '--stdout'], { cwd, input: `${objects.join('\n')}\n` });
   if (pack.status !== 0) throw new Error(`git pack-objects exited ${pack.status}: ${(pack.stderr || '').toString().trim().slice(0, 500)}`);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, pack.stdout);
-  return { head, base, objects: objects.split('\n').length, bytes: pack.stdout.length };
+  return { head, base, objects: objects.length, bytes: pack.stdout.length };
 }
 
 const OPTIONS = { '--out': 'out', '--base': 'base', '--ref': 'ref' };
