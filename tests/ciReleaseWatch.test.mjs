@@ -140,6 +140,34 @@ test('a signing service that fails its smoke test is an infrastructure failure w
   assert.match(advice, /rerun --failed/);
 });
 
+test('the smoke test before packaging is the same failure, with the same way back', () => {
+  const { kind, advice } = classifyFailure('Smoke-test the signing service before packaging (Windows)');
+  assert.equal(kind, 'infra');
+  assert.match(advice, /SimplySign session running out — it lasts 2 h 27 min from the login/);
+  assert.match(advice, /rerun --failed/);
+});
+
+test('a signing service the hook found silent is named from the job log once the run is over', () => {
+  const packaging = { name: 'Build Electron app package (Windows signed)', status: 'completed', conclusion: 'failure', started_at: minutesAgo(21) };
+  const failedWindows = { ...job(windows, { status: 'completed', conclusion: 'failure' }), id: 4242, steps: [packaging] };
+  const done = { status: 'completed', conclusion: 'failure', startedAt: minutesAgo(61) };
+  // What scripts/windows-sign.cjs prints in that case.
+  const silent = '⨯ windows-sign: the signing service is not answering.\nsigntool timed out after 90000ms on a signature asked without a timestamp';
+
+  const named = evaluate({ run: done, jobs: [failedWindows], now: NOW, jobLogs: { 4242: silent } });
+  assert.equal(named.verdict, 'completed-failed');
+  const text = named.lines.join('\n');
+  assert.match(text, /the job log says the signing service is not answering/);
+  assert.match(text, /Re-login SimplySign on the signing machine/);
+  assert.match(text, /rerun --failed/);
+
+  // Without that line the step keeps its generic advice: read the log before rerunning.
+  const unnamed = evaluate({ run: done, jobs: [failedWindows], now: NOW, jobLogs: { 4242: '⨯ windows-sign: all timestamp attempts failed' } });
+  const plain = unnamed.lines.join('\n');
+  assert.equal(plain.includes('the job log says the signing service'), false);
+  assert.match(plain, /Read the step log before rerunning/);
+});
+
 test('a source delta that does not fit, or breaks, is a fallback and not a failure', () => {
   const done = (name, conclusion, minutes) => ({ name, status: 'completed', conclusion, started_at: minutesAgo(minutes) });
   // GitHub lists a job's steps from the start, the ones still ahead as "queued".
