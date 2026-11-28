@@ -245,6 +245,29 @@ test('the signing service is asked to sign before the Windows job spends any tim
   assert.deepEqual(before, ['Enable Git long paths (Windows)']);
 });
 
+test('the signing service is asked the same question again right before packaging', () => {
+  const first = buildSteps[indexOf('Smoke-test the signing service (Windows)')];
+  const again = buildSteps[indexOf('Smoke-test the signing service before packaging (Windows)')];
+  assert.equal(again.if, `runner.os == 'Windows'`);
+  assert.equal(again.shell, 'powershell');
+  assert.deepEqual(again.env, first.env);
+  // The same script, word for word: that is the one that was run as it is on the signing machine.
+  assert.equal(again.run, first.run);
+  // After the tests and the cache, and ahead of the packaging: the session can
+  // run out while the tests run — SimplySign's lasts 2 h 27 min from the login
+  // (release SOP 11.54) — and run 46051725913 then spent 8 minutes packaging
+  // before its first signature found the service gone.
+  for (const earlier of ['Fail the job if any test step failed (aggregated verdict)', 'Reuse the signed PortableGit cache (Windows)']) {
+    assert.equal(indexOf(earlier) < indexOf(again.name), true, `after ${earlier}`);
+  }
+  assert.equal(indexOf(again.name) < indexOf('Build Electron app package (Windows signed)'), true, 'before packaging');
+  const runsOnWindows = (step) => step.if !== `runner.os != 'Windows'` && !/macOS/.test(step.if ?? '');
+  const between = buildSteps.slice(indexOf(again.name) + 1, indexOf('Build Electron app package (Windows signed)')).filter(runsOnWindows).map((step) => step.name);
+  assert.deepEqual(between, [], 'nothing that costs time runs between the question and the packaging');
+  // The failure says what runs out and how long it lasts.
+  assert.match(again.run, /SimplySign session running out: it lasts about 2 h 27 min from the login \(release SOP 11\.54\)/);
+});
+
 test('package.json and electron-builder.json carry the matching wiring', () => {
   const scripts = readJson('package.json').scripts;
   assert.match(scripts['compile:electron'], /^node scripts\/compile-electron\.cjs && node scripts\/copy-electron-js\.cjs$/);

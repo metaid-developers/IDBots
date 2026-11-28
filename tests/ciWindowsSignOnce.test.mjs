@@ -12,12 +12,19 @@ const signWindowsArtifact = require('../scripts/windows-sign.cjs');
 
 // A stand-in for signtool: records every invocation and, like the real tool,
 // modifies its target (the last argument) so a second signature would be a
-// different file again.
+// different file again. SIGN_STUB_MODE makes it stand still the way a service
+// that does not answer does: "silent" for every signature; "silent with a
+// timestamp" only while a timestamp server is asked — a signer that is well
+// behind a timestamp server that is not.
 const STUB = [
   '#!/bin/sh',
   'for target; do :; done',
   'echo "$target" >> "$SIGN_STUB_LOG"',
   'if [ -n "$SIGN_STUB_FAIL" ]; then echo "stub failure" >&2; exit 1; fi',
+  'if [ "$SIGN_STUB_MODE" = "silent" ]; then exec sleep 20; fi',
+  'if [ "$SIGN_STUB_MODE" = "silent with a timestamp" ]; then',
+  '  for argument; do if [ "$argument" = "/tr" ]; then exec sleep 20; fi; done',
+  'fi',
   'printf signature >> "$target"',
 ].join('\n');
 
@@ -34,13 +41,18 @@ function makeSigningRig(t) {
   const signtool = path.join(dir, 'signtool.exe');
   fs.writeFileSync(signtool, STUB, { mode: 0o755 });
   const log = path.join(dir, 'calls.log');
+  // The stand-in is started once before anything is timed: each attempt spawns a
+  // fresh shell, a slow start can eat the timeout before the stub writes its log
+  // line, and a test that counts calls must not depend on the machine's speed.
+  // Its call goes to a log of its own.
+  execFileSync(signtool, [path.join(dir, 'warm-up.exe')], { env: { ...process.env, SIGN_STUB_LOG: path.join(dir, 'warm-up.log'), SIGN_STUB_MODE: '' } });
   const env = {
     WIN_SIGNTOOL_PATH: signtool,
     WIN_CERT_SHA1: 'AB'.repeat(20),
     WIN_TIMESTAMP_URL: 'http://timestamp.invalid',
     SIGN_STUB_LOG: log,
   };
-  const keys = [...Object.keys(env), 'SIGN_STUB_FAIL', 'IDBOTS_PRESIGNED_MANIFEST'];
+  const keys = [...Object.keys(env), 'SIGN_STUB_FAIL', 'SIGN_STUB_MODE', 'WIN_SIGNTOOL_TIMEOUT_MS', 'IDBOTS_PRESIGNED_MANIFEST'];
   const originalEnv = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   t.mock.method(console, 'log', () => {});
   t.mock.method(console, 'warn', () => {});
@@ -166,4 +178,73 @@ test('no digest list asked for is no warning at all', { skip: process.platform =
 
   assert.equal(rig.calls().length, 1);
   assert.deepEqual(warnings, []);
+});
+
+const isSignerQuestion = (call) => path.basename(call).startsWith('idbots-signer-probe-');
+
+test('a signing service that does not answer is named after two questions, not eight timeouts', { skip: process.platform === 'win32' }, async (t) => {
+  const rig = makeSigningRig(t);
+  const warnings = [];
+  t.mock.method(console, 'warn', (message) => warnings.push(String(message)));
+  const exe = rig.target('OpenConsole.exe');
+
+  // What run 46051725913 met at its first signature: the SimplySign session had run out.
+  const failure = await rig
+    .sign(exe, { SIGN_STUB_MODE: 'silent', WIN_SIGNTOOL_TIMEOUT_MS: '1000' })
+    .then(
+      () => null,
+      (error) => error
+    );
+
+  assert.match(String(failure && failure.message), /the signing service is not answering\./);
+  assert.match(failure.message, /no timestamp server is involved/);
+  assert.match(failure.message, /SimplySign session running out/);
+  assert.match(failure.message, /Re-login SimplySign/);
+  assert.doesNotMatch(failure.message, /all timestamp attempts failed/);
+  // The signature with its timestamp, then one question to the service alone. The build spent eight timeouts of 90 seconds here.
+  assert.equal(rig.calls().length, 2);
+  assert.equal(isSignerQuestion(rig.calls()[1]), true, 'the question is asked on a throwaway copy of signtool');
+  assert.equal(fs.existsSync(rig.calls()[1]), false, 'which is gone afterwards');
+  assert.equal(rig.read(exe), 'MZ\u0000\u0000binary', 'and nothing was signed');
+  assert.deepEqual(warnings.filter((message) => /mark timestamp server unavailable/.test(message)), [], 'no timestamp server is blamed');
+});
+
+test('a timestamp server that does not answer is still the server: the service is asked once, then the next server', { skip: process.platform === 'win32' }, async (t) => {
+  const rig = makeSigningRig(t);
+  const warnings = [];
+  t.mock.method(console, 'warn', (message) => warnings.push(String(message)));
+  const exe = rig.target('IDBots.exe');
+
+  await rig.sign(exe, { SIGN_STUB_MODE: 'silent with a timestamp', WIN_SIGNTOOL_TIMEOUT_MS: '1000' });
+
+  assert.equal(rig.read(exe), 'MZ\u0000\u0000binarysignature', 'signed in the end, without a timestamp');
+  assert.equal(rig.calls().filter(isSignerQuestion).length, 1, 'the service is asked alone once for this file');
+  const givenUp = warnings.filter((message) => /mark timestamp server unavailable/.test(message)).map((message) => message.replace(/^.*: /, ''));
+  assert.equal(new Set(givenUp).size, 4, 'the configured server and the three defaults');
+  assert.equal(givenUp.length, 4, 'each once: the second certificate profile does not ask them again');
+  assert.equal(rig.calls().length, 6, 'four servers, one question to the service, one signature without a timestamp');
+  assert.equal(warnings.some((message) => /fallback to signing without timestamp/.test(message)), true);
+
+  // A file asked for later in the same build goes straight to a signature without a timestamp.
+  const callsSoFar = rig.calls().length;
+  const next = rig.target('uninstaller.exe');
+  await rig.sign(next, { WIN_SIGNTOOL_TIMEOUT_MS: '1000' });
+  assert.equal(rig.calls().length, callsSoFar + 1, 'no timestamp server is tried again in this build');
+  assert.equal(rig.read(next), 'MZ\u0000\u0000binarysignature');
+});
+
+test('a service that falls silent after it had answered is named as well', { skip: process.platform === 'win32' }, async (t) => {
+  const rig = makeSigningRig(t);
+  await rig.sign(rig.target('IDBots.exe'), { SIGN_STUB_MODE: 'silent with a timestamp', WIN_SIGNTOOL_TIMEOUT_MS: '1000' });
+
+  const second = rig.target('uninstaller.exe');
+  const failure = await rig
+    .sign(second, { SIGN_STUB_MODE: 'silent', WIN_SIGNTOOL_TIMEOUT_MS: '1000' })
+    .then(
+      () => null,
+      (error) => error
+    );
+
+  assert.match(String(failure && failure.message), /the signing service is not answering\./);
+  assert.equal(rig.read(second), 'MZ\u0000\u0000binary');
 });

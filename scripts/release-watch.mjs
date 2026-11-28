@@ -113,7 +113,7 @@ export function classifyFailure(stepName = '') {
   if (/Smoke-test the signing service/i.test(stepName)) {
     return {
       kind: 'infra',
-      advice: 'The signing service did not sign a test file. Re-login SimplySign on the signing machine, do the smoke signature of release SOP 11.18, then rerun the failed jobs: gh run rerun --failed <run-id>.',
+      advice: 'The signing service did not sign a test file. On the signing machine that is the SimplySign session running out — it lasts 2 h 27 min from the login, however recently it was used (release SOP 11.54). Re-login SimplySign on the signing machine, do the smoke signature of release SOP 11.18, then rerun the failed jobs: gh run rerun --failed <run-id>.',
     };
   }
   if (/source (delta|bundle)|source tree/i.test(stepName)) {
@@ -134,7 +134,7 @@ export function classifyFailure(stepName = '') {
   };
 }
 
-function describeFailures(jobs) {
+function describeFailures(jobs, jobLogs = {}) {
   const lines = [];
   for (const job of jobs) {
     const steps = job.steps || [];
@@ -145,6 +145,13 @@ function describeFailures(jobs) {
       const { kind, advice } = classifyFailure(step.name);
       lines.push(`      step "${step.name}" [${kind}]`);
       lines.push(`      → ${advice}`);
+    }
+    // The signing hook says so itself, in the one line that matters
+    // (scripts/windows-sign.cjs); the step's name alone cannot.
+    if (/windows-sign: the signing service is not answering/.test(jobLogs[job.id] || '')) {
+      lines.push(
+        '      the job log says the signing service is not answering: the SimplySign session has run out — it lasts 2 h 27 min from the login, however recently it was used (release SOP 11.54). Re-login SimplySign on the signing machine, do the smoke signature of release SOP 11.18, then rerun the failed jobs: gh run rerun --failed <run-id>.'
+      );
     }
   }
   return lines;
@@ -247,7 +254,7 @@ export function evaluate({
     if (run.conclusion === 'success') {
       return { verdict: 'completed-ok', exitCode: 0, lines: [...overview, ...fallbacks, 'run succeeded'], stateKey };
     }
-    return { verdict: 'completed-failed', exitCode: 1, lines: [...overview, ...fallbacks, ...describeFailures(jobs)], stateKey };
+    return { verdict: 'completed-failed', exitCode: 1, lines: [...overview, ...fallbacks, ...describeFailures(jobs, jobLogs)], stateKey };
   }
 
   // A failed step is reported the moment it is recorded, even while the job is
@@ -419,11 +426,12 @@ async function main() {
       continue;
     }
 
-    // Why a fallback stepped in is only in the log, and the log is only worth
-    // reading once the run is over.
+    // Why a fallback stepped in, and why a job failed in its packaging, are only
+    // in the log, and the log is only worth reading once the run is over.
     const jobLogs = {};
     if (snapshot.run.status === 'completed') {
-      for (const job of snapshot.jobs.filter(hasRebuiltFromFallback)) jobLogs[job.id] = fetchJobLog(job.id, options.repo);
+      const worthReading = (job) => hasRebuiltFromFallback(job) || FAILED_CONCLUSIONS.has(job.conclusion);
+      for (const job of snapshot.jobs.filter(worthReading)) jobLogs[job.id] = fetchJobLog(job.id, options.repo);
     }
 
     const result = evaluate({
